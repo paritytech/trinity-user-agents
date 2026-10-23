@@ -287,6 +287,8 @@
     <string name="spa_browser_menu_refresh">Refresh</string>
     <string name="spa_browser_menu_share">Share</string>
     <string name="spa_browser_page_no_app_surface">This product doesn\'t have an app on this device.</string>
+    <string name="spa_browser_update_ready">New version of “%1$s” is ready</string>
+    <string name="spa_browser_update_reload">Reload</string>
     <string name="product_resolution_error_malformed_manifest">This product published a manifest this app can\'t read. Contact the product\'s developer.</string>
     <string name="product_resolution_error_unknown">Couldn\'t load this product.</string>
     <string name="debug_menu_enable_retro_mode">Enable retro mode</string>
@@ -305,6 +307,7 @@
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>
+    <string name="debug_menu_dotns_cache_restart_message">Clearing the DotNs cache restarts the app. Open products load their pages from the cached content and would break without a restart.</string>
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>

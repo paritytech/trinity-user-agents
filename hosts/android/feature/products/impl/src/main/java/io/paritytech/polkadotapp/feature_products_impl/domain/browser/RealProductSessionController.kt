@@ -257,10 +257,7 @@ class RealProductSessionController @Inject constructor(
             provider.webViews().onEach { webView.value = it }.launchIn(scope)
             provider.loadProgress.onEach { loadProgress.value = it }.launchIn(scope)
 
-            url.mapNotNull { rawUrl ->
-                dotNsTldProvider.getTld().getOrNull()
-                    ?.let { tld -> ProductId.fromUrl(rawUrl.toUri(), tld).getOrNull() }
-            }
+            url.mapNotNull { productIdOf(it) }
                 .onEach { productRegistrar.ensureRegistered(it) }
                 .launchIn(scope)
         }
@@ -311,6 +308,9 @@ class RealProductSessionController @Inject constructor(
         title.ifEmpty { host(url)?.capitalize() ?: url }
 
     private fun host(url: String): String? = runCatching { URI(url).host }.getOrNull()
+
+    private suspend fun productIdOf(url: String): ProductId? =
+        dotNsTldProvider.getTld().getOrNull()?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
 
     // Groups tabs by product (one tab per product); falls back to the raw url for non-product tabs.
     private fun productKey(url: String, tld: DotNsTld?): String =

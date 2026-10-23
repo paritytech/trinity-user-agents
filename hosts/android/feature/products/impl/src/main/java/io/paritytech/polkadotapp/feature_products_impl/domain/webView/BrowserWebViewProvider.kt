@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -28,9 +29,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductsInUse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -48,6 +51,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: ProductServingHostResolver,
+    private val productsInUse: ProductsInUse,
     dispatchers: CoroutineDispatchers,
     @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
@@ -87,6 +91,17 @@ class BrowserWebViewProvider @AssistedInject constructor(
     /** Load progress of the domain the WebView is currently resolving content for. */
     val loadProgress: Flow<DotNsLoadProgress> =
         if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
+
+    private val pageUrl = MutableStateFlow<String?>(null)
+
+    init {
+        // A product's new build is applied only once no page of it is running, so each page reports its product.
+        if (fixedProductId != null) {
+            productsInUse.hold(fixedProductId, scope)
+        } else {
+            productsInUse.track(pageUrl.map { url -> url?.let { productIdOf(it) } }, scope)
+        }
+    }
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
@@ -137,7 +152,13 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     override suspend fun loadInitialContent() {
+        // Held before the first request, or an update could be applied under the document being served.
+        pageUrl.value = initialUrl
         accessWebView { it.loadUrl(initialUrl) }
+    }
+
+    private suspend fun productIdOf(url: String): ProductId? {
+        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
     }
 
     private inner class InternalWebViewClient(
@@ -158,6 +179,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             permissionClient.onPageStarted(view, url, favicon)
             innerClient.onPageStarted(view, url, favicon)
+            pageUrl.value = url
             notifyOnPageStarted(url)
         }
 

@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 import android.net.Uri
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
-import io.paritytech.polkadotapp.common.data.memory.MapCache
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapNotNull
@@ -15,14 +15,19 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractA
 import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.CarFetcher
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuild
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuildStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
 import io.paritytech.polkadotapp.tools_car_parser.CarParser
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import java.io.File
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
 
 private typealias DomainName = String
 
@@ -31,78 +36,68 @@ internal class RealDotNsResolver @Inject constructor(
     private val contractApi: DotNsContractApi,
     private val carFetcher: CarFetcher,
     private val contentStorage: DotNsContentStorage,
+    private val buildStorage: DotNsBuildStorage,
     private val contentHashOverrides: ContentHashOverrides,
     private val dispatchers: CoroutineDispatchers
-) : DotNsResolver, CoroutineScope {
-    override val coroutineContext = dispatchers.io + SupervisorJob()
-
+) : DotNsResolver {
     private val progressRegistry = DotNsLoadProgressRegistry()
 
-    private val localDomainsCache: MapCache<DomainName, Result<Uri>> = MapCache(this) { domainName ->
-        Timber.d("resolving content hash for $domainName")
+    // A page's requests all land on one build, and a name's first load downloads once however many of them wait on it.
+    private val buildLocks = KeyedMutex<DomainName>()
 
-        resolveContentHash(domainName)
-            .logFailure("failed to resolve content hash for $domainName")
-            .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
-            .flatMap { contentHash -> resolveContentHash(domainName, contentHash) }
-            .logFailure("failed to resolve $domainName")
-            // A domain with nothing registered behind it never reaches the download that reports its
-            // own failures, and a host screen reading progress would wait on it for good.
-            .onFailure { progressRegistry.markFailed(domainName, it) }
-    }
+    // Two names can point at one build, which must not be unpacked twice into the same directory.
+    private val downloadLocks = KeyedMutex<ContentHash>()
 
-    // TODO v1: Currently always fetches the latest content hash from chain for session. In the target solution,
-    //  product updates should be under full user control: once a content hash is fetched for a domain,
-    //  it should be pinned and never auto-updated. A separate UX flow will prompt the user to
-    //  acknowledge and update to a newer version when available.
     override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
-        localDomainsCache.getOrCompute(dotNsName)
-            // Usually a read that did not land; remembered, it would outlast the outage until restart.
-            .onFailure { localDomainsCache.remove(dotNsName) }
-    }
-
-    private suspend fun resolveContentHash(domainName: DomainName): Result<ContentHash?> {
-        val override = contentHashOverrides.getContentHashOverride(domainName)
-        if (override != null) return Result.success(override)
-
-        return contractApi.resolveContentHash(domainName)
-            .mapNotNull { it.toHexString() }
-    }
-
-    private suspend fun resolveContentHash(dotNsName: String, contentHashHex: ContentHash): Result<Uri> {
-        val contentHash = contentHashHex.fromHex()
-        Timber.d("resolving content for content hash $contentHashHex ($dotNsName)")
-
-        // Check if we already have this content
-        val existingDir = contentStorage.getContentDirectory(contentHashHex)
-        if (existingDir != null) {
-            Timber.d("content $contentHashHex already cached on disk for $dotNsName")
-            progressRegistry.markCompleted(dotNsName)
-            return Result.success(Uri.fromFile(existingDir))
-        }
-
-        Timber.d("content $contentHashHex not cached — fetching CAR for $dotNsName")
-        progressRegistry.markResolving(dotNsName)
-        return carFetcher.fetchCarToFile(
-            contentHash = contentHash,
-            onProgress = { downloaded, total -> progressRegistry.markDownloadProgress(dotNsName, downloaded, total) }
-        )
-            .mapCatching { carFile ->
-                progressRegistry.markUnpacking(dotNsName)
-                try {
-                    contentStorage.saveContentStreaming(contentHashHex) { writer ->
-                        CarParser.unpack(carFile) { path, content -> writer.write(path, content) }
-                    }
-                    Timber.d("saved content $contentHashHex for $dotNsName")
-                    Uri.fromFile(contentStorage.getContentDirectory(contentHashHex)!!)
-                } finally {
-                    carFile.delete()
-                }
+        buildLocks.withLock(dotNsName) {
+            servedDirectory(dotNsName)?.let { directory ->
+                progressRegistry.markCompleted(dotNsName)
+                return@withLock Result.success(directory)
             }
-            .onSuccess { progressRegistry.markCompleted(dotNsName) }
+
+            // Nothing on the device yet, so chain is the only source. Once downloaded, the build is served without it.
+            readContentHash(dotNsName).flatMap { contentHash ->
+                contentDirectory(contentHash, reportedAs = dotNsName)
+                    .onSuccess { buildStorage.put(dotNsName, DotNsBuild(served = contentHash, update = null)) }
+            }
+        }
+            .map(Uri::fromFile)
+            .logFailure("failed to resolve $dotNsName")
+            // A host screen reads a failure as final, and a domain with nothing registered would otherwise leave it waiting for good.
             .onFailure { progressRegistry.markFailed(dotNsName, it) }
-            .logFailure("failed to parse CAR for $contentHashHex")
     }
+
+    override suspend fun fetchUpdate(dotNsName: String): Result<Boolean> = withContext(dispatchers.computation) {
+        if (buildStorage.get(dotNsName) == null) return@withContext Result.success(false)
+
+        // Read before taking any lock, so the round trip to chain holds up no page being served.
+        val latest = withTimeoutOrNull(CHAIN_READ_TIMEOUT) { readContentHash(dotNsName) }
+            ?: Result.failure(IllegalStateException("Chain did not answer for $dotNsName within $CHAIN_READ_TIMEOUT"))
+
+        latest
+            .flatMap { contentHash -> contentDirectory(contentHash, reportedAs = null).map { contentHash } }
+            .map { contentHash -> recordUpdate(dotNsName, contentHash) }
+            .logFailure("failed to fetch an update for $dotNsName")
+    }
+
+    override suspend fun applyUpdate(dotNsName: String) = withContext(dispatchers.computation) {
+        buildLocks.withLock(dotNsName) {
+            val build = buildStorage.get(dotNsName) ?: return@withLock
+            val update = build.update ?: return@withLock
+
+            buildStorage.put(dotNsName, DotNsBuild(served = update, update = null))
+            Timber.d("$dotNsName now serves $update")
+            deleteUnlessReferenced(build.served)
+        }
+    }
+
+    override fun observePendingUpdates(): Flow<Set<String>> {
+        return buildStorage.observeAll()
+            .map { builds -> builds.filterValues { it.update != null }.keys }
+            .distinctUntilChanged()
+    }
+
+    override fun namesOnDevice(): Set<String> = buildStorage.all().keys
 
     override fun getProgressByDomain(dotNsName: String): Flow<DotNsLoadProgress> {
         return progressRegistry.observe(dotNsName)
@@ -115,9 +110,88 @@ internal class RealDotNsResolver @Inject constructor(
     }
 
     override suspend fun clearCache() {
-        localDomainsCache.clear()
+        buildStorage.clear()
         progressRegistry.clear()
 
         contentStorage.deleteAll()
+    }
+
+    /** Remembers [latest] as the update of [dotNsName], or drops a pending one when chain points back at the served build. */
+    private suspend fun recordUpdate(dotNsName: DomainName, latest: ContentHash): Boolean = buildLocks.withLock(dotNsName) {
+        val build = buildStorage.get(dotNsName) ?: return@withLock false
+        val update = latest.takeIf { it != build.served }
+
+        if (build.update != update) {
+            buildStorage.put(dotNsName, build.copy(update = update))
+            build.update?.let { deleteUnlessReferenced(it) }
+        }
+
+        update != null
+    }
+
+    // Two names may share one build, as a name and its alias do.
+    private suspend fun deleteUnlessReferenced(contentHash: ContentHash) {
+        val referenced = buildStorage.all().values.any { it.served == contentHash || it.update == contentHash }
+        if (!referenced) contentStorage.deleteContent(contentHash)
+    }
+
+    private fun servedDirectory(dotNsName: DomainName): File? {
+        return buildStorage.get(dotNsName)?.let { contentStorage.getContentDirectory(it.served) }
+    }
+
+    private suspend fun readContentHash(domainName: DomainName): Result<ContentHash> {
+        Timber.d("resolving content hash for $domainName")
+
+        return resolveContentHash(domainName)
+            .logFailure("failed to resolve content hash for $domainName")
+            .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
+    }
+
+    private suspend fun resolveContentHash(domainName: DomainName): Result<ContentHash?> {
+        val override = contentHashOverrides.getContentHashOverride(domainName)
+        if (override != null) return Result.success(override)
+
+        return contractApi.resolveContentHash(domainName)
+            .mapNotNull { it.toHexString() }
+    }
+
+    /** The unpacked [contentHashHex], downloaded first when the device does not have it. */
+    private suspend fun contentDirectory(contentHashHex: ContentHash, reportedAs: DomainName?): Result<File> {
+        return downloadLocks.withLock(contentHashHex) {
+            contentStorage.getContentDirectory(contentHashHex)?.let { directory ->
+                reportedAs?.let(progressRegistry::markCompleted)
+                return@withLock Result.success(directory)
+            }
+
+            download(contentHashHex, reportedAs)
+        }
+    }
+
+    // Progress goes to the name in [reportedAs]; a download for an update passes none and stays off the host screen's bar.
+    private suspend fun download(contentHashHex: ContentHash, reportedAs: DomainName?): Result<File> {
+        Timber.d("content $contentHashHex not on the device, fetching CAR")
+        reportedAs?.let(progressRegistry::markResolving)
+
+        return carFetcher.fetchCarToFile(
+            contentHash = contentHashHex.fromHex(),
+            onProgress = { downloaded, total -> reportedAs?.let { progressRegistry.markDownloadProgress(it, downloaded, total) } }
+        )
+            .mapCatching { carFile ->
+                reportedAs?.let(progressRegistry::markUnpacking)
+                try {
+                    contentStorage.saveContentStreaming(contentHashHex) { writer ->
+                        CarParser.unpack(carFile) { path, content -> writer.write(path, content) }
+                    }
+                    requireNotNull(contentStorage.getContentDirectory(contentHashHex)) { "nothing unpacked for $contentHashHex" }
+                } finally {
+                    carFile.delete()
+                }
+            }
+            .onSuccess { reportedAs?.let(progressRegistry::markCompleted) }
+            .logFailure("failed to download $contentHashHex")
+    }
+
+    private companion object {
+        val CHAIN_READ_TIMEOUT = 30.seconds
     }
 }

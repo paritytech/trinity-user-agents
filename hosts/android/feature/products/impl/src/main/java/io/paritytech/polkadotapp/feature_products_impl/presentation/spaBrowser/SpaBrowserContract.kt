@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.StateFlow
 
 interface SpaBrowserContract {
@@ -10,6 +11,12 @@ interface SpaBrowserContract {
     fun onBackPressed()
 
     fun onRefresh()
+
+    fun onScreenStarted()
+
+    fun onUpdateReloadClick()
+
+    fun onUpdateDismissClick()
 }
 
 data class SpaBrowserUiState(
@@ -18,6 +25,8 @@ data class SpaBrowserUiState(
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
     val isDevServer: Boolean = false,
+    /** The product on screen whose new build is downloaded and waits for the user to reload. */
+    val updateReadyFor: ProductId? = null,
 )
 
 /** What the content area shows. Anything still in flight is [Content] with [SpaBrowserUiState.loadProgress] running. */
