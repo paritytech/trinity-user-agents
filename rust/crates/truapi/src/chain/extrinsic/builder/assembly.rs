@@ -26,10 +26,10 @@ use crate::chain::{
 	EncodedExtrinsic, MortalExtrinsic, Mortality,
 	extrinsic::{
 		ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
-		extension::{SlotTypes, SuppliedExtension},
+		extension::{ExtensionValueTypes, SuppliedExtension},
 		signature::VerifySignatureExtension,
 		version::{choose_version, pipeline_names},
-		well_known::{ChainValues, SlotValues, unset_slot_value, well_known_values},
+		well_known::{ChainValues, EncodedExtensionValues, unset_value_default, well_known_values},
 	},
 };
 
@@ -61,17 +61,19 @@ pub fn assemble(
 		restrict_origins: builder.restrict_origins,
 	};
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
-	let slots = fold.fill_pipeline(extensions, &metadata)?;
-	let parts = EncodedParts::new(&call, &slots, version, &metadata)?;
+	let encoded = fold.fill_pipeline(extensions, &metadata)?;
+	let parts = EncodedParts::new(&call, &encoded, version, &metadata)?;
 	let bytes = match v4_signature {
-		Some(signature) => parts.encode_v4(&signature, &fold.implication_after(&slots), &metadata),
+		Some(signature) => {
+			parts.encode_v4(&signature, &fold.implication_after(&encoded), &metadata)
+		},
 		None => parts.encode_v5(version.extension_version(), &metadata),
 	}?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
 }
 
-/// Where the signature goes: a V5 extrinsic fills its `VerifyMultiSignature`
-/// slot with it like any extension; a V4 one takes it out of the pipeline to
+/// Where the signature goes: a V5 extrinsic carries it as its
+/// `VerifyMultiSignature` value like any extension; a V4 one takes it out of the pipeline to
 /// sign the preamble, and cannot be built without one.
 fn place_signature<'a>(
 	version: ExtrinsicVersion,
@@ -103,7 +105,7 @@ fn check_format_supported(
 }
 
 /// Rejects a supplied extension the pipeline does not list, or one supplied
-/// twice, since only one value can fill a slot.
+/// twice, since an extension has only one value.
 fn check_supplied_extensions(
 	supplied: &[SuppliedExtension<'_>],
 	extension_version: u8,
@@ -128,10 +130,10 @@ fn check_supplied_extensions(
 	Ok(())
 }
 
-/// One pipeline slot's name and computed values.
-struct Slot {
+/// One pipeline extension's name and encoded values.
+struct EncodedExtension {
 	name: String,
-	values: SlotValues,
+	values: EncodedExtensionValues,
 }
 
 /// What filling the pipeline needs besides the supplied extensions.
@@ -143,72 +145,77 @@ struct PipelineFold<'f> {
 }
 
 impl PipelineFold<'_> {
-	/// Fills every slot of the pipeline, from the last to the first.
+	/// Encodes every extension of the pipeline, from the last to the first.
 	fn fill_pipeline(
 		&self,
 		mut supplied: Vec<SuppliedExtension<'_>>,
 		metadata: &Metadata,
-	) -> Result<Vec<Slot>, ExtrinsicBuildError> {
+	) -> Result<Vec<EncodedExtension>, ExtrinsicBuildError> {
 		let pipeline = extension_info(metadata, self.version.extension_version())?;
-		let mut slots = VecDeque::with_capacity(pipeline.extension_ids.len());
+		let mut encoded = VecDeque::with_capacity(pipeline.extension_ids.len());
 		for declared in pipeline.extension_ids.iter().rev() {
-			let implication = self.implication_after(slots.make_contiguous());
+			let implication = self.implication_after(encoded.make_contiguous());
 			let position = supplied.iter().position(|extension| extension.name == declared.name);
 			let extension = position.map(|index| supplied.swap_remove(index));
-			let values = self.slot_values(declared, extension, &implication)?;
-			check_slot_shape(declared, &values, self.types)?;
-			slots.push_front(Slot { name: declared.name.to_string(), values });
+			let values = self.extension_values(declared, extension, &implication)?;
+			check_value_shapes(declared, &values, self.types)?;
+			encoded.push_front(EncodedExtension { name: declared.name.to_string(), values });
 		}
-		Ok(slots.into())
+		Ok(encoded.into())
 	}
 
 	/// The implication an extension sees: for V5 the extension version, then
 	/// the call, then every later extension's explicit and implicit values.
-	fn implication_after(&self, later: &[Slot]) -> InheritedImplication {
+	fn implication_after(&self, later: &[EncodedExtension]) -> InheritedImplication {
 		let mut encoded = match self.version {
 			ExtrinsicVersion::V4 => Vec::new(),
 			ExtrinsicVersion::V5 { extension_version } => vec![extension_version],
 		};
 		encoded.extend_from_slice(self.call);
-		later.iter().for_each(|slot| encoded.extend_from_slice(&slot.values.explicit));
-		later.iter().for_each(|slot| encoded.extend_from_slice(&slot.values.implicit));
+		later
+			.iter()
+			.for_each(|extension| encoded.extend_from_slice(&extension.values.explicit));
+		later
+			.iter()
+			.for_each(|extension| encoded.extend_from_slice(&extension.values.implicit));
 		InheritedImplication::new(encoded, self.version)
 	}
 
-	/// A slot's values: the supplied extension's, else a well-known value,
+	/// An extension's values: the supplied extension's, else a well-known value,
 	/// else the type's unset default.
-	fn slot_values(
+	fn extension_values(
 		&self,
 		declared: &ExtrinsicExtensionInfoArg<'_, u32>,
 		supplied: Option<SuppliedExtension<'_>>,
 		implication: &InheritedImplication,
-	) -> Result<SlotValues, ExtrinsicBuildError> {
+	) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
 		if let Some(extension) = supplied {
-			let types = SlotTypes { explicit: declared.id, implicit: declared.implicit_id };
+			let types =
+				ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
 			return (extension.encode)(implication, types, self.types);
 		}
 		if let Some(values) = well_known_values(declared, &self.chain, self.types)? {
 			return Ok(values);
 		}
-		unset_values(declared, self.types)
+		unset_extension_values(declared, self.types)
 	}
 }
 
-fn unset_values(
+fn unset_extension_values(
 	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
 	types: &PortableRegistry,
-) -> Result<SlotValues, ExtrinsicBuildError> {
+) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
 	let missing = || ExtrinsicBuildError::MissingExtension { extension: declared.name.to_string() };
-	let explicit = unset_slot_value(declared.id, types).ok_or_else(missing)?;
-	let implicit = unset_slot_value(declared.implicit_id, types).ok_or_else(missing)?;
-	Ok(SlotValues { explicit, implicit })
+	let explicit = unset_value_default(declared.id, types).ok_or_else(missing)?;
+	let implicit = unset_value_default(declared.implicit_id, types).ok_or_else(missing)?;
+	Ok(EncodedExtensionValues { explicit, implicit })
 }
 
-/// Checks that both of a slot's values decode as their metadata types and
+/// Checks that both of an extension's values decode as their metadata types and
 /// leave nothing over.
-fn check_slot_shape(
+fn check_value_shapes(
 	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
-	values: &SlotValues,
+	values: &EncodedExtensionValues,
 	types: &PortableRegistry,
 ) -> Result<(), ExtrinsicBuildError> {
 	check_value_shape(&declared.name, "explicit", &values.explicit, declared.id, types)?;
@@ -217,14 +224,14 @@ fn check_slot_shape(
 
 fn check_value_shape(
 	extension: &str,
-	slot: &'static str,
+	value_name: &'static str,
 	bytes: &[u8],
 	type_id: u32,
 	types: &PortableRegistry,
 ) -> Result<(), ExtrinsicBuildError> {
 	let shape_error = |reason: String| ExtrinsicBuildError::ExtensionShape {
 		extension: extension.to_string(),
-		slot,
+		value: value_name,
 		bytes: hex::encode(bytes),
 		reason,
 	};
@@ -266,23 +273,28 @@ fn split_call<'c>(
 /// Everything frame-decode lays out, already computed.
 struct EncodedParts<'p> {
 	args: EncodedArgs<'p>,
-	slots: ComputedSlots<'p>,
+	encoded: EncodedExtensions<'p>,
 	call_info: ExtrinsicCallInfo<'p, u32>,
 	pipeline: ExtrinsicExtensionInfo<'p, u32>,
 }
 
 impl<'p> EncodedParts<'p> {
-	/// The call and the computed slots, ready for frame-decode to lay out in
+	/// The call and the encoded extensions, ready for frame-decode to lay out in
 	/// `version`'s format.
 	fn new(
 		call: &'p [u8],
-		slots: &'p [Slot],
+		encoded: &'p [EncodedExtension],
 		version: ExtrinsicVersion,
 		metadata: &'p Metadata,
 	) -> Result<Self, ExtrinsicBuildError> {
 		let (call_info, args) = split_call(call, metadata)?;
 		let pipeline = extension_info(metadata, version.extension_version())?;
-		Ok(Self { args: EncodedArgs(args), slots: ComputedSlots(slots), call_info, pipeline })
+		Ok(Self {
+			args: EncodedArgs(args),
+			encoded: EncodedExtensions(encoded),
+			call_info,
+			pipeline,
+		})
 	}
 
 	fn encode_v5(
@@ -294,7 +306,7 @@ impl<'p> EncodedParts<'p> {
 		encode_v5_general_with_info_to(
 			&self.args,
 			extension_version,
-			&self.slots,
+			&self.encoded,
 			metadata.types(),
 			&self.call_info,
 			&self.pipeline,
@@ -317,7 +329,7 @@ impl<'p> EncodedParts<'p> {
 		let mut out = Vec::new();
 		encode_v4_signed_with_info_to(
 			&self.args,
-			&self.slots,
+			&self.encoded,
 			&address,
 			&signature.sign(implication),
 			metadata.types(),
@@ -350,22 +362,22 @@ impl EncodeAsFields for EncodedArgs<'_> {
 	}
 }
 
-/// The computed slots, handed to frame-decode by name.
-struct ComputedSlots<'s>(&'s [Slot]);
+/// The encoded extensions, handed to frame-decode by name.
+struct EncodedExtensions<'s>(&'s [EncodedExtension]);
 
-impl ComputedSlots<'_> {
-	fn slot(&self, name: &str) -> Result<&SlotValues, TransactionExtensionsError> {
+impl EncodedExtensions<'_> {
+	fn values_of(&self, name: &str) -> Result<&EncodedExtensionValues, TransactionExtensionsError> {
 		self.0
 			.iter()
-			.find(|slot| slot.name == name)
-			.map(|slot| &slot.values)
+			.find(|extension| extension.name == name)
+			.map(|extension| &extension.values)
 			.ok_or_else(|| TransactionExtensionsError::NotFound(name.to_string()))
 	}
 }
 
-impl TransactionExtensions<PortableRegistry> for ComputedSlots<'_> {
+impl TransactionExtensions<PortableRegistry> for EncodedExtensions<'_> {
 	fn contains_extension(&self, name: &str) -> bool {
-		self.0.iter().any(|slot| slot.name == name)
+		self.0.iter().any(|extension| extension.name == name)
 	}
 
 	fn encode_extension_value_to(
@@ -375,7 +387,7 @@ impl TransactionExtensions<PortableRegistry> for ComputedSlots<'_> {
 		_types: &PortableRegistry,
 		out: &mut Vec<u8>,
 	) -> Result<(), TransactionExtensionsError> {
-		out.extend_from_slice(&self.slot(name)?.explicit);
+		out.extend_from_slice(&self.values_of(name)?.explicit);
 		Ok(())
 	}
 
@@ -386,7 +398,7 @@ impl TransactionExtensions<PortableRegistry> for ComputedSlots<'_> {
 		_types: &PortableRegistry,
 		out: &mut Vec<u8>,
 	) -> Result<(), TransactionExtensionsError> {
-		out.extend_from_slice(&self.slot(name)?.implicit);
+		out.extend_from_slice(&self.values_of(name)?.implicit);
 		Ok(())
 	}
 }

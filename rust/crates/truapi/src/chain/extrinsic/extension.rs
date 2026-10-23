@@ -5,7 +5,7 @@ use scale_info::PortableRegistry;
 use sp_crypto_hashing::blake2_256;
 use subxt::ext::scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver};
 
-use super::{ExtrinsicBuildError, ExtrinsicVersion, well_known::SlotValues};
+use super::{ExtrinsicBuildError, ExtrinsicVersion, well_known::EncodedExtensionValues};
 
 /// A transaction extension that a caller supplies to the builder.
 ///
@@ -140,9 +140,9 @@ impl EncodeAsType for PreencodedValue {
 	}
 }
 
-/// The metadata types of one pipeline slot.
+/// The metadata types of one extension's values.
 #[derive(Clone, Copy, Debug)]
-pub struct SlotTypes {
+pub struct ExtensionValueTypes {
 	/// The explicit value's type.
 	pub explicit: u32,
 	/// The implicit value's type.
@@ -151,43 +151,43 @@ pub struct SlotTypes {
 
 /// A supplied extension with its values not yet encoded, so the builder can
 /// hold extensions of different types in one list. Both values encode once
-/// the slot's types and the implication are known.
+/// their types and the implication are known.
 pub struct SuppliedExtension<'a> {
 	/// The extension's name in metadata.
 	pub name: String,
-	/// Encodes both values for the slot.
-	pub encode: EncodeSlot<'a>,
+	/// Encodes both values.
+	pub encode: EncodeExtensionValues<'a>,
 }
 
-/// Encodes an extension's values against its slot's types, the explicit one
+/// Encodes an extension's values against their metadata types, the explicit one
 /// from the implication.
-type EncodeSlot<'a> = Box<
+type EncodeExtensionValues<'a> = Box<
 	dyn FnOnce(
 			&InheritedImplication,
-			SlotTypes,
+			ExtensionValueTypes,
 			&PortableRegistry,
-		) -> Result<SlotValues, ExtrinsicBuildError>
+		) -> Result<EncodedExtensionValues, ExtrinsicBuildError>
 		+ Send
 		+ 'a,
 >;
 
 impl<'a> SuppliedExtension<'a> {
-	/// Holds `extension` until the builder reaches its slot.
+	/// Holds `extension` until the builder reaches it in the pipeline.
 	pub fn new<E: TransactionExtension + 'a>(extension: E) -> Self {
 		let name = extension.name().to_string();
-		let encode: EncodeSlot<'a> = Box::new(move |implication, types, registry| {
-			encode_slot(&extension, implication, types, registry)
+		let encode: EncodeExtensionValues<'a> = Box::new(move |implication, types, registry| {
+			encode_extension_values(&extension, implication, types, registry)
 		});
 		Self { name, encode }
 	}
 }
 
-fn encode_slot<E: TransactionExtension>(
+fn encode_extension_values<E: TransactionExtension>(
 	extension: &E,
 	implication: &InheritedImplication,
-	types: SlotTypes,
+	types: ExtensionValueTypes,
 	registry: &PortableRegistry,
-) -> Result<SlotValues, ExtrinsicBuildError> {
+) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
 	let name = extension.name();
 	let explicit_value = extension
 		.explicit(implication)
@@ -195,12 +195,12 @@ fn encode_slot<E: TransactionExtension>(
 	let explicit = encode_value(name, "explicit", &explicit_value, types.explicit, registry)?;
 	let implicit_value = extension.implicit();
 	let implicit = encode_value(name, "implicit", &implicit_value, types.implicit, registry)?;
-	Ok(SlotValues { explicit, implicit })
+	Ok(EncodedExtensionValues { explicit, implicit })
 }
 
 fn encode_value(
 	extension: &str,
-	slot: &'static str,
+	value_name: &'static str,
 	value: &impl EncodeAsType,
 	type_id: u32,
 	registry: &PortableRegistry,
@@ -209,7 +209,7 @@ fn encode_value(
 		.encode_as_type(type_id, registry)
 		.map_err(|error| ExtrinsicBuildError::ExtensionEncode {
 			extension: extension.to_string(),
-			slot,
+			value: value_name,
 			type_id,
 			reason: error.to_string(),
 		})

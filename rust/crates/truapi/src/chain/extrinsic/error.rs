@@ -94,24 +94,24 @@ pub enum ExtrinsicBuildError {
 		extension: String,
 	},
 	/// An extension value does not match its metadata type.
-	#[error("{extension} {slot} value 0x{bytes} does not match its metadata type: {reason}")]
+	#[error("{extension} {value} value 0x{bytes} does not match its metadata type: {reason}")]
 	ExtensionShape {
 		/// The extension name.
 		extension: String,
 		/// `explicit` or `implicit`.
-		slot: &'static str,
+		value: &'static str,
 		/// The bytes, hex encoded.
 		bytes: String,
 		/// The decoder's message.
 		reason: String,
 	},
 	/// A supplied extension's value does not encode as its metadata type.
-	#[error("{extension} {slot} value does not encode as metadata type {type_id}: {reason}")]
+	#[error("{extension} {value} value does not encode as metadata type {type_id}: {reason}")]
 	ExtensionEncode {
 		/// The extension name.
 		extension: String,
 		/// `explicit` or `implicit`.
-		slot: &'static str,
+		value: &'static str,
 		/// The metadata type it was encoded against.
 		type_id: u32,
 		/// The encoder's message.

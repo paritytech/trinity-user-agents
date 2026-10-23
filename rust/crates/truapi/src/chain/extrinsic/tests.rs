@@ -27,7 +27,7 @@ use super::{
 	RawExtension, TransactionExtension,
 	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
 	version::choose_version,
-	well_known::unset_slot_value,
+	well_known::unset_value_default,
 };
 use crate::{
 	chain::HashAndNumber,
@@ -117,7 +117,7 @@ const AUTHORIZED_EXTRINSIC_HASH: &str =
 	"98c8c0ea429d862856c9de737268cef03340fb77c3a4f0c39fb56e7125e494e2";
 
 /// The proof-authorized layout the People runtime accepts: preamble,
-/// extension order, the authorizer's value in its slot, then the call.
+/// extension order, the authorizer's value in its place, then the call.
 #[test]
 fn an_authorized_extrinsic_has_the_reference_bytes() {
 	let call = remark_call(PEOPLE);
@@ -304,10 +304,10 @@ fn a_v4_extrinsic_without_a_signer_is_refused() {
 	assert!(matches!(error, ExtrinsicBuildError::UnsignedV4));
 }
 
-/// The signature is an ordinary extension, so a pipeline without its slot
+/// The signature is an ordinary extension, so a pipeline that does not list it
 /// refuses it by name rather than dropping it in silence.
 #[test]
-fn a_signer_on_a_pipeline_without_a_signature_slot_is_refused() {
+fn a_signer_on_a_pipeline_without_verify_multi_signature_is_refused() {
 	let signer = test_signer();
 	let v5_zero = ExtrinsicVersion::V5 { extension_version: 0 };
 	let error = build_error(ASSET_HUB, Some(&signer), |builder| {
@@ -360,7 +360,7 @@ fn a_value_that_does_not_match_its_type_is_refused() {
 
 	assert!(matches!(
 		error,
-		ExtrinsicBuildError::ExtensionShape { extension, slot: "explicit", .. } if extension == "RestrictOrigins"
+		ExtrinsicBuildError::ExtensionShape { extension, value: "explicit", .. } if extension == "RestrictOrigins"
 	));
 }
 
@@ -380,12 +380,13 @@ fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails
 		panic!("expected a V5 general extrinsic on pipeline 0");
 	};
 	let pipeline = metadata.extrinsic_extension_info(Some(0)).unwrap();
-	let slot = pipeline
+	let declared = pipeline
 		.extension_ids
 		.iter()
 		.find(|declared| declared.name == "VerifyMultiSignature");
 	let mut cursor = values;
-	VerifySignatureDetails::decode_as_type(&mut cursor, slot.unwrap().id, metadata.types()).unwrap()
+	VerifySignatureDetails::decode_as_type(&mut cursor, declared.unwrap().id, metadata.types())
+		.unwrap()
 }
 
 /// A V5 signature covers the extensions after `VerifyMultiSignature`, as the
@@ -444,7 +445,7 @@ fn the_implication_carries_the_given_genesis() {
 	assert!(carries_configured);
 }
 
-fn asset_hub_slot_type(name: &str, implicit: bool) -> u32 {
+fn asset_hub_value_type(name: &str, implicit: bool) -> u32 {
 	let metadata = Metadata::decode_from(ASSET_HUB).unwrap();
 	let pipeline = metadata.extrinsic_extension_info(Some(1)).unwrap();
 	let declared = pipeline.extension_ids.iter().find(|declared| declared.name == name).unwrap();
@@ -457,13 +458,13 @@ fn asset_hub_slot_type(name: &str, implicit: bool) -> u32 {
 fn only_empty_and_option_extensions_have_an_unset_default() {
 	let metadata = Metadata::decode_from(ASSET_HUB).unwrap();
 	let types = metadata.types();
-	let as_pgas = asset_hub_slot_type("AsPgas", false);
-	let check_weight = asset_hub_slot_type("CheckWeight", false);
-	let restrict_origins = asset_hub_slot_type("RestrictOrigins", false);
+	let as_pgas = asset_hub_value_type("AsPgas", false);
+	let check_weight = asset_hub_value_type("CheckWeight", false);
+	let restrict_origins = asset_hub_value_type("RestrictOrigins", false);
 
-	assert_eq!(unset_slot_value(as_pgas, types), Some(vec![0x00]));
-	assert_eq!(unset_slot_value(check_weight, types), Some(Vec::new()));
-	assert_eq!(unset_slot_value(restrict_origins, types), None);
+	assert_eq!(unset_value_default(as_pgas, types), Some(vec![0x00]));
+	assert_eq!(unset_value_default(check_weight, types), Some(Vec::new()));
+	assert_eq!(unset_value_default(restrict_origins, types), None);
 }
 
 /// Bulletin's runtime accepts only V4, so pinning V5 there fails by name

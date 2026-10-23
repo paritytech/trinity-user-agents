@@ -37,7 +37,7 @@ pub struct ChainValues {
 
 /// One extension's encoded values.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SlotValues {
+pub struct EncodedExtensionValues {
 	/// What the extrinsic carries.
 	pub explicit: Vec<u8>,
 	/// What only the signer payload carries.
@@ -51,15 +51,15 @@ pub fn well_known_values(
 	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
 	chain: &ChainValues,
 	types: &PortableRegistry,
-) -> Result<Option<SlotValues>, ExtrinsicBuildError> {
+) -> Result<Option<EncodedExtensionValues>, ExtrinsicBuildError> {
 	if declared.name == VERIFY_MULTI_SIGNATURE {
 		let explicit = disabled_signature(declared.id, types)?;
-		return Ok(Some(SlotValues { explicit, implicit: Vec::new() }));
+		return Ok(Some(EncodedExtensionValues { explicit, implicit: Vec::new() }));
 	}
 	Ok(constant_values(&declared.name, chain))
 }
 
-fn constant_values(name: &str, chain: &ChainValues) -> Option<SlotValues> {
+fn constant_values(name: &str, chain: &ChainValues) -> Option<EncodedExtensionValues> {
 	let (explicit, implicit) = match name {
 		"CheckSpecVersion" => (Vec::new(), chain.spec_version.encode()),
 		"CheckTxVersion" => (Vec::new(), chain.transaction_version.encode()),
@@ -76,12 +76,12 @@ fn constant_values(name: &str, chain: &ChainValues) -> Option<SlotValues> {
 		"RestrictOrigins" => (vec![u8::from(chain.restrict_origins)], Vec::new()),
 		_ => return None,
 	};
-	Some(SlotValues { explicit, implicit })
+	Some(EncodedExtensionValues { explicit, implicit })
 }
 
-/// The value an unset extension slot of type `type_id` takes: nothing for an
+/// The value an unset extension value of type `type_id` takes: nothing for an
 /// empty type, `None` for an `Option`, and no default for anything else.
-pub fn unset_slot_value(type_id: u32, types: &PortableRegistry) -> Option<Vec<u8>> {
+pub fn unset_value_default(type_id: u32, types: &PortableRegistry) -> Option<Vec<u8>> {
 	if is_empty_type(type_id, types) {
 		return Some(Vec::new());
 	}
@@ -119,7 +119,7 @@ fn disabled_signature(
 		.encode_as_type(type_id, types)
 		.map_err(|error| ExtrinsicBuildError::ExtensionEncode {
 			extension: VERIFY_MULTI_SIGNATURE.to_string(),
-			slot: "explicit",
+			value: "explicit",
 			type_id,
 			reason: error.to_string(),
 		})
