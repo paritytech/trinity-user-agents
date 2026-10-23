@@ -7,6 +7,8 @@
 
 use thiserror::Error;
 
+use crate::platform::ProductId;
+
 const DOMAIN_SEPARATOR: &[u8] = b"product-entropy-derivation";
 
 /// Error deriving product-scoped entropy.
@@ -23,7 +25,7 @@ pub enum ProductEntropyError {
 /// Derive product-scoped entropy from the session root entropy secret.
 pub fn derive_product_entropy(
 	entropy_secret: &[u8],
-	product_id: &str,
+	product_id: &ProductId,
 	key: &[u8],
 ) -> Result<[u8; 32], ProductEntropyError> {
 	derive_product_entropy_from_source(&root_entropy_source(entropy_secret), product_id, key)
@@ -40,14 +42,14 @@ pub fn root_entropy_source(entropy_secret: &[u8]) -> [u8; 32] {
 /// pre-hashed root entropy source.
 pub fn derive_product_entropy_from_source(
 	root_entropy_source: &[u8; 32],
-	product_id: &str,
+	product_id: &ProductId,
 	key: &[u8],
 ) -> Result<[u8; 32], ProductEntropyError> {
 	if key.is_empty() || key.len() > 32 {
 		return Err(ProductEntropyError::InvalidKeyLength(key.len()));
 	}
 
-	let product_id_hash = blake2b256_keyed(product_id.as_bytes(), &[]);
+	let product_id_hash = blake2b256_keyed(product_id.as_str().as_bytes(), &[]);
 	let per_product_entropy = blake2b256_keyed(root_entropy_source, &product_id_hash);
 	Ok(blake2b256_keyed(&per_product_entropy, key))
 }
@@ -105,7 +107,9 @@ mod tests {
 		];
 
 		for case in success_cases {
-			let entropy = derive_product_entropy(&secret(), case.product_id, &case.key).unwrap();
+			let entropy =
+				derive_product_entropy(&secret(), &ProductId::for_test(case.product_id), &case.key)
+					.unwrap();
 			assert_eq!(hex::encode(entropy), case.expected_hex, "{}", case.name);
 		}
 
@@ -130,7 +134,9 @@ mod tests {
 			),
 		];
 		for (product_id, key, expected_hex) in ios_cases {
-			let entropy = derive_product_entropy(&ios_entropy, product_id, key).unwrap();
+			let entropy =
+				derive_product_entropy(&ios_entropy, &ProductId::for_test(product_id), key)
+					.unwrap();
 			assert_eq!(hex::encode(entropy), expected_hex, "ios vector {product_id}");
 		}
 
@@ -139,7 +145,11 @@ mod tests {
 			(vec![0u8; 33], ProductEntropyError::InvalidKeyLength(33)),
 		];
 		for (key, expected) in error_cases {
-			assert_eq!(derive_product_entropy(&secret(), "myapp.dot", &key).unwrap_err(), expected,);
+			assert_eq!(
+				derive_product_entropy(&secret(), &ProductId::for_test("myapp.dot"), &key)
+					.unwrap_err(),
+				expected,
+			);
 		}
 	}
 }

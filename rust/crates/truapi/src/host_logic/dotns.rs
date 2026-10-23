@@ -4,7 +4,7 @@
 //! same categorization and the `navigate_to` callback only receives
 //! already-validated input.
 
-use crate::platform::{has_dotns_tld, normalize_chat_identifier, normalize_product_identifier};
+use crate::platform::{ProductId, has_dotns_tld, normalize_chat_identifier};
 use unicode_normalization::UnicodeNormalization;
 use url::{Url, form_urlencoded};
 
@@ -61,7 +61,7 @@ pub enum NavigateDecision {
 	Pocket {
 		/// Normalized dotNS name of the product that backs the card, from the
 		/// `product` query parameter.
-		identifier: String,
+		identifier: ProductId,
 		/// Requested Pocket action.
 		action: PocketDeeplinkAction,
 		/// Card named by the `card` query parameter.
@@ -189,8 +189,8 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			reason: "pocket deeplink names no product or no card".to_string(),
 		});
 	};
-	let identifier = match normalize_product_identifier(&product) {
-		Ok(identifier) if has_dotns_tld(&identifier) => identifier,
+	let identifier = match product.parse::<ProductId>() {
+		Ok(identifier) if has_dotns_tld(identifier.as_str()) => identifier,
 		_ => {
 			return Some(NavigateDecision::Reject {
 				reason: "pocket deeplink names a product that is not a dotNS name".to_string(),
@@ -210,7 +210,7 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 	// raw `#` or `&` in a card id would make the canonical form parse as a
 	// different deeplink.
 	let query = form_urlencoded::Serializer::new(String::new())
-		.append_pair("product", &identifier)
+		.append_pair("product", identifier.as_str())
 		.append_pair("card", &card_id)
 		.finish();
 	Some(NavigateDecision::Pocket {
@@ -339,7 +339,7 @@ mod tests {
 			PocketDeeplinkAction::Open => "open",
 		};
 		Expected::Decision(NavigateDecision::Pocket {
-			identifier: identifier.to_string(),
+			identifier: ProductId::for_test(identifier),
 			action,
 			card_id: card_id.to_string(),
 			canonical_url: format!(

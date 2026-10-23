@@ -66,7 +66,9 @@ use truapi::{
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
-	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
+	platform::{
+		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+	},
 	statement_allowance as alloc,
 	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
@@ -246,7 +248,7 @@ enum Command {
 	/// identity/username.
 	IdentityCheck {
 		/// BIP-39 mnemonic to probe.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to probe.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -257,7 +259,7 @@ enum Command {
 	/// person. That person's People ring must have propagated to Asset Hub.
 	RegisterName {
 		/// BIP-39 mnemonic of the recognized full person.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -280,7 +282,7 @@ enum Command {
 	/// test mnemonics; the account store is not touched.
 	Attest {
 		/// BIP-39 mnemonic of the identity to attest.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to attest on.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -294,7 +296,7 @@ enum Command {
 	/// (with `--submit`) the `set_statement_store_account` extrinsic.
 	AllocCheck {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use for People-chain RPC.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -315,7 +317,7 @@ enum Command {
 	/// slot, and the `Pgas.claim_pgas` extrinsic.
 	PgasCheck {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use for People and Asset Hub RPC.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -429,7 +431,7 @@ struct DevArgs {
 	/// BIP-39 mnemonic for the wallet root, to sign as an existing identity
 	/// instead of the auto-managed one. Confirmations are auto-approved here,
 	/// so the connected product can sign anything: testnet keys only.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 	mnemonic: Option<String>,
 	/// Base directory; CLI-managed state lives in its v2 subdirectory.
 	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
@@ -464,7 +466,7 @@ struct SigningHostArgs {
 	/// BIP-39 mnemonic for the wallet root. If omitted, the
 	/// `HOST_CLI_SIGNER_MNEMONIC` env var is used when set. Any mnemonic
 	/// bypasses account auto-management.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 	mnemonic: Option<String>,
 	/// Named stored account to use. Omit this and `--mnemonic` to auto-select
 	/// or create a usable account.
@@ -624,7 +626,7 @@ async fn dispatch(
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config()?;
+			let config = network.cli_config().await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -650,7 +652,7 @@ async fn dispatch(
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config()?, &entropy).await
+			attestation::check_identity(network.cli_config().await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -666,7 +668,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config()?,
+				network: network.cli_config().await?,
 				entropy,
 				label,
 				link_lite,
@@ -675,14 +677,15 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.cli_config()?, target, lookback, submit).await
+			run_alloc_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.cli_config()?, target, lookback, submit).await
+			run_pgas_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
 		},
 		Command::Attest { mnemonic, network, username } => {
 			let attested =
-				accounts::attest_mnemonic(network.cli_config()?, &mnemonic, &username).await?;
+				accounts::attest_mnemonic(network.cli_config().await?, &mnemonic, &username)
+					.await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -1071,8 +1074,20 @@ async fn report_slot_scan(
 
 /// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
 /// each confirmation on the CLI.
-fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
-	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
+///
+/// Auto-accept is refused on a network whose identities are real, so a local
+/// page can never get a real identity's signature without a prompt.
+fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<ApprovalPolicy> {
+	if !auto_accept {
+		return Ok(ApprovalPolicy::Prompt);
+	}
+	anyhow::ensure!(
+		network.disposable_identities,
+		"{} holds real identities, so every confirmation must be approved by hand; \
+		 automatic approval, which `dev` always uses, is only available on test network presets",
+		network.id
+	);
+	Ok(ApprovalPolicy::AutoAccept)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -1233,7 +1248,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config()?;
+	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
@@ -1249,7 +1264,7 @@ async fn run_pairing_host(
 	let platform = CliPlatform::new(
 		network,
 		Some(storage_paths),
-		approval_policy(args.auto_accept),
+		approval_policy(args.auto_accept, network)?,
 		ui_handle,
 	);
 	// SSO runs over the real People chain. Usernames resolve from the dotNS
@@ -1353,7 +1368,7 @@ async fn run_signing_host(
 		args.execution_kind.context(),
 	)?;
 	let product_id = product.current();
-	let network = args.network.cli_config()?;
+	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -1609,7 +1624,7 @@ async fn resolve_session_signer(config: ResolveSignerConfig<'_>) -> Result<Resol
 	if config.mnemonic.is_none() &&
 		let Some(signer) = accounts::resolve_cached_signer(
 			config.base_path,
-			config.network.id,
+			config.network,
 			config.account.as_deref(),
 		)? {
 		return Ok(signer);
@@ -1624,6 +1639,7 @@ async fn start_signing_host(
 	network: NetworkConfig,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
+	let approval = approval_policy(args.auto_accept, network)?;
 	let mnemonic = normalized(args.mnemonic.clone());
 	let mut profile =
 		if mnemonic.is_some() { None } else { Some(catalog.ensure_profile(&session_name)?) };
@@ -1643,7 +1659,7 @@ async fn start_signing_host(
 		.map(|profile| {
 			accounts::resolve_cached_signer(
 				&profile.account_base_path,
-				network.id,
+				network,
 				selected_account.as_deref(),
 			)
 		})
@@ -1681,7 +1697,6 @@ async fn start_signing_host(
 		}
 		signer = Some(explicit_signer);
 	}
-	let approval = approval_policy(args.auto_accept);
 	let chat = args.execution_kind.chat_host();
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
@@ -1693,7 +1708,7 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	apply_local_product_grants(platform.as_ref(), network, &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2051,10 +2066,21 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
+async fn apply_local_product_grants(
+	platform: &CliPlatform,
+	network: NetworkConfig,
+	paths: &[PathBuf],
+) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
+	// Seeded grants persist in the core database and are never prompted for.
+	anyhow::ensure!(
+		network.disposable_identities,
+		"{} holds real identities, so --product-config grants are only available on test \
+		 network presets",
+		network.id
+	);
 	let configs = product_config::read_all(paths)?;
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
@@ -2087,8 +2113,8 @@ async fn run_dev(
 		base_path: args.base_path,
 		product_config: args.product_config,
 		frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
-		// A process with no terminal cannot prompt, which is why this pairs
-		// with a testnet-only network preset.
+		// A process with no terminal cannot prompt, so `dev` approves every
+		// confirmation and refuses to start on a preset whose identities are real.
 		serve: true,
 		auto_accept: true,
 		..Default::default()
@@ -3155,11 +3181,8 @@ async fn import_mnemonic_session(
 			)
 		})?;
 
-	let signer = accounts::persist_imported_signer(
-		&profile.account_base_path,
-		session.network.id,
-		&imported,
-	)?;
+	let signer =
+		accounts::persist_imported_signer(&profile.account_base_path, session.network, &imported)?;
 	let account_name = signer
 		.account_name
 		.as_deref()
@@ -3264,17 +3287,15 @@ async fn pairing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				match product.select(product_id) {
-					Ok(true) => {
-						let product_id = product.current();
-						ui.set_product(product_id.clone());
-						ui.success(
-							format!("Product set to {product_id}"),
-							Some("Reconnect product clients to continue.".to_string()),
-						);
-					},
-					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+				if product.select(product_id) {
+					let product_id = product.current();
+					ui.set_product(product_id.clone());
+					ui.success(
+						format!("Product set to {product_id}"),
+						Some("Reconnect product clients to continue.".to_string()),
+					);
+				} else {
+					ui.system(product.current());
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3316,7 +3337,7 @@ async fn pairing_interactive_loop(
 
 async fn run_pairing_login(
 	runtime: &PairingHostRuntime,
-	product_id: &str,
+	product_id: &ProductId,
 	label: String,
 	ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
@@ -3349,7 +3370,7 @@ async fn run_pairing_login(
 
 async fn run_pairing_script(
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	script: &std::path::Path,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3443,27 +3464,31 @@ async fn signing_interactive_loop(
 				);
 			},
 			ShellCommand::Approval(ApprovalCommand::Automatic) => {
-				session.platform.set_approval_policy(ApprovalPolicy::AutoAccept);
-				ui.success(
-					"Approval mode set to automatic",
-					Some(
-						"Future product confirmations will be approved automatically.".to_string(),
-					),
-				);
+				match approval_policy(true, session.network) {
+					Ok(policy) => {
+						session.platform.set_approval_policy(policy);
+						ui.success(
+							"Approval mode set to automatic",
+							Some(
+								"Future product confirmations will be approved automatically."
+									.to_string(),
+							),
+						);
+					},
+					Err(error) => ui.error(error.to_string()),
+				}
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				match product.select(product_id) {
-					Ok(true) => {
-						let product_id = product.current();
-						ui.set_product(product_id.clone());
-						ui.success(
-							format!("Product set to {product_id}"),
-							Some("Reconnect product clients to continue.".to_string()),
-						);
-					},
-					Ok(false) => ui.system(product.current()),
-					Err(error) => ui.error(error.to_string()),
+				if product.select(product_id) {
+					let product_id = product.current();
+					ui.set_product(product_id.clone());
+					ui.success(
+						format!("Product set to {product_id}"),
+						Some("Reconnect product clients to continue.".to_string()),
+					);
+				} else {
+					ui.system(product.current());
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
@@ -3619,7 +3644,7 @@ async fn signing_interactive_loop(
 async fn run_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	command: ShellCommand,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3681,7 +3706,7 @@ async fn run_interactive_pairing_image(
 async fn execute_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &str,
+	product_id: &ProductId,
 	command: ShellCommand,
 	ui: UiHandle,
 ) -> Result<()> {
@@ -3807,7 +3832,7 @@ async fn execute_non_interactive_command(
 			println!("{}", product.current());
 		},
 		ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-			if product.select(product_id)? {
+			if product.select(product_id) {
 				terminal_ui::output_success(
 					format!("Product set to {}", product.current()),
 					Some("Reconnect product clients to continue.".to_string()),
@@ -4029,7 +4054,7 @@ mod cli_tests {
 	async fn session_selection_retries_the_active_unfinished_profile() -> Result<()> {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
-		session.network.identity_backend_base = "invalid-backend-url";
+		session.network.identity_backend_base = Some("invalid-backend-url");
 		let runtime = session.runtime.clone();
 
 		let error = switch_session(&mut session, "pending".to_string())
@@ -4058,7 +4083,7 @@ mod cli_tests {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
 		let accounts = finish_session_account(&session)?;
-		session.network.identity_backend_base = "invalid-backend-url";
+		session.network.identity_backend_base = Some("invalid-backend-url");
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
 		let expected_key =
 			truapi::host_logic::product_account::derive_root_keypair_from_entropy(&[0; 16])
@@ -4193,7 +4218,7 @@ mod cli_tests {
 		let responder = tokio::spawn(std::future::pending::<()>());
 		let responder_abort = responder.abort_handle();
 		session.responders.insert([7; 32], responder);
-		session.network.identity_backend_base = "invalid-backend-url";
+		session.network.identity_backend_base = Some("invalid-backend-url");
 
 		session.catalog.ensure_profile("workbench.99")?;
 		for name in ["foo", "carol", "workbench.99", "another"] {
@@ -4693,6 +4718,41 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 				.unwrap_err()
 				.to_string()
 				.contains("--serve cannot be combined with the exec subcommand")
+		);
+	}
+
+	/// `dev` always auto-accepts, so this is what stops it signing for a real
+	/// identity without a prompt.
+	/// A seeded grant is never prompted for and outlives the run, so a preset
+	/// whose identities are real refuses it before reading any config.
+	#[tokio::test]
+	async fn a_real_identity_network_refuses_local_product_grants() {
+		let production = NetworkConfig {
+			disposable_identities: false,
+			..crate::network::Network::Polkadot.config()
+		};
+		let platform = CliPlatform::new(production, None, ApprovalPolicy::Prompt, None);
+		let error = apply_local_product_grants(
+			&platform,
+			production,
+			&[PathBuf::from("/nonexistent/product.json")],
+		)
+		.await
+		.expect_err("grants are refused on a real-identity preset");
+		assert!(error.to_string().contains("--product-config"), "{error}");
+	}
+
+	#[test]
+	fn a_real_identity_network_never_approves_without_a_prompt() {
+		let testnet = crate::network::Network::PaseoNextV2.config();
+		let production = NetworkConfig { disposable_identities: false, ..testnet };
+		assert_eq!(
+			[
+				approval_policy(true, testnet).ok(),
+				approval_policy(false, production).ok(),
+				approval_policy(true, production).ok(),
+			],
+			[Some(ApprovalPolicy::AutoAccept), Some(ApprovalPolicy::Prompt), None,]
 		);
 	}
 

@@ -6,8 +6,10 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.disable
 import io.paritytech.polkadotapp.common.utils.enable
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
@@ -16,7 +18,9 @@ import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
@@ -54,26 +58,42 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         if (expanded) focused else null
     }
 
+    private val testData = MutableStateFlow(CoinageTestDataMode.LIVE)
+    private val coinSet = MutableStateFlow(CoinageScene.CoinSet.SHIPPED)
+
+    private val debugState = combine(testData, coinSet) { mode, set ->
+        if (FeatureOption.COINAGE_DEBUG_TOOLS.isEnabled) {
+            DebugState(mode, set)
+        } else {
+            DebugState(CoinageTestDataMode.LIVE, CoinageScene.CoinSet.SHIPPED)
+        }
+    }
+
+    private val presentation = combine(detailsVisible, coinsState, debugState) { expanded, focused, debug ->
+        Presentation(expanded, focused, debug)
+    }
+
     private val holdingsFlow: Flow<Result<CoinageHoldingsInfo>> = interactor.observeHoldings()
 
     val coinageState: StateFlow<LoadingState<CoinageUiState>> = combine(
         holdingsFlow,
         fundInProgress,
         interactor.observeActionsEnabled(),
-        detailsVisible,
-        coinsState
-    ) { holdingsResult, inProgress, actionsEnabled, expanded, focused ->
+        presentation
+    ) { holdingsResult, inProgress, actionsEnabled, shown ->
         val asset = interactor.asset()
 
         holdingsResult.map { holdings ->
             CoinageUiState(
-                tokensState = holdings.toTokensState(asset),
+                tokensState = shown.debug.testData.applied(holdings.toTokensState(asset)),
                 autoFundAvailable = interactor.autoFundAvailable(),
                 fundInProgress = inProgress,
                 actionsEnabled = actionsEnabled,
                 shareLogsEnabled = BuildConfig.TESTNET_FUND_ENABLED,
-                detailsVisible = expanded,
-                focusedCoin = focused
+                detailsVisible = shown.expanded,
+                focusedCoin = shown.focused,
+                coinSet = shown.debug.coinSet,
+                testData = shown.debug.testData
             )
         }
     }
@@ -149,6 +169,14 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         detailsVisible.value = false
     }
 
+    fun onTestDataSelected(mode: CoinageTestDataMode) {
+        testData.value = mode
+    }
+
+    fun onCoinSetSelected(set: CoinageScene.CoinSet) {
+        coinSet.value = set
+    }
+
     fun onShareLogsClick() = launchUnit {
         interactor.shareCoinageLogs()
             .onFailure { showPresentationError(ShareCoinageLogsFailedPresentationError(it)) }
@@ -169,6 +197,10 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             canSpendGainingPrivacy = balance.gainingPrivacy.canSpendWithConfirmation
         )
     )
+
+    private class DebugState(val testData: CoinageTestDataMode, val coinSet: CoinageScene.CoinSet)
+
+    private class Presentation(val expanded: Boolean, val focused: String?, val debug: DebugState)
 
     private fun BackupProgress.toBalanceRestoreUiState(): BalanceRestoreUiState {
         return when (this) {

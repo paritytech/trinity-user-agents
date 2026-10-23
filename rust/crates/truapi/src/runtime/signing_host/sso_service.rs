@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::platform::{
-	CreateTransactionReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
+	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
 	UserConfirmationReview,
 };
 use tracing::warn;
@@ -87,7 +87,7 @@ impl SigningHostSsoService {
 	async fn review(
 		&self,
 		cx: &SsoRequestContext,
-		product_id: Option<&str>,
+		product_id: Option<&ProductId>,
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
 		self.signing_host
@@ -222,7 +222,7 @@ impl SigningHostSsoService {
 	async fn allocate(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		resource: api::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
@@ -511,7 +511,7 @@ impl SigningHostSsoService {
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
 		self.signing_host
-			.product_subtree_public_key(&cx.call, &cx.session, request.product_id)
+			.product_subtree_public_key(&cx.call, &cx.session, &request.product_id)
 			.await
 			.map_err(|err| err.to_string())
 	}

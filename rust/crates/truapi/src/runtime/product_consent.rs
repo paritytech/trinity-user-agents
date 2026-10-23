@@ -9,18 +9,14 @@ use truapi::{CallContext, latest::GenericError};
 
 use super::authority::{AccountCaller, AuthorityError};
 use crate::{
-	host_internal::{
-		permissions::{
-			TemporaryPermissions, account_access_status, cross_product_signature_key,
-			set_account_access_status,
-		},
-		product_manifest::bare_product_label,
+	host_internal::permissions::{
+		TemporaryPermissions, account_access_status, cross_product_signature_key,
+		set_account_access_status,
 	},
 	platform::{
 		AccountAccessReview, CreateTransactionReview, CrossProductSignatureKind,
-		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext,
-		SignPayloadReview, SignRawReview, UserConfirmationReview, has_trusted_remote_permissions,
-		normalize_product_identifier, normalizes_to_trusted_remote_permissions,
+		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductId,
+		SignPayloadReview, SignRawReview, UserConfirmationReview,
 	},
 };
 
@@ -47,16 +43,15 @@ impl ProductConsent {
 	/// and a request that waited for it reuses the answer.
 	pub async fn account_access(
 		&self,
-		requester: &str,
-		target: &str,
+		requester: &ProductId,
+		target: &ProductId,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		if requester == target || normalizes_to_trusted_remote_permissions(requester) {
+		if requester == target || requester.has_trusted_remote_permissions() {
 			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		// Filed per product, the granularity a manifest grant uses, so a refused
 		// product cannot keep access by respelling itself under a subname.
-		let pair =
-			(bare_product_label(requester).to_string(), bare_product_label(target).to_string());
+		let pair = (requester.bare_label().to_string(), target.bare_label().to_string());
 		if let Some(status) = self.decided(&pair).await? {
 			return Ok(status);
 		}
@@ -67,8 +62,8 @@ impl ProductConsent {
 		let decision = self
 			.platform
 			.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: requester.to_string(),
-				target_product_id: target.to_string(),
+				requesting_product_id: requester.clone(),
+				target_product_id: target.clone(),
 			}))
 			.await
 			.map_err(AccountAccessError::Confirmation)?;
@@ -113,11 +108,11 @@ impl ProductConsent {
 		product: &ProductContext,
 		approvals: &TemporaryPermissions,
 		kind: CrossProductSignatureKind,
-		owner: &str,
+		owner: &ProductId,
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
 		let caller = AccountCaller::Local { product };
-		if owner == product.product_id {
+		if *owner == product.product_id {
 			return self.review(cx, caller, review).await;
 		}
 		let approval = cross_product_signature_key(&product.product_id, owner, kind);
@@ -139,8 +134,8 @@ impl ProductConsent {
 	}
 
 	/// Forget the Allow once answers `product_id` received, as on its reset.
-	pub fn forget_allowed_once_for(&self, product_id: &str) {
-		let requester = bare_product_label(product_id);
+	pub fn forget_allowed_once_for(&self, product_id: &ProductId) {
+		let requester = product_id.bare_label();
 		self.allowed_once
 			.lock()
 			.expect("account access mutex poisoned")
@@ -183,7 +178,7 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 	let AccountCaller::Local { product } = caller else {
 		return false;
 	};
-	let first_party = has_trusted_remote_permissions(&product.product_id);
+	let first_party = product.product_id.has_trusted_remote_permissions();
 	match review {
 		UserConfirmationReview::SignPayload(SignPayloadReview::Product { .. }) |
 		UserConfirmationReview::SignRaw(SignRawReview::Product { .. }) |
@@ -199,9 +194,7 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 			first_party || review.account.dot_ns_identifier == product.product_id
 		},
 		UserConfirmationReview::SignVrf(review) => {
-			first_party &&
-				normalize_product_identifier(&review.request.account.dot_ns_identifier)
-					.is_ok_and(|owner| owner == product.product_id)
+			first_party && review.request.account.dot_ns_identifier == product.product_id
 		},
 		_ => false,
 	}
@@ -224,8 +217,11 @@ mod tests {
 	}
 
 	fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
-		futures::executor::block_on(consent.account_access(requester, "peopl.dot"))
-			.expect("the stub answers every prompt")
+		futures::executor::block_on(
+			consent
+				.account_access(&ProductId::for_test(requester), &ProductId::for_test("peopl.dot")),
+		)
+		.expect("the stub answers every prompt")
 	}
 
 	fn prompts(platform: &StubPlatform) -> usize {
@@ -242,7 +238,7 @@ mod tests {
 		]);
 		access(&consent, "myapp.dot");
 		access(&consent, "other.dot");
-		consent.forget_allowed_once_for("myapp.dot");
+		consent.forget_allowed_once_for(&ProductId::for_test("myapp.dot"));
 		assert_eq!(
 			(access(&consent, "other.dot"), access(&consent, "myapp.dot"), prompts(&platform)),
 			(Authorized, Denied, 3)
@@ -277,10 +273,12 @@ mod tests {
 			..StubPlatform::default()
 		});
 		let consent = ProductConsent::new(platform.clone());
+		let (requester, target) =
+			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 		let (first, second, ()) = futures::executor::block_on(async {
 			futures::join!(
-				consent.account_access("myapp.dot", "peopl.dot"),
-				consent.account_access("myapp.dot", "peopl.dot"),
+				consent.account_access(&requester, &target),
+				consent.account_access(&requester, &target),
 				async { release.send(()).unwrap() },
 			)
 		});

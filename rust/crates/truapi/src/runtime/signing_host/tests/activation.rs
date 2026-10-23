@@ -18,7 +18,7 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 			&CallContext::default(),
 			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 				product_account_id: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 			}),
@@ -32,7 +32,7 @@ fn lock_wallet_switch_and_product_reset_forget_allow_once() {
 	prompts.push(prompts_after_request());
 	futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
 	prompts.push(prompts_after_request());
-	authority.clear_product_state("myapp.dot").unwrap();
+	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
 	prompts.push(prompts_after_request());
 	assert_eq!(prompts, vec![1, 1, 2, 3, 4]);
 }

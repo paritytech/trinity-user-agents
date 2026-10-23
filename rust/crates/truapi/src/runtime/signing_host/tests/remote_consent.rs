@@ -59,7 +59,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 					RemoteMessage::request(
 						request_id.to_string(),
 						ProductRequest {
-							calling_product_id: "myapp.dot".to_string(),
+							calling_product_id: ProductId::for_test("myapp.dot"),
 							payload: HostAccountGetAliasRequest {
 								key_handle: full_person_key_handle(),
 								context: v01::ProductProofContext {
@@ -74,7 +74,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 					RemoteMessage::request(
 						request_id.to_string(),
 						ProductRequest {
-							calling_product_id: "myapp.dot".to_string(),
+							calling_product_id: ProductId::for_test("myapp.dot"),
 							payload: HostAccountListRingVrfKeysRequest {
 								owner: "foreign.dot".to_string(),
 								disclosure: RingVrfKeyDisclosure::PublicKey,
