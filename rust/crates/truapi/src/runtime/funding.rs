@@ -22,13 +22,14 @@ use core::time::Duration;
 
 use futures::{
 	channel::{mpsc, oneshot},
+	future::BoxFuture,
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
 use truapi::latest::{
-	FundingDirection, FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
-	GenericError, HostFundingReportError, HostFundingServeSubscribeItem,
-	HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
+	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
+	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
+	HostFundingReportError, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
 	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
 	HostPaymentTopUpStatusSubscribeItem,
 };
@@ -36,13 +37,13 @@ use truapi::latest::{
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, FundingSessionSummary, SaveRefusal, Settlement, StartedFunds,
-		load_pack, load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
+		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
+		FundingSessionError, FundingSessionSummary, Settlement, StartedFunds, load_pack,
+		load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
-		ProductContext, ProductExecutionKind,
+		ProductContext, ProductExecutionKind, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
 	unix_time::current_unix_millis,
@@ -61,13 +62,37 @@ const FOLLOW_RETRY_LONGEST: Duration = Duration::from_secs(5 * 60);
 const UNKNOWN_FUNDS_GRACE_MS: u64 = 60 * 60 * 1_000;
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
-type Servers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingServeSubscribeItem>>>;
 
-/// A quote ask sent to a provider and not yet answered.
-struct PendingAsk {
-	provider_id: String,
-	ask: FundingQuoteAsk,
-	answer: futures::channel::oneshot::Sender<FundingQuoteAnswer>,
+/// A provider worker's connection, through which the core calls it. Each
+/// call takes the worker's one answer; a worker that errs, goes away or never
+/// answers gives none.
+pub trait FundingProviderLink: Send + Sync {
+	/// Hand the worker a session. Returns whether it took it.
+	fn assign(&self, session: FundingAssignment) -> BoxFuture<'static, bool>;
+	/// Ask the worker to price `ask`, and take its answer.
+	fn quote(&self, ask: FundingQuoteAsk) -> BoxFuture<'static, Option<FundingQuoteAnswer>>;
+	/// Ask the worker to stop a session, and take its answer.
+	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<FundingCancelAnswer>>;
+	/// Tell the worker the user's answer to its cancel offer. Returns whether
+	/// it heard it.
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: FundingCancelDecision,
+	) -> BoxFuture<'static, bool>;
+}
+
+/// A provider's worker connection, and whether the worker has been handed
+/// what it serves since it connected.
+struct Link {
+	link: Arc<dyn FundingProviderLink>,
+	caught_up: bool,
+}
+
+/// A call the core puts to a provider's worker about one session.
+enum ProviderCall {
+	Assign(Box<FundingAssignment>),
+	Cancel(String, CancelCall),
 }
 
 /// Session changes the host has not been told of yet, in commit order.
@@ -102,10 +127,10 @@ pub struct FundingRegistry {
 	/// days while a new session expires in hours.
 	sweep_alarm: Mutex<Option<(u64, mpsc::UnboundedSender<()>)>>,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
-	/// Each provider's open `serve_subscribe` streams, by product id.
-	servers: Mutex<Servers>,
-	/// Quote asks waiting for their provider's answer, by ask id.
-	asks: Mutex<HashMap<String, PendingAsk>>,
+	/// Each provider's worker connection, by product id.
+	links: Mutex<HashMap<String, Link>>,
+	/// Callers waiting for a provider's worker to connect, by product id.
+	link_waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
 	/// Sessions holding a reference on their provider's worker, with that
 	/// provider.
 	holding: Mutex<HashMap<String, String>>,
@@ -157,101 +182,104 @@ impl FundingRegistry {
 		let Some(session) = assigned else {
 			return Ok(false);
 		};
-		self.serve_item(
-			provider_id,
-			HostFundingServeSubscribeItem::Assigned { session: Box::new(session) },
-		);
+		self.call(provider_id, vec![ProviderCall::Assign(Box::new(session))]);
 		Ok(true)
 	}
 
-	/// The sessions assigned to `provider_id` and what the user asked of
-	/// them. Opening the stream replays every session still in flight, oldest
-	/// first, each followed by its pending cancel request or answer, then
-	/// every quote ask still unanswered; later items follow in the order they
-	/// happen. An item can repeat, as each
-	/// open replays, so a worker treats them as idempotent. The stream never
-	/// errors and never ends on its own; dropping it stops serving.
-	pub fn serve(&self, provider_id: &str) -> BoxStream<'static, HostFundingServeSubscribeItem> {
-		let mut servers = self.lock_servers();
-		let replay: Vec<HostFundingServeSubscribeItem> = {
-			let sessions = self.lock_sessions();
-			let mut assigned: Vec<&FundingSession> = sessions
-				.values()
-				.filter(|session| {
-					!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
-				})
-				.collect();
-			assigned.sort_by_key(|session| session.opened_at_ms);
-			assigned
-				.into_iter()
-				.flat_map(|session| {
-					core::iter::once(HostFundingServeSubscribeItem::Assigned {
-						session: Box::new(session.assignment()),
-					})
-					.chain(session.pending_cancel_item())
-				})
-				.collect()
+	/// Take `link` as the way to call `provider_id`'s worker, in place of any
+	/// earlier one. Nothing is sent until [`Self::connected`], apart from
+	/// calls made in the meantime.
+	pub fn link(&self, provider_id: &str, link: Arc<dyn FundingProviderLink>) {
+		self.lock_links()
+			.insert(provider_id.to_string(), Link { link, caught_up: false });
+	}
+
+	/// Drop `link`, unless a newer one replaced it.
+	pub fn unlink(&self, provider_id: &str, link: &Arc<dyn FundingProviderLink>) {
+		let mut links = self.lock_links();
+		if links.get(provider_id).is_some_and(|held| Arc::ptr_eq(&held.link, link)) {
+			links.remove(provider_id);
+		}
+	}
+
+	/// The worker on `provider_id`'s link is ready: once persisted sessions
+	/// are loaded, assign it every session it still serves, oldest first, each
+	/// followed by the cancel call it has not answered. Once per link, so a
+	/// worker that checks its connection again is not handed everything
+	/// again. A worker treats every call as idempotent, as one sent before it
+	/// was ready is repeated here.
+	pub fn connected(&self, provider_id: &str) {
+		let caught_up = {
+			let mut links = self.lock_links();
+			let caught_up = links
+				.get_mut(provider_id)
+				.map(|link| core::mem::replace(&mut link.caught_up, true));
+			for waiter in lock(&self.link_waiters).remove(provider_id).unwrap_or_default() {
+				let _ = waiter.send(());
+			}
+			caught_up
 		};
-		let asks = self
-			.lock_asks()
-			.iter()
-			.filter(|(_, pending)| pending.provider_id == provider_id)
-			.map(|(ask_id, pending)| HostFundingServeSubscribeItem::Quote {
-				ask_id: ask_id.clone(),
-				ask: pending.ask.clone(),
+		let Some(services) = self.services.upgrade().filter(|_| caught_up == Some(false)) else {
+			return;
+		};
+		let provider_id = provider_id.to_string();
+		let spawner = services.spawner.clone();
+		spawner(Box::pin(async move {
+			let registry = services.funding().clone();
+			if let Err(error) = registry.load(&services).await {
+				tracing::warn!(%error, "loading funding sessions for a provider failed");
+				return;
+			}
+			for calls in registry.pending_calls(&provider_id) {
+				registry.call(&provider_id, calls);
+			}
+		}));
+	}
+
+	/// The link to `provider_id`'s worker once that worker has connected,
+	/// waiting for it when it has not. A caller holds the worker meanwhile,
+	/// so the host runs it, and bounds the wait itself.
+	pub async fn connected_link(&self, provider_id: &str) -> Arc<dyn FundingProviderLink> {
+		loop {
+			let connected = {
+				let links = self.lock_links();
+				if let Some(held) = links.get(provider_id).filter(|held| held.caught_up) {
+					return held.link.clone();
+				}
+				let (sender, connected) = oneshot::channel();
+				lock(&self.link_waiters)
+					.entry(provider_id.to_string())
+					.or_default()
+					.push(sender);
+				connected
+			};
+			let _ = connected.await;
+		}
+	}
+
+	/// What `provider_id`'s worker has to hear when it connects, one list per
+	/// session it serves, oldest first.
+	fn pending_calls(&self, provider_id: &str) -> Vec<Vec<ProviderCall>> {
+		let sessions = self.lock_sessions();
+		let mut served: Vec<&FundingSession> = sessions
+			.values()
+			.filter(|session| {
+				!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
 			})
-			.collect::<Vec<_>>();
-		let (sender, receiver) = mpsc::unbounded();
-		let senders = servers.entry(provider_id.to_string()).or_default();
-		// A worker that restarts opens a new stream, so the ones it left are
-		// dropped here rather than kept until the next item is sent.
-		senders.retain(|sender| !sender.is_closed());
-		senders.push(sender);
-		stream::iter(replay.into_iter().chain(asks)).chain(receiver).boxed()
-	}
-
-	/// Ask `provider_id` to price `ask`. The ask reaches the provider's open
-	/// streams now and any it opens while it is pending, so a worker that is
-	/// still starting receives it; the receiver yields the provider's answer.
-	pub fn ask_quote(
-		&self,
-		provider_id: &str,
-		ask: FundingQuoteAsk,
-	) -> (String, futures::channel::oneshot::Receiver<FundingQuoteAnswer>) {
-		let ask_id = format!("qa_{}", nanoid::nanoid!(10));
-		let (answer, answered) = futures::channel::oneshot::channel();
-		// Held across both steps so a stream `serve` opens in between neither
-		// misses the ask nor receives it twice, from its replay and here.
-		let mut servers = self.lock_servers();
-		self.lock_asks().insert(
-			ask_id.clone(),
-			PendingAsk { provider_id: provider_id.to_string(), ask: ask.clone(), answer },
-		);
-		if let Some(senders) = servers.get_mut(provider_id) {
-			let item = HostFundingServeSubscribeItem::Quote { ask_id: ask_id.clone(), ask };
-			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
-		}
-		(ask_id, answered)
-	}
-
-	/// Deliver `provider_id`'s answer to ask `ask_id`. Returns whether the
-	/// ask was pending and sent to that provider.
-	pub fn answer_quote(
-		&self,
-		provider_id: &str,
-		ask_id: &str,
-		answer: FundingQuoteAnswer,
-	) -> bool {
-		let mut asks = self.lock_asks();
-		if asks.get(ask_id).is_none_or(|pending| pending.provider_id != provider_id) {
-			return false;
-		}
-		asks.remove(ask_id).is_some_and(|pending| pending.answer.send(answer).is_ok())
-	}
-
-	/// Drop ask `ask_id` without an answer, as when it timed out.
-	pub fn withdraw_ask(&self, ask_id: &str) {
-		self.lock_asks().remove(ask_id);
+			.collect();
+		served.sort_by_key(|session| session.opened_at_ms);
+		served
+			.into_iter()
+			.map(|session| {
+				core::iter::once(ProviderCall::Assign(Box::new(session.assignment())))
+					.chain(
+						session
+							.pending_cancel_call()
+							.map(|call| ProviderCall::Cancel(session.intent.clone(), call)),
+					)
+					.collect()
+			})
+			.collect()
 	}
 
 	/// Store `update` from `provider` on session `intent`. Funds a
@@ -292,8 +320,10 @@ impl FundingRegistry {
 	/// Record funds `provider_id` started under `host_id`, so a report can
 	/// name them: on the one open session it serves in `direction` whose
 	/// amount is `amount`, when exactly one is, and otherwise on every such
-	/// session, since a top-up does not say which session it is for. Returns
-	/// whether any session recorded them.
+	/// session, since a top-up does not say which session it is for. Funds
+	/// under an id any session of the provider started before, ended ones
+	/// included, are not recorded again. Returns whether any session recorded
+	/// them.
 	pub async fn record_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -304,6 +334,13 @@ impl FundingRegistry {
 		amount: u128,
 	) -> Result<bool, FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
+			let used = sessions.values().any(|session| {
+				session.provider_id.as_deref() == Some(provider_id) &&
+					session.started.iter().any(|record| record.host_id == host_id)
+			});
+			if used {
+				return (false, Vec::new());
+			}
 			let served = |session: &FundingSession| {
 				!session.is_terminal() &&
 					session.direction == direction &&
@@ -341,27 +378,6 @@ impl FundingRegistry {
 				session.forget_start(&host_id);
 			}
 			((), Vec::new())
-		})
-		.await
-	}
-
-	/// Keep `state` as `provider_id`'s own state for session `intent`.
-	pub async fn save(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-		now_ms: u64,
-		provider_id: &str,
-		intent: &str,
-		state: Vec<u8>,
-	) -> Result<Result<(), SaveRefusal>, FundingSessionError> {
-		let intent = intent.to_string();
-		let provider = provider_id.to_string();
-		self.commit(storage, now_ms, move |sessions| {
-			let saved = match sessions.get_mut(&intent) {
-				Some(session) => session.save(&provider, state),
-				None => Err(SaveRefusal::NotFound),
-			};
-			(saved, Vec::new())
 		})
 		.await
 	}
@@ -420,7 +436,7 @@ impl FundingRegistry {
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
 	/// no such session is held, `Some(None)` when the host opened it.
-	pub fn owner(&self, intent: &str) -> Option<Option<String>> {
+	pub fn owner(&self, intent: &str) -> Option<Option<ProductId>> {
 		if let Some(session) = self.lock_sessions().get(intent) {
 			return Some(session.owner_product_id.clone());
 		}
@@ -480,9 +496,9 @@ impl FundingRegistry {
 			})
 			.await?;
 		if let (CancelOutcome::Requested, Some(provider)) = (outcome, provider) {
-			self.serve_item(
+			self.call(
 				&provider,
-				HostFundingServeSubscribeItem::Cancel { intent: intent.to_string() },
+				vec![ProviderCall::Cancel(intent.to_string(), CancelCall::Cancel)],
 			);
 		}
 		Ok(outcome)
@@ -498,33 +514,21 @@ impl FundingRegistry {
 		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		let target = intent.to_string();
-		let (confirmation, provider) = self
+		let (confirmation, call) = self
 			.commit(storage, now_ms, move |sessions| {
 				let Some(session) = sessions.get_mut(&target) else {
 					return ((CancelConfirmation::NoOffer, None), Vec::new());
 				};
 				let confirmation = session.confirm_cancel(terms, now_ms);
-				let provider = session.provider_id.clone();
-				let changed = match confirmation {
-					CancelConfirmation::NoOffer | CancelConfirmation::Changed => Vec::new(),
-					_ => vec![target],
-				};
-				((confirmation, provider), changed)
+				if confirmation == CancelConfirmation::NoOffer {
+					return ((confirmation, None), Vec::new());
+				}
+				let call = session.provider_id.clone().zip(session.pending_cancel_call());
+				((confirmation, call), vec![target])
 			})
 			.await?;
-		let item = match confirmation {
-			CancelConfirmation::Accepted => {
-				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: intent.to_string() })
-			},
-			CancelConfirmation::Declined |
-			CancelConfirmation::Lapsed |
-			CancelConfirmation::TooLate => {
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: intent.to_string() })
-			},
-			CancelConfirmation::NoOffer | CancelConfirmation::Changed => None,
-		};
-		if let (Some(item), Some(provider)) = (item, provider) {
-			self.serve_item(&provider, item);
+		if let Some((provider, call)) = call {
+			self.call(&provider, vec![ProviderCall::Cancel(intent.to_string(), call)]);
 		}
 		Ok(confirmation)
 	}
@@ -690,14 +694,12 @@ impl FundingRegistry {
 				lapsed.extend(session.provider_id.clone().map(|provider| {
 					(
 						provider,
-						HostFundingServeSubscribeItem::CancelDeclined {
-							intent: session.intent.clone(),
-						},
+						ProviderCall::Cancel(
+							session.intent.clone(),
+							CancelCall::Settle(FundingCancelDecision::Declined),
+						),
 					)
 				}));
-			}
-			if session.is_terminal() {
-				session.saved = None;
 			}
 		}
 		// The write lock keeps the in-memory map unchanged until this commit
@@ -752,8 +754,8 @@ impl FundingRegistry {
 			}
 		}
 		drop(loaded);
-		for (provider, item) in lapsed {
-			self.serve_item(&provider, item);
+		for (provider, call) in lapsed {
+			self.call(&provider, vec![call]);
 		}
 		self.announce();
 		self.follow_sessions();
@@ -808,11 +810,11 @@ impl FundingRegistry {
 				ended.iter().filter_map(|intent| holding.remove(intent)).collect();
 			(acquire, release)
 		};
-		for provider in &acquire {
-			services.worker_ledger.acquire(provider);
+		for provider in acquire.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
+			services.worker_ledger.acquire(&provider);
 		}
-		for provider in &release {
-			services.worker_ledger.release(provider);
+		for provider in release.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
+			services.worker_ledger.release(&provider);
 		}
 		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
 		for (intent, provider, settlement) in due {
@@ -822,10 +824,75 @@ impl FundingRegistry {
 		}
 	}
 
-	/// Send `item` to every open stream of `provider_id`.
-	fn serve_item(&self, provider_id: &str, item: HostFundingServeSubscribeItem) {
-		if let Some(senders) = self.lock_servers().get_mut(provider_id) {
-			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
+	/// Put `calls` to `provider_id`'s worker one after another, on a task of
+	/// their own, and store its answers. Without a link they wait for the
+	/// worker to connect, which repeats whatever is still pending.
+	fn call(&self, provider_id: &str, calls: Vec<ProviderCall>) {
+		let Some(services) = self.services.upgrade() else {
+			return;
+		};
+		let Some(link) = self.lock_links().get(provider_id).map(|held| held.link.clone()) else {
+			return;
+		};
+		let spawner = services.spawner.clone();
+		spawner(Box::pin(async move {
+			for call in calls {
+				services.funding().put(&services, link.as_ref(), call).await;
+			}
+		}));
+	}
+
+	/// Put one call to a provider's worker and store its answer.
+	async fn put(
+		&self,
+		services: &RuntimeServices,
+		link: &dyn FundingProviderLink,
+		call: ProviderCall,
+	) {
+		let (intent, answered) = match call {
+			ProviderCall::Assign(session) => {
+				let intent = session.intent.clone();
+				if !link.assign(*session).await {
+					tracing::debug!(%intent, "a provider's worker did not take its session");
+				}
+				return;
+			},
+			ProviderCall::Cancel(intent, CancelCall::Cancel) => {
+				let Some(answer) = link.cancel(intent.clone()).await else {
+					tracing::debug!(%intent, "a provider's worker did not answer a cancel");
+					return;
+				};
+				let target = intent.clone();
+				let answered = self
+					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+						let now_ms = current_unix_millis();
+						let changed = sessions
+							.get_mut(&target)
+							.is_some_and(|session| session.answer_cancel(answer, now_ms));
+						((), if changed { vec![target] } else { Vec::new() })
+					})
+					.await;
+				(intent, answered)
+			},
+			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
+				if !link.settle_cancel(intent.clone(), decision.clone()).await {
+					tracing::debug!(%intent, "a provider's worker did not hear a cancel decision");
+					return;
+				}
+				let target = intent.clone();
+				let answered = self
+					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+						if let Some(session) = sessions.get_mut(&target) {
+							session.cancel_settled(&decision);
+						}
+						((), Vec::new())
+					})
+					.await;
+				(intent, answered)
+			},
+		};
+		if let Err(error) = answered {
+			tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
 		}
 	}
 
@@ -1006,16 +1073,12 @@ impl FundingRegistry {
 		lock(&self.sessions)
 	}
 
-	fn lock_asks(&self) -> MutexGuard<'_, HashMap<String, PendingAsk>> {
-		lock(&self.asks)
-	}
-
 	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
 		lock(&self.subscribers)
 	}
 
-	fn lock_servers(&self) -> MutexGuard<'_, Servers> {
-		lock(&self.servers)
+	fn lock_links(&self) -> MutexGuard<'_, HashMap<String, Link>> {
+		self.links.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, String>> {
@@ -1133,10 +1196,9 @@ impl RuntimeServices {
 		}));
 	}
 
-	/// End session `intent` with `stage` as though its funds had moved, for
-	/// test hosts that drive the flow with no chain behind it. Returns
-	/// whether it was still in flight.
-	#[cfg(feature = "test-host")]
+	/// End session `intent` with `stage` as though its funds had moved.
+	/// Returns whether it was still in flight.
+	#[cfg(test)]
 	pub async fn settle_funding_for_test(
 		&self,
 		intent: &str,
@@ -1196,24 +1258,22 @@ impl RuntimeServices {
 		provider_id: &str,
 		quote_id: Option<&str>,
 	) -> Result<bool, FundingSessionError> {
-		let provider = ProductContext::new_with_execution(
-			provider_id.to_string(),
-			ProductExecutionKind::Worker,
-		)
-		.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
+		let provider = provider_id
+			.parse::<ProductId>()
+			.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		let registry = self.funding();
 		if registry.get(intent).is_some() &&
-			!self.funding_providers().is_quote_target(&provider.product_id)
+			!self.funding_providers().is_quote_target(provider.as_str())
 		{
 			return Err(FundingSessionError::InvalidProvider {
-				reason: format!("{} is not a funding provider", provider.product_id),
+				reason: format!("{provider} is not a funding provider"),
 			});
 		}
 		let choice = match quote_id {
 			None => None,
 			Some(quote_id) => Some(
 				self.funding_quotes()
-					.offered(intent, &provider.product_id, quote_id, current_unix_millis())
+					.offered(intent, provider.as_str(), quote_id, current_unix_millis())
 					.ok_or_else(|| FundingSessionError::UnknownQuote {
 						quote_id: quote_id.to_string(),
 					})?,
@@ -1236,7 +1296,7 @@ impl RuntimeServices {
 				self.platform.as_ref(),
 				current_unix_millis(),
 				intent,
-				&provider.product_id,
+				provider.as_str(),
 				choice,
 			)
 			.await
@@ -1253,16 +1313,16 @@ impl RuntimeServices {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
 			let registry = self.funding();
-			let provider =
-				match ProductContext::new_with_execution(provider_id, ProductExecutionKind::Worker)
-				{
-					Ok(provider) => provider,
-					Err(error) => {
-						tracing::warn!(%error, "a funding session names an invalid provider");
-						registry.lock_following().remove(&intent);
-						return;
-					},
-				};
+			let provider = match provider_id.parse::<ProductId>() {
+				Ok(product_id) => {
+					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+				},
+				Err(error) => {
+					tracing::warn!(%error, "a funding session names an invalid provider");
+					registry.lock_following().remove(&intent);
+					return;
+				},
+			};
 			let moved = match settlement {
 				Settlement::TopUps(top_ups) => {
 					let mut credited: Option<u128> = Some(0);
@@ -1539,7 +1599,7 @@ mod tests {
 	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
 		FundingSession::new(
 			intent.to_string(),
-			Some("wallet.dot".to_string()),
+			Some(ProductId::for_test("wallet.dot")),
 			FundingDirection::In,
 			Some(100),
 			opened_at_ms,
@@ -1650,8 +1710,10 @@ mod tests {
 	}
 
 	fn worker(provider_id: &str) -> ProductContext {
-		ProductContext::new_with_execution(provider_id.to_string(), ProductExecutionKind::Worker)
-			.expect("test provider id is valid")
+		ProductContext::new_with_execution(
+			ProductId::for_test(provider_id),
+			ProductExecutionKind::Worker,
+		)
 	}
 
 	// A top-up does not say which session it is for, so its amount picks the
@@ -1664,7 +1726,7 @@ mod tests {
 		for (intent, amount) in [("fs_fifty", 50), ("fs_thirty", 30)] {
 			let mut session = FundingSession::new(
 				intent.to_string(),
-				Some("wallet.dot".to_string()),
+				Some(ProductId::for_test("wallet.dot")),
 				FundingDirection::In,
 				Some(amount),
 				NOW,
@@ -1993,7 +2055,7 @@ mod tests {
 			(
 				None,
 				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
-				Some(Some("wallet.dot".to_string())),
+				Some(Some(ProductId::for_test("wallet.dot"))),
 				true,
 				(0..=RECORDED_PER_OWNER as u64)
 					.rev()

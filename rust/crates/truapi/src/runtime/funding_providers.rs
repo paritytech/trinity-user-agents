@@ -33,7 +33,7 @@ use crate::{
 		funding_providers::{FundingCandidate, FundingProviderEntry, LearnedSupport},
 		worker_manifest::WorkerManifest,
 	},
-	platform::{CoreStorageKey, ProductContext, ProductExecutionKind},
+	platform::{CoreStorageKey, ProductId},
 	unix_time::current_unix_millis,
 };
 
@@ -297,7 +297,10 @@ impl RuntimeServices {
 
 	/// Read `product_id`'s Worker manifest into what the core goes by.
 	async fn read_provider_manifest(&self, product_id: &str) {
-		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
+		let read = match product_id.parse::<ProductId>() {
+			Ok(provider) => worker_manifest(self, self.platform.as_ref(), &provider).await,
+			Err(error) => Err(error.to_string()),
+		};
 		let providers = &self.funding_providers();
 		if let Ok(manifest) = read {
 			lock(&providers.live).insert(product_id.to_string(), manifest);
@@ -333,8 +336,9 @@ fn offered_providers(
 /// `product_id` as the core names a provider's worker, so ids from the host
 /// and from browse compare equal.
 fn normalized_product_id(product_id: String) -> Result<String, String> {
-	ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
-		.map(|product| product.product_id)
+	product_id
+		.parse::<ProductId>()
+		.map(|product_id| product_id.to_string())
 		.map_err(|error| error.to_string())
 }
 

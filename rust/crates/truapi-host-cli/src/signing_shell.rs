@@ -5,7 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use truapi::platform::normalize_product_identifier;
+use truapi::platform::ProductId;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{LogLevel, sessions};
@@ -16,7 +16,7 @@ pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
 	/// Switch to the validated, normalized product id.
-	Switch(String),
+	Switch(ProductId),
 }
 
 /// Operation selected through `/devices`.
@@ -145,6 +145,13 @@ impl ScriptCommand {
 	}
 }
 
+/// What the user does to a funding session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FundingCommand {
+	/// Cancel the session with this intent.
+	Cancel(String),
+}
+
 /// A command accepted by the signing-host command bar or `exec` mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
@@ -175,6 +182,8 @@ pub enum ShellCommand {
 	Session(SessionCommand),
 	/// Renew tracked statement-store allowances for the current period.
 	Renew,
+	/// Act on a funding session as the user.
+	Funding(FundingCommand),
 	/// Shut down the signing host.
 	Quit,
 }
@@ -270,8 +279,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id =
-				normalize_product_identifier(argument).map_err(|error| error.to_string())?;
+			let product_id = argument.parse::<ProductId>().map_err(|error| error.to_string())?;
 			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
@@ -286,9 +294,9 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 					return Ok(ShellCommand::Session(SessionCommand::List));
 				},
 				"--clear" => {
-					let Some(name) = arguments.get(1) else {
-						return Err("usage: /session --clear <name>".to_string());
-					};
+					let name = arguments
+						.get(1)
+						.ok_or_else(|| "usage: /session --clear <name>".to_string())?;
 					if arguments.len() != 2 {
 						return Err("usage: /session --clear <name>".to_string());
 					}
@@ -324,6 +332,12 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			Ok(ShellCommand::Session(SessionCommand::Switch(first.to_string())))
 		},
 		"/renew" => no_argument(name, argument, ShellCommand::Renew),
+		"/funding" => match argument.split_once(char::is_whitespace) {
+			Some(("cancel", intent)) if !intent.trim().is_empty() => {
+				Ok(ShellCommand::Funding(FundingCommand::Cancel(intent.trim().to_string())))
+			},
+			_ => Err("usage: /funding cancel <intent>".to_string()),
+		},
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
 		_ => Err(format!("unknown command `{name}`; use /help to list commands")),
 	}
@@ -360,6 +374,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
 	("/product", "show or switch the active product"),
 	("/session", "show, switch, or clear sessions"),
 	("/renew", "renew statement-store allowances now"),
+	("/funding", "cancel a funding session"),
 	("/help", "show commands and keyboard shortcuts"),
 	("/clear", "clear the visible transcript"),
 	("/copy", "copy the transcript to the clipboard"),
@@ -832,6 +847,7 @@ pub const HELP_TEXT: &str = "\
 /session --clear <name> permanently clear one session
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
+/funding cancel <intent> cancel a funding session
 /help                   show this help
 /clear                  clear the visible transcript
 /copy                   copy the transcript to the clipboard
@@ -924,10 +940,16 @@ mod tests {
 		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
 		assert_eq!(
 			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch("dotli.dot".to_string())))
+			Ok(ShellCommand::Product(ProductCommand::Switch(ProductId::for_test("dotli.dot"))))
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
+		assert_eq!(
+			parse_command("/funding cancel fs_abc"),
+			Ok(ShellCommand::Funding(FundingCommand::Cancel("fs_abc".to_string())))
+		);
+		assert!(parse_command("/funding cancel").is_err());
+		assert!(parse_command("/funding").is_err());
 		assert_eq!(parse_command("/devices"), Ok(ShellCommand::Devices(DeviceCommand::List)));
 		assert_eq!(
 			parse_command(&format!("/devices --remove 0x{DEVICE_ID}")),

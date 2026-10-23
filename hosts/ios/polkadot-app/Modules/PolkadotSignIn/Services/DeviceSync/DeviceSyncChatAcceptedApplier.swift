@@ -7,18 +7,15 @@ import SubstrateSdk
 struct DeviceSyncChatAcceptedApplier {
     private let storageFacade: StorageFacadeProtocol
     private let contactsStorageService: ContactsLocalStorageServicing
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
     private let peerLogger: LoggerProtocol
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         contactsStorageService: ContactsLocalStorageServicing = ContactsLocalStorageService(),
-        messageExchangeModeProvider: MessageExchangeModeProviding,
         peerLogger: LoggerProtocol
     ) {
         self.storageFacade = storageFacade
         self.contactsStorageService = contactsStorageService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.peerLogger = peerLogger
     }
 
@@ -106,24 +103,12 @@ private extension DeviceSyncChatAcceptedApplier {
             return
         }
 
-        guard let contact = try await contactsStorageService
-            .getContact(by: contactId)
-            .asyncExecute()
-        else {
+        guard try await contactsStorageService.getContact(by: contactId).asyncExecute() != nil else {
             peerLogger.error("Missing contact for synced accepted request")
             return
         }
 
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact)
-
-        try await markLocalOutgoingRequestAccepted(
-            requestId,
-            messageExchangeMode: messageExchangeMode
-        )
-
-        if let peerDevice, messageExchangeMode == .multidevice {
-            try await storePeerDevice(peerDevice, for: contactId)
-        }
+        try await markLocalOutgoingRequestAccepted(requestId, peerDevice: peerDevice)
 
         peerLogger.debug("Accepted outgoing request \(requestId) from sync")
     }
@@ -138,15 +123,12 @@ private extension DeviceSyncChatAcceptedApplier {
         .asyncExecute()
     }
 
-    func markLocalOutgoingRequestAccepted(
-        _ requestId: String,
-        messageExchangeMode: MessageExchangeMode
-    ) async throws {
+    func markLocalOutgoingRequestAccepted(_ requestId: String, peerDevice: Chat.PeerDevice?) async throws {
         let acceptOutgoing = ChatRequest.AcceptOutgoing(
             requestId: requestId,
-            messageExchangeMode: messageExchangeMode,
             incomingRequest: nil,
-            acceptorDevice: nil
+            acceptorDevice: nil,
+            peerDevice: peerDevice
         )
 
         try await storageFacade.createRepository(
@@ -154,16 +136,6 @@ private extension DeviceSyncChatAcceptedApplier {
         )
         .saveOperation({ [acceptOutgoing] }, { [] })
         .asyncExecute()
-    }
-
-    func storePeerDevice(_ peerDevice: Chat.PeerDevice, for contactId: AccountId) async throws {
-        let settings = Chat.ContactDeviceSettings(
-            accountId: contactId,
-            changes: [.added(peerDevice)]
-        )
-
-        try await contactsStorageService.updateDeviceSettings([settings]).asyncExecute()
-        peerLogger.debug("Stored peer device from synced accept for \(contactId.toHex())")
     }
 
     func chatAccepted(
