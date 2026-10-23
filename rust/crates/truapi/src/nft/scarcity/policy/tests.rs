@@ -6,11 +6,11 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::{
-	chain::{HashAndNumber, StorageWatchError},
+	chain::{HashAndNumber, StorageWatchError, extrinsic_service_serving},
 	durable::{DomainId, SubmissionPlan},
 	nft::{
 		NftLedger, PurseId, PurseTag,
-		scarcity::{chain::TransferContext, testing::asset_hub_metadata},
+		scarcity::{chain::TransferContext, testing::ASSET_HUB_METADATA_BYTES},
 		testing::{FixedEntropy, TEST_ENTROPY, test_ledger},
 	},
 	runtime::AuthorityError,
@@ -24,6 +24,13 @@ const BEST: HashAndNumber = HashAndNumber { hash: H256([0x0b; 32]), number: 2_13
 const DESTINATION: ItemKey = ItemKey([0x08; 32]);
 const INSTANCE: u64 = 330;
 const NOW: u64 = 1_700_000_000_000;
+/// The genesis the scripted node's chain is configured with.
+const GENESIS: H256 = H256([0xab; 32]);
+
+/// Builds transfers over a scripted node serving the Asset Hub fixture.
+fn transfer_extrinsics() -> Arc<ExtrinsicService> {
+	Arc::new(extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, 1))
+}
 
 /// Scarcity storage a test writes by hand, held at [`BEST`] only.
 #[derive(Default)]
@@ -61,14 +68,8 @@ impl ScarcityChain for ScriptedScarcity {
 	}
 
 	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
-		let runtime = TransferRuntime {
-			genesis: H256([0xab; 32]),
-			spec_version: 3_004_000,
-			transaction_version: 22,
-			metadata: asset_hub_metadata(),
-		};
 		let best = HashAndNumber { number: BEST.number + self.best_ahead_by, ..BEST };
-		Ok(TransferContext { birth: FINALIZED, runtime, best })
+		Ok(TransferContext { birth: FINALIZED, best })
 	}
 }
 
@@ -135,6 +136,8 @@ fn policy(registered: &RegisteredTransfer, chain: ScriptedScarcity) -> ScarcityT
 		db: registered.db.clone(),
 		chain: Arc::new(chain),
 		signer: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		extrinsics: transfer_extrinsics(),
+		genesis: GENESIS,
 	})
 }
 
@@ -248,6 +251,8 @@ fn without_a_session_a_transfer_waits_until_its_limit() {
 			db: registered.db.clone(),
 			chain: Arc::new(holding(registered, held_nft())),
 			signer: Arc::new(SignedOut),
+			extrinsics: transfer_extrinsics(),
+			genesis: GENESIS,
 		})
 	};
 	let prepare = |registered: &RegisteredTransfer| {

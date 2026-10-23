@@ -256,7 +256,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 The core builds its own extrinsics through `ExtrinsicService` in the `chain`
 module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
-preimages, and the CLI's dotNS registrations. A caller names the call and the
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
 extensions after it, signs, and returns a mortal extrinsic born at the finalized

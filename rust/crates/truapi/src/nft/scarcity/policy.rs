@@ -8,10 +8,10 @@ use subxt::utils::H256;
 
 use super::{
 	chain::{KeyLocks, ScarcityChain, ScarcityNft, TransferContext},
-	transfer::{NftTransfer, TransferRuntime, sign_transfer},
+	transfer::{NftTransfer, TRANSFER_PERIOD, sign_transfer},
 };
 use crate::{
-	chain::{MortalExtrinsic, Mortality},
+	chain::{ExtrinsicService, MortalExtrinsic, Mortality},
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
@@ -27,9 +27,6 @@ pub const TRANSFER_POLICY: &str = "nft.scarcity.transfer";
 /// Attempts after which a transfer is given up, so a rejection that repeats
 /// cannot loop forever.
 const MAX_ATTEMPTS: u32 = 5;
-
-/// Blocks a transfer stays valid for after its birth.
-const TRANSFER_PERIOD: u64 = 64;
 
 /// How long a registered transfer may keep waiting for its NFT or for a lock to
 /// end before it is given up, so its item never stays in use for good.
@@ -75,6 +72,10 @@ pub struct ScarcityTransferPolicyDeps {
 	pub chain: Arc<dyn ScarcityChain>,
 	/// Signs with the key each transfer spends.
 	pub signer: Arc<dyn ItemSigner>,
+	/// Builds each transfer.
+	pub extrinsics: Arc<ExtrinsicService>,
+	/// Genesis of the chain that runs the pallet.
+	pub genesis: H256,
 }
 
 /// Builds NFT transfers: one fee-less `Scarcity::transfer` per spent key.
@@ -111,8 +112,8 @@ struct TransferView {
 
 /// What every transfer of one batch is built with.
 struct BatchBuild {
-	runtime: TransferRuntime,
-	mortality: Mortality,
+	/// Builds every transfer of the batch born at the same finalized head.
+	extrinsics: ExtrinsicService,
 	/// The best head is so far past the finalized one that an era born there
 	/// would die before it could land, so nothing is built until finality
 	/// catches up.
@@ -122,12 +123,18 @@ struct BatchBuild {
 }
 
 impl BatchBuild {
-	/// The build of transfers born at the finalized head of `context`.
-	fn born_at(context: TransferContext) -> Result<Self, PolicyError> {
-		let TransferContext { birth, runtime, best } = context;
+	/// The build of transfers born at the finalized head of `context`, through
+	/// `extrinsics` with the runtime there cached.
+	async fn born_at(
+		extrinsics: &ExtrinsicService,
+		genesis: H256,
+		context: TransferContext,
+	) -> Result<Self, PolicyError> {
+		let TransferContext { birth, best } = context;
 		let mortality = Mortality::new(birth, TRANSFER_PERIOD).map_err(policy_error)?;
 		let finality_stalled = best.number + TRANSFER_PERIOD / 2 >= mortality.death();
-		Ok(Self { runtime, mortality, finality_stalled, now: current_unix_secs() })
+		let extrinsics = extrinsics.cache_runtime_at(genesis, birth).await.map_err(policy_error)?;
+		Ok(Self { extrinsics, finality_stalled, now: current_unix_secs() })
 	}
 }
 
@@ -162,12 +169,13 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 		let (planned, unplanned) = self.read_planned_transfers(batch).await?;
 		let context = self.deps.chain.transfer_context().await.map_err(policy_error)?;
 		let views = self.read_transfer_views(context.best.hash, &planned).await?;
-		let build = BatchBuild::born_at(context)?;
-		let prepare_one = |(transfer, view): (&PlannedTransfer, TransferView)| {
-			self.preparation_of(transfer, view, &build).map(|answer| (transfer.id, answer))
-		};
-		let mut prepared: HashMap<_, _> =
-			planned.iter().zip(views).filter_map(prepare_one).collect();
+		let build = BatchBuild::born_at(&self.deps.extrinsics, self.deps.genesis, context).await?;
+		let mut prepared = HashMap::new();
+		for (transfer, view) in planned.iter().zip(views) {
+			if let Some(answer) = self.preparation_of(transfer, view, &build).await {
+				prepared.insert(transfer.id, answer);
+			}
+		}
 		prepared.extend(unplanned.into_iter().map(|id| (id, Preparation::GiveUp)));
 		Ok(prepared)
 	}
@@ -208,7 +216,7 @@ impl ScarcityTransferPolicy {
 	/// The answer for `transfer`, or `None` while it waits. A transfer that
 	/// cannot be signed yet, as without a session, waits like any other, so
 	/// its wait limit still applies.
-	fn preparation_of(
+	async fn preparation_of(
 		&self,
 		transfer: &PlannedTransfer,
 		view: TransferView,
@@ -218,7 +226,7 @@ impl ScarcityTransferPolicy {
 			TransferDecision::GiveUp => return Some(Preparation::GiveUp),
 			TransferDecision::Wait => None,
 			TransferDecision::Build { state_nonce } => {
-				self.ready_to_submit(transfer, state_nonce, build)
+				self.ready_to_submit(transfer, state_nonce, build).await
 			},
 		};
 		ready.or_else(|| give_up_after_limit(transfer, build.now))
@@ -226,7 +234,7 @@ impl ScarcityTransferPolicy {
 
 	/// `transfer` signed and ready, or `None` when finality stalled or it
 	/// could not be signed.
-	fn ready_to_submit(
+	async fn ready_to_submit(
 		&self,
 		transfer: &PlannedTransfer,
 		state_nonce: u64,
@@ -235,13 +243,13 @@ impl ScarcityTransferPolicy {
 		if build.finality_stalled {
 			return None;
 		}
-		let signed = self.sign_planned_transfer(transfer, state_nonce, build);
+		let signed = self.sign_planned_transfer(transfer, state_nonce, build).await;
 		let signed = signed.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"));
 		signed.ok().map(Preparation::Ready)
 	}
 
 	/// `transfer` signed by its source key. Fails without a session.
-	fn sign_planned_transfer(
+	async fn sign_planned_transfer(
 		&self,
 		transfer: &PlannedTransfer,
 		state_nonce: u64,
@@ -250,7 +258,9 @@ impl ScarcityTransferPolicy {
 		let signer = self.deps.signer.item_signer(transfer.slot).map_err(policy_error)?;
 		let TransferParams { instance, destination, .. } = transfer.params;
 		let nft_transfer = NftTransfer { instance, state_nonce, destination };
-		sign_transfer(&signer, &build.runtime, &nft_transfer, build.mortality).map_err(policy_error)
+		let signed =
+			sign_transfer(&build.extrinsics, self.deps.genesis, &signer, &nft_transfer).await;
+		signed.map_err(policy_error)
 	}
 }
 

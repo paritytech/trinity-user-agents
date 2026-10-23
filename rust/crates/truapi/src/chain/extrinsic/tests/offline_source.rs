@@ -64,7 +64,7 @@ impl OfflineSource {
 
 #[async_trait::async_trait]
 impl BuildSource for OfflineSource {
-	async fn runtime_at_finalized_head(
+	async fn runtime_at_birth(
 		&self,
 		_genesis: H256,
 	) -> Result<RuntimeAtBirth, ExtrinsicBuildError> {

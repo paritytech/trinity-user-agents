@@ -13,12 +13,10 @@ use core::{num::NonZeroU32, time::Duration};
 use std::{collections::BTreeSet, sync::Arc};
 
 use futures::StreamExt;
-use parity_scale_codec::{Compact, Encode};
 use subxt::{
 	dynamic::{At, Value, tx},
 	utils::{AccountId32, H256},
 };
-use truapi::latest::TxPayloadExtension;
 
 use super::{
 	ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId, PurseTag,
@@ -28,12 +26,13 @@ use super::{
 };
 use crate::{
 	chain::{
-		BlockBackend, ChainHeads, DispatchOutcome, EncodedExtrinsic, HashAndNumber, TxSubmitter,
-		WatchEvent, WatchedStorage, live_asset_hub, live_asset_hub_genesis, tokio_spawner,
+		BlockBackend, ChainHeads, DispatchOutcome, EncodedExtrinsic, ExtrinsicService,
+		FixedExtensionVersions, HashAndNumber, TxSubmitter, V4OnlyHost, WatchEvent, WatchedStorage,
+		live_asset_hub, live_asset_hub_genesis, tokio_spawner,
 	},
 	chain_runtime::ChainRuntime,
 	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
-	host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v5},
+	host_internal::extrinsic::Sr25519Signer,
 	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
 	nft::HoldingTracker,
 	store::open_temporary_core_db,
@@ -51,6 +50,8 @@ struct CollectionOwner {
 	chain: ChainRuntime,
 	genesis: H256,
 	signer: Sr25519Signer,
+	/// Builds the owner's calls on pipeline 1, as the host builds Asset Hub.
+	extrinsics: ExtrinsicService,
 }
 
 impl CollectionOwner {
@@ -64,7 +65,9 @@ impl CollectionOwner {
 			None => derive_sr25519_hard_path(&entropy, &["Alice"]),
 		}
 		.expect("the owner key derives");
-		Self { chain, genesis, signer: Sr25519Signer::from_keypair(&keypair) }
+		let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, 1));
+		let extrinsics = ExtrinsicService::over_chain(chain.clone(), versions);
+		Self { chain, genesis, signer: Sr25519Signer::from_keypair(&keypair), extrinsics }
 	}
 
 	/// Signs `call` of `Scarcity`, submits it, and waits until a best block
@@ -77,32 +80,14 @@ impl CollectionOwner {
 	}
 
 	async fn signed_by_owner(&self, call: &str, args: Vec<Value>) -> EncodedExtrinsic {
-		let client = self.chain.client_at_finalized_head(self.genesis).await.expect("client");
-		let call_data = client.tx().call_data(&tx("Scarcity", call, args)).expect("call encodes");
-		let nonce = self.next_nonce().await;
-		let extensions = paying_extensions(
-			self.genesis,
-			client.spec_version(),
-			client.transaction_version(),
-			nonce,
-		);
-		let genesis = self.genesis.0;
-		let bytes = build_signed_extrinsic_v5(
-			&self.signer,
-			genesis,
-			&call_data,
-			&extensions,
-			1,
-			client.metadata(),
-		)
-		.expect("extrinsic builds");
-		EncodedExtrinsic::new(bytes)
-	}
-
-	async fn next_nonce(&self) -> u64 {
-		let legacy = self.chain.legacy_connection(self.genesis.as_bytes()).await.expect("node");
-		let account = AccountId32(self.signer_account());
-		legacy.methods.system_account_next_index(&account).await.expect("nonce")
+		let built = self
+			.extrinsics
+			.build_mortal_extrinsic(self.genesis)
+			.with_call(tx("Scarcity", call, args))
+			.with_signer(&self.signer)
+			.build()
+			.await;
+		built.expect("extrinsic builds").extrinsic
 	}
 
 	fn signer_account(&self) -> [u8; 32] {
@@ -127,41 +112,6 @@ impl CollectionOwner {
 	}
 }
 
-/// The extensions of an account-signed, fee-paying, immortal transaction.
-fn paying_extensions(
-	genesis: H256,
-	spec: u32,
-	tx_version: u32,
-	nonce: u64,
-) -> Vec<TxPayloadExtension> {
-	let nonce = u32::try_from(nonce).expect("nonce fits u32");
-	let extension = |id: &str, extra: Vec<u8>, implicit: Vec<u8>| TxPayloadExtension {
-		id: id.to_owned(),
-		extra,
-		additional_signed: implicit,
-	};
-	vec![
-		extension("UnitTransactionExtension", vec![], vec![]),
-		extension("AsScarcity", vec![0], vec![]),
-		extension("AuthorizeCall", vec![], vec![]),
-		extension("AsPgas", vec![0], vec![]),
-		extension("AsDotnsGateway", vec![0], vec![]),
-		extension("RestrictOrigins", vec![0], vec![]),
-		extension("CheckNonZeroSender", vec![], vec![]),
-		extension("CheckSpecVersion", vec![], spec.encode()),
-		extension("CheckTxVersion", vec![], tx_version.encode()),
-		extension("CheckGenesis", vec![], genesis.0.to_vec()),
-		extension("CheckMortality", vec![0], genesis.0.to_vec()),
-		extension("CheckNonce", Compact(nonce).encode(), vec![]),
-		extension("CheckWeight", vec![], vec![]),
-		extension("ChargeAssetTxPayment", vec![0, 0], vec![]),
-		extension("PrevalidateAttests", vec![], vec![]),
-		extension("CheckMetadataHash", vec![0], vec![0]),
-		extension("EthSetOrigin", vec![], vec![]),
-		extension("StorageWeightReclaim", vec![], vec![]),
-	]
-}
-
 /// A ledger with its durable engine and holding tracker, all over the live
 /// chain, deriving item keys from entropy fresh for this run.
 struct LivePurses {
@@ -181,6 +131,7 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		heads,
 		genesis,
 		signer: keys.clone(),
+		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost))),
 	};
 	let engine =
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));

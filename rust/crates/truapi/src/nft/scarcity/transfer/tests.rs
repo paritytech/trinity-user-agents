@@ -1,11 +1,16 @@
+use futures::executor::block_on;
 use schnorrkel::{ExpansionMode, MiniSecretKey};
 use subxt::ext::frame_decode::extrinsics::decode_extrinsic;
 
 use super::*;
-use crate::{chain::HashAndNumber, nft::scarcity::testing::asset_hub_metadata};
+use crate::{
+	chain::extrinsic_service_serving,
+	nft::scarcity::testing::{ASSET_HUB_METADATA_BYTES, asset_hub_metadata},
+};
 
 const DESTINATION: ItemKey = ItemKey([0x08; 32]);
-const BIRTH: HashAndNumber = HashAndNumber { hash: H256([0x0b; 32]), number: 2_138_796 };
+/// The genesis the scripted node's chain is configured with.
+const GENESIS: H256 = H256([0xab; 32]);
 
 fn test_signer() -> Sr25519Signer {
 	let keypair = MiniSecretKey::from_bytes(&[7; 32])
@@ -14,48 +19,39 @@ fn test_signer() -> Sr25519Signer {
 	Sr25519Signer::from_keypair(&keypair)
 }
 
-fn asset_hub_runtime() -> TransferRuntime {
-	TransferRuntime {
-		genesis: H256([0xab; 32]),
-		spec_version: 3_004_000,
-		transaction_version: 22,
-		metadata: asset_hub_metadata(),
-	}
-}
-
 fn test_transfer() -> NftTransfer {
 	NftTransfer { instance: 330, state_nonce: 7, destination: DESTINATION }
 }
 
+/// [`test_transfer`] built over a scripted node serving the Asset Hub fixture.
+fn signed_test_transfer() -> MortalExtrinsic {
+	let extrinsics = extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, TRANSFER_PIPELINE_VERSION);
+	block_on(sign_transfer(&extrinsics, GENESIS, &test_signer(), &test_transfer())).unwrap()
+}
+
 #[test]
 fn a_move_is_a_signed_transfer_to_the_destination() {
-	let signer = test_signer();
-	let mortality = Mortality::new(BIRTH, 64).unwrap();
-	let runtime = asset_hub_runtime();
+	let metadata = asset_hub_metadata();
 
-	let signed = sign_transfer(&signer, &runtime, &test_transfer(), mortality).unwrap();
+	let signed = signed_test_transfer();
 
 	let bytes = signed.extrinsic.bytes();
-	let decoded =
-		decode_extrinsic(&mut &bytes[..], &*runtime.metadata, runtime.metadata.types()).unwrap();
+	let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
 	let call_args = &bytes[decoded.call_data_args_range()];
 	let pallet_and_call = (decoded.pallet_name(), decoded.call_name());
 	assert_eq!(pallet_and_call, ("Scarcity", "transfer"));
 	assert_eq!(call_args, DESTINATION.0);
-	assert_eq!(signed.mortality, mortality);
+	assert_eq!(signed.mortality.period(), TRANSFER_PERIOD);
 }
 
 #[test]
 fn a_move_acts_as_the_nft_it_names_without_fee_or_nonce() {
-	let signer = test_signer();
-	let mortality = Mortality::new(BIRTH, 64).unwrap();
-	let runtime = asset_hub_runtime();
+	let metadata = asset_hub_metadata();
 
-	let signed = sign_transfer(&signer, &runtime, &test_transfer(), mortality).unwrap();
+	let signed = signed_test_transfer();
 
 	let bytes = signed.extrinsic.bytes();
-	let decoded =
-		decode_extrinsic(&mut &bytes[..], &*runtime.metadata, runtime.metadata.types()).unwrap();
+	let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
 	let extensions = decoded.transaction_extension_payload().unwrap();
 	let value_of = |name: &str| {
 		let extension = extensions.iter().find(|extension| extension.name() == name).unwrap();
@@ -63,7 +59,6 @@ fn a_move_acts_as_the_nft_it_names_without_fee_or_nonce() {
 	};
 	let as_scarcity = [&[1_u8, 0][..], &330_u64.to_le_bytes(), &7_u64.to_le_bytes()].concat();
 	assert_eq!(value_of("AsScarcity"), as_scarcity);
-	assert_eq!(value_of("CheckMortality"), mortality.era_bytes());
 	assert_eq!(value_of("CheckNonce"), [0]);
 	assert_eq!(value_of("ChargeAssetTxPayment"), [0, 0]);
 }
@@ -81,21 +76,15 @@ const NO_NFT: u8 = 2;
 async fn the_live_node_refuses_a_transfer_from_an_empty_key_as_holding_no_nft() {
 	use subxt::tx::{TransactionInvalid, ValidationResult};
 
-	use crate::chain::{TxValidator, WatchedStorage, live_asset_hub, live_asset_hub_genesis};
+	use crate::chain::{TxValidator, V4OnlyHost, live_asset_hub, live_asset_hub_genesis};
 
 	let genesis = live_asset_hub_genesis();
 	let chain = live_asset_hub(genesis);
-	let client = chain.client_at_finalized_head(genesis).await.expect("finalized client");
-	let birth = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
-	let runtime = TransferRuntime {
-		genesis,
-		spec_version: client.spec_version(),
-		transaction_version: client.transaction_version(),
-		metadata: client.metadata(),
-	};
-	let mortality = Mortality::new(birth, 64).expect("a 64-block era");
+	let extrinsics = ExtrinsicService::over_chain(chain.clone(), std::sync::Arc::new(V4OnlyHost));
 
-	let signed = sign_transfer(&test_signer(), &runtime, &test_transfer(), mortality).unwrap();
+	let signed = sign_transfer(&extrinsics, genesis, &test_signer(), &test_transfer())
+		.await
+		.unwrap();
 	let validated = chain.validate(genesis, &signed.extrinsic).await.expect("node validates");
 
 	let no_nft = ValidationResult::Invalid(TransactionInvalid::Custom(NO_NFT));

@@ -288,6 +288,14 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		self.chain.client_at_finalized_head(genesis).await
 	}
 
+	async fn client_at(
+		&self,
+		genesis: H256,
+		at: HashAndNumber,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		self.chain.client_at(genesis, at).await
+	}
+
 	async fn watch_raw_key_changes(
 		&self,
 		_genesis: H256,

@@ -1356,6 +1356,7 @@ fn durable_registry(
 		heads: chain,
 		genesis: genesis.into(),
 		signer,
+		extrinsics: services.extrinsics.clone(),
 	};
 	with_scarcity_transfers(registry, deps)
 }

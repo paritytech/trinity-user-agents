@@ -40,6 +40,7 @@ mod reader;
 use reader::WatchedKeysReader;
 
 const CLIENT_AT_FINALIZED_HEAD: &str = "storage_client_at_finalized_head";
+const CLIENT_AT: &str = "storage_client_at";
 const STORAGE_WATCH: &str = "storage_watch";
 const READ_KEYS_AT: &str = "storage_read_keys_at";
 
@@ -61,6 +62,15 @@ impl WatchedStorage for ChainRuntime {
 		let legacy = self.legacy(genesis).await?;
 		let finalized = finalized_block(&legacy, CLIENT_AT_FINALIZED_HEAD).await?;
 		reader::client_at_block(&legacy, finalized, CLIENT_AT_FINALIZED_HEAD).await
+	}
+
+	async fn client_at(
+		&self,
+		genesis: H256,
+		at: HashAndNumber,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		let legacy = self.legacy(genesis).await?;
+		reader::client_at_block(&legacy, at, CLIENT_AT).await
 	}
 
 	async fn watch_raw_key_changes(

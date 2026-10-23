@@ -61,17 +61,6 @@ impl Mortality {
 	pub fn death(&self) -> u64 {
 		self.birth.number + self.period
 	}
-
-	/// The era as `CheckMortality` puts it in the extrinsic: the period's
-	/// exponent in the low four bits, the quantized birth phase above them,
-	/// little-endian.
-	pub fn era_bytes(&self) -> [u8; 2] {
-		let quantize_factor = (self.period >> 12).max(1);
-		let phase = (self.birth.number % self.period) / quantize_factor;
-		let exponent = u64::from(self.period.trailing_zeros() - 1).clamp(1, 15);
-		let encoded = (exponent | (phase << 4)) as u16;
-		encoded.to_le_bytes()
-	}
 }
 
 /// An encoded extrinsic together with the era it was signed with. There is no
@@ -125,15 +114,5 @@ mod tests {
 		);
 		assert!(Mortality::new(block(8194), 8192).is_ok());
 		assert!(Mortality::new(block(4097), 4096).is_ok());
-	}
-
-	#[test]
-	fn the_era_bytes_match_substrate_for_a_short_and_a_long_period() {
-		let short = Mortality::new(block(42), 64).unwrap();
-		let long = Mortality::new(block(20_000), 32_768).unwrap();
-
-		assert_eq!(short.era_bytes(), [0xa5, 0x02]);
-		// Substrate's own vector for `Era::mortal(32768, 20000)`.
-		assert_eq!(long.era_bytes(), [(14 + 2500 % 16 * 16) as u8, (2500 / 16) as u8]);
 	}
 }

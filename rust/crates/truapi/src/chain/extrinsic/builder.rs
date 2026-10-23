@@ -43,12 +43,8 @@ pub struct RuntimeAtBirth {
 /// What a build reads from the chain and the host.
 #[async_trait::async_trait]
 pub trait BuildSource: Sync {
-	/// The runtime at the chain's finalized head, which the extrinsic is born
-	/// at.
-	async fn runtime_at_finalized_head(
-		&self,
-		genesis: H256,
-	) -> Result<RuntimeAtBirth, ExtrinsicBuildError>;
+	/// The runtime at the block the extrinsic is born at.
+	async fn runtime_at_birth(&self, genesis: H256) -> Result<RuntimeAtBirth, ExtrinsicBuildError>;
 
 	/// The host's pipeline for the chain, or `None` when the host builds it
 	/// as V4.
@@ -198,9 +194,9 @@ impl<'a> ExtrinsicBuilder<'a> {
 		self.with_extension(restrict_origins(restrict))
 	}
 
-	/// Builds the extrinsic, mortal from the chain's finalized head.
+	/// Builds the extrinsic, mortal from the block its source names as birth.
 	pub async fn build(self) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-		let runtime = self.source.runtime_at_finalized_head(self.genesis).await?;
+		let runtime = self.source.runtime_at_birth(self.genesis).await?;
 		assemble(self, runtime).await
 	}
 

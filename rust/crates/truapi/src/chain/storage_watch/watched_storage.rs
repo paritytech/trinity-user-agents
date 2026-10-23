@@ -43,6 +43,14 @@ pub trait WatchedStorage: Send + Sync {
 		genesis: H256,
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure>;
 
+	/// A client at the block `at`, for work that must use the runtime of one
+	/// known block.
+	async fn client_at(
+		&self,
+		genesis: H256,
+		at: HashAndNumber,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure>;
+
 	/// Changes to `keys` at `head`. The first item holds every key; each later
 	/// one holds the keys whose value changed since the item before. A failed
 	/// read is an `Err` item, never an absent value, and the watch goes on.

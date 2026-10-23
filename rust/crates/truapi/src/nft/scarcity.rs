@@ -23,7 +23,7 @@ use self::{
 };
 use super::{ItemSigner, operation::nft_domain};
 use crate::{
-	chain::{ChainHeads, WatchedStorage},
+	chain::{ChainHeads, ExtrinsicService, WatchedStorage},
 	durable::DurableRegistry,
 	store::Db,
 };
@@ -40,6 +40,8 @@ pub struct ScarcityTransfersDeps {
 	pub genesis: H256,
 	/// Signs with item keys.
 	pub signer: Arc<dyn ItemSigner>,
+	/// Builds the transfers.
+	pub extrinsics: Arc<ExtrinsicService>,
 }
 
 /// `registry` with the NFT domain, whose transfers the Scarcity oracle decides
@@ -48,9 +50,10 @@ pub fn with_scarcity_transfers(
 	registry: DurableRegistry,
 	deps: ScarcityTransfersDeps,
 ) -> DurableRegistry {
-	let ScarcityTransfersDeps { db, storage, heads, genesis, signer } = deps;
+	let ScarcityTransfersDeps { db, storage, heads, genesis, signer, extrinsics } = deps;
 	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
 	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone(), genesis));
-	let policy = ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps { db, chain, signer });
+	let policy_deps = ScarcityTransferPolicyDeps { db, chain, signer, extrinsics, genesis };
+	let policy = ScarcityTransferPolicy::new(policy_deps);
 	registry.with_domain(nft_domain(), oracle).with_policy(Arc::new(policy))
 }

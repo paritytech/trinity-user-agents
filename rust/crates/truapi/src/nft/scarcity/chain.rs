@@ -9,7 +9,6 @@ use subxt::{
 	utils::{AccountId32, H256},
 };
 
-use super::transfer::TransferRuntime;
 use crate::{
 	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
 	chain_runtime::RuntimeFailure,
@@ -102,8 +101,8 @@ pub trait ScarcityChain: Send + Sync {
 	/// The lock on each of `keys` at `at`, and the chain time of `at`.
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError>;
 
-	/// Where transfers built now stand: the finalized head they are born at, the
-	/// runtime they are signed for, and the best head their state is read at.
+	/// Where transfers built now stand: the finalized head they are born at and
+	/// the best head their state is read at.
 	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError>;
 }
 
@@ -111,12 +110,10 @@ pub trait ScarcityChain: Send + Sync {
 /// where the tracker sees holdings, so a transfer is never judged on a finalized
 /// block that does not hold its NFT yet. Its era is born at the finalized
 /// head, which no reorg removes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct TransferContext {
 	/// The finalized head, where each transfer's era is born.
 	pub birth: HashAndNumber,
-	/// The runtime at the birth block.
-	pub runtime: TransferRuntime,
 	/// The best head, where the state each transfer depends on is read.
 	pub best: HashAndNumber,
 }
@@ -179,16 +176,8 @@ impl ScarcityChain for ScarcityStorage {
 	}
 
 	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
-		let client = self.storage.client_at_finalized_head(self.genesis).await?;
-		let birth = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
-		let runtime = TransferRuntime {
-			genesis: self.genesis,
-			spec_version: client.spec_version(),
-			transaction_version: client.transaction_version(),
-			metadata: client.metadata(),
-		};
-		let best = self.heads.heads(self.genesis).await?.best;
-		Ok(TransferContext { birth, runtime, best })
+		let heads = self.heads.heads(self.genesis).await?;
+		Ok(TransferContext { birth: heads.finalized, best: heads.best })
 	}
 }
 
