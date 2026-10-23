@@ -32,7 +32,7 @@ impl ExtrinsicVersion {
 /// The host default follows the native hosts: a chain the host maps to a
 /// pipeline is V5 with that pipeline, unless the build is signed and the
 /// pipeline has no `VerifyMultiSignature`. Every other chain is V4.
-pub fn choose_version(
+pub fn choose_extrinsic_version(
 	pinned: Option<ExtrinsicVersion>,
 	host_extension_version: Option<u8>,
 	signed: bool,

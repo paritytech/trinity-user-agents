@@ -148,7 +148,7 @@ pub fn restrict_origins(restrict: bool) -> ConstantExtension<(), bool> {
 
 /// The extension the builder adds for `name` when the caller leaves it
 /// unset, or `None` when `name` has no well-known default.
-pub fn default_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExtension<'static>> {
+pub fn well_known_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExtension<'static>> {
 	let extension = match name {
 		"CheckSpecVersion" => SuppliedExtension::new(check_spec_version(chain.spec_version)),
 		"CheckTxVersion" => SuppliedExtension::new(check_tx_version(chain.transaction_version)),
@@ -167,7 +167,7 @@ pub fn default_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExte
 
 /// The value an unset extension value of type `type_id` takes: nothing for an
 /// empty type, `None` for an `Option`, and no default for anything else.
-pub fn unset_value_default(type_id: u32, types: &PortableRegistry) -> Option<Vec<u8>> {
+pub fn default_value_for_type(type_id: u32, types: &PortableRegistry) -> Option<Vec<u8>> {
 	if is_empty_type(type_id, types) {
 		return Some(Vec::new());
 	}

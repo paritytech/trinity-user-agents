@@ -28,8 +28,8 @@ use crate::chain::{
 		ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
 		extension::{ExtensionValueTypes, SuppliedExtension},
 		signature::{SubstrateSigner, VerifySignatureExtension},
-		version::{choose_version, pipeline_names},
-		well_known::{ChainValues, EncodedExtensionValues, default_extension, unset_value_default},
+		version::{choose_extrinsic_version, pipeline_names},
+		well_known::{ChainValues, EncodedExtensionValues, well_known_extension, default_value_for_type},
 	},
 };
 
@@ -46,7 +46,7 @@ pub fn assemble(
 	let call = builder.call.ok_or(ExtrinsicBuildError::NoCall)??;
 	let metadata = builder.runtime.metadata.clone();
 	let signed = builder.signature.is_some();
-	let version = choose_version(builder.version, host_extension_version, signed, &metadata)?;
+	let version = choose_extrinsic_version(builder.version, host_extension_version, signed, &metadata)?;
 	check_format_supported(version, &metadata)?;
 	let (extensions, v4_signer) = place_signature(version, builder.extensions, builder.signature)?;
 	check_supplied_extensions(&extensions, version.extension_version(), &metadata)?;
@@ -184,22 +184,22 @@ impl PipelineFold<'_> {
 		supplied: Option<SuppliedExtension<'_>>,
 		implication: &InheritedImplication,
 	) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
-		let Some(extension) = supplied.or_else(|| default_extension(&declared.name, &self.chain))
+		let Some(extension) = supplied.or_else(|| well_known_extension(&declared.name, &self.chain))
 		else {
-			return unset_extension_values(declared, self.types);
+			return use_default_values_for_unset_extension(declared, self.types);
 		};
 		let types = ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
 		(extension.encode)(implication, types, self.types)
 	}
 }
 
-fn unset_extension_values(
+fn use_default_values_for_unset_extension(
 	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
 	types: &PortableRegistry,
 ) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
 	let missing = || ExtrinsicBuildError::MissingExtension { extension: declared.name.to_string() };
-	let explicit = unset_value_default(declared.id, types).ok_or_else(missing)?;
-	let implicit = unset_value_default(declared.implicit_id, types).ok_or_else(missing)?;
+	let explicit = default_value_for_type(declared.id, types).ok_or_else(missing)?;
+	let implicit = default_value_for_type(declared.implicit_id, types).ok_or_else(missing)?;
 	Ok(EncodedExtensionValues { explicit, implicit })
 }
 

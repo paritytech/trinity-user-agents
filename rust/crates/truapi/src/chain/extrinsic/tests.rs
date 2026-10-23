@@ -26,8 +26,8 @@ use super::{
 	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication, PreencodedValue,
 	RawExtension, TransactionExtension,
 	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
-	version::choose_version,
-	well_known::unset_value_default,
+	version::choose_extrinsic_version,
+	well_known::default_value_for_type,
 };
 use crate::{
 	chain::HashAndNumber,
@@ -270,15 +270,15 @@ fn the_host_map_decides_the_default_version() {
 	let people = Metadata::decode_from(PEOPLE).unwrap();
 	let asset_hub = Metadata::decode_from(ASSET_HUB).unwrap();
 
-	assert_eq!(choose_version(None, None, true, &people).unwrap(), ExtrinsicVersion::V4);
+	assert_eq!(choose_extrinsic_version(None, None, true, &people).unwrap(), ExtrinsicVersion::V4);
 	assert_eq!(
-		choose_version(None, Some(0), true, &people).unwrap(),
+		choose_extrinsic_version(None, Some(0), true, &people).unwrap(),
 		ExtrinsicVersion::V5 { extension_version: 0 }
 	);
 	// Asset Hub's pipeline 0 has no `VerifyMultiSignature`.
-	assert_eq!(choose_version(None, Some(0), true, &asset_hub).unwrap(), ExtrinsicVersion::V4);
+	assert_eq!(choose_extrinsic_version(None, Some(0), true, &asset_hub).unwrap(), ExtrinsicVersion::V4);
 	assert_eq!(
-		choose_version(None, Some(0), false, &asset_hub).unwrap(),
+		choose_extrinsic_version(None, Some(0), false, &asset_hub).unwrap(),
 		ExtrinsicVersion::V5 { extension_version: 0 }
 	);
 }
@@ -462,9 +462,9 @@ fn only_empty_and_option_extensions_have_an_unset_default() {
 	let check_weight = asset_hub_value_type("CheckWeight", false);
 	let restrict_origins = asset_hub_value_type("RestrictOrigins", false);
 
-	assert_eq!(unset_value_default(as_pgas, types), Some(vec![0x00]));
-	assert_eq!(unset_value_default(check_weight, types), Some(Vec::new()));
-	assert_eq!(unset_value_default(restrict_origins, types), None);
+	assert_eq!(default_value_for_type(as_pgas, types), Some(vec![0x00]));
+	assert_eq!(default_value_for_type(check_weight, types), Some(Vec::new()));
+	assert_eq!(default_value_for_type(restrict_origins, types), None);
 }
 
 /// Bulletin's runtime accepts only V4, so pinning V5 there fails by name
