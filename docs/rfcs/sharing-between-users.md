@@ -142,12 +142,16 @@ pub enum HostSharingSendError {
 ### 2. What the host sends to the statement store
 
 Alice's host finds her chat with Bob from the handle and posts the sharing request there, stamped with the calling
-product's id.
+product's id. It travels as an RFC 0002 `Custom` message with a message type reserved for hosts.
 
 ```rust
-pub enum MessageContent {
-    ShareRequest(ShareRequest),
-    // ...
+MessageContent::Custom {
+    /// Reserved for hosts: never passed to a product renderer, and rejected when a product posts it.
+    message_type: b"host:share-request".to_vec(),
+    /// SCALE-encoded `ShareRequest`.
+    payload: share_request.encode(),
+    /// The request's title: shown on the card, in notifications, and by hosts that don't know the type.
+    preview_text: Some(title),
 }
 
 /// The sharing request as it travels between hosts.
@@ -156,7 +160,6 @@ pub struct ShareRequest {
     pub from: AccountId,
     /// The calling product, from the call context.
     pub product_id: ProductId,
-    pub title: String,
     pub deeplink_route: String,
     /// The recipient's data the sender asks for.
     pub ask: Vec<ProfileScope>,
@@ -180,9 +183,11 @@ The recipient's host keeps the grants. When `ask` is not empty, it draws the car
 chat, like a reaction. Answers travel in chat, so `ask` needs a `Contact`.
 
 ```rust
-pub enum MessageContent {
-    ShareResponse(ShareResponse),
-    // ...
+MessageContent::Custom {
+    message_type: b"host:share-response".to_vec(),
+    /// SCALE-encoded `ShareResponse`.
+    payload: share_response.encode(),
+    preview_text: None,
 }
 
 /// The recipient's answer, sent only when the sharing request has an `ask`.
@@ -201,6 +206,8 @@ pub enum ShareOutcome {
     Declined,
 }
 ```
+
+A `host:share-response` message updates the request it names and never shows as a message of its own.
 
 Alice's host keeps the grants against Bob; any product that can identify Bob can have the host show his data.
 
