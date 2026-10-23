@@ -238,18 +238,10 @@ jobs:
       - name: Build the E2E simulator app
         run: e2e/host-playground/ios/build.sh
 
-      # Third-party tap, pinned to a reviewed commit.
+      # A pinned release under RUNNER_TEMP, not Homebrew, which the self-hosted
+      # Mac runners do not have on PATH.
       - name: Install applesimutils
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          WIX_TAP_COMMIT: 8f636f84541e08e850f455d7cffdfbd7ba305d3f
-        run: |
-          set -euo pipefail
-          brew tap wix/brew
-          git -C "$(brew --repo wix/brew)" checkout --quiet "${WIX_TAP_COMMIT}"
-          brew trust wix/brew
-          brew install wix/brew/applesimutils
-          applesimutils --version
+        uses: ./.github/actions/setup-applesimutils
 
       - name: Write the test account's mnemonic
         env:
