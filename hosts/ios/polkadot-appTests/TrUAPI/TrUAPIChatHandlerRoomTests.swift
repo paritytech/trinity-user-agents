@@ -140,6 +140,52 @@ struct TrUAPIChatHandlerRoomTests {
         await handler.dispose()
     }
 
+    /// A contact link that opens the app reaches a worker whose client has not connected and whose chat surface
+    /// does not run yet; the link waits both out and opens the room the product gives.
+    @Test func aLinkAskedWhileTheProductStartsWaitsForIt() async throws {
+        let workers = runningWorkers()
+        let handler = makeHandler(workers)
+        execution.openLinkAnswers = [
+            .failure(ProductRuntimeError.NotConnected),
+            .failure(ChatQueryError.refused(.unknown(reason: "chat is starting")))
+        ]
+        execution.openLinkAnswer = .success(ProductChatOpenLinkItem(roomId: "dm-ab"))
+
+        let answer = try await handler.openLink(ProductChatOpenLinkRequest(roomId: "chats", payload: "contact:ab"))
+
+        #expect(answer.roomId == "dm-ab")
+        #expect(execution.queryLog.count == 3)
+        #expect(workers.references.log == ["acquire \(product)", "release \(product)"])
+
+        await handler.dispose()
+    }
+
+    @Test func aLinkGivesUpOnAProductThatNeverStarts() async {
+        let workers = runningWorkers()
+        let handler = TrUAPIChatHandler(productId: product, workers: workers, messageStartupWindow: .milliseconds(600))
+        execution.openLinkAnswer = .failure(ChatQueryError.refused(.unknown(reason: "chat is starting")))
+
+        await #expect(throws: ChatQueryError.refused(.unknown(reason: "chat is starting"))) {
+            try await handler.openLink(ProductChatOpenLinkRequest(roomId: "chats", payload: "contact:ab"))
+        }
+        #expect(workers.references.released == [product])
+
+        await handler.dispose()
+    }
+
+    @Test func anotherRefusalOfALinkIsPassedOnAtOnce() async {
+        let workers = runningWorkers()
+        let handler = makeHandler(workers)
+        execution.openLinkAnswer = .failure(ChatQueryError.refused(.unknown(reason: "no chat key")))
+
+        await #expect(throws: ChatQueryError.refused(.unknown(reason: "no chat key"))) {
+            try await handler.openLink(ProductChatOpenLinkRequest(roomId: "chats", payload: "contact:ab"))
+        }
+        #expect(execution.queryLog.count == 1)
+
+        await handler.dispose()
+    }
+
     /// The room screen finds the lifecycle and the queries through the bot of the product.
     @Test func theBotOfAProductServesTheRoomsOfItsRuntime() async throws {
         let workers = runningWorkers()

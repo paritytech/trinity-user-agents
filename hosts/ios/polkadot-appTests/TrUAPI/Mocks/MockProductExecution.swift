@@ -59,6 +59,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var reactionsAnswer: Result<ProductChatReactionsQueryItem, Error>?
     var editHistoryAnswer: Result<ProductChatEditHistoryQueryItem, Error>?
     var openLinkAnswer: Result<ProductChatOpenLinkItem, Error>?
+    /// Answers given, in order, before ``openLinkAnswer``.
+    var openLinkAnswers: [Result<ProductChatOpenLinkItem, Error>] = []
 
     private let renderSignal: AsyncStream<Void>.Continuation
     private var renderSignals: AsyncStream<Void>.AsyncIterator
@@ -159,6 +161,9 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         timeout: Duration
     ) async throws -> ProductChatOpenLinkItem {
         queryLog.append(.openLink(request, timeout))
+        if !openLinkAnswers.isEmpty {
+            return try openLinkAnswers.removeFirst().get()
+        }
         return try (openLinkAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 

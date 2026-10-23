@@ -56,7 +56,9 @@ import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductChatEditHistoryQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatOpenLinkRequest
+import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatSearchQueryRequest
+import uniffi.truapi.ProductChatUserActionError
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
@@ -179,16 +181,24 @@ class TrUAPIChatWorker(
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
     // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1). The supervisor reports a
     // restarted worker as running before its client connects to the core, so a query waits for that connection
-    // for a limited time.
+    // for a limited time. A worker that just started also refuses queries until its chat surface runs (the chat
+    // product answers "chat is starting" while it opens its store), so a query waits that out too: a contact link
+    // that opens the app, or brings it back from the background, asks while the worker starts.
     private suspend fun <T> query(ask: suspend (TrUAPIProductExecution) -> T): Result<T> {
         var attempt = 1
         var connectWaits = 0
+        var startingWaits = 0
         while (true) {
             val outcome = runCatching { ask(awaitRunningExecution()) }
             val failure = outcome.exceptionOrNull() ?: return outcome
             if (failure is CancellationException) throw failure
             if (failure is ProductRuntimeException.NotConnected && connectWaits < CONNECT_WAITS) {
                 connectWaits++
+                delay(CONNECT_WAIT_STEP)
+                continue
+            }
+            if (failure.isSurfaceStarting() && startingWaits < STARTING_WAITS) {
+                startingWaits++
                 delay(CONNECT_WAIT_STEP)
                 continue
             }
@@ -202,6 +212,16 @@ class TrUAPIChatWorker(
     }
 
     private fun Throwable.isUnavailable() = this is ChatQueryException.Failed || this is ProductRuntimeException
+
+    // The answer of a chat product whose surface does not run yet (`registerChatHandlers` of the product).
+    private fun Throwable.isSurfaceStarting(): Boolean {
+        val reason = when (this) {
+            is ChatQueryException.Refused -> (error as? ProductChatQueryError.Unknown)?.reason
+            is ChatQueryException.ActionRefused -> (error as? ProductChatUserActionError.Unknown)?.reason
+            else -> null
+        }
+        return reason == SURFACE_STARTING
+    }
 
     // W1: a message in flight wakes the worker, so the product can answer when the user closes the room at once.
     // Every message wakes, also with an open room: the room can close before the product answers.
@@ -384,6 +404,10 @@ class TrUAPIChatWorker(
         val QUERY_RETRY_DELAY = 1.seconds
         const val CONNECT_WAITS = 40
         val CONNECT_WAIT_STEP = 250.milliseconds
+
+        /** 30 s: a chat product opening its store at a cold start took about 9 s on an emulator. */
+        const val STARTING_WAITS = 120
+        const val SURFACE_STARTING = "chat is starting"
 
         /** Below the 30 s of a wake of the core, so that a renewal comes before the end. */
         val WAKE_RENEWAL = 20.seconds

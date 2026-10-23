@@ -35,6 +35,8 @@ import uniffi.truapi.ChatUserAction
 import uniffi.truapi.ChatWakeReason
 import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatOpenLinkItem
+import uniffi.truapi.ProductChatOpenLinkRequest
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ProductRuntimeException
@@ -190,6 +192,40 @@ class TrUAPIChatWorkerRoomsTest {
 
         assertTrue(page.isFailure)
         assertTrue(currentTime < 20_000)
+    }
+
+    @Test
+    fun `a contact link asked while the chat product starts waits for its surface`() = runTest {
+        coEvery { execution.chatOpenLink(any(), any()) } throws
+            ChatQueryException.Refused(ProductChatQueryError.Unknown("chat is starting")) andThenThrows
+            ChatQueryException.Refused(ProductChatQueryError.Unknown("chat is starting")) andThen
+            ProductChatOpenLinkItem("dm-ab")
+
+        val room = worker().openLink(ProductChatIdParameter("chats"), "contact:ab")
+
+        assertEquals(ProductChatIdParameter("dm-ab"), room.getOrNull())
+        coVerify(exactly = 3) { execution.chatOpenLink(ProductChatOpenLinkRequest("chats", "contact:ab"), any()) }
+    }
+
+    @Test
+    fun `a chat product that never starts fails the link after a limited wait`() = runTest {
+        coEvery { execution.chatOpenLink(any(), any()) } throws
+            ChatQueryException.Refused(ProductChatQueryError.Unknown("chat is starting"))
+
+        val room = worker().openLink(ProductChatIdParameter("chats"), "contact:ab")
+
+        assertTrue(room.exceptionOrNull() is ProductChatQueryException.Failed)
+        assertTrue(currentTime in 20_000..40_000)
+    }
+
+    @Test
+    fun `another refusal of the product fails the link at once`() = runTest {
+        coEvery { execution.chatOpenLink(any(), any()) } throws ChatQueryException.Refused(ProductChatQueryError.Unknown("no key"))
+
+        val room = worker().openLink(ProductChatIdParameter("chats"), "contact:ab")
+
+        assertTrue(room.isFailure)
+        coVerify(exactly = 1) { execution.chatOpenLink(any(), any()) }
     }
 
     @Test
