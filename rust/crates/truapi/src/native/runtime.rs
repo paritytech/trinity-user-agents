@@ -93,8 +93,8 @@ impl NativeTrUApiHostRuntime {
 	/// The admin of the open Worker execution of `product_id`, else a new
 	/// admin of the product with the runtime's callbacks.
 	fn worker_admin(&self, product_id: String) -> Result<crate::HostAdmin, String> {
-		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
-			.map_err(|error| error.to_string())?;
+		let product_id = product_id.parse::<ProductId>().map_err(|error| error.to_string())?;
+		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker);
 		let execution = self
 			.worker_executions
 			.lock()
@@ -590,6 +590,9 @@ impl NativeTrUApiHostRuntime {
 		room_id: String,
 		event: truapi::latest::ChatRoomEvent,
 	) -> Result<(), HostRejection> {
+		let product_id = product_id
+			.parse::<ProductId>()
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
 		self.runtime
 			.publish_chat_room_event(
 				&product_id,
@@ -607,6 +610,9 @@ impl NativeTrUApiHostRuntime {
 		product_id: String,
 		reason: crate::ChatWakeReason,
 	) -> Result<crate::ChatWakeOutcome, HostRejection> {
+		let product_id = product_id
+			.parse::<ProductId>()
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
 		self.runtime
 			.wake_product(&product_id, reason)
 			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })

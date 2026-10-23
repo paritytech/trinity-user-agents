@@ -7,8 +7,8 @@ import SubstrateStorageQuery
 import Operation_iOS
 import ChainRegistry
 
+@MainActor
 extension ServiceCoordinator {
-    @MainActor
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,

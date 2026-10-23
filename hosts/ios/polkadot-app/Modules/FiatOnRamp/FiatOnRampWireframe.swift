@@ -12,11 +12,7 @@ final class FiatOnRampWireframe: FiatOnRampWireframeProtocol {
         amount: Decimal,
         purchaseLimit: FiatOnrampFiatPurchaseLimit?
     ) {
-        guard let view else {
-            return
-        }
-
-        guard let destination = FiatOnRampProviderViewFactory.createView(
+        guard let view, let destination = FiatOnRampProviderViewFactory.createView(
             context: context,
             amount: amount,
             purchaseLimit: purchaseLimit

@@ -43,19 +43,17 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
 
 // MARK: - Private Setup
 
+@MainActor
 private extension SPAJSEngine {
-    @MainActor
     func performGetState() -> JSEngineState {
         state
     }
 
-    @MainActor
     func performDestroy() {
         state = .destroyed
         cleanup()
     }
 
-    @MainActor
     func performRegisterFunction(name: String, handler: @escaping JSNativeHandler) {
         let alreadyRegistered = messageHandlers[name] != nil
 
@@ -77,7 +75,6 @@ private extension SPAJSEngine {
         contentController?.add(self, name: name)
     }
 
-    @MainActor
     @discardableResult
     func performEvaluation(_ script: String) async throws -> Any? {
         guard state == .ready else {
@@ -87,7 +84,6 @@ private extension SPAJSEngine {
         return try await webView.evaluateJavaScript(script)
     }
 
-    @MainActor
     func setupEngine(scripts: [JSEngineScript]) {
         let contentController = webView.configuration.userContentController
         self.contentController = contentController
@@ -125,7 +121,6 @@ private extension SPAJSEngine {
         completeInitialization()
     }
 
-    @MainActor
     func cleanup() {
         contentController?.removeAllScriptMessageHandlers()
         webView.navigationDelegate = nil
@@ -133,7 +128,6 @@ private extension SPAJSEngine {
         webView.stopLoading()
     }
 
-    @MainActor
     func completeInitialization(error: Error? = nil) {
         guard let continuation = initContinuation else { return }
         initContinuation = nil

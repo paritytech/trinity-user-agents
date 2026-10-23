@@ -380,8 +380,8 @@ extension AutosizedSheetPresentationController {
     // MARK: Interactive dismissal
 
     @objc func didPan(sender: Any?) {
-        guard let panGestureRecognizer = sender as? UIPanGestureRecognizer else { return }
-        guard let view = panGestureRecognizer.view else { return }
+        guard let panGestureRecognizer = sender as? UIPanGestureRecognizer,
+              let view = panGestureRecognizer.view else { return }
 
         handlePan(from: panGestureRecognizer, on: view)
     }

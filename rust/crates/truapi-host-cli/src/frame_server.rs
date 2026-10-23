@@ -718,8 +718,7 @@ where
 	let mut product = product_updates.borrow().clone();
 	if worker_surface.is_some() {
 		product =
-			ProductContext::new_with_execution(product.product_id, ProductExecutionKind::Worker)
-				.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+			ProductContext::new_with_execution(product.product_id, ProductExecutionKind::Worker);
 	}
 	let sink = Arc::new(WsFrameSink { outbound: outbound_tx.clone() });
 	let product_runtime = Arc::new(runtime.product_runtime(product, sink));

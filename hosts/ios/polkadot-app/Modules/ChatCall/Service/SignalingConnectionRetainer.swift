@@ -18,9 +18,7 @@ actor SignalingConnectionRetainer {
             return
         }
 
-        guard token == nil else { return }
-
-        guard chainRegistry.getConnection(for: chainId) != nil else { return }
+        guard token == nil, chainRegistry.getConnection(for: chainId) != nil else { return }
 
         token = chainRegistry.retainConnections(.chains([chainId]))
     }

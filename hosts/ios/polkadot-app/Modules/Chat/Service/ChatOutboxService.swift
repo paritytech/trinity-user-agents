@@ -198,12 +198,7 @@ extension ChatOutboxService: ChatOutboxServicing {
 
     func sendPeerLeftMessage(to contact: Chat.Contact, completion: @escaping () -> Void) {
         workQueue.async { [weak self] in
-            guard let self else {
-                completion()
-                return
-            }
-
-            guard let exchangeService else {
+            guard let self, let exchangeService else {
                 completion()
                 return
             }

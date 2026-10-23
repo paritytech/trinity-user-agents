@@ -6,8 +6,7 @@ public enum SingleEmojiChecker {
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard trimmed.count == 1 else { return false }
-        guard let scalar = trimmed.unicodeScalars.first else { return false }
+        guard trimmed.count == 1, let scalar = trimmed.unicodeScalars.first else { return false }
 
         let isEmoji = scalar.properties.isEmoji
         let isEmojiPresentation = scalar.properties.isEmojiPresentation

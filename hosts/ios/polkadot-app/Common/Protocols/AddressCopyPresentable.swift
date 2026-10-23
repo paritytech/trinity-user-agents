@@ -10,8 +10,8 @@ protocol AddressCopyPresentable {
     )
 }
 
+@MainActor
 extension AddressCopyPresentable {
-    @MainActor
     func copyAddress(
         from view: ControllerBackedProtocol?,
         address: String,

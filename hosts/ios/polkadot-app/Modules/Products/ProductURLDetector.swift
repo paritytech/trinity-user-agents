@@ -11,9 +11,7 @@ enum ProductURLDetector {
         in text: String,
         hostProvider: ProductHostProviding
     ) -> DetectedProductLink? {
-        guard !text.isEmpty else { return nil }
-
-        guard let detector = try? NSDataDetector(
+        guard !text.isEmpty, let detector = try? NSDataDetector(
             types: NSTextCheckingResult.CheckingType.link.rawValue
         ) else {
             return nil

@@ -173,8 +173,7 @@ final class VoucherOnChainQueryService: VoucherOnChainQuerying, @unchecked Senda
         aliasFetchSucceeded: Bool
     ) -> VoucherAliasPresence {
         if position.isOnboarding { return .notUnloaded }
-        guard position.ringIndex != nil else { return .unknown }
-        guard aliasFetchSucceeded else { return .unknown }
+        guard position.ringIndex != nil, aliasFetchSucceeded else { return .unknown }
         return aliasState == .unloaded ? .unloaded : .notUnloaded
     }
 }

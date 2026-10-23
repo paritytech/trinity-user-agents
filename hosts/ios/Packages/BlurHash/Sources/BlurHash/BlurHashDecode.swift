@@ -77,8 +77,7 @@ public extension UIImage {
 
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.none.rawValue)
 
-        guard let provider = CGDataProvider(data: data) else { return nil }
-        guard let cgImage = CGImage(
+        guard let provider = CGDataProvider(data: data), let cgImage = CGImage(
             width: width,
             height: height,
             bitsPerComponent: 8,

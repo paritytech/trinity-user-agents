@@ -89,11 +89,7 @@ public final class AssetHubSwapOperationFactory {
                     let asset1 = tokenConverter.convertFromMultilocation(
                         assetIdPair.asset1,
                         chain: chain
-                    ) else {
-                    return nil
-                }
-
-                guard
+                    ),
                     let asset2 = tokenConverter.convertFromMultilocation(
                         assetIdPair.asset2,
                         chain: chain

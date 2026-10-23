@@ -1419,9 +1419,8 @@ impl ProductAuthority for SigningHost {
 		payload: Vec<u8>,
 	) -> Result<([u8; 32], [u8; 64]), AuthorityError> {
 		self.require_current_session(session)?;
-		let keypair =
-			allowance::chat_delivery_keypair(&self.root_entropy()?, &request_id, period)
-				.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
+		let keypair = allowance::chat_delivery_keypair(&self.root_entropy()?, &request_id, period)
+			.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
 		let signature = keypair
 			.secret
 			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)

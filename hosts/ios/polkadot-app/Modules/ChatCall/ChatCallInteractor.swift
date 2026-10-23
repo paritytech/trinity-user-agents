@@ -270,11 +270,7 @@ private extension ChatCallInteractor {
 
     @MainActor
     func performSetup() async {
-        guard role == .initiator else {
-            return
-        }
-
-        guard await ensureCallPermissions() else {
+        guard role == .initiator, await ensureCallPermissions() else {
             return
         }
 

@@ -50,7 +50,8 @@ extension Chat {
         /// The sort key in milliseconds since the Unix epoch. Nil uses the time of the last message.
         let timestamp: Int64?
         let badge: RoomBadge
-        /// The newest message that the room shows, as the room screen draws it. Nil draws the stored last message.
+        /// The last message of the chat list, as the room screen draws it: the newest message, or the newest call
+        /// once its end or answer is newer. Nil draws the stored last message.
         let lastMessage: RoomPreviewMessage?
         /// The contact reacted to a message, and the user did not see the reaction yet.
         let unseenReaction: Bool
@@ -82,6 +83,21 @@ extension Chat {
 
             let others = relatedMessages.filter { $0.messageId != signal.messageId }
             return localMessage(chatId: chatId, from: signal, relatedMessages: [asRelated] + others)
+        }
+
+        /// The time of the message in the chat list: the end of a call, else its answer, else the message.
+        var listTimestamp: Timestamp {
+            newestCallSignal?.timestamp ?? timestamp
+        }
+
+        /// The last message of the chat list. The native chat keeps each signal of a call as a message of its chat,
+        /// so the list shows the newest call when its end or answer is newer than the newest message.
+        static func listed(lastMessage: Self?, lastCall: Self?) -> Self? {
+            guard let lastMessage, let lastCall else {
+                return lastMessage ?? lastCall
+            }
+
+            return lastCall.listTimestamp > lastMessage.listTimestamp ? lastCall : lastMessage
         }
     }
 

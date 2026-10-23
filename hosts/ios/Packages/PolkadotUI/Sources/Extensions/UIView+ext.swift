@@ -8,8 +8,9 @@ public extension UIView {
     }
 }
 
+@MainActor
 public extension (any UIContentView & UIView)? {
-    @MainActor mutating func apply(
+    mutating func apply(
         _ configuration: UIContentConfiguration?,
         addViewClosure: (UIView) -> Void
     ) {

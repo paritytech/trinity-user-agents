@@ -63,11 +63,11 @@ final class AppPersonChatHostBridge: PersonChatHostBridge, @unchecked Sendable {
         try self.contacts.replace(productId: productId, contacts: contacts)
     }
 
-    func historyExport(productId: String, offset: UInt64, maxLen: UInt32) async throws -> HostHistoryExportChunk {
+    func historyExport(productId _: String, offset: UInt64, maxLen: UInt32) async throws -> HostHistoryExportChunk {
         try await migration.part(offset: offset, maxLen: maxLen)
     }
 
-    func historyImported(productId: String) async throws {
+    func historyImported(productId _: String) async throws {
         await migration.imported()
     }
 }

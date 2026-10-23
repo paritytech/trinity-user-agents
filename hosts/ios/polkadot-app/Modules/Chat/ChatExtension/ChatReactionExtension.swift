@@ -28,11 +28,7 @@ final class ChatReactionExtension: ChatExtending {
         lastProcessingOutcome: ChatExtension.ProcessingHistoryOutcome,
         context _: ChatExtensionProcessingContextProtocol
     ) async -> ChatExtension.ProcessingResult {
-        guard lastProcessingOutcome == .firstEncounter else {
-            return .skipped
-        }
-
-        guard case .contact = message.origin else {
+        guard lastProcessingOutcome == .firstEncounter, case .contact = message.origin else {
             return .skipped
         }
 

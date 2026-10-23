@@ -217,11 +217,7 @@ private extension Chat.Request {
                 nil
             }
 
-        guard let matchingRequestId else {
-            return false
-        }
-
-        guard let message, case let .outgoing(outgoingStatus) = message.status else {
+        guard let matchingRequestId, let message, case let .outgoing(outgoingStatus) = message.status else {
             return false
         }
 

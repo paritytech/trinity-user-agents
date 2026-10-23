@@ -279,11 +279,7 @@ private extension PeerSessionInitializer {
         _ error: Error,
         route: PeerSessionRoute
     ) -> Bool {
-        guard route == .device else {
-            return false
-        }
-
-        guard let decodingError = error as? MultiDeviceDecodingError else {
+        guard route == .device, let decodingError = error as? MultiDeviceDecodingError else {
             return false
         }
 

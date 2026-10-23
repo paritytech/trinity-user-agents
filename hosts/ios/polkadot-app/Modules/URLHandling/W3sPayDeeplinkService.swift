@@ -16,15 +16,12 @@ final class W3sPayDeeplinkService {
 
 extension W3sPayDeeplinkService: URLHandlingServiceProtocol {
     func handle(url: URL) -> Bool {
-        guard url.host() == Constants.host, url.path() == Constants.path else {
-            return false
-        }
-        guard
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let queryItems = components.queryItems,
-            let id = queryItems.first(where: { $0.name == Constants.queryId })?.value,
-            let amountString = queryItems.first(where: { $0.name == Constants.queryAmount })?.value,
-            let keyString = queryItems.first(where: { $0.name == Constants.queryKey })?.value
+        guard url.host() == Constants.host, url.path() == Constants.path,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems,
+              let id = queryItems.first(where: { $0.name == Constants.queryId })?.value,
+              let amountString = queryItems.first(where: { $0.name == Constants.queryAmount })?.value,
+              let keyString = queryItems.first(where: { $0.name == Constants.queryKey })?.value
         else {
             return false
         }

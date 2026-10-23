@@ -360,7 +360,7 @@ impl crate::platform::PersonChatPlatform for RecordingPersonChat {
 		product: &ProductContext,
 		contacts: Vec<crate::platform::HostChatContact>,
 	) -> Result<(), truapi::latest::GenericError> {
-		self.contacts.lock().unwrap().push((product.product_id.clone(), contacts));
+		self.contacts.lock().unwrap().push((product.product_id.to_string(), contacts));
 		Ok(())
 	}
 
@@ -382,7 +382,7 @@ impl crate::platform::PersonChatPlatform for RecordingPersonChat {
 		&self,
 		product: &ProductContext,
 	) -> Result<(), truapi::latest::GenericError> {
-		self.imported.lock().unwrap().push(product.product_id.clone());
+		self.imported.lock().unwrap().push(product.product_id.to_string());
 		Ok(())
 	}
 }
@@ -952,10 +952,9 @@ mod hop {
 			authority.clone(),
 			authority,
 			ProductContext::new_with_execution(
-				product_id.to_string(),
+				ProductId::for_test(product_id),
 				ProductExecutionKind::Worker,
-			)
-			.expect("valid product id"),
+			),
 		)
 	}
 

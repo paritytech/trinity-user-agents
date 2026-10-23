@@ -9,13 +9,12 @@ protocol BottomNotificationPresenting {
     )
 }
 
+@MainActor
 extension BottomNotificationPresenting {
-    @MainActor
     func presentSuccessNotification(_ title: String, from view: ControllerBackedProtocol?) {
         presentSuccessNotification(title, from: view, completion: nil)
     }
 
-    @MainActor
     func presentSuccessNotification(
         _ title: String,
         from view: ControllerBackedProtocol?,
@@ -28,7 +27,6 @@ extension BottomNotificationPresenting {
         )
     }
 
-    @MainActor
     func presentSuccessNotification(
         _ title: String,
         from presenter: UIViewController?,

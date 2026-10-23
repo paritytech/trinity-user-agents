@@ -2460,7 +2460,7 @@ mod tests {
 	#[test]
 	fn the_mock_serves_the_chat_additions() {
 		let p = MockPlatform::new();
-		let product = ProductContext::new("chat.dot".to_string()).unwrap();
+		let product = ProductContext::new(ProductId::for_test("chat.dot"));
 
 		assert_eq!(
 			block_on(p.chat_capabilities(&product)).unwrap().names,

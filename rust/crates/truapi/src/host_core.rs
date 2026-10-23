@@ -1091,7 +1091,7 @@ impl SigningHostRuntime {
 	/// product subscribes to `room_events_subscribe`.
 	pub fn publish_chat_room_event(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		item: truapi::latest::HostChatRoomEventsSubscribeItem,
 	) -> Result<(), crate::platform::ChatFieldError> {
 		self.services.publish_chat_room_event(product_id, item)
@@ -1101,7 +1101,7 @@ impl SigningHostRuntime {
 	/// [`crate::CHAT_WAKE_HOLD_MS`]. A new wake moves the end of the hold.
 	pub fn wake_product(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		reason: crate::runtime::ChatWakeReason,
 	) -> Result<crate::runtime::ChatWakeOutcome, crate::platform::ChatFieldError> {
 		self.services.wake_product(product_id, reason)
@@ -4489,10 +4489,9 @@ mod tests {
 		let chat = ConfiguredChat { config };
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let sink = Arc::new(RecordingSink::default());
 		let platform = Arc::new(StubPlatform::default());
 		let runtime = ProductRuntime::from_platform_with_chat_platform(
@@ -4587,7 +4586,7 @@ mod tests {
 		);
 		assert_eq!(futures::executor::block_on(query.next()), None);
 		assert!(sent_frames(&sink).is_empty());
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 
 		let mut action = runtime
 			.control()
@@ -4650,7 +4649,7 @@ mod tests {
 			.expect("may be asked");
 		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
 		assert!(query.poll_next_unpin(&mut cx).is_pending());
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		let start = sent_frames(&sink).remove(0);
 		assert_eq!(start.payload.message_type, crate::frame::MESSAGE_TYPE_START);
@@ -4672,7 +4671,7 @@ mod tests {
 
 		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(page)));
 		assert_eq!(futures::executor::block_on(query.next()), None);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	// A product answers no more than the host asked for, and the core refuses

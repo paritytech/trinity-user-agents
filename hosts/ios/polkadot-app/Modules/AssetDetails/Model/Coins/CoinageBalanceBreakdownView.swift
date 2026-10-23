@@ -223,7 +223,6 @@ struct CoinageBalanceBreakdownView: View {
 
     /// The Clearing and Ready headers over the grid. The layout leaves room for them above each
     /// block, so they sit in space the coins already made rather than pushing them about.
-    @ViewBuilder
     private var blockHeaders: some View {
         ForEach(coinMetrics.blocks) { block in
             Text(String(localized: block.partition == .ready ? .coinageSpendable : .coinageLoading))
@@ -249,7 +248,6 @@ struct CoinageBalanceBreakdownView: View {
     ///
     /// Only while the coins are in the strip: spread into the grid they have headers of their own,
     /// and the runs these rule no longer exist.
-    @ViewBuilder
     private var runMarkers: some View {
         GeometryReader { proxy in
             CoinageRunMarkers(

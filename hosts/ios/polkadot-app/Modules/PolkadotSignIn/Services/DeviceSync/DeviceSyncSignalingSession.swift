@@ -69,8 +69,7 @@ extension DeviceSyncSignalingSession {
     func reconnection(
         in envelopes: [Chat.DeviceSyncSignalingEnvelope]
     ) -> (offerId: String, following: [Chat.DeviceSyncSignalingEnvelope])? {
-        guard let reconnectOfferId else { return nil }
-        guard let index = envelopes.lastIndex(where: {
+        guard let reconnectOfferId, let index = envelopes.lastIndex(where: {
             if case .reconnected = $0.message { return $0.offerId == reconnectOfferId }
             return false
         }) else { return nil }

@@ -161,12 +161,12 @@ enum SPAViewFactory {
 
 // MARK: - Rust runtime assembly
 
+@MainActor
 extension SPAViewFactory {
     /// Internal for the pages that only the rust runtime can load by address:
     /// the debug playground and a debug Pocket card's widget URL.
     /// The shared ``TrUAPIHostRuntime`` is sourced from the process-wide
     /// provider registered by `ServiceCoordinator`.
-    @MainActor
     static func createRustView(
         configuration: SPAConfiguration,
         flowState: SPAFlowState
@@ -247,9 +247,9 @@ extension SPAViewFactory {
 
 // MARK: - Private
 
+@MainActor
 private extension SPAViewFactory {
     /// Sheets get the simplified screen, since browser chrome (pills, collapse, minimize) only suits a mounted tab.
-    @MainActor
     static func createViewController(
         presenter: SPAPresenterProtocol,
         configuration: SPAConfiguration,

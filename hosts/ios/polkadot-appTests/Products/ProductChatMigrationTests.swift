@@ -40,7 +40,7 @@ struct ProductChatMigrationTests {
         let request = Chat.Request(
             requestId: "req-1",
             contactAccountId: bob,
-            timestamp: 2000,
+            timestamp: 2_000,
             status: .incoming(.new),
             message: nil
         )
@@ -67,7 +67,7 @@ struct ProductChatMigrationTests {
             origin: .user,
             creationSource: .localDevice,
             status: .outgoing(.sent),
-            timestamp: 3000,
+            timestamp: 3_000,
             content: .text("hi"),
             reactions: [],
             compactionId: nil,

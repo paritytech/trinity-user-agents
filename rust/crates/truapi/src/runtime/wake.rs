@@ -18,7 +18,7 @@ use std::{
 use truapi::latest;
 
 use crate::{
-	platform::{ChatFieldError, normalize_chat_identifier, validate_chat_room_event},
+	platform::{ChatFieldError, ProductId, normalize_chat_identifier, validate_chat_room_event},
 	runtime::RuntimeServices,
 	unix_time::current_unix_millis,
 };
@@ -142,7 +142,7 @@ impl RuntimeServices {
 	/// [`CHAT_WAKE_HOLD_MS`].
 	pub fn wake_product(
 		self: &Arc<Self>,
-		product_id: &str,
+		product_id: &ProductId,
 		reason: ChatWakeReason,
 	) -> Result<ChatWakeOutcome, ChatFieldError> {
 		self.wake_product_at(product_id, reason, current_unix_millis(), |hold| {
@@ -154,7 +154,7 @@ impl RuntimeServices {
 	/// hold, so a test holds the clock still.
 	fn wake_product_at(
 		self: &Arc<Self>,
-		product_id: &str,
+		product_id: &ProductId,
 		reason: ChatWakeReason,
 		now_ms: u64,
 		timer: impl FnOnce(Duration) -> BoxFuture<'static, ()>,
@@ -169,18 +169,18 @@ impl RuntimeServices {
 			},
 		};
 		let notification = matches!(reason, ChatWakeReason::Notification { .. });
-		let Some(start) = self.chat_wakes.begin(product_id, notification, now_ms) else {
+		let Some(start) = self.chat_wakes.begin(product_id.as_str(), notification, now_ms) else {
 			return Ok(ChatWakeOutcome::BudgetSpent);
 		};
 		if start.acquired {
 			self.worker_ledger.acquire(product_id);
 		}
 		let services = self.clone();
-		let product = product_id.to_string();
+		let product = product_id.clone();
 		let hold = timer(Duration::from_millis(CHAT_WAKE_HOLD_MS));
 		(self.spawner)(Box::pin(async move {
 			hold.await;
-			if services.chat_wakes.end(&product, start.generation) {
+			if services.chat_wakes.end(product.as_str(), start.generation) {
 				services.worker_ledger.release(&product);
 			}
 		}));
@@ -191,14 +191,14 @@ impl RuntimeServices {
 	/// product subscribes to `room_events_subscribe`.
 	pub fn publish_chat_room_event(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		item: latest::HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ChatFieldError> {
 		let item = latest::HostChatRoomEventsSubscribeItem {
 			room_id: normalize_chat_identifier("roomId", &item.room_id)?,
 			event: validate_chat_room_event(item.event)?,
 		};
-		self.chat_room_events.publish(product_id, item);
+		self.chat_room_events.publish(product_id.as_str(), item);
 		Ok(())
 	}
 }
@@ -211,6 +211,10 @@ mod tests {
 	use crate::test_support::{runtime_config, stub_platform, test_spawner};
 
 	const PRODUCT: &str = "chat.dot";
+
+	fn product() -> ProductId {
+		ProductId::for_test(PRODUCT)
+	}
 
 	/// A clock that stands still: each hold waits until the test ends it.
 	#[derive(Default)]
@@ -255,7 +259,7 @@ mod tests {
 	/// Wait until the worker of the product has `count` references.
 	fn references(services: &RuntimeServices, count: usize) {
 		let deadline = std::time::Instant::now() + Duration::from_secs(5);
-		while services.worker_ledger.count(PRODUCT) != count {
+		while services.worker_ledger.count(&product()) != count {
 			assert!(
 				std::time::Instant::now() < deadline,
 				"the worker never had {count} references"
@@ -275,13 +279,17 @@ mod tests {
 		let services = services();
 		let clock = PausedClock::default();
 
-		let outcome =
-			services.wake_product_at(PRODUCT, ChatWakeReason::ProductStart, 1_000, clock.timer());
+		let outcome = services.wake_product_at(
+			&product(),
+			ChatWakeReason::ProductStart,
+			1_000,
+			clock.timer(),
+		);
 
 		assert_eq!(outcome, Ok(ChatWakeOutcome::Held { until_ms: 31_000 }));
 		references(&services, 1);
 		std::thread::sleep(Duration::from_millis(50));
-		assert_eq!(services.worker_ledger.count(PRODUCT), 1, "the clock has not moved");
+		assert_eq!(services.worker_ledger.count(&product()), 1, "the clock has not moved");
 		clock.end(0);
 		references(&services, 0);
 	}
@@ -292,13 +300,13 @@ mod tests {
 		let services = services();
 		let clock = PausedClock::default();
 		services
-			.wake_product_at(PRODUCT, ChatWakeReason::ProductStart, 0, clock.timer())
+			.wake_product_at(&product(), ChatWakeReason::ProductStart, 0, clock.timer())
 			.unwrap();
-		services.worker_ledger.acquire(PRODUCT);
+		services.worker_ledger.acquire(&product());
 
 		clock.end(0);
 		references(&services, 1);
-		services.worker_ledger.release(PRODUCT);
+		services.worker_ledger.release(&product());
 		references(&services, 0);
 	}
 
@@ -310,9 +318,9 @@ mod tests {
 		let clock = PausedClock::default();
 
 		let first =
-			services.wake_product_at(PRODUCT, ChatWakeReason::ProductStart, 0, clock.timer());
+			services.wake_product_at(&product(), ChatWakeReason::ProductStart, 0, clock.timer());
 		let second = services.wake_product_at(
-			PRODUCT,
+			&product(),
 			ChatWakeReason::MessageInFlight { room_id: "main".to_string() },
 			10_000,
 			clock.timer(),
@@ -323,7 +331,7 @@ mod tests {
 		references(&services, 1);
 		clock.end(0);
 		std::thread::sleep(Duration::from_millis(50));
-		assert_eq!(services.worker_ledger.count(PRODUCT), 1, "the moved hold still runs");
+		assert_eq!(services.worker_ledger.count(&product()), 1, "the moved hold still runs");
 		clock.end(1);
 		references(&services, 0);
 	}
@@ -335,19 +343,23 @@ mod tests {
 		let services = services();
 		let clock = PausedClock::default();
 		for minute in 0..CHAT_NOTIFICATION_WAKES_PER_HOUR as u64 {
-			let outcome =
-				services.wake_product_at(PRODUCT, notification(), minute * 60_000, clock.timer());
+			let outcome = services.wake_product_at(
+				&product(),
+				notification(),
+				minute * 60_000,
+				clock.timer(),
+			);
 			assert!(matches!(outcome, Ok(ChatWakeOutcome::Held { .. })));
 		}
 		let held = clock.holds();
 
 		assert_eq!(
-			services.wake_product_at(PRODUCT, notification(), 59 * 60_000, clock.timer()),
+			services.wake_product_at(&product(), notification(), 59 * 60_000, clock.timer()),
 			Ok(ChatWakeOutcome::BudgetSpent)
 		);
 		assert_eq!(clock.holds(), held, "a spent budget starts no hold");
 		assert_eq!(
-			services.wake_product_at(PRODUCT, notification(), HOUR_MS, clock.timer()),
+			services.wake_product_at(&product(), notification(), HOUR_MS, clock.timer()),
 			Ok(ChatWakeOutcome::Held { until_ms: HOUR_MS + CHAT_WAKE_HOLD_MS })
 		);
 	}

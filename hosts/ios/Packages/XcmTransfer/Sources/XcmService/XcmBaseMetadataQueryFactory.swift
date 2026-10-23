@@ -20,11 +20,7 @@ class XcmBaseMetadataQueryFactory {
 
             guard
                 let typeName = oneOfTypes.first(where: { codingFactory.hasType(for: $0) }),
-                let node = codingFactory.getTypeNode(for: typeName) else {
-                return nil
-            }
-
-            guard let versionNode = node as? SiVariantNode else {
+                let node = codingFactory.getTypeNode(for: typeName), let versionNode = node as? SiVariantNode else {
                 return nil
             }
 

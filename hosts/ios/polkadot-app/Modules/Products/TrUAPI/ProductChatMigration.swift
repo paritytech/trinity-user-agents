@@ -17,7 +17,8 @@ final class NativeChatHistoryExporter: NativeChatHistoryExporting, @unchecked Se
     private let messages: ChatMessageRepositoryMaking
 
     init(
-        contacts: ChatContactRepositoryMaking = ChatContactRepositoryFactory(storageFacade: UserDataStorageFacade.shared),
+        contacts: ChatContactRepositoryMaking = ChatContactRepositoryFactory(storageFacade: UserDataStorageFacade
+            .shared),
         messages: ChatMessageRepositoryMaking = ChatMessageRepositoryFactory()
     ) {
         self.contacts = contacts
@@ -63,11 +64,12 @@ private extension ProductChatHistoryExport {
             try ScaleOption(value: contact.username).encode(scaleEncoder: encoder)
             encoder.appendRaw(data: contact.publicKey)
             try ScaleOption(value: contact.pushToken).encode(scaleEncoder: encoder)
-            let platform: UInt8? = switch contact.peerPlatform {
-            case .android: Self.tokenPlatformAndroid
-            case .ios: Self.tokenPlatformIos
-            case nil: nil
-            }
+            let platform: UInt8? =
+                switch contact.peerPlatform {
+                case .android: Self.tokenPlatformAndroid
+                case .ios: Self.tokenPlatformIos
+                case nil: nil
+                }
             try ScaleOption(value: platform).encode(scaleEncoder: encoder)
             try ScaleOption(value: contact.voipPushToken).encode(scaleEncoder: encoder)
             try contact.isBlocked.encode(scaleEncoder: encoder)
@@ -90,11 +92,13 @@ private extension ProductChatHistoryExport {
             encoder.appendRaw(data: request.contactAccountId)
             try request.timestamp.encode(scaleEncoder: encoder)
             try request.isOutgoing.encode(scaleEncoder: encoder)
-            let status: UInt8 = switch request.status {
-            case .outgoing, .incoming(.new): 0
-            case .incoming(.accepted): 1
-            case .incoming(.declined): 2
-            }
+            let status: UInt8 =
+                switch request.status {
+                case .outgoing,
+                     .incoming(.new): 0
+                case .incoming(.accepted): 1
+                case .incoming(.declined): 2
+                }
             try status.encode(scaleEncoder: encoder)
             try (request.message?.status == .outgoing(.sent)).encode(scaleEncoder: encoder)
             try ScaleOption<String>(value: nil).encode(scaleEncoder: encoder)
@@ -115,7 +119,7 @@ private extension ProductChatHistoryExport {
     }
 
     func milliseconds(_ date: Date?) -> UInt64? {
-        date.map { UInt64(max(0, $0.timeIntervalSince1970 * 1000)) }
+        date.map { UInt64(max(0, $0.timeIntervalSince1970 * 1_000)) }
     }
 }
 
@@ -197,7 +201,10 @@ private extension ProductChatMigration {
         try directory.setResourceValues(values)
         try history.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         if try await !importKey(deviceKey()) {
-            logger.warning("The core keeps another chat device key; contacts of the native chat may not reach this device")
+            logger
+                .warning(
+                    "The core keeps another chat device key; contacts of the native chat may not reach this device"
+                )
         }
     }
 }

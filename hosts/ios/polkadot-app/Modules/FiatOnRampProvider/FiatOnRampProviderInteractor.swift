@@ -87,11 +87,7 @@ private extension FiatOnRampProviderInteractor {
     func filterProviders(
         _ providers: [FiatOnrampProviderSummary]
     ) -> [FiatOnrampProviderSummary] {
-        guard let purchaseLimit else {
-            return providers
-        }
-
-        guard let providerDetails = purchaseLimit.serviceProviderDetails,
+        guard let purchaseLimit, let providerDetails = purchaseLimit.serviceProviderDetails,
               !providerDetails.isEmpty else {
             return providers
         }

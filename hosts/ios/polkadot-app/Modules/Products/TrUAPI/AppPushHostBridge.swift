@@ -50,7 +50,7 @@ final class AppPushHostBridge: PushHostBridge, @unchecked Sendable {
     }
 
     func pushTokens() async throws -> HostPushTokens {
-        HostPushTokens(service: .apns, token: deviceToken()?.toHex(), voipToken: await voipToken()?.toHex())
+        await HostPushTokens(service: .apns, token: deviceToken()?.toHex(), voipToken: voipToken()?.toHex())
     }
 }
 

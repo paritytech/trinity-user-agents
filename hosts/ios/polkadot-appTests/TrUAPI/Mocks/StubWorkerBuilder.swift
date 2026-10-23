@@ -41,6 +41,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         get { state.withLock { $0.engine } }
         set { state.withLock { $0.engine = newValue } }
     }
+
     /// Advances only when a test resumes a sleep, so the pauses inside a boot
     /// are placed by the test rather than by the wall clock.
     let clock = ManualClock()

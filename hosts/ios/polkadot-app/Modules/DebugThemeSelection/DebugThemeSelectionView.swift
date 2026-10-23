@@ -148,7 +148,6 @@ struct DebugThemeSelectionView: View {
 
     // MARK: Pieces
 
-    @ViewBuilder
     private func section(title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())

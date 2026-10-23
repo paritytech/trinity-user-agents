@@ -146,9 +146,8 @@ private extension ProductBotProvider {
     /// The TLD wait is bounded because every other product's bot is built after it, and a device
     /// that can never read the TLD must not cost the products that do not need it.
     func hostPlacedProducts() async -> [Product] {
-        guard settingsManager.isHostPlacementEnabled else { return [] }
-
-        guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
+        guard settingsManager.isHostPlacementEnabled,
+              let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
         // The chat product is placed only on an install whose chats it runs (HX2).
         let chatProduct = PersonChatMode.isProductChat

@@ -51,19 +51,17 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
     }
 }
 
+@MainActor
 private extension WKWebViewJSEngine {
-    @MainActor
     func performGetState() -> JSEngineState {
         state
     }
 
-    @MainActor
     func performDestroy() {
         state = .destroyed
         cleanup()
     }
 
-    @MainActor
     func performRegisterFunction(name: String, handler: @escaping JSNativeHandler) {
         let alreadyRegistered = messageHandlers[name] != nil
 
@@ -85,7 +83,6 @@ private extension WKWebViewJSEngine {
         contentController?.add(self, name: name)
     }
 
-    @MainActor
     @discardableResult private func performEvaluation(_ script: String) async throws -> Any? {
         guard state == .ready, let webView else {
             throw JSEngineError.notReady
@@ -94,7 +91,6 @@ private extension WKWebViewJSEngine {
         return try await webView.evaluateJavaScript(script)
     }
 
-    @MainActor
     private func setupWebView(scripts: [JSEngineScript]) {
         cleanup()
 
@@ -160,7 +156,6 @@ private extension WKWebViewJSEngine {
         webView.loadHTMLString(Self.htmlTemplate, baseURL: engineBaseUrl)
     }
 
-    @MainActor
     private func attachToHostWindow(webView: WKWebView) {
         guard let hostWindow = hostWindowProvider() else {
             logger.warning(
@@ -172,7 +167,6 @@ private extension WKWebViewJSEngine {
         hostWindow.addSubview(webView)
     }
 
-    @MainActor
     private func cleanup() {
         contentController?.removeAllScriptMessageHandlers()
         webView?.navigationDelegate = nil
@@ -182,7 +176,6 @@ private extension WKWebViewJSEngine {
         webView = nil
     }
 
-    @MainActor
     private func completeInitialization(error: Error? = nil) {
         guard let continuation = initContinuation else { return }
         initContinuation = nil

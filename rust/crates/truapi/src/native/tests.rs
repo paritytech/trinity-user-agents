@@ -1749,9 +1749,10 @@ fn chat_adapter() -> (Arc<EventCallbacks>, ChatCallbackPlatform, ProductContext)
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	(callbacks, platform, product)
 }
 

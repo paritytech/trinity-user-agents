@@ -67,7 +67,6 @@ struct AppPushHostBridgeTests {
 
         #expect(tokens == HostPushTokens(service: .apns, token: "a1b2", voipToken: "c3"))
     }
-
 }
 
 private final class RecordingRelay: ProductPushRelaying, @unchecked Sendable {

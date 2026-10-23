@@ -83,15 +83,8 @@ final class SdpCoder {
         }
 
         let addressString = String(parts[4])
-        guard let address = MinimalCandidate.IPAddress(addressString: addressString) else {
-            throw SdpCodingError.invalidCandidateFormat
-        }
-
-        guard let port = UInt16(parts[5]) else {
-            throw SdpCodingError.invalidCandidateFormat
-        }
-
-        guard parts[6] == "typ" else {
+        guard let address = MinimalCandidate.IPAddress(addressString: addressString), let port = UInt16(parts[5]),
+              parts[6] == "typ" else {
             throw SdpCodingError.invalidCandidateFormat
         }
 

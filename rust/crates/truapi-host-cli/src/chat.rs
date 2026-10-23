@@ -1227,9 +1227,11 @@ mod tests {
 	use super::*;
 	use parity_scale_codec::Decode;
 	use std::fs::read_to_string;
-	use truapi::platform::ProductId;
-	use truapi::latest::{
-		ChatCallClose, ChatPaymentRecord, ChatPreviewReaction, HostChatSetRoomFooterRequest,
+	use truapi::{
+		latest::{
+			ChatCallClose, ChatPaymentRecord, ChatPreviewReaction, HostChatSetRoomFooterRequest,
+		},
+		platform::ProductId,
 	};
 
 	/// The reserved participant id of the product itself.

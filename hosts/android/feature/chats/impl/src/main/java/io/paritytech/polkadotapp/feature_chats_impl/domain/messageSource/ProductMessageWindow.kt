@@ -129,10 +129,10 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
 
         if (pages.isEmpty()) pages += Page(anchor = ChatPageAnchorModel.Before(null), next = null, ids = emptyList())
 
+        // A new message goes last whatever its time, as the product orders it and as the native chat places a message
+        // of a contact session (base ChatMessagePlacement.Latest).
         val page = pages.last()
-        val lastEarlier = page.ids.indexOfLast { id -> (messages[id]?.timestamp ?: 0) <= message.timestamp }
-        val ids = page.ids.toMutableList().apply { add(lastEarlier + 1, message.messageId) }
-        pages[pages.lastIndex] = page.copy(ids = ids)
+        pages[pages.lastIndex] = page.copy(ids = page.ids + message.messageId)
         messages[message.messageId] = message
 
         dropOlderPagesIfNeeded()

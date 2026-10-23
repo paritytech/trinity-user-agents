@@ -24,12 +24,8 @@ extension EditHistoryInteractor: EditHistoryInteractorInputProtocol {
     func fetchEditHistory() {
         Task {
             guard let messages = try? await repository.fetchAllOperation(with: RepositoryFetchOptions())
-                .asyncExecute() else {
-                return
-            }
-
-            guard let originalMessage = messages.first(where: { $0.identifier == messageId }),
-                  let originalText = originalMessage.content.originalMessageText else {
+                .asyncExecute(), let originalMessage = messages.first(where: { $0.identifier == messageId }),
+                let originalText = originalMessage.content.originalMessageText else {
                 return
             }
 

@@ -47,8 +47,7 @@ final class WalletQRScanPresenter: QRScannerPresenter {
             lastHandledCode = nil
         }
 
-        guard view?.isCoveredByModal == false else { return }
-        guard lastHandledCode != code else { return }
+        guard view?.isCoveredByModal == false, lastHandledCode != code else { return }
         lastHandledCode = code
 
         if let receipt = dsfinvkParser.tryParse(code) {

@@ -229,9 +229,9 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     }
 }
 
+@MainActor
 extension ServiceCoordinator {
-    @MainActor
-    // swiftlint:disable:next function_body_length
+     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 

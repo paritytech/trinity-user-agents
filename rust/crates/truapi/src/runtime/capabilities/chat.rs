@@ -225,10 +225,10 @@ impl Chat for ProductRuntimeHost {
 				Err(refusal) => Err(CallError::Domain(refusal.into())),
 				Ok(room_id) => {
 					let limits = &self.connection.services.chat_rate_limits;
-					limits.feed.forget(&self.connection.product.product_id, &room_id);
-					limits.preview.forget(&self.connection.product.product_id, &room_id);
-					limits.contact.forget(&self.connection.product.product_id, &room_id);
-					limits.call.forget(&self.connection.product.product_id, &room_id);
+					limits.feed.forget(self.connection.product.product_id.as_str(), &room_id);
+					limits.preview.forget(self.connection.product.product_id.as_str(), &room_id);
+					limits.contact.forget(self.connection.product.product_id.as_str(), &room_id);
+					limits.call.forget(self.connection.product.product_id.as_str(), &room_id);
 					self.forget_chat_staging(&room_id);
 					self.connection.services.hold_chat_call(
 						&self.connection.product.product_id,
@@ -358,7 +358,7 @@ impl Chat for ProductRuntimeHost {
 			.connection
 			.services
 			.chat_room_events
-			.subscribe::<latest::GenericError>(&self.connection.product.product_id)
+			.subscribe::<latest::GenericError>(self.connection.product.product_id.as_str())
 			.map(move |item| match item {
 				Ok(item) => Ok(HostChatRoomEventsSubscribeItem::from_latest(item, version)),
 				Err(error) => Err(from_latest_error(error, version)),
@@ -550,7 +550,7 @@ impl ProductRuntimeHost {
 		}
 		if let Some(limiter) = limiter &&
 			!limiter.try_acquire(
-				&self.connection.product.product_id,
+				self.connection.product.product_id.as_str(),
 				&room_id,
 				current_unix_millis(),
 			) {
@@ -694,7 +694,7 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		platform::{CHAT_FEED_UPDATES_PER_SECOND, ProductContext, ProductExecutionKind},
+		platform::{CHAT_FEED_UPDATES_PER_SECOND, ProductContext, ProductExecutionKind, ProductId},
 		runtime::{PairingHostRole, RuntimeServices},
 		test_support::{runtime_config, session_info, stub_platform, test_spawner},
 	};
@@ -903,10 +903,9 @@ mod tests {
 	) -> ProductRuntimeHost {
 		let (host_config, _) = runtime_config(product_id);
 		let product = ProductContext::new_with_execution(
-			product_id.to_string(),
+			ProductId::for_test(product_id),
 			ProductExecutionKind::Worker,
-		)
-		.expect("test chat product context is valid");
+		);
 		let services = RuntimeServices::new(
 			platform,
 			host_config.host.host_info.clone(),
@@ -922,7 +921,7 @@ mod tests {
 			services,
 			adapters,
 			pairing_host.clone(),
-			pairing_host,
+			pairing_host.session().clone(),
 			product,
 		);
 		host.test_session_state().set_session(session_info());
@@ -1327,7 +1326,13 @@ mod tests {
 	fn the_call_of_a_room_holds_the_worker() {
 		let chat = RecordingHost::with_rooms(&[hosted("main"), hosted("other")]);
 		let runtime = chat_runtime(chat.clone());
-		let references = || runtime.connection.services.worker_ledger.count("chat.dot");
+		let references = || {
+			runtime
+				.connection
+				.services
+				.worker_ledger
+				.count(&ProductId::for_test("chat.dot"))
+		};
 
 		assert!(set_call(&runtime, "main", Some(ringing())).is_err());
 		assert_eq!(references(), 0);
@@ -1534,11 +1539,25 @@ mod tests {
 			runtime.connection.wake(notification()),
 			Ok(crate::runtime::ChatWakeOutcome::Held { .. })
 		));
-		assert_eq!(runtime.connection.services.worker_ledger.count("chat.dot"), 1);
+		assert_eq!(
+			runtime
+				.connection
+				.services
+				.worker_ledger
+				.count(&ProductId::for_test("chat.dot")),
+			1
+		);
 		for _ in 1..crate::runtime::CHAT_NOTIFICATION_WAKES_PER_HOUR {
 			runtime.connection.wake(notification()).expect("a valid reason");
 		}
-		assert_eq!(runtime.connection.services.worker_ledger.count("chat.dot"), 1);
+		assert_eq!(
+			runtime
+				.connection
+				.services
+				.worker_ledger
+				.count(&ProductId::for_test("chat.dot")),
+			1
+		);
 		assert!(matches!(
 			runtime.connection.wake(notification()),
 			Ok(crate::runtime::ChatWakeOutcome::BudgetSpent)

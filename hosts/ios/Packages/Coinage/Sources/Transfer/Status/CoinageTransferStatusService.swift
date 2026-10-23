@@ -116,12 +116,9 @@ extension CoinageTransferStatusService {
         let minted = tracked
             .filter { $0.state.minterStatus == .finalizedSuccess }
             .map(\.coin.publicKey)
-        guard !minted.isEmpty else { return [:] }
-
-        guard let view = try? await chainViewFactory.pin(chainId: chainId) else { return [:] }
-        guard
-            let responses = try? await coinOnChainQuery.fetchCoins(for: minted, atBlockHash: view.finalizedHead.hash),
-            responses.count == minted.count
+        guard !minted.isEmpty, let view = try? await chainViewFactory.pin(chainId: chainId),
+              let responses = try? await coinOnChainQuery.fetchCoins(for: minted, atBlockHash: view.finalizedHead.hash),
+              responses.count == minted.count
         else {
             return [:]
         }

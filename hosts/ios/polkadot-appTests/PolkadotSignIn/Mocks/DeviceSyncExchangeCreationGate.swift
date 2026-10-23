@@ -10,8 +10,7 @@ actor DeviceSyncExchangeCreationGate {
     }
 
     func wait(connection: Int) async {
-        guard connection == blockedConnection else { return }
-        guard !isOpen else { return }
+        guard connection == blockedConnection, !isOpen else { return }
         for await _ in stream {
             return
         }

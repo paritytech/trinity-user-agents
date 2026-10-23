@@ -60,11 +60,7 @@ final class QRCaptureService: NSObject {
         )
         let device = discoverySession.devices.first
 
-        guard let camera = device else {
-            throw QRCaptureServiceError.deviceAccessRestricted
-        }
-
-        guard let input = try? AVCaptureDeviceInput(device: camera) else {
+        guard let camera = device, let input = try? AVCaptureDeviceInput(device: camera) else {
             throw QRCaptureServiceError.deviceAccessRestricted
         }
 
@@ -181,11 +177,7 @@ extension QRCaptureService: AVCaptureMetadataOutputObjectsDelegate {
         didOutput metadataObjects: [AVMetadataObject],
         from _: AVCaptureConnection
     ) {
-        guard isRecognitionArmed else {
-            return
-        }
-
-        guard let metadata = metadataObjects.first as? AVMetadataMachineReadableCodeObject else {
+        guard isRecognitionArmed, let metadata = metadataObjects.first as? AVMetadataMachineReadableCodeObject else {
             return
         }
 

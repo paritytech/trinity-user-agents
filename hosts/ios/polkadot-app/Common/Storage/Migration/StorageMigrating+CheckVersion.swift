@@ -11,11 +11,7 @@ extension StorageMigrating {
     ) -> Bool where T: Version, T.RawValue == String {
         let storageExists = fileManager.fileExists(atPath: storeURL.path)
 
-        guard storageExists else {
-            return false
-        }
-
-        guard let metadata = NSPersistentStoreCoordinator.metadata(at: storeURL) else {
+        guard storageExists, let metadata = NSPersistentStoreCoordinator.metadata(at: storeURL) else {
             return false
         }
 

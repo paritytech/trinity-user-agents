@@ -6,11 +6,7 @@ extension String {
 
         guard
             baseExpComponents.count == 2,
-            let exponent = Int(baseExpComponents[1].trimmingCharacters(in: .whitespaces)) else {
-            return nil
-        }
-
-        guard exponent >= 0 else {
+            let exponent = Int(baseExpComponents[1].trimmingCharacters(in: .whitespaces)), exponent >= 0 else {
             return nil
         }
 

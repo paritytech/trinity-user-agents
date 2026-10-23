@@ -222,7 +222,7 @@ class ProductMessageSourceTest {
         source.apply(productRoom, ProductFeedUpdateModel.StatusChanged("m11", ProductMessageStatusModel.READ))
 
         val snapshot = source.snapshot
-        assertEquals(listOf("m0", "m1", "m2", "m3", "m4", "late", "m5", "m6", "m7", "m8", "m9", "m10", "m11"), source.oldestFirstIds())
+        assertEquals(listOf("m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "m9", "m10", "late", "m11"), source.oldestFirstIds())
         assertEquals(edited, snapshot.messages.single { it.id == "m3" }.content)
         assertEquals("replaced", (snapshot.messages.single { it.id == "m2" }.content as ChatMessage.Content.Text).text)
         assertFalse("m2" in snapshot.revisions)

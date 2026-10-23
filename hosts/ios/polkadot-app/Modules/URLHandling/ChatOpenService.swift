@@ -25,16 +25,12 @@ final class ChatOpenService {
 
 extension ChatOpenService: URLHandlingServiceProtocol {
     func handle(url: URL) -> Bool {
-        guard url.host() == host else {
-            return false
-        }
-
-        guard
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let queryItems = components.queryItems,
-            let rawChatId = queryItems.first(where: { $0.name == "id" })?.value,
-            let chatId = Chat.Id.fromRawRepresentation(rawChatId),
-            let shouldForce = queryItems.first(where: { $0.name == "force" })?.value.flatMap(Bool.init)
+        guard url.host() == host,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems,
+              let rawChatId = queryItems.first(where: { $0.name == "id" })?.value,
+              let chatId = Chat.Id.fromRawRepresentation(rawChatId),
+              let shouldForce = queryItems.first(where: { $0.name == "force" })?.value.flatMap(Bool.init)
         else {
             return false
         }

@@ -44,8 +44,8 @@ struct ProductPayments {
         )
         guard decision == .approved else { return false }
 
-        guard recyclingStrategy.strategy != .minPrivacy else { return true }
-        guard try await !support.coinageService.canExecuteExternalPaymentPrivately(amount: amount) else {
+        guard recyclingStrategy.strategy != .minPrivacy,
+              try await !support.coinageService.canExecuteExternalPaymentPrivately(amount: amount) else {
             return true
         }
 

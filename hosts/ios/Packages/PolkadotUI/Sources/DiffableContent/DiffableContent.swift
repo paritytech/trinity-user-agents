@@ -209,10 +209,8 @@ public extension DiffableCollectionViewProviding {
         var reloadIds: [ItemIdentifierType] = []
         for section in sectionProviders {
             for after in section.itemProviders {
-                guard let before = beforeMap[after.id] else {
-                    continue
-                }
-                guard AnyHashable(before.configuration) != AnyHashable(after.configuration) else {
+                guard let before = beforeMap[after.id],
+                      AnyHashable(before.configuration) != AnyHashable(after.configuration) else {
                     continue
                 }
                 if before.reuseIdentifier != after.reuseIdentifier {

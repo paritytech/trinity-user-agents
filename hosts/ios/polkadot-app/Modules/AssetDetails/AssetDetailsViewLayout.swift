@@ -49,7 +49,6 @@ struct AssetDetailsView: View {
         }
     }
 
-    @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
             if viewModel.showsAccountBackupPending {

@@ -112,11 +112,8 @@ extension AuthorizationPresentable {
             completionBlock(true)
             return
         #else
-            guard !isAuthorizing else {
-                return
-            }
-
-            guard let presentingController = UIWindow.topWindow?.rootViewController?.topModalViewController else {
+            guard !isAuthorizing,
+                  let presentingController = UIWindow.topWindow?.rootViewController?.topModalViewController else {
                 return
             }
 
@@ -146,11 +143,8 @@ extension AuthorizationPresentable {
             completionBlock(true)
             return
         #else
-            guard !isAuthorizing else {
-                return
-            }
-
-            guard let presentingController = UIWindow.topWindow?.rootViewController?.topModalViewController else {
+            guard !isAuthorizing,
+                  let presentingController = UIWindow.topWindow?.rootViewController?.topModalViewController else {
                 return
             }
 

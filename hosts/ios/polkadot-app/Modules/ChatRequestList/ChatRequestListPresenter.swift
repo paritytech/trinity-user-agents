@@ -62,17 +62,9 @@ private extension ChatRequestListPresenter {
                 return makeItem(from: chat, contact: contact)
             }
 
-            guard case let .person(contact) = chat.peer else {
-                return nil
-            }
-
-            guard let chatRequest = contact.chatRequest else {
-                return nil
-            }
-
-            guard
-                chatRequest.isIncoming,
-                case let .incoming(incomingStatus) = chatRequest.message?.status else {
+            guard case let .person(contact) = chat.peer, let chatRequest = contact.chatRequest,
+                  chatRequest.isIncoming,
+                  case let .incoming(incomingStatus) = chatRequest.message?.status else {
                 return nil
             }
 

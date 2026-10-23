@@ -120,7 +120,7 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func didEndEditingInput(_ input: String?) {
         guard
             let inputText = input?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             !inputText.isEmpty
         else {
             return

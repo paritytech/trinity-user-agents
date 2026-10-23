@@ -100,7 +100,6 @@ struct WalletView: View {
         )
     }
 
-    @ViewBuilder
     private var assetCard: some View {
         AssetDetailsView(
             viewModel: viewModel.assetDetailsViewModel,
@@ -181,7 +180,6 @@ struct WalletView: View {
 }
 
 private extension WalletView {
-    @ViewBuilder
     var collectiblesCard: some View {
         CollectiblesCardView(
             isExpanded: viewModel.expandedSection == .collectiblesDetails,

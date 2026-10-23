@@ -26,11 +26,8 @@ public struct XcmLegacyTransfers: Decodable {
     }
 
     public func getReservePath(for chainAssetId: ChainAssetId) -> XcmAsset.ReservePath? {
-        guard let asset = asset(from: chainAssetId) else {
-            return nil
-        }
-
-        guard let assetLocation = assetLocation(for: asset.assetLocation)?.multiLocation else {
+        guard let asset = asset(from: chainAssetId),
+              let assetLocation = assetLocation(for: asset.assetLocation)?.multiLocation else {
             return nil
         }
 

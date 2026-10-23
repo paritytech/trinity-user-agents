@@ -101,8 +101,7 @@ private final class ChainsSetupWaiter: @unchecked Sendable {
         }
 
         registry.chainsSubscribe(target, runningInQueue: syncQueue) { [weak self] changes in
-            guard let self else { return }
-            guard apply(changes, requiring: chainIds) else { return }
+            guard let self, apply(changes, requiring: chainIds) else { return }
             finish()
         }
     }

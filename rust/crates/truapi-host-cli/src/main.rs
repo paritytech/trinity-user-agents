@@ -2161,9 +2161,10 @@ async fn run_dev(
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
-	let surface_product_id = truapi::platform::ProductContext::new(product_id.clone())
+	let surface_product_id = product_id
+		.parse::<truapi::platform::ProductId>()
 		.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?
-		.product_id;
+		.to_string();
 	let surface = chat_surface::ChatSurface::new(
 		chat::CliChatHost::from_env(),
 		args.worker_bundle,

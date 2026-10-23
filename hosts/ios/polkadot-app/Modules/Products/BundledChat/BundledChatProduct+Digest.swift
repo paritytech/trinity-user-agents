@@ -2,5 +2,5 @@
 
 extension BundledChatProduct {
     /// SHA-256 of `person-chat-worker.js`, pinned when the bundle was installed.
-    static let bundledWorkerSHA256 = "f3eefa6f72f40142fa9fa4fed7d62098d4ca258f82531ccc5b9f1e1670ac9523"
+    static let bundledWorkerSHA256 = "5e04c3480003f3341fe95ec67aa9c8751ac155cddfc7bb6c2b05d10d19bfdefc"
 }

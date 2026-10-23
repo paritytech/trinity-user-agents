@@ -38,8 +38,8 @@ final class TopUpAcknowledgementPresenter: IncomingPaymentAcknowledging, @unchec
     }
 }
 
+@MainActor
 private extension TopUpAcknowledgementPresenter {
-    @MainActor
     func presentMismatch(productId: ProductId, claimedAmount: Balance, requestedAmount: Balance) {
         let view = TopUpAcknowledgementViewFactory.createMismatchView(
             productId: productId,
@@ -49,12 +49,10 @@ private extension TopUpAcknowledgementPresenter {
         present(view)
     }
 
-    @MainActor
     func presentError(productId: ProductId) {
         present(TopUpAcknowledgementViewFactory.createErrorView(productId: productId))
     }
 
-    @MainActor
     func present(_ view: (any ControllerBackedProtocol)?) {
         guard let view else {
             logger.warning("Top-up acknowledgement could not build its screen")

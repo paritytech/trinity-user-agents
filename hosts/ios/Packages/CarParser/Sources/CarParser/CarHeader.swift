@@ -20,11 +20,7 @@ enum CarHeaderDecoder {
     static func decode(from data: Data) throws -> CarHeader {
         let cbor = try CBOR.decode(Array(data))
 
-        guard let cbor else {
-            throw CarHeaderError.invalidCborStructure
-        }
-
-        guard case let .map(map) = cbor else {
+        guard let cbor, case let .map(map) = cbor else {
             throw CarHeaderError.invalidCborStructure
         }
 

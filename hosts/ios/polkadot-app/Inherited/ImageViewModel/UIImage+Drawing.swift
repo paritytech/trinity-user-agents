@@ -26,11 +26,7 @@ extension UIImage {
     }
 
     func crop(targetSize: CGSize, cornerRadius: CGFloat, contentScale: CGFloat) -> UIImage? {
-        guard size.width > 0, size.height > 0 else {
-            return nil
-        }
-
-        guard targetSize.width > 0, targetSize.height > 0 else {
+        guard size.width > 0, size.height > 0, targetSize.width > 0, targetSize.height > 0 else {
             return nil
         }
 

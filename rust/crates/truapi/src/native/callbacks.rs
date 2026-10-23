@@ -540,7 +540,7 @@ pub trait NativePersonChatCallbacks: Send + Sync {
 	/// Replace the chat contacts of `product_id`.
 	async fn set_contacts(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		contacts: Vec<crate::platform::HostChatContact>,
 	) -> Result<(), HostRejection>;
 
@@ -548,13 +548,13 @@ pub trait NativePersonChatCallbacks: Send + Sync {
 	/// staged for `product_id`, and the size of the whole export.
 	async fn history_export(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		offset: u64,
 		max_len: u32,
 	) -> Result<crate::platform::HostHistoryExportChunk, HostRejection>;
 
 	/// `product_id` imported the staged history.
-	async fn history_imported(&self, product_id: String) -> Result<(), HostRejection>;
+	async fn history_imported(&self, product_id: ProductId) -> Result<(), HostRejection>;
 }
 
 /// Native form of [`crate::platform::PushPlatform`], whose rules it follows.
@@ -568,7 +568,7 @@ pub trait NativePushCallbacks: Send + Sync {
 	/// whether the push service took it.
 	async fn send_push(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		delivery: crate::platform::HostPushDelivery,
 	) -> Result<bool, HostRejection>;
 
@@ -578,7 +578,7 @@ pub trait NativePushCallbacks: Send + Sync {
 	/// Replace the chat push routes of `product_id` with `routes`.
 	async fn set_chat_push_routes(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		routes: Vec<crate::platform::HostChatPushRoute>,
 	) -> Result<(), HostRejection>;
 }
@@ -594,7 +594,7 @@ pub trait NativeCallMediaCallbacks: Send + Sync {
 	/// Start the media of `call_id` of `room_id` of `product_id`.
 	async fn start_call_media(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		room_id: String,
 		call_id: String,
 		video: bool,
@@ -604,7 +604,7 @@ pub trait NativeCallMediaCallbacks: Send + Sync {
 	/// A media signal of the other side of `call_id`.
 	async fn call_media_signal(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		room_id: String,
 		call_id: String,
 		signal: Vec<u8>,
@@ -613,7 +613,7 @@ pub trait NativeCallMediaCallbacks: Send + Sync {
 	/// Stop the media of `call_id`.
 	async fn stop_call_media(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		room_id: String,
 		call_id: String,
 	) -> Result<(), HostRejection>;

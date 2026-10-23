@@ -85,20 +85,12 @@ private extension CreateTransactionExtensionResolver {
             for: ext.id,
             extensionVersion: extensionVersion,
             metadata: codingFactory.metadata
-        ) else {
-            return false
-        }
-
-        guard let json = try? decodeExplicitJSON(
+        ), let json = try? decodeExplicitJSON(
             ext: ext,
             coder: coder,
             extensionVersion: extensionVersion,
             codingFactory: codingFactory
-        ) else {
-            return false
-        }
-
-        guard let mode = try? json.map(
+        ), let mode = try? json.map(
             to: TransactionExtension.VerifySignature.Mode.self
         ) else {
             return false

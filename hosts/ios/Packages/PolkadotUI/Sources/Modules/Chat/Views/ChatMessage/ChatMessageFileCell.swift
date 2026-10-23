@@ -24,7 +24,6 @@ public struct ChatMessageFileCell: View, Hashable {
 }
 
 private extension ChatMessageFileCell {
-    @ViewBuilder
     var metadataView: some View {
         HStack(alignment: .center, spacing: 12) {
             if let preview = viewModel.preview {
@@ -59,7 +58,6 @@ private extension ChatMessageFileCell {
         .background(Color(.fill8))
     }
 
-    @ViewBuilder
     func textView(with text: String) -> some View {
         Text(text)
             .typography(.paragraphLarge)

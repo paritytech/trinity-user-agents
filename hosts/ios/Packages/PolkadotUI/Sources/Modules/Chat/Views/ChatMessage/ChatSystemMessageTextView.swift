@@ -23,7 +23,6 @@ public struct ChatSystemMessageTextView: View, Hashable {
 // MARK: - Subviews
 
 private extension ChatSystemMessageTextView {
-    @ViewBuilder
     func text(_ text: AttributedString) -> some View {
         Text(text)
             .typography(.bodyMedium)
@@ -31,7 +30,6 @@ private extension ChatSystemMessageTextView {
             .multilineTextAlignment(.center)
     }
 
-    @ViewBuilder
     func parts(_ parts: [Part]) -> some View {
         parts
             .map { part in

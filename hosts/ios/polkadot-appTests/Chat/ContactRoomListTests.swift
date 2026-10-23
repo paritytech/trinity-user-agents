@@ -157,6 +157,92 @@ struct ContactRoomListTests {
         #expect(last.resolveCallState() == .finished(durationMs: 66_000))
     }
 
+    /// The native chat keeps each signal of a call as a message of its chat: a call that ends after a text sent
+    /// during it is the last message of the list again.
+    @Test func aCallThatEndsAfterTheLastMessageShowsTheCall() async throws {
+        let call = message(.call(ChatCallRecord(
+            video: false,
+            answeredAt: 2_000,
+            closed: ChatCallClose(at: 62_000, byUser: true)
+        )), id: "call")
+        let text = message(.text(text: "During the call"), from: "user", at: 30_000)
+
+        let row = try await row(lastMessage: text, lastCall: call)
+
+        #expect(row.date == Date.fromChatTimestamp(62_000))
+        #expect(row.messageKind == .voiceCall)
+        #expect(row.message == ChatCallMessageConfiguration.title(
+            direction: .incoming,
+            callType: .audio,
+            state: .finished(duration: DateComponentsFormatter.secondsMinutesAbbreviated.string(from: 60) ?? "")
+        ))
+    }
+
+    @Test func aTextAfterTheEndOfTheCallShowsTheText() async throws {
+        let call = message(.call(ChatCallRecord(
+            video: false,
+            answeredAt: 2_000,
+            closed: ChatCallClose(at: 20_000, byUser: false)
+        )), id: "call")
+        let text = message(.text(text: "Bye"), at: 30_000)
+
+        let row = try await row(lastMessage: text, lastCall: call)
+
+        #expect(row.date == Date.fromChatTimestamp(30_000))
+        #expect(row.message == "Bye")
+        #expect(row.messageKind == .default)
+    }
+
+    @Test func aCallAnsweredAfterTheLastMessageShowsTheRunningCall() async throws {
+        let call = message(.call(ChatCallRecord(video: true, answeredAt: 8_000, closed: nil)), id: "call")
+        let text = message(.text(text: "Calling you"), from: "user", at: 3_000)
+
+        let row = try await row(lastMessage: text, lastCall: call)
+
+        #expect(row.date == Date.fromChatTimestamp(8_000))
+        #expect(row.messageKind == .videoCall)
+        #expect(row.message == ChatCallMessageConfiguration.title(
+            direction: .incoming,
+            callType: .video,
+            state: .active
+        ))
+    }
+
+    /// A ringing call has no end or answer, so a message after its offer stays the last message.
+    @Test func aMessageAfterARingingCallStaysTheLastMessage() async throws {
+        let call = message(.call(ChatCallRecord(video: false, answeredAt: nil, closed: nil)), id: "call")
+        let text = message(.text(text: "Pick up"), at: 4_000)
+
+        let row = try await row(lastMessage: text, lastCall: call)
+
+        #expect(row.date == Date.fromChatTimestamp(4_000))
+        #expect(row.message == "Pick up")
+    }
+
+    /// The list orders the room by the end of the call that it shows.
+    @Test func theListOrdersACallShownOverTheLastMessageByItsEnd() throws {
+        let call = message(.call(ChatCallRecord(
+            video: false,
+            answeredAt: 4_000,
+            closed: ChatCallClose(at: 70_000, byUser: true)
+        )), id: "call")
+        let text = message(.text(text: "During the call"), at: 10_000)
+        let preview = Chat.RoomPreview(ChatRoomPreview(
+            timestamp: text.timestamp,
+            badge: nil,
+            lastMessage: text,
+            lastReaction: nil,
+            unseenReactions: 0,
+            lastCall: call
+        ))
+
+        let last = try #require(preview.lastMessage?.localMessage(chatId: .chatExtension("chat.dot", roomId: "dm")))
+
+        #expect(last.timestamp == 70_000)
+        #expect(last.callOffer?.messageId == "call")
+        #expect(last.resolveCallState() == .finished(durationMs: 66_000))
+    }
+
     @Test func theWelcomeOfARequestShowsItsText() async throws {
         var welcome = message(.text(text: "Hi, it's Bob"), from: "user")
         welcome.request = true
@@ -207,11 +293,16 @@ struct ContactRoomListTests {
 }
 
 private extension ContactRoomListTests {
-    func message(_ body: ChatMessageBody, from participantId: String = "contact") -> ChatMessage {
+    func message(
+        _ body: ChatMessageBody,
+        from participantId: String = "contact",
+        id: String = "m1",
+        at timestamp: UInt64 = 1_000
+    ) -> ChatMessage {
         ChatMessage(
-            messageId: "m1",
+            messageId: id,
             origin: ChatMessageOrigin(participantId: participantId),
-            timestamp: 1_000,
+            timestamp: timestamp,
             body: body,
             status: .read,
             replyTo: nil,
@@ -225,6 +316,7 @@ private extension ContactRoomListTests {
     /// The row of a room that the product created, with its contact and its preview, as the store gives it.
     func row(
         lastMessage: ChatMessage,
+        lastCall: ChatMessage? = nil,
         badge: ChatRoomBadge? = nil,
         unseenReaction: Bool = false,
         state: Chat.RoomContact.State = .established,
@@ -243,7 +335,8 @@ private extension ContactRoomListTests {
             badge: badge,
             lastMessage: lastMessage,
             lastReaction: nil,
-            unseenReactions: unseenReaction ? 1 : 0
+            unseenReactions: unseenReaction ? 1 : 0,
+            lastCall: lastCall
         )))
 
         let chat = try #require(try await AnyDataProviderRepository(

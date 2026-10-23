@@ -83,10 +83,7 @@ extension FiatOnrampTrackingServicing {
         _ transaction: FiatOnrampTrackedTransaction,
         label: DepositExecLabel
     ) -> Bool {
-        guard case let .swapping(swap) = transaction.status else {
-            return false
-        }
-        guard swap.swapLabel == label else {
+        guard case let .swapping(swap) = transaction.status, swap.swapLabel == label else {
             return false
         }
         if case .inProgress = swap.status {

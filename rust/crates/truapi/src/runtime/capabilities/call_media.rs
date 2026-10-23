@@ -68,7 +68,7 @@ impl CallMedia for ProductRuntimeHost {
 				self.connection.services.call_media_platform().ok_or(CallError::Unsupported)?;
 			let (room_id, call_id) = call_of(&request.room_id, &request.call_id)?;
 			let consented = self.connection.services.chat_room_events.call_consented_within(
-				&self.connection.product.product_id,
+				self.connection.product.product_id.as_str(),
 				&room_id,
 				CALL_MEDIA_CONSENT_SECS,
 			);

@@ -77,7 +77,7 @@ impl ProductRuntimeHost {
 	/// `room_id`.
 	pub fn record_chat_staging(&self, room_id: &str, features: &latest::ChatRoomFeatures) {
 		self.connection.services.chat_staging.record(
-			&self.connection.product.product_id,
+			self.connection.product.product_id.as_str(),
 			room_id,
 			features,
 		);
@@ -88,7 +88,7 @@ impl ProductRuntimeHost {
 		self.connection
 			.services
 			.chat_staging
-			.forget(&self.connection.product.product_id, room_id);
+			.forget(self.connection.product.product_id.as_str(), room_id);
 	}
 
 	/// Whether `room_id` declares `hop_attachments`: as the core last saw it,
@@ -98,7 +98,7 @@ impl ProductRuntimeHost {
 			.connection
 			.services
 			.chat_staging
-			.declared(&self.connection.product.product_id, room_id)
+			.declared(self.connection.product.product_id.as_str(), room_id)
 		{
 			return declared;
 		}

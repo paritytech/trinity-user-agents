@@ -20,14 +20,18 @@ extension Chat.RoomConfig {
 
 extension Chat.RoomPreview {
     /// The preview with its last message as the native chat draws it. The status of a message of the contact says
-    /// whether the user saw it.
+    /// whether the user saw it. The newest call is the last message once its end or answer is newer than the newest
+    /// message, as in the native chat.
     init(_ preview: ChatRoomPreview) {
         let badge = preview.badge.map(Chat.RoomBadge.init) ?? .hostDefault
 
         self.init(
             timestamp: preview.timestamp.map { Int64(clamping: $0) },
             badge: badge,
-            lastMessage: preview.lastMessage.map { $0.previewMessage() },
+            lastMessage: Chat.RoomPreviewMessage.listed(
+                lastMessage: preview.lastMessage?.previewMessage(),
+                lastCall: preview.lastCall?.previewMessage()
+            ),
             // The native chat list draws the heart for a reaction that the user did not see, and does not count it
             // in the unread badge.
             unseenReaction: preview.unseenReactions > 0

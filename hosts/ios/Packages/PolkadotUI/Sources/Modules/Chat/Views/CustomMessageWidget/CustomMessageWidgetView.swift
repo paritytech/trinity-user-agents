@@ -272,7 +272,6 @@ private struct NodeColumnView: View {
         }
     }
 
-    @ViewBuilder
     private var childrenContent: some View {
         ForEach(children.indices, id: \.self) { index in
             WidgetNodeContent(node: children[index])
@@ -327,7 +326,6 @@ private struct NodeRowView: View {
         }
     }
 
-    @ViewBuilder
     private var childrenContent: some View {
         ForEach(children.indices, id: \.self) { index in
             WidgetNodeContent(node: children[index])

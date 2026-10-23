@@ -26,8 +26,7 @@ extension ChatMessageContainerView: UIContextMenuInteractionDelegate {
         willDisplayMenuFor _: UIContextMenuConfiguration,
         animator: (any UIContextMenuInteractionAnimating)?
     ) {
-        guard appliedConfiguration.canReact else { return }
-        guard let animator else { return }
+        guard appliedConfiguration.canReact, let animator else { return }
         let reactionPicker = makeReactionPicker()
 
         Task {
@@ -105,8 +104,7 @@ extension ChatMessageContainerView: UIContextMenuInteractionDelegate {
         let allSections = addReaction?.allSections ?? []
         let onReactionTap = addReaction?.onReactionTap
         reactionPicker.onExpandTapped = { [weak self] in
-            guard !allSections.isEmpty else { return }
-            guard let window = Self.activeReactionPicker?.window else { return }
+            guard !allSections.isEmpty, let window = Self.activeReactionPicker?.window else { return }
 
             let pickerFrame = reactionPicker.frame
             let expandedPickerHeight: CGFloat = 300
@@ -227,11 +225,7 @@ extension ChatMessageContainerView: UIContextMenuInteractionDelegate {
         for window in windows {
             guard let containerView = window.subviews.first(where: {
                 String(describing: type(of: $0)).contains(Self.sig0)
-            }) else {
-                continue
-            }
-
-            guard let previewView = findSubview(in: containerView, matching: {
+            }), let previewView = findSubview(in: containerView, matching: {
                 let name = String(describing: type(of: $0))
 
                 return name.contains(Self.sig1)

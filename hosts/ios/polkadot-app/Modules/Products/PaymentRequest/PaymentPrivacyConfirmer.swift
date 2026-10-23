@@ -24,8 +24,8 @@ final class PaymentPrivacyConfirmer: PaymentPrivacyConfirming, @unchecked Sendab
     }
 }
 
+@MainActor
 private extension PaymentPrivacyConfirmer {
-    @MainActor
     func present(amount: Balance, on router: ProductsRouting, decision: @escaping (Bool) -> Void) {
         guard let chainAsset = PaymentRequestViewFactory.mainChainAsset() else {
             decision(false)

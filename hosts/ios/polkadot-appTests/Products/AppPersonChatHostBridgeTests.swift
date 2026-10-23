@@ -25,8 +25,18 @@ struct ProductChatContactsTests {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("contacts.json")
-        let bob = HostChatContact(accountId: Data(repeating: 0xB0, count: 32), username: "bob.01", roomId: "dm-b0", blocked: false)
-        let carol = HostChatContact(accountId: Data(repeating: 0xC0, count: 32), username: nil, roomId: "dm-c0", blocked: true)
+        let bob = HostChatContact(
+            accountId: Data(repeating: 0xB0, count: 32),
+            username: "bob.01",
+            roomId: "dm-b0",
+            blocked: false
+        )
+        let carol = HostChatContact(
+            accountId: Data(repeating: 0xC0, count: 32),
+            username: nil,
+            roomId: "dm-c0",
+            blocked: true
+        )
         let bridge = AppPersonChatHostBridge(nodes: { [] }, devices: { [] }, contacts: ProductChatContacts(file: file))
 
         try await bridge.setContacts(productId: "chat.dot", contacts: [bob, carol])

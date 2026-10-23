@@ -12,16 +12,16 @@ use std::{
 
 use truapi::latest;
 
-use crate::runtime::RuntimeServices;
+use crate::{platform::ProductId, runtime::RuntimeServices};
 
 /// The rooms whose call holds a worker reference, by product and room.
 #[derive(Default)]
 pub struct ChatCallHolds {
-	rooms: Mutex<HashSet<(String, String)>>,
+	rooms: Mutex<HashSet<(ProductId, String)>>,
 }
 
 impl ChatCallHolds {
-	fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<(String, String)>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<(ProductId, String)>> {
 		self.rooms.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 }
@@ -31,11 +31,11 @@ impl RuntimeServices {
 	/// worker of `product_id`, and `None` releases it.
 	pub fn hold_chat_call(
 		self: &Arc<Self>,
-		product_id: &str,
+		product_id: &ProductId,
 		room_id: &str,
 		call: Option<&latest::ChatRoomCall>,
 	) {
-		let key = (product_id.to_string(), room_id.to_string());
+		let key = (product_id.clone(), room_id.to_string());
 		if call.is_some() {
 			if self.chat_call_holds.lock().insert(key) {
 				self.worker_ledger.acquire(product_id);
@@ -55,6 +55,10 @@ mod tests {
 
 	const PRODUCT: &str = "chat.dot";
 
+	fn product() -> ProductId {
+		ProductId::for_test(PRODUCT)
+	}
+
 	fn services() -> Arc<RuntimeServices> {
 		let (config, _) = runtime_config(PRODUCT);
 		RuntimeServices::new(
@@ -69,7 +73,7 @@ mod tests {
 
 	fn references(services: &RuntimeServices, count: usize) {
 		let deadline = std::time::Instant::now() + Duration::from_secs(5);
-		while services.worker_ledger.count(PRODUCT) != count {
+		while services.worker_ledger.count(&product()) != count {
 			assert!(
 				std::time::Instant::now() < deadline,
 				"the worker never had {count} references"
@@ -91,14 +95,14 @@ mod tests {
 	fn a_call_holds_the_worker_until_it_is_cleared() {
 		let services = services();
 
-		services.hold_chat_call(PRODUCT, "main", Some(&ringing()));
-		services.hold_chat_call(PRODUCT, "main", Some(&active()));
-		services.hold_chat_call(PRODUCT, "other", Some(&active()));
+		services.hold_chat_call(&product(), "main", Some(&ringing()));
+		services.hold_chat_call(&product(), "main", Some(&active()));
+		services.hold_chat_call(&product(), "other", Some(&active()));
 		references(&services, 2);
-		services.hold_chat_call(PRODUCT, "main", None);
-		services.hold_chat_call(PRODUCT, "main", None);
+		services.hold_chat_call(&product(), "main", None);
+		services.hold_chat_call(&product(), "main", None);
 		references(&services, 1);
-		services.hold_chat_call(PRODUCT, "other", None);
+		services.hold_chat_call(&product(), "other", None);
 		references(&services, 0);
 	}
 
@@ -107,10 +111,10 @@ mod tests {
 	#[test]
 	fn a_ringing_call_holds_the_worker_until_it_is_cleared() {
 		let services = services();
-		services.hold_chat_call(PRODUCT, "main", Some(&ringing()));
+		services.hold_chat_call(&product(), "main", Some(&ringing()));
 		std::thread::sleep(Duration::from_millis(50));
-		assert_eq!(services.worker_ledger.count(PRODUCT), 1);
-		services.hold_chat_call(PRODUCT, "main", None);
+		assert_eq!(services.worker_ledger.count(&product()), 1);
+		services.hold_chat_call(&product(), "main", None);
 		references(&services, 0);
 	}
 }

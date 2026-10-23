@@ -235,7 +235,7 @@ impl CliPlatform {
 		let started = std::time::Instant::now();
 		let result = append_product_change(&directory, product_id, values, change);
 		tracing::debug!(
-			product_id,
+			%product_id,
 			bytes = match change {
 				StorageChange::Set(_, value) => value.len(),
 				StorageChange::Clear(_) => 0,
@@ -1141,7 +1141,7 @@ const LOG_HEADER_BYTES: usize = 9;
 /// [`PRODUCT_LOG_COMPACTION_BYTES`]) is replaced by a new snapshot.
 fn append_product_change(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 	change: StorageChange<'_>,
 ) -> Result<(), String> {
@@ -1158,7 +1158,7 @@ fn append_product_change(
 /// [`PRODUCT_LOG_COMPACTION_BYTES`].
 fn append_product_change_within(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 	change: StorageChange<'_>,
 	compaction_bytes: u64,
@@ -1190,7 +1190,7 @@ fn append_product_change_within(
 }
 
 /// The log beside the snapshot of `product_id`.
-fn product_log_path(directory: &Path, product_id: &str) -> PathBuf {
+fn product_log_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	product_storage_path(directory, product_id).with_extension("log")
 }
 
@@ -2129,7 +2129,7 @@ mod tests {
 	#[test]
 	fn product_storage_writes_after_the_first_go_to_the_log() {
 		let temporary = tempdir().expect("create product storage root");
-		let key = |name: &str| ProductStorageKey::new("log.dot", name).expect("product key");
+		let key = |name: &str| ProductStorageKey::new(ProductId::for_test("log.dot"), name);
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -2137,8 +2137,8 @@ mod tests {
 			None,
 		);
 		let directory = temporary.path().join("storage").join("test");
-		let snapshot = product_storage_path(&directory, "log.dot");
-		let log = product_log_path(&directory, "log.dot");
+		let snapshot = product_storage_path(&directory, &ProductId::for_test("log.dot"));
+		let log = product_log_path(&directory, &ProductId::for_test("log.dot"));
 		futures::executor::block_on(async {
 			platform.write(key("a").encode(), b"one".to_vec()).await.expect("first write");
 			assert!(snapshot.is_file());
@@ -2159,7 +2159,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&directory),
 			HashMap::from([(
-				"log.dot".to_string(),
+				ProductId::for_test("log.dot"),
 				HashMap::from([
 					("a".to_string(), b"two".to_vec()),
 					("b".to_string(), vec![7; 1000]),
@@ -2176,20 +2176,26 @@ mod tests {
 		let temporary = tempdir().expect("create product storage root");
 		let directory = temporary.path().join("storage");
 		let mut values = HashMap::from([("a".to_string(), b"one".to_vec())]);
-		save_product_storage(&directory, "cut.dot", &values).expect("snapshot");
+		save_product_storage(&directory, &ProductId::for_test("cut.dot"), &values)
+			.expect("snapshot");
 		values.insert("b".to_string(), b"two".to_vec());
-		append_product_change(&directory, "cut.dot", &values, StorageChange::Set("b", b"two"))
-			.expect("record");
-		let log = product_log_path(&directory, "cut.dot");
+		append_product_change(
+			&directory,
+			&ProductId::for_test("cut.dot"),
+			&values,
+			StorageChange::Set("b", b"two"),
+		)
+		.expect("record");
+		let log = product_log_path(&directory, &ProductId::for_test("cut.dot"));
 		let whole = fs::read(&log).expect("read log");
 		let partial = encode_log_record(StorageChange::Set("c", b"three"));
 		fs::write(&log, [whole.as_slice(), &partial[..partial.len() - 3]].concat())
 			.expect("cut the last record");
 
 		let loaded = load_product_storage(&directory);
-		assert_eq!(loaded["cut.dot"], values);
+		assert_eq!(loaded[&ProductId::for_test("cut.dot")], values);
 		assert!(!log.exists(), "the load replaced the log with a snapshot");
-		assert_eq!(load_product_storage(&directory)["cut.dot"], values);
+		assert_eq!(load_product_storage(&directory)[&ProductId::for_test("cut.dot")], values);
 	}
 
 	/// A record whose checksum does not match ends the log, as a partial
@@ -2211,12 +2217,13 @@ mod tests {
 		let temporary = tempdir().expect("create product storage root");
 		let directory = temporary.path().join("storage");
 		let mut values = HashMap::from([("a".to_string(), vec![1; 1000])]);
-		save_product_storage(&directory, "big.dot", &values).expect("snapshot");
-		let log = product_log_path(&directory, "big.dot");
+		save_product_storage(&directory, &ProductId::for_test("big.dot"), &values)
+			.expect("snapshot");
+		let log = product_log_path(&directory, &ProductId::for_test("big.dot"));
 		values.insert("b".to_string(), vec![2; 100]);
 		append_product_change_within(
 			&directory,
-			"big.dot",
+			&ProductId::for_test("big.dot"),
 			&values,
 			StorageChange::Set("b", &[2; 100]),
 			0,
@@ -2226,14 +2233,14 @@ mod tests {
 		values.insert("c".to_string(), vec![3; 4000]);
 		append_product_change_within(
 			&directory,
-			"big.dot",
+			&ProductId::for_test("big.dot"),
 			&values,
 			StorageChange::Set("c", &[3; 4000]),
 			0,
 		)
 		.expect("second record");
 		assert!(!log.exists(), "a log larger than the snapshot becomes a snapshot");
-		assert_eq!(load_product_storage(&directory)["big.dot"], values);
+		assert_eq!(load_product_storage(&directory)[&ProductId::for_test("big.dot")], values);
 	}
 
 	#[test]

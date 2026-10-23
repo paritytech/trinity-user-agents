@@ -30,11 +30,7 @@ final class RestoredBackupGuard: Migrating {
     }
 
     func migrate() throws {
-        guard keyIdStore.getInstallationKeyId() != nil else {
-            return
-        }
-
-        guard try !entropyManager.hasRootEntropy() else {
+        guard keyIdStore.getInstallationKeyId() != nil, try !entropyManager.hasRootEntropy() else {
             return
         }
 

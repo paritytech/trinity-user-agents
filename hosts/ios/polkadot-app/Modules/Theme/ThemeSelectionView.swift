@@ -65,7 +65,6 @@ struct ThemeSelectionView: View {
 // MARK: - Helper
 
 private extension ThemeSelectionView {
-    @ViewBuilder
     func screenContent(
         swatchOnly: Bool = false,
         titleSelection: ThemeSelection? = nil
@@ -183,7 +182,6 @@ private extension ThemeSelectionView {
         .padding(.horizontal, DSSpacings.large)
     }
 
-    @ViewBuilder
     func bubbleRow(_ sender: DSChatMessageBubble.Sender, @ViewBuilder _ bubble: () -> some View) -> some View {
         HStack(spacing: 0) {
             switch sender {

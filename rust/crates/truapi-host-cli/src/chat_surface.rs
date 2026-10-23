@@ -1320,7 +1320,7 @@ mod tests {
 	};
 
 	fn product() -> ProductContext {
-		ProductContext::new("chat.dot".to_string()).expect("valid product id")
+		ProductContext::new("chat.dot".parse().expect("valid product id"))
 	}
 
 	/// A surface over the room `daily` the host keeps and the room `kept` the

@@ -18,14 +18,12 @@ enum PocketCardOpening {
         pocket: ProductPocketService
     ) {
         // A second screen would take the open card's page and leave it blank.
-        guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
-
-        guard
-            let url = card.key.launchUrl,
-            let page = flowState.hostProvider.page(url: url),
-            let product = pocket.cardHosts.product(for: card.key, make: { surface in
-                makeView(for: card, page: page, surface: surface, flowState: flowState)
-            })
+        guard !pocket.cardHosts.isOnDisplay(card.key),
+              let url = card.key.launchUrl,
+              let page = flowState.hostProvider.page(url: url),
+              let product = pocket.cardHosts.product(for: card.key, make: { surface in
+                  makeView(for: card, page: page, surface: surface, flowState: flowState)
+              })
         else { return }
 
         let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)

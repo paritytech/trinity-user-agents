@@ -32,11 +32,7 @@ extension KeyedHashChainSegment {
     func chainCode() throws -> Data {
         switch self {
         case let .string(value):
-            guard !value.isEmpty, !value.contains("/") else {
-                throw KeyedHashChainError.invalidSegment(value)
-            }
-
-            guard let chaincode = try SubstrateJunctionFactory()
+            guard !value.isEmpty, !value.contains("/"), let chaincode = try SubstrateJunctionFactory()
                 .parse(path: "//\(value)").chaincodes.first else {
                 throw KeyedHashChainError.invalidSegment(value)
             }

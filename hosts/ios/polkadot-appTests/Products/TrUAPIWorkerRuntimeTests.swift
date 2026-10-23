@@ -106,6 +106,7 @@ struct TrUAPIWorkerRuntimeTests {
         #expect(chainConnections.closeAllCallCount == 1)
     }
 }
+
 private func makeRuntime(
     engine: MockJSEngine,
     execution: MockProductExecution = MockProductExecution(),

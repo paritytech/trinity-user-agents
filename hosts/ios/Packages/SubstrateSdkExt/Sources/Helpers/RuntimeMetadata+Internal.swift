@@ -7,11 +7,10 @@ public extension RuntimeMetadataProtocol {
     }
 
     func createEventCodingPath(from moduleIndex: UInt8, eventIndex: UInt32) -> EventCodingPath? {
-        guard let moduleName = getModuleName(by: moduleIndex) else {
-            return nil
-        }
-
-        guard let event = getEventForModuleIndex(moduleIndex, eventIndex: eventIndex) else {
+        guard let moduleName = getModuleName(by: moduleIndex), let event = getEventForModuleIndex(
+            moduleIndex,
+            eventIndex: eventIndex
+        ) else {
             return nil
         }
 

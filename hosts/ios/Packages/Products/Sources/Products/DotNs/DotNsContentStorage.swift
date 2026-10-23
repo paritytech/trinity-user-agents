@@ -57,8 +57,8 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
     }
 
     public func getContentDirectory(contentHash: String) -> URL? {
-        guard let contentDir = try? contentDirectory(for: contentHash) else { return nil }
-        guard fileManager.fileExists(atPath: contentDir.path) else { return nil }
+        guard let contentDir = try? contentDirectory(for: contentHash),
+              fileManager.fileExists(atPath: contentDir.path) else { return nil }
         return contentDir
     }
 

@@ -18,11 +18,7 @@ struct DeviceSyncDeviceChangesApplier {
         let sortedMessages = wireMessages.sorted { $0.remote.timestamp < $1.remote.timestamp }
 
         for wireMessage in sortedMessages {
-            guard case .incoming = wireMessage.status else {
-                continue
-            }
-
-            guard let change = deviceChange(from: wireMessage.remote) else {
+            guard case .incoming = wireMessage.status, let change = deviceChange(from: wireMessage.remote) else {
                 continue
             }
 
