@@ -249,9 +249,10 @@ struct SPARustRuntimeTests {
     }
 
     @Test func nativeHostTelemetryUsesCanonicalRuntimeMetadata() throws {
+        let hostSessionId = try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
         let telemetry = try #require(
             NativeHostTelemetry.current(
-                hostSessionId: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
+                hostSessionId: hostSessionId,
                 enabled: true
             )
         )
