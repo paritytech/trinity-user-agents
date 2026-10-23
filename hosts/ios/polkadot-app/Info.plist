@@ -4,6 +4,7 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).statement-renewal</string>
 		<string>io.novatech.truapi.durable.recovery</string>
 	</array>
 	<key>BrandAppGroup</key>
