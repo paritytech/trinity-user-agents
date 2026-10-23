@@ -151,3 +151,23 @@ The handshake request carries the protocol (codec) version as a `u8`. On receivi
 
 The concrete handshake request, response, and error types are defined in the `truapi` crate.
 
+### Request versions
+
+Every request payload starts with its version: `V1` is encoded as `0`, `V2` as `1`, and so on. A host can only read the versions it was built with, so a product built against a newer protocol may send a version the host does not know.
+
+When that happens, the host MUST NOT run the call. It answers with a protocol-error frame (see [Requests](#requests)) carrying:
+
+```text
+V1(UnsupportedVersion { trait_id, method_id, newest_version })
+encoded as [0, 1, trait_id, method_id, newest_version]
+```
+
+- `trait_id` and `method_id` name the refused call.
+- `newest_version` is the newest version the host accepts for that method, as a number: `2` means `V2`.
+
+The same applies to a subscription's `Start` frame.
+
+The product treats this like `UnsupportedMessage`: the call fails as unsupported.
+
+Hosts released before this error existed cannot send it. They answer a version they do not know with `CallError::MalformedFrame`.
+

@@ -2,9 +2,11 @@
 //! incoming frames to the host trait implementation.
 //!
 //! For each method the emitter produces an `on_request` (or
-//! `on_subscription`) registration that:
-//! 1. SCALE-decodes the versioned request wrapper directly from the wire bytes (the wrapper's own
-//!    variant tag carries its version — there is no outer envelope).
+//! `on_subscription`) registration whose handler:
+//! 1. Receives the versioned request wrapper, which the framework has decoded from the wire bytes
+//!    (the wrapper's own variant tag carries its version, and there is no outer envelope). The
+//!    framework refuses a version newer than the wrapper's `Versioned::LATEST`, and answers bytes
+//!    that do not decode with `MalformedFrame`, before the handler runs.
 //! 2. Calls the host trait method (which receives the wrapper directly and matches `_::V1(inner)`
 //!    internally).
 //! 3. SCALE-encodes the versioned response wrapper back onto the wire.
@@ -335,7 +337,7 @@ impl MethodEmission {
 			&formatdoc! {
 				r#"
                 let host = {host_expr};
-                dispatcher.on_request(wire_table::{ids}, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {{
+                dispatcher.on_request(wire_table::{ids}, move |request_id: String, request: {request_path}, cancel: truapi::CancellationToken| {{
                     let host = host.clone();
                     Box::pin(async move {{
                 "#
@@ -347,15 +349,6 @@ impl MethodEmission {
 			16,
 			&formatdoc! {
 				r#"
-                let request: {request_path} = match DecodeAll::decode_all(&mut &bytes[..]) {{
-                    Ok(request) => request,
-                    Err(err) => {{
-                        let error: truapi::CallError<{error_path}> =
-                            truapi::CallError::MalformedFrame {{ reason: err.to_string() }};
-                        let result: Result<{response_ty}, truapi::CallError<{error_path}>> = Err(error);
-                        return result.encode();
-                    }}
-                }};
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 "#
@@ -463,26 +456,9 @@ impl MethodEmission {
 			&formatdoc! {
 				r#"
                 let host = {host_expr};
-                dispatcher.on_subscription(wire_table::{ids}, move |request_id: String, bytes: Vec<u8>| {{
+                dispatcher.on_subscription(wire_table::{ids}, move |request_id: String, request: {start_ty}| {{
                     let host = host.clone();
                     Box::pin(async move {{
-                "#
-			},
-		);
-
-		write_indented(
-			out,
-			16,
-			&formatdoc! {
-				r#"
-                let request: {start_ty} = match DecodeAll::decode_all(&mut &bytes[..]) {{
-                    Ok(request) => request,
-                    Err(err) => {{
-                        let error: truapi::CallError<{error_ty}> =
-                            truapi::CallError::MalformedFrame {{ reason: err.to_string() }};
-                        return Err(subscription_interrupt(error));
-                    }}
-                }};
                 "#
 			},
 		);
@@ -654,7 +630,7 @@ fn write_imports(out: &mut String, traits: &[&TraitDef]) {
 		r#"
         use std::sync::Arc;
 
-        use parity_scale_codec::{{DecodeAll, Encode}};
+        use parity_scale_codec::Encode;
 
         use truapi::CallContext;
         use truapi::api::{{
