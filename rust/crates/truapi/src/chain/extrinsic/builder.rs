@@ -1,8 +1,12 @@
 //! [`ExtrinsicBuilder`]: what a caller asks one extrinsic to contain.
 
+use scale_info::PortableRegistry;
 use subxt::{
 	ArcMetadata, Metadata,
-	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
+	ext::{
+		frame_decode::extrinsics::{ExtrinsicCallInfo, ExtrinsicTypeInfo},
+		scale_encode::{EncodeAsFields, Field},
+	},
 	tx::{Payload, StaticPayload},
 	utils::{AccountId32, H256},
 };
@@ -64,20 +68,49 @@ pub trait BuildSource: Sync {
 /// A call of any payload type, kept unencoded until the build is assembled.
 /// `Payload` cannot be boxed itself, since its call data type differs per call.
 trait AnyCall: Send {
-	/// The call encoded against `metadata`.
-	fn encode(&self, metadata: &Metadata) -> Result<Vec<u8>, ExtrinsicBuildError>;
+	/// The call's metadata entry, found by its pallet and call name.
+	fn call_info<'m>(
+		&self,
+		metadata: &'m Metadata,
+	) -> Result<ExtrinsicCallInfo<'m, u32>, ExtrinsicBuildError>;
+
+	/// The call's arguments, encoded against the types `call_info` lists.
+	fn encode_args(
+		&self,
+		call_info: &ExtrinsicCallInfo<'_, u32>,
+		types: &PortableRegistry,
+	) -> Result<Vec<u8>, ExtrinsicBuildError>;
 }
 
 impl<P: Payload + Send> AnyCall for P {
-	fn encode(&self, metadata: &Metadata) -> Result<Vec<u8>, ExtrinsicBuildError> {
-		let (pallet, call) = (self.pallet_name(), self.call_name());
-		encode_call_data(pallet, call, self.call_data(), metadata, metadata.types()).map_err(
-			|error| ExtrinsicBuildError::Call {
-				pallet: pallet.to_string(),
-				call: call.to_string(),
-				reason: error.to_string(),
-			},
-		)
+	fn call_info<'m>(
+		&self,
+		metadata: &'m Metadata,
+	) -> Result<ExtrinsicCallInfo<'m, u32>, ExtrinsicBuildError> {
+		metadata
+			.extrinsic_call_info_by_name(self.pallet_name(), self.call_name())
+			.map_err(|error| call_error(self, error.to_string()))
+	}
+
+	fn encode_args(
+		&self,
+		call_info: &ExtrinsicCallInfo<'_, u32>,
+		types: &PortableRegistry,
+	) -> Result<Vec<u8>, ExtrinsicBuildError> {
+		let mut fields = call_info.args.iter().map(|arg| Field::new(arg.id, Some(&*arg.name)));
+		let mut args = Vec::new();
+		self.call_data()
+			.encode_as_fields_to(&mut fields, types, &mut args)
+			.map_err(|error| call_error(self, error.to_string()))?;
+		Ok(args)
+	}
+}
+
+fn call_error(call: &impl Payload, reason: String) -> ExtrinsicBuildError {
+	ExtrinsicBuildError::Call {
+		pallet: call.pallet_name().to_string(),
+		call: call.call_name().to_string(),
+		reason,
 	}
 }
 

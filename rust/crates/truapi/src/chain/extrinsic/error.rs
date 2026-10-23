@@ -25,16 +25,6 @@ pub enum ExtrinsicBuildError {
 		/// The encoder's message.
 		reason: String,
 	},
-	/// Call bytes do not start with a pallet and call index the runtime knows.
-	#[error(
-		"call bytes {call_bytes} do not name a known call, expected a pallet index and a call index: {reason}"
-	)]
-	CallBytes {
-		/// The bytes, hex encoded.
-		call_bytes: String,
-		/// Why they were rejected.
-		reason: String,
-	},
 	/// The metadata could not answer a question the build needs.
 	#[error("metadata: {0}")]
 	Metadata(String),

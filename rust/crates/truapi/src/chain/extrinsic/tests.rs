@@ -479,6 +479,21 @@ fn a_build_without_a_call_is_refused() {
 	assert!(matches!(build_offline(source.start_build()), Err(ExtrinsicBuildError::NoCall)));
 }
 
+/// A call the runtime does not have fails by its pallet and call name, before
+/// anything is signed.
+#[test]
+fn a_call_the_runtime_does_not_have_is_refused() {
+	let source = people();
+	let unknown = tx("NoSuchPallet", "no_such_call", Vec::<Value>::new());
+
+	let error = build_offline(source.start_build().with_call(unknown)).unwrap_err();
+
+	assert!(matches!(
+		error,
+		ExtrinsicBuildError::Call { pallet, call, .. } if pallet == "NoSuchPallet" && call == "no_such_call"
+	));
+}
+
 /// The signature `VerifyMultiSignature` carries in a V5 `extrinsic` whose
 /// pipeline puts it right after an empty first extension, as People's does.
 fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails<SubstrateConfig> {

@@ -13,7 +13,8 @@ use subxt::{
 		frame_decode::extrinsics::{
 			ExtrinsicCallInfo, ExtrinsicExtensionInfo, ExtrinsicExtensionInfoArg,
 			ExtrinsicTypeInfo, TransactionExtensions, TransactionExtensionsError,
-			encode_v4_signed_with_info_to, encode_v5_general_with_info_to,
+			encode_call_data_with_info_to, encode_v4_signed_with_info_to,
+			encode_v5_general_with_info_to,
 		},
 		scale_decode::visitor::{IgnoreVisitor, decode_with_visitor},
 		scale_encode::{EncodeAsFields, Error as ScaleEncodeError, FieldIter, TypeResolver},
@@ -21,7 +22,7 @@ use subxt::{
 	utils::{AccountId32, H256, MultiAddress},
 };
 
-use super::{BuildSource, ExtrinsicBuilder, RuntimeAtBirth};
+use super::{AnyCall, BuildSource, ExtrinsicBuilder, RuntimeAtBirth};
 use crate::chain::{
 	EncodedExtrinsic, MortalExtrinsic, Mortality,
 	extrinsic::{
@@ -82,7 +83,7 @@ fn encode_extrinsic(
 	let metadata = runtime.metadata.clone();
 	check_format_supported(version, &metadata)?;
 	let pending_call = call.ok_or(ExtrinsicBuildError::NoCall)?;
-	let call = pending_call.encode(&metadata)?;
+	let call = EncodedCall::new(pending_call.as_ref(), &metadata)?;
 	let (extensions, v4_signature) = supplied_extensions(version, extensions, &metadata)?;
 	let v4_signer = v4_signature.as_deref().and_then(AnyExtension::signer);
 	let mortality = Mortality::new(runtime.birth, period)?;
@@ -190,7 +191,7 @@ struct EncodedExtension {
 /// What filling the pipeline needs besides the supplied extensions.
 struct PipelineFold<'f> {
 	version: ExtrinsicVersion,
-	call: &'f [u8],
+	call: &'f EncodedCall<'f>,
 	chain: ChainValues,
 	types: &'f PortableRegistry,
 }
@@ -226,7 +227,7 @@ impl PipelineFold<'_> {
 			ExtrinsicVersion::V4 => Vec::new(),
 			ExtrinsicVersion::V5 { extension_version } => vec![extension_version],
 		};
-		encoded.extend_from_slice(self.call);
+		encoded.extend_from_slice(&self.call.bytes);
 		later
 			.iter()
 			.for_each(|extension| encoded.extend_from_slice(&extension.values.explicit));
@@ -321,28 +322,29 @@ fn extension_info(
 	})
 }
 
-/// The call's metadata and its argument bytes, after the pallet and call
-/// indices.
-fn split_call<'c>(
-	call: &'c [u8],
-	metadata: &'c Metadata,
-) -> Result<(ExtrinsicCallInfo<'c, u32>, &'c [u8]), ExtrinsicBuildError> {
-	let call_bytes_error =
-		|reason: String| ExtrinsicBuildError::CallBytes { call_bytes: hex::encode(call), reason };
-	let [pallet_index, call_index, args @ ..] = call else {
-		return Err(call_bytes_error(format!("only {} byte(s)", call.len())));
-	};
-	let call_info = metadata
-		.extrinsic_call_info_by_index(*pallet_index, *call_index)
-		.map_err(|error| call_bytes_error(error.to_string()))?;
-	Ok((call_info, args))
+/// The call with its metadata entry, its encoded arguments and its full
+/// encoding, which the implication starts with.
+struct EncodedCall<'m> {
+	info: ExtrinsicCallInfo<'m, u32>,
+	args: Vec<u8>,
+	bytes: Vec<u8>,
+}
+
+impl<'m> EncodedCall<'m> {
+	fn new(call: &dyn AnyCall, metadata: &'m Metadata) -> Result<Self, ExtrinsicBuildError> {
+		let info = call.call_info(metadata)?;
+		let args = call.encode_args(&info, metadata.types())?;
+		let mut bytes = Vec::new();
+		encode_call_data_with_info_to(&EncodedArgs(&args), &info, metadata.types(), &mut bytes)
+			.map_err(encode_error)?;
+		Ok(Self { info, args, bytes })
+	}
 }
 
 /// Everything frame-decode lays out, already computed.
 struct EncodedParts<'p> {
-	args: EncodedArgs<'p>,
+	call: &'p EncodedCall<'p>,
 	encoded: EncodedExtensions<'p>,
-	call_info: ExtrinsicCallInfo<'p, u32>,
 	pipeline: ExtrinsicExtensionInfo<'p, u32>,
 }
 
@@ -350,19 +352,13 @@ impl<'p> EncodedParts<'p> {
 	/// The call and the encoded extensions, ready for frame-decode to lay out in
 	/// `version`'s format.
 	fn new(
-		call: &'p [u8],
+		call: &'p EncodedCall<'p>,
 		encoded: &'p [EncodedExtension],
 		version: ExtrinsicVersion,
 		metadata: &'p Metadata,
 	) -> Result<Self, ExtrinsicBuildError> {
-		let (call_info, args) = split_call(call, metadata)?;
 		let pipeline = extension_info(metadata, version.extension_version())?;
-		Ok(Self {
-			args: EncodedArgs(args),
-			encoded: EncodedExtensions(encoded),
-			call_info,
-			pipeline,
-		})
+		Ok(Self { call, encoded: EncodedExtensions(encoded), pipeline })
 	}
 
 	fn encode_v5(
@@ -372,11 +368,11 @@ impl<'p> EncodedParts<'p> {
 	) -> Result<Vec<u8>, ExtrinsicBuildError> {
 		let mut out = Vec::new();
 		encode_v5_general_with_info_to(
-			&self.args,
+			&EncodedArgs(&self.call.args),
 			extension_version,
 			&self.encoded,
 			metadata.types(),
-			&self.call_info,
+			&self.call.info,
 			&self.pipeline,
 			&mut out,
 		)
@@ -396,12 +392,12 @@ impl<'p> EncodedParts<'p> {
 		let signature_info = metadata.extrinsic_signature_info().map_err(encode_error)?;
 		let mut out = Vec::new();
 		encode_v4_signed_with_info_to(
-			&self.args,
+			&EncodedArgs(&self.call.args),
 			&self.encoded,
 			&address,
 			&signer.sign(&implication.signer_payload()),
 			metadata.types(),
-			&self.call_info,
+			&self.call.info,
 			&signature_info,
 			&self.pipeline,
 			&mut out,
