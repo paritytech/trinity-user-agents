@@ -25,5 +25,14 @@
                 options.tracesSampleRate = 0
             }
         }
+
+        func recordProcessStarted(_ context: HostProcessStartedContext) {
+            SentrySDK.capture(message: context.eventName) { scope in
+                scope.setFingerprint([context.eventName])
+                let fields = context.sentryFields
+                fields.tags.forEach { scope.setTag(value: $0.value, key: $0.key) }
+                fields.extras.forEach { scope.setExtra(value: $0.value, key: $0.key) }
+            }
+        }
     }
 #endif

@@ -2,9 +2,12 @@ import UIKit
 import TipKit
 import IssueMonitoring
 import Keystore_iOS
+import TrUAPIHost
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    private let appLaunchID = UUID()
+    private let processStartUptimeMilliseconds = ProcessInfo.processInfo.systemUptime * 1_000
     let logger: LoggerProtocol = Logger.shared
     let issueMonitoringService: IssueMonitoringServiceProtocol = IssueMonitoringFactory.createService(
         dsn: GeneratedSecrets.sentryDSN
@@ -28,6 +31,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureTips()
 
         issueMonitoringService.setup()
+        recordProcessStarted()
 
         // The OS requires every background task handler to be registered before launch finishes.
         StatementRenewalBackgroundTask.shared?.register()
@@ -67,6 +71,30 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 private extension AppDelegate {
+    func recordProcessStarted() {
+        #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
+            issueMonitoringService.recordProcessStarted(
+                makeHostProcessStartedContext(
+                    appLaunchID: appLaunchID,
+                    processStartUptimeMilliseconds: processStartUptimeMilliseconds,
+                    appVersion: Bundle.main.appVersion,
+                    appBuild: Bundle.main.appBuild.flatMap { Int($0) },
+                    appVariant: issueMonitoringAppVariant
+                )
+            )
+        #endif
+    }
+
+    var issueMonitoringAppVariant: String {
+        #if NIGHTLY
+            "nightly"
+        #elseif SAFETYNET
+            "safetynet"
+        #else
+            "debug"
+        #endif
+    }
+
     func configureTips() {
         #if TESTNET_FEATURE
             resetTipsDatastoreIfRequested()
@@ -98,6 +126,32 @@ private extension AppDelegate {
             }
         }
     #endif
+}
+
+func makeHostProcessStartedContext(
+    appLaunchID: UUID,
+    processStartUptimeMilliseconds: Double,
+    appVersion: String?,
+    appBuild: Int?,
+    appVariant: String,
+    operatingSystemVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
+    truapiVersion: String = TrUAPIHost.version
+) -> HostProcessStartedContext {
+    HostProcessStartedContext(
+        appLaunchID: appLaunchID,
+        processStartUptimeMilliseconds: processStartUptimeMilliseconds,
+        appVersion: appVersion,
+        appBuild: appBuild,
+        appVariant: appVariant,
+        platform: "ios",
+        osVersion: plainProcessStartedOSVersion(operatingSystemVersion),
+        truapiHostVersion: truapiVersion
+    )
+}
+
+func plainProcessStartedOSVersion(_ version: OperatingSystemVersion) -> String {
+    let baseVersion = "\(version.majorVersion).\(version.minorVersion)"
+    return version.patchVersion == 0 ? baseVersion : "\(baseVersion).\(version.patchVersion)"
 }
 
 var isUnitTesting: Bool {
