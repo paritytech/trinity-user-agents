@@ -148,6 +148,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             logger: logger
         )
 
+        #if UNSTABLE
+            // The core logs at ERROR until a host raises it, so its chain and
+            // follow lifecycle has never reached a device log. Raised here, before
+            // the runtime boots, so nothing it emits during setup is missed.
+            setLogLevel(level: "debug")
+        #endif
+
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
