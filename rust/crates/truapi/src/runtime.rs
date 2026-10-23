@@ -26,6 +26,7 @@ pub mod login_failure;
 mod pairing_host;
 mod payment_id;
 mod product_accounts;
+mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -57,7 +58,7 @@ use std::{
 };
 
 pub use actions::ActionChannel;
-use authority::{AuthorityCancelError, AuthoritySession};
+use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
@@ -86,7 +87,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
@@ -137,7 +138,7 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::{
 		bulletin::preimage_key,
-		permissions::{PermissionsService, TemporaryPermissions, cross_product_signature_key},
+		permissions::{PermissionsService, TemporaryPermissions},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
 	},
@@ -467,45 +468,6 @@ impl ProductConnection {
 			) => Err(CallError::Domain(denied_error)),
 			Err(reason) => Err(CallError::HostFailure { reason }),
 		}
-	}
-
-	async fn confirm_user_action_if_needed(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if self.product_id().has_trusted_remote_permissions() {
-			return Ok(true);
-		}
-		self.platform.confirm_user_action(review).await
-	}
-
-	/// Confirm a signature with one of `owner`'s accounts. When the account
-	/// belongs to another product, the user is asked once per kind and owning
-	/// product for the rest of this execution. Prompts open one at a time, and a
-	/// signature the user already approved never waits for one.
-	async fn confirm_signature(
-		&self,
-		kind: CrossProductSignatureKind,
-		owner: &ProductId,
-		review: impl FnOnce() -> UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if owner == self.product_id() {
-			return self.confirm_user_action_if_needed(review()).await;
-		}
-		let approval = cross_product_signature_key(self.product_id(), owner, kind);
-		let permissions = &self.temporary_permissions;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let _prompt = permissions.signature_prompt().await;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let approved = self.confirm_user_action_if_needed(review()).await?;
-		if approved {
-			permissions.grant(approval);
-		}
-		Ok(approved)
 	}
 
 	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
@@ -851,6 +813,38 @@ impl ProductRuntimeHost {
 		self.host_session.disconnect().await;
 	}
 
+	/// Confirm with the user unless this host's product may skip the review.
+	async fn confirm(
+		&self,
+		cx: &CallContext,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		let caller = AccountCaller::Local { product: &self.connection.product };
+		self.accounts.consent().review(cx, caller, review).await
+	}
+
+	/// Confirm a signature with one of `owner`'s accounts, once per kind for this
+	/// execution when another product owns it.
+	async fn confirm_signature(
+		&self,
+		cx: &CallContext,
+		kind: CrossProductSignatureKind,
+		owner: &ProductId,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		self.accounts
+			.consent()
+			.review_signature(
+				cx,
+				&self.connection.product,
+				&self.connection.temporary_permissions,
+				kind,
+				owner,
+				review,
+			)
+			.await
+	}
+
 	/// Whether this product may use `owner`'s accounts.
 	pub async fn may_use_product_account(&self, owner: &ProductId, cx: &CallContext) -> bool {
 		if self.connection.product_id().is_localhost() {
@@ -1045,52 +1039,6 @@ impl ProductRuntimeHost {
 	}
 }
 
-async fn account_access_authorization(
-	platform: &dyn Platform,
-	requesting_product_id: &ProductId,
-	target_product_id: &ProductId,
-) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-	if requesting_product_id == target_product_id ||
-		requesting_product_id.has_trusted_remote_permissions()
-	{
-		return Ok(PermissionAuthorizationStatus::Authorized);
-	}
-
-	let target = target_product_id.bare_label();
-	let caller = requesting_product_id.bare_label();
-	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	if cached != PermissionAuthorizationStatus::NotDetermined {
-		return Ok(cached);
-	}
-
-	let decision = platform
-		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.clone(),
-			target_product_id: target_product_id.clone(),
-		}))
-		.await
-		.map_err(AccountAccessAuthorizationError::Confirmation)?;
-	let status = match decision {
-		PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-		PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-		PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-	};
-	crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	Ok(status)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AccountAccessAuthorizationError {
-	#[error("permission storage failed: {0:?}")]
-	PermissionStorage(v01::GenericError),
-	#[error("account access confirmation failed: {0:?}")]
-	Confirmation(v01::GenericError),
-}
-
 fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 	let raw = signer
 		.strip_prefix("0x")
@@ -1149,6 +1097,9 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 	let error = match err {
 		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
 		AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure { reason: error.reason };
+		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
@@ -1232,6 +1183,11 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
 			latest::HostSignPayloadError::Rejected
 		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("sign payload confirmation failed: {error:?}"),
+			};
+		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
@@ -1245,6 +1201,11 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	CallError::Domain(match err {
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
 			latest::HostCreateTransactionError::Rejected
+		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("create transaction confirmation failed: {error:?}"),
+			};
 		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostCreateTransactionError::Unknown { reason: err.to_string() }
