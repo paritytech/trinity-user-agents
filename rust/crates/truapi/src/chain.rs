@@ -48,7 +48,7 @@ pub use tx_validator::TxValidator;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub use tests::{Node, method_count, serve};
+pub use tests::{Node, V4OnlyHost, extrinsic_service_serving, method_count, serve};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

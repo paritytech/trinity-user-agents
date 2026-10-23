@@ -36,7 +36,7 @@ use super::{
 	CollectionScanParams, PersonhoodSigner, PooledRegistrationParams, RegistrationOutcome,
 	StatementAllowanceError, allocated_in,
 	collection::PersonhoodCollection,
-	extension::{ChainState, Metadata},
+	extension::Metadata,
 	register_statement_account_pooled,
 	rpc::RpcClient,
 	scan_collections,
@@ -149,8 +149,8 @@ pub struct RenewalChainContext<'a> {
 	pub rpc: &'a RpcClient,
 	/// Decoded runtime metadata.
 	pub metadata: &'a Metadata,
-	/// Signed-extension chain state.
-	pub chain_state: &'a ChainState,
+	/// Where each registration extrinsic is built.
+	pub target_chain: super::ExtrinsicTarget<'a>,
 	/// Runtime-wide suffix used for product-scoped aliases and proofs.
 	pub network_suffix: &'a [u8],
 	/// Every collection the host can derive aliases for, so an allowance already
@@ -244,7 +244,7 @@ pub async fn renew_targets(
 					register_statement_account_pooled(
 						context.rpc,
 						context.metadata,
-						context.chain_state,
+						context.target_chain,
 						context.signer,
 						&scans,
 						context.memberships,
@@ -381,9 +381,7 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
-			extension::ChainState,
-			proof,
+			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
 			slot::testing::lite_people,
@@ -401,12 +399,11 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
+		let extrinsics =
+			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
+		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
+			extrinsics: &extrinsics,
+			genesis: subxt::utils::H256([0xab; 32]),
 		};
 		let entropy = [0x11; 32];
 		// One collection, so this stays a test of cross-target protection rather
@@ -446,7 +443,7 @@ mod tests {
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
-			chain_state: &chain_state,
+			target_chain,
 			network_suffix: b"paseo",
 			signer: &signer,
 			collections: &[PersonhoodCollection::LitePeople],
@@ -478,9 +475,7 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
-			extension::ChainState,
-			proof,
+			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
 			slot::testing::lite_people,
@@ -494,12 +489,11 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
+		let extrinsics =
+			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
+		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
+			extrinsics: &extrinsics,
+			genesis: subxt::utils::H256([0xab; 32]),
 		};
 		let entropy = [0x11; 32];
 		let memberships = [RingParams {
@@ -529,7 +523,7 @@ mod tests {
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
-			chain_state: &chain_state,
+			target_chain,
 			network_suffix: b"paseo",
 			signer: &signer,
 			collections: &[PersonhoodCollection::LitePeople],
@@ -570,9 +564,7 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
-			extension::ChainState,
-			proof,
+			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
 			slot::testing::lite_people,
@@ -589,12 +581,11 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
+		let extrinsics =
+			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
+		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
+			extrinsics: &extrinsics,
+			genesis: subxt::utils::H256([0xab; 32]),
 		};
 		let entropy = [0x11; 32];
 		let memberships = [RingParams {
@@ -625,7 +616,7 @@ mod tests {
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
-			chain_state: &chain_state,
+			target_chain,
 			network_suffix: b"paseo",
 			signer: &signer,
 			collections: &[PersonhoodCollection::LitePeople],

@@ -5,6 +5,7 @@
 //! call.
 
 use parity_scale_codec::{Decode, Encode};
+use subxt::ext::scale_encode::EncodeAsType;
 
 use super::{
 	StatementAllowanceError,
@@ -17,24 +18,38 @@ const GENERAL_V5_PREAMBLE: u8 = 0x45;
 /// `Option::Some` discriminant for the `AsResources` extension `extra`.
 const OPTION_SOME: u8 = 0x01;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct SetStatementStoreAccountCallArgs {
-	period: u32,
-	seq: u32,
-	target: [u8; 32],
+/// `Resources.set_statement_store_account` arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct SetStatementStoreAccountCallArgs {
+	/// Statement-store period.
+	pub period: u32,
+	/// Slot within the period.
+	pub seq: u32,
+	/// Account the allowance is for.
+	pub target_account: [u8; 32],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct ClaimLongTermStorageCallArgs {
-	period: u32,
-	counter: u8,
-	account_id: [u8; 32],
+/// `Resources.claim_long_term_storage` arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct ClaimLongTermStorageCallArgs {
+	/// Long-term-storage period.
+	pub period: u32,
+	/// Claim counter within the period.
+	pub counter: u8,
+	/// Account the storage is for.
+	pub account_id: [u8; 32],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct ClaimPgasCallArgs {
-	slot_index: u32,
-	target: [u8; 32],
+/// `Pgas.claim_pgas` arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct ClaimPgasCallArgs {
+	/// PGAS slot of the day.
+	pub slot_index: u32,
+	/// Account credited.
+	pub target: [u8; 32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -74,7 +89,7 @@ pub fn build_set_statement_store_account_call(
 	let indices = metadata.call_indices("Resources", "set_statement_store_account")?;
 	let mut call = Vec::with_capacity(2 + 4 + 4 + 32);
 	call.extend_from_slice(&indices);
-	SetStatementStoreAccountCallArgs { period, seq, target: *target }.encode_to(&mut call);
+	SetStatementStoreAccountCallArgs { period, seq, target_account: *target }.encode_to(&mut call);
 	Ok(call)
 }
 
@@ -266,7 +281,7 @@ mod tests {
 		);
 		assert_eq!(
 			SetStatementStoreAccountCallArgs::decode(&mut &call[2..]).unwrap(),
-			SetStatementStoreAccountCallArgs { period: 7, seq: 0, target: [0; 32] }
+			SetStatementStoreAccountCallArgs { period: 7, seq: 0, target_account: [0; 32] }
 		);
 	}
 
@@ -544,5 +559,71 @@ mod tests {
 			0b10 => 4,
 			_ => 5,
 		}
+	}
+}
+
+/// The typed call arguments encode against metadata by name; these pin that
+/// they produce the bytes the runtime has always received.
+#[cfg(test)]
+mod typed_call_tests {
+	use subxt::{
+		Metadata as SubxtMetadata,
+		ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
+	};
+
+	use super::{super::test_fixtures, *};
+
+	fn encode_typed(
+		metadata_bytes: &[u8],
+		pallet: &str,
+		call: &str,
+		args: &impl EncodeAsFields,
+	) -> Vec<u8> {
+		let metadata = SubxtMetadata::decode_from(metadata_bytes).unwrap();
+		encode_call_data(pallet, call, args, &metadata, metadata.types()).unwrap()
+	}
+
+	#[test]
+	fn the_statement_store_call_encodes_as_before() {
+		let args =
+			SetStatementStoreAccountCallArgs { period: 7, seq: 3, target_account: [0x22; 32] };
+		let expected =
+			build_set_statement_store_account_call(test_fixtures::people(), 7, 3, &[0x22; 32])
+				.unwrap();
+
+		let encoded = encode_typed(
+			test_fixtures::PEOPLE_METADATA,
+			"Resources",
+			"set_statement_store_account",
+			&args,
+		);
+
+		assert_eq!(encoded, expected);
+	}
+
+	#[test]
+	fn the_long_term_storage_call_encodes_as_before() {
+		let args = ClaimLongTermStorageCallArgs { period: 9, counter: 2, account_id: [0x33; 32] };
+		let expected =
+			build_claim_long_term_storage_call(test_fixtures::people(), 9, 2, &[0x33; 32]).unwrap();
+
+		let encoded = encode_typed(
+			test_fixtures::PEOPLE_METADATA,
+			"Resources",
+			"claim_long_term_storage",
+			&args,
+		);
+
+		assert_eq!(encoded, expected);
+	}
+
+	#[test]
+	fn the_pgas_call_encodes_as_before() {
+		let args = ClaimPgasCallArgs { slot_index: 4, target: [0x44; 32] };
+		let expected = build_claim_pgas_call(test_fixtures::asset_hub(), 4, &[0x44; 32]).unwrap();
+
+		let encoded = encode_typed(test_fixtures::ASSET_HUB_METADATA, "Pgas", "claim_pgas", &args);
+
+		assert_eq!(encoded, expected);
 	}
 }

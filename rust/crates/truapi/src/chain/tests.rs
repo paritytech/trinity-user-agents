@@ -357,6 +357,24 @@ pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRunti
 	(node, provider, chain)
 }
 
+/// A host that builds every chain as V4.
+pub struct V4OnlyHost;
+
+impl crate::platform::ExtrinsicVersionHost for V4OnlyHost {}
+
+/// An extrinsic service over a scripted node serving `metadata`, on a host
+/// that builds every chain as V4.
+pub fn extrinsic_service_serving(metadata: &'static [u8]) -> super::ExtrinsicService {
+	let mut node = Node::new(4, 6);
+	node.metadata = metadata;
+	let (_node, _provider, chain) = serve(node);
+	super::ExtrinsicService::new(super::ExtrinsicServiceDeps {
+		storage: Arc::new(chain.clone()),
+		nonces: Arc::new(chain),
+		versions: Arc::new(V4OnlyHost),
+	})
+}
+
 /// How many requests for `method` the node received.
 pub fn method_count(provider: &ScriptedProvider, method: &str) -> usize {
 	provider

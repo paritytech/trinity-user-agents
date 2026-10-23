@@ -74,12 +74,11 @@ async fn network_suffix_matches_the_preset() {
 	);
 }
 
-/// The genesis hash signed into allowance extrinsics must be the one the chain
-/// reports, not the caller's constant, and the entry must still be keyed by that
-/// constant so the cache actually hits.
+/// A host whose configured genesis has gone stale still reads metadata, and
+/// the entry is keyed by that configured hash so the cache actually hits.
 #[tokio::test]
 #[ignore = "needs network access to a live People chain"]
-async fn chain_context_reports_the_chains_genesis_and_caches_by_the_configured_hash() {
+async fn chain_context_caches_by_the_configured_hash() {
 	let rpc = connect().await;
 	let live = alloc::fetch_genesis_hash(&rpc).await.expect("read the live genesis hash");
 	assert_ne!(
@@ -90,18 +89,6 @@ async fn chain_context_reports_the_chains_genesis_and_caches_by_the_configured_h
 	let cache = ChainContextCache::default();
 	let client = alloc::ChainClient::new(connect().await, STALE_CONFIGURED_GENESIS);
 	let first = cache.get(&client).await.expect("a stale configured genesis is not fatal");
-
-	assert_eq!(
-		first.state.genesis_hash, live,
-		"CheckGenesis is signed over this; it must come from the chain"
-	);
-	assert!(first.state.spec_version > 0);
-	println!(
-		"live People chain: spec_version={} transaction_version={} genesis=0x{}",
-		first.state.spec_version,
-		first.state.transaction_version,
-		hex::encode(live)
-	);
 
 	let second = cache.get(&client).await.expect("second read succeeds");
 	assert!(
@@ -217,9 +204,8 @@ async fn live_metadata_still_exposes_the_allowance_extension_shape() {
 
 	assert!(period_duration > 0);
 	println!(
-		"live spec {}: RegisterStatementStoreAllowance={register:?} ClaimLongTermStorage={claim:?} \
+		"live: RegisterStatementStoreAllowance={register:?} ClaimLongTermStorage={claim:?} \
          long-term-storage period={period_duration}s",
-		chain.state.spec_version,
 	);
 }
 

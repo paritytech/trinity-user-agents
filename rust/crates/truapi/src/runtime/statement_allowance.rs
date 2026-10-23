@@ -6,6 +6,7 @@
 //! and submit the resulting unsigned General (v5) extrinsic. Native only
 //! (needs the `verifiable` prover and live chain reads).
 
+mod authorizer;
 pub mod collection;
 pub mod extension;
 pub mod extrinsic;
@@ -25,6 +26,7 @@ pub use test_fixtures::{asset_hub as asset_hub_test_metadata, people as people_t
 mod view;
 mod view_cache;
 
+pub use authorizer::{ExtrinsicTarget, ProofAuthorizer};
 pub use signer::{FixedPersonhoodSigner, PersonhoodSigner};
 pub use view::ViewFunctionError;
 
@@ -46,10 +48,16 @@ use thiserror::Error;
 use tracing::{debug, warn};
 
 use collection::PersonhoodCollection;
-use extension::{ChainState, Metadata, MetadataError};
+use subxt::utils::H256;
+
+use crate::chain::ExtrinsicService;
+use extension::{AS_RESOURCES, ChainState, Metadata, MetadataError};
 use ring::RingParams;
 use rpc::RpcClient;
 use slot::{SlotError, SlotSelection};
+
+/// The pallet that grants statement-store and long-term-storage allowances.
+const RESOURCES_PALLET: &str = "Resources";
 
 /// Error while reading chain state, building allowance extrinsics, or waiting
 /// for allowance authorization.
@@ -80,6 +88,9 @@ pub enum StatementAllowanceError {
 	/// Runtime view-function dispatch or response decoding failed.
 	#[error(transparent)]
 	ViewFunction(#[from] view::ViewFunctionError),
+	/// The allowance extrinsic could not be built.
+	#[error(transparent)]
+	Extrinsic(#[from] crate::chain::ExtrinsicBuildError),
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
@@ -253,20 +264,28 @@ impl ChainClient {
 	pub fn rpc(&self) -> &RpcClient {
 		&self.rpc
 	}
+
+	/// Where to build extrinsics for this chain: `extrinsics`, over the
+	/// genesis the host configured.
+	pub fn extrinsic_target<'a>(&self, extrinsics: &'a ExtrinsicService) -> ExtrinsicTarget<'a> {
+		ExtrinsicTarget { extrinsics, genesis: H256(self.configured_genesis_hash) }
+	}
 }
 
-/// Runtime metadata and signed-extension chain state for one chain.
+/// Runtime metadata for one chain, with the runtime it was read from.
 #[derive(Clone)]
 pub struct ChainContext {
 	/// Decoded runtime metadata.
 	pub metadata: Arc<Metadata>,
-	/// Chain state filling the standard signed extensions.
-	pub state: ChainState,
+	/// Spec version the metadata belongs to.
+	spec_version: u32,
+	/// Genesis hash the chain reported when the metadata was read.
+	reported_genesis_hash: [u8; 32],
 }
 
-/// Runtime metadata and chain state cached per chain.
+/// Runtime metadata cached per chain.
 ///
-/// Both are fixed for a given runtime, and a full `state_getMetadata` response
+/// Metadata is fixed for a given runtime, and a full `state_getMetadata` response
 /// is large, so entries are keyed by genesis hash and revalidated with a
 /// concurrent `state_getRuntimeVersion` + `chain_getBlockHash(0)` — two small
 /// requests in place of a metadata download on every allowance call.
@@ -284,28 +303,20 @@ pub struct ChainContextCache {
 }
 
 impl ChainContextCache {
-	/// Metadata and chain state for the chain reached over `rpc`, read from the
-	/// chain only when no entry describes the chain as it is now.
+	/// Metadata for the chain reached over `rpc`, read from the chain only
+	/// when no entry describes the chain as it is now.
 	///
-	/// The client carries the caller's identity for the chain — the hash it
-	/// routes connections by — and that keys the cache. The genesis hash
-	/// placed in [`ChainState`], and therefore signed into every allowance
-	/// extrinsic, is always the one the chain itself reports: a host whose
-	/// configured constant has gone stale (a wiped testnet) still produces
-	/// valid extrinsics. A divergence is logged, since it means the host's
-	/// chain configuration needs refreshing — see RFC-0026, which lets hosts
-	/// discover these hashes instead of hard-coding them.
-	///
-	/// An entry is reused only when both the spec version **and** the reported
-	/// genesis hash still match. Spec version alone cannot see a chain that was
-	/// wiped and redeployed from the same runtime, which keeps its spec version
-	/// and gets a new genesis; an entry held across that would sign
-	/// `CheckGenesis` for a chain that no longer exists. Both reads are issued
-	/// together, so validating on the pair costs no extra round trip.
+	/// The client carries the caller's identity for the chain, the hash it
+	/// routes connections by, and that keys the cache. An entry is reused only
+	/// when both the spec version **and** the reported genesis hash still
+	/// match, so a chain wiped and redeployed from the same runtime is read
+	/// again. Extrinsics are always signed with the configured genesis, never
+	/// the reported one; a divergence is logged, since such extrinsics will be
+	/// rejected until the host's chain configuration is refreshed.
 	pub async fn get(&self, client: &ChainClient) -> Result<ChainContext, StatementAllowanceError> {
 		let rpc = client.rpc();
 		let configured_genesis_hash = client.configured_genesis_hash;
-		let ((spec_version, transaction_version), genesis_hash) =
+		let ((spec_version, _transaction_version), genesis_hash) =
 			futures::try_join!(fetch_runtime_version(rpc), fetch_genesis_hash(rpc))?;
 		if let Some(cached) = self.cached(configured_genesis_hash, spec_version, genesis_hash) {
 			return Ok(cached);
@@ -320,18 +331,14 @@ impl ChainContextCache {
 			warn!(
 				configured = %hex::encode(configured_genesis_hash),
 				reported = %hex::encode(genesis_hash),
-				"chain reports a different genesis than the host configured; using the chain's"
+				"chain reports a different genesis than the host configured; extrinsics signed \
+				 for the configured one will be rejected"
 			);
 		}
 		let context = ChainContext {
 			metadata: Arc::new(fetch_metadata(rpc).await?),
-			state: ChainState {
-				spec_version,
-				transaction_version,
-				genesis_hash,
-				nonce: 0,
-				restrict_origins: false,
-			},
+			spec_version,
+			reported_genesis_hash: genesis_hash,
 		};
 		self.entries
 			.lock()
@@ -351,8 +358,7 @@ impl ChainContextCache {
 			.expect("chain context cache mutex poisoned")
 			.get(&configured_genesis_hash)
 			.filter(|cached| {
-				cached.state.spec_version == spec_version &&
-					cached.state.genesis_hash == genesis_hash
+				cached.spec_version == spec_version && cached.reported_genesis_hash == genesis_hash
 			})
 			.cloned()
 	}
@@ -444,8 +450,8 @@ pub struct LongTermStorageClaim<'a> {
 	pub rpc: &'a RpcClient,
 	/// People runtime metadata.
 	pub metadata: &'a Metadata,
-	/// People signed-extension state.
-	pub chain_state: &'a ChainState,
+	/// Where the claim extrinsic is built.
+	pub target_chain: ExtrinsicTarget<'a>,
 	/// Authorizes synchronous personhood operations for the selected wallet.
 	pub signer: &'a dyn PersonhoodSigner,
 	/// People suffix used for the product-scoped alias and proof.
@@ -578,7 +584,7 @@ pub async fn find_including_rings(
 async fn register_statement_account(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	chain_state: &ChainState,
+	target_chain: ExtrinsicTarget<'_>,
 	signer: &dyn PersonhoodSigner,
 	params: RegistrationParams<'_>,
 ) -> Result<RegistrationOutcome, StatementAllowanceError> {
@@ -667,25 +673,31 @@ async fn register_statement_account(
 		};
 
 		let context = slot::derive_slot_context(params.network_suffix, params.period, seq);
-		let call = extrinsic::build_set_statement_store_account_call(
-			metadata,
-			params.period,
-			seq,
-			params.target,
-		)?;
-		let message = extension::build_proof_message(metadata, &call, chain_state)?;
 		let alias =
 			slot::slot_alias(signer, collection, params.network_suffix, params.period, seq)?;
-		let ring_proof = signer.prove(params.ring, &context, &message)?;
-		let as_resources_extra = extrinsic::build_as_resources_extra(
-			metadata,
-			&ring_proof,
-			params.ring.ring_index,
-			revision,
-			collection,
-		)?;
-		let extrinsic =
-			extrinsic::build_unsigned_extrinsic(metadata, chain_state, &call, &as_resources_extra)?;
+		let prove_allowance = |message: &[u8; 32]| {
+			let ring_proof = signer.prove(params.ring, &context, message)?;
+			extrinsic::build_as_resources_extra(
+				metadata,
+				&ring_proof,
+				params.ring.ring_index,
+				revision,
+				collection,
+			)
+		};
+		let call = extrinsic::SetStatementStoreAccountCallArgs {
+			period: params.period,
+			seq,
+			target_account: *params.target,
+		};
+		let extrinsic = target_chain
+			.build_authorized(
+				RESOURCES_PALLET,
+				"set_statement_store_account",
+				call,
+				ProofAuthorizer::new(AS_RESOURCES, prove_allowance),
+			)
+			.await?;
 
 		match rpc.submit_and_watch(&extrinsic).await {
 			Ok(block_hash) => {
@@ -852,7 +864,7 @@ pub struct PooledRegistrationParams<'a> {
 pub async fn register_statement_account_pooled(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	chain_state: &ChainState,
+	target_chain: ExtrinsicTarget<'_>,
 	signer: &dyn PersonhoodSigner,
 	scans: &[CollectionScan],
 	memberships: &[RingParams],
@@ -954,7 +966,7 @@ pub async fn register_statement_account_pooled(
 	register_statement_account(
 		rpc,
 		metadata,
-		chain_state,
+		target_chain,
 		signer,
 		RegistrationParams {
 			target: params.target,
@@ -989,7 +1001,7 @@ pub async fn claim_long_term_storage(
 	let LongTermStorageClaim {
 		rpc,
 		metadata,
-		chain_state,
+		target_chain,
 		signer,
 		network_suffix,
 		target,
@@ -1013,19 +1025,25 @@ pub async fn claim_long_term_storage(
 		.await?;
 
 		let context = slot::derive_long_term_storage_context(network_suffix, period, counter);
-		let call =
-			extrinsic::build_claim_long_term_storage_call(metadata, period, counter, target)?;
-		let message = extension::build_proof_message(metadata, &call, chain_state)?;
-		let ring_proof = signer.prove(ring, &context, &message)?;
-		let as_resources_extra = extrinsic::build_long_term_storage_extra(
-			metadata,
-			&ring_proof,
-			ring.ring_index,
-			revision,
-			ring.collection,
-		)?;
-		let extrinsic =
-			extrinsic::build_unsigned_extrinsic(metadata, chain_state, &call, &as_resources_extra)?;
+		let prove_claim = |message: &[u8; 32]| {
+			let ring_proof = signer.prove(ring, &context, message)?;
+			extrinsic::build_long_term_storage_extra(
+				metadata,
+				&ring_proof,
+				ring.ring_index,
+				revision,
+				ring.collection,
+			)
+		};
+		let call = extrinsic::ClaimLongTermStorageCallArgs { period, counter, account_id: *target };
+		let extrinsic = target_chain
+			.build_authorized(
+				RESOURCES_PALLET,
+				"claim_long_term_storage",
+				call,
+				ProofAuthorizer::new(AS_RESOURCES, prove_claim),
+			)
+			.await?;
 		debug!(
 			period,
 			counter,
@@ -1501,24 +1519,6 @@ mod tests {
 	}
 
 	#[test]
-	fn a_wipe_is_reflected_in_the_signed_genesis_hash() {
-		let responses =
-			[call_script(1_000_000, [0xaa; 32], true), call_script(1_000_000, [0xcc; 32], true)]
-				.concat();
-		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str));
-		let client = ChainClient::new(RpcClient::new(HostRpcClient::new(scripted)), [0xaa; 32]);
-		let cache = ChainContextCache::default();
-
-		futures::executor::block_on(async {
-			let before = cache.get(&client).await.expect("first read");
-			assert_eq!(before.state.genesis_hash, [0xaa; 32]);
-
-			let after = cache.get(&client).await.expect("read after a wipe");
-			assert_eq!(after.state.genesis_hash, [0xcc; 32]);
-		});
-	}
-
-	#[test]
 	fn a_spec_version_bump_refreshes_the_entry() {
 		let seen = scripted_cache_run(
 			&[call_script(1_000_000, [0xaa; 32], true), call_script(1_000_001, [0xaa; 32], true)]
@@ -1538,21 +1538,6 @@ mod tests {
 		);
 
 		assert_eq!(seen, [MISS, MISS].concat());
-	}
-
-	#[test]
-	fn a_stale_configured_genesis_still_yields_the_chains_own_hash() {
-		let responses = call_script(1_000_000, [0xbb; 32], true);
-		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str));
-		let client = ChainClient::new(RpcClient::new(HostRpcClient::new(scripted)), [0xaa; 32]);
-		let cache = ChainContextCache::default();
-
-		let context = futures::executor::block_on(cache.get(&client))
-			.expect("a stale configured genesis is not fatal");
-
-		// `CheckGenesis` is signed over this, so it must be the chain's value,
-		// not the caller's possibly-stale constant.
-		assert_eq!(context.state.genesis_hash, [0xbb; 32]);
 	}
 
 	#[test]
@@ -1604,13 +1589,8 @@ mod tests {
 		free_slots: usize,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -1633,7 +1613,7 @@ mod tests {
 		let outcome = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
@@ -1689,13 +1669,8 @@ mod tests {
 		allow_eviction: bool,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -1720,7 +1695,7 @@ mod tests {
 			register_statement_account_pooled(
 				&rpc,
 				metadata,
-				&chain_state,
+				target_chain,
 				&signer,
 				&scans,
 				&memberships,
@@ -1745,13 +1720,8 @@ mod tests {
 		submit_error: &str,
 	) -> Result<RegistrationOutcome, StatementAllowanceError> {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -1776,7 +1746,7 @@ mod tests {
 			register_statement_account_pooled(
 				&rpc,
 				metadata,
-				&chain_state,
+				target_chain,
 				&signer,
 				&scans,
 				&memberships,
@@ -2216,13 +2186,8 @@ mod tests {
 	#[test]
 	fn a_full_table_replaces_the_oldest_replaceable_slot() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2251,7 +2216,7 @@ mod tests {
 		let outcome = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
@@ -2275,13 +2240,8 @@ mod tests {
 	#[test]
 	fn a_duplicate_submit_retry_does_not_take_over_a_second_slot() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2310,7 +2270,7 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
@@ -2335,13 +2295,8 @@ mod tests {
 	#[test]
 	fn a_refused_takeover_is_named() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2364,7 +2319,7 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
@@ -2385,13 +2340,8 @@ mod tests {
 	#[test]
 	fn a_full_table_within_the_cooldown_still_fails() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
+		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2413,7 +2363,7 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],

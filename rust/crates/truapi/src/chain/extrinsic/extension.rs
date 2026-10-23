@@ -67,9 +67,10 @@ impl ExtensionError {
 		Self(Box::new(error))
 	}
 
-	/// The wrapped error, for a caller that wants its own type back.
-	pub fn into_inner(self) -> Box<dyn core::error::Error + Send + Sync> {
-		self.0
+	/// The wrapped error as `E`, when it is one, so a caller gets its own
+	/// error back; otherwise the error unchanged.
+	pub fn downcast<E: core::error::Error + 'static>(self) -> Result<E, Self> {
+		self.0.downcast::<E>().map(|error| *error).map_err(Self)
 	}
 }
 

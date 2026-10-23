@@ -1510,17 +1510,12 @@ mod tests {
 			.unwrap()
 		}
 
-		/// A host that builds every chain as V4.
-		struct NoV5Chains;
-
-		impl crate::platform::ExtrinsicVersionHost for NoV5Chains {}
-
 		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
 			let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
 			let extrinsics = Arc::new(ExtrinsicService::new(ExtrinsicServiceDeps {
 				storage: Arc::new(chain.clone()),
 				nonces: Arc::new(chain.clone()),
-				versions: Arc::new(NoV5Chains),
+				versions: Arc::new(crate::chain::V4OnlyHost),
 			}));
 			BulletinRpc::new(chain, extrinsics, [0x42; 32])
 				.with_allowance_block_wait_timeout(Duration::from_millis(25))

@@ -24,9 +24,9 @@ use sp_crypto_hashing::twox_128;
 use thiserror::Error;
 
 use super::{
-	ChainContext, StatementAllowanceError,
+	StatementAllowanceError,
 	collection::PersonhoodCollection,
-	duplicate_submit_error, extension,
+	duplicate_submit_error,
 	extension::{AS_PGAS, Metadata, MetadataError},
 	extrinsic,
 	key_hash::{blake2_128_concat, twox_64_concat},
@@ -143,8 +143,10 @@ fn ring_roots_key(generation: u32, collection: PersonhoodCollection, ring_index:
 pub struct PgasClaim<'a> {
 	/// Asset Hub connection the claim is submitted on.
 	pub asset_hub_rpc: &'a RpcClient,
-	/// Asset Hub metadata and signed-extension state, from the per-chain cache.
-	pub asset_hub: &'a ChainContext,
+	/// Asset Hub metadata.
+	pub asset_hub_metadata: &'a Metadata,
+	/// Where the claim extrinsic is built on Asset Hub.
+	pub asset_hub_target: super::ExtrinsicTarget<'a>,
 	/// People-chain connection the ring revision is read from.
 	pub people_rpc: &'a RpcClient,
 	/// People-chain metadata.
@@ -203,7 +205,8 @@ pub async fn claim_pgas(
 ) -> Result<PgasClaimOutcome, StatementAllowanceError> {
 	let PgasClaim {
 		asset_hub_rpc,
-		asset_hub,
+		asset_hub_metadata,
+		asset_hub_target,
 		people_rpc,
 		people_metadata,
 		signer,
@@ -211,8 +214,6 @@ pub async fn claim_pgas(
 		target,
 		ring,
 	} = params;
-	let asset_hub_metadata = asset_hub.metadata.as_ref();
-	let asset_hub_state = &asset_hub.state;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
 	let day = slot::current_period(slot::read_chain_now_seconds(asset_hub_rpc).await?);
@@ -246,30 +247,27 @@ pub async fn claim_pgas(
 		)
 		.await?;
 		let context = slot::derive_pgas_context(network_suffix, day, slot_index);
-		let call = extrinsic::build_claim_pgas_call(asset_hub_metadata, slot_index, target)?;
-		let message = extension::build_proof_message_after_extension(
-			asset_hub_metadata,
-			&call,
-			asset_hub_state,
-			AS_PGAS,
-		)?;
 		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
-		let ring_proof = signer.prove(ring, &context, &message)?;
-		let extra = extrinsic::build_as_pgas_extra(
-			asset_hub_metadata,
-			&ring_proof,
-			ring.ring_index,
-			revision,
-			day,
-			ring.collection,
-		)?;
-		let claim = extrinsic::build_unsigned_extrinsic_with_extra(
-			asset_hub_metadata,
-			asset_hub_state,
-			&call,
-			AS_PGAS,
-			&extra,
-		)?;
+		let prove_claim = |message: &[u8; 32]| {
+			let ring_proof = signer.prove(ring, &context, message)?;
+			extrinsic::build_as_pgas_extra(
+				asset_hub_metadata,
+				&ring_proof,
+				ring.ring_index,
+				revision,
+				day,
+				ring.collection,
+			)
+		};
+		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
+		let claim = asset_hub_target
+			.build_authorized(
+				"Pgas",
+				"claim_pgas",
+				call,
+				super::ProofAuthorizer::new(AS_PGAS, prove_claim),
+			)
+			.await?;
 
 		match asset_hub_rpc.submit_and_watch(&claim).await {
 			Ok(block_hash) => {
