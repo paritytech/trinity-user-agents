@@ -10,18 +10,17 @@ use subxt::{
 use super::{
 	ExtensionError, InheritedImplication, TransactionExtension, well_known::VERIFY_MULTI_SIGNATURE,
 };
-use crate::host_internal::extrinsic::Sr25519Signer;
 
 /// `VerifyMultiSignature` carrying the signer's signature over the
 /// extrinsic's implication. A V5 extrinsic carries it as an extension; a V4
 /// one takes it out of the pipeline and puts the signature in its preamble.
 pub struct VerifySignatureExtension<'a> {
-	signer: &'a Sr25519Signer,
+	signer: &'a (dyn Signer<SubstrateConfig> + Sync),
 }
 
 impl<'a> VerifySignatureExtension<'a> {
 	/// Signs with `signer`.
-	pub fn new(signer: &'a Sr25519Signer) -> Self {
+	pub fn new(signer: &'a (dyn Signer<SubstrateConfig> + Sync)) -> Self {
 		Self { signer }
 	}
 

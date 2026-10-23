@@ -182,9 +182,10 @@ async fn a_pgas_claim_is_judged_by_asset_hub() {
 async fn a_dotns_registration_is_judged_by_asset_hub() {
 	let chain = ASSET_HUB.chain_runtime();
 	let extrinsics = extrinsic_service(&chain);
-	let who = schnorrkel::MiniSecretKey::from_bytes(&[0x09; 32])
+	let keypair = schnorrkel::MiniSecretKey::from_bytes(&[0x09; 32])
 		.expect("a mini secret")
 		.expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+	let who = Sr25519Signer::from_keypair(&keypair);
 	let authorizer = AsDotnsGatewayExtension {
 		ring_proof: UNVERIFIABLE_PROOF.to_vec(),
 		ring_index: 0,

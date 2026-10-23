@@ -16,14 +16,16 @@
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
-use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
+use subxt::{
+	config::substrate::SubstrateConfig, ext::scale_encode::EncodeAsType, tx::Signer,
+	utils::MultiSignature,
+};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::{
 	chain::{ExtensionError, InheritedImplication, TransactionExtension},
 	dotns_views::{call_string, network_tld, tld_node},
-	host_logic::product_account::SR25519_SIGNING_CONTEXT,
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
 
@@ -133,7 +135,7 @@ pub struct AsDotnsGatewayExtension<'a> {
 	/// The People root revision the proof is built against.
 	pub revision: u32,
 	/// The account registering the username.
-	pub who: &'a schnorrkel::Keypair,
+	pub who: &'a (dyn Signer<SubstrateConfig> + Sync),
 }
 
 impl TransactionExtension for AsDotnsGatewayExtension<'_> {
@@ -150,16 +152,11 @@ impl TransactionExtension for AsDotnsGatewayExtension<'_> {
 		&self,
 		implication: &InheritedImplication,
 	) -> Result<Option<AsDotnsGatewayInfo>, ExtensionError> {
-		let signature = self.who.secret.sign_simple(
-			SR25519_SIGNING_CONTEXT,
-			&implication.hash(),
-			&self.who.public,
-		);
 		Ok(Some(AsDotnsGatewayInfo::RegisterFullName {
 			proof: self.ring_proof.clone(),
 			ring_index: self.ring_index,
 			revision: self.revision,
-			signature: MultiSignature::Sr25519(signature.to_bytes()),
+			signature: self.who.sign(&implication.hash()),
 		}))
 	}
 }

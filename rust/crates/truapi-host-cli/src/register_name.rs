@@ -16,6 +16,7 @@ use anyhow::{Context, Result, bail};
 use subxt::utils::H256;
 use tracing::debug;
 use truapi::{
+	Sr25519Signer,
 	host_logic::{
 		dotns_gateway::{
 			AsDotnsGatewayExtension, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,
@@ -186,7 +187,8 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// The account signs the implication with sr25519; the signature travels
 	// next to the ring proof in the AsDotnsGateway value.
-	let authorizer = AsDotnsGatewayExtension { ring_proof, ring_index, revision, who: &who };
+	let who_signer = Sr25519Signer::from_keypair(&who);
+	let authorizer = AsDotnsGatewayExtension { ring_proof, ring_index, revision, who: &who_signer };
 	let call =
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsics = crate::extrinsic_service(&config.network);
