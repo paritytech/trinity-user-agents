@@ -1,117 +1,118 @@
 // The fundtest provider's Worker: serves the FundingProvider trait.
 //
-// One stream carries everything the host asks: a price for an ask, a session
-// to run, a request to cancel one and the user's answer to a cancel offer.
-// Sessions still in flight, and cancel requests and answers the worker has
-// not settled, are handed over again whenever the stream opens, so a
-// restarted worker resumes them. A
-// session stopped at its kill point, or by an error it could not settle,
-// drops what it held in memory and the stream is opened again, which hands it
-// back the way a restart would: at once after a kill, after a growing wait
-// after an error.
+// The core calls the worker, and each handler sends one answer: a price for
+// an ask, a session to run, a request to cancel one and the user's answer to
+// a cancel offer. When the worker connects, the core assigns it every session
+// it still serves and repeats the cancel calls it never answered, so a
+// restarted worker resumes them from the state each session kept in storage.
+// A session stopped at its kill point runs again at once from that state, and
+// one an error stopped runs again after a growing wait, as a restart would.
+// Calls come in no order between them, so they find their session by intent.
 
-import type { HostFundingServeSubscribeItem } from "@parity/truapi";
+import type { FundingAssignment } from "@parity/truapi";
 import { answerAsk } from "./quotes";
 import { describe, sleep, truapi } from "./host";
+import { loadSaved } from "./saved";
 import { Session } from "./session";
 
-/** Wait before the stream is opened again after it failed or ended. */
-const RESUBSCRIBE_MS = 5_000;
-/** Longest wait before a session an error stopped is handed out again. */
+/** First wait before a session an error stopped runs again. */
+const RESTART_MS = 5_000;
+/** Longest wait before a session an error stopped runs again. */
 const MAX_RESTART_MS = 10 * 60_000;
+/** How long a cancel call waits for the session it names to be assigned. */
+const SESSION_WAIT_MS = 30_000;
 
-const sessions = new Map<string, Session>();
+/** The running sessions, by intent, each once its state is loaded. */
+const sessions = new Map<string, Promise<Session>>();
 /** Times in a row each session was stopped by an error. */
 const restarts = new Map<string, number>();
 
-/** Closes the open stream, so `serve` opens it again. */
-let reopenStream: (() => void) | undefined;
-
-async function answerQuote(
-  askId: string,
-  ask: Extract<HostFundingServeSubscribeItem, { tag: "Quote" }>["value"]["ask"],
-) {
-  const client = await truapi();
-  await client.fundingProvider
-    .answerQuote({ askId, answer: answerAsk(ask, Date.now()) })
-    .match(
-      () => undefined,
-      (error) =>
-        console.warn(
-          `[fundtest] quote ${askId} not answered: ${describe(error)}`,
-        ),
+/** Runs `assignment` from the state it kept in storage, unless it runs
+ *  already. */
+function start(assignment: FundingAssignment): void {
+  const { intent } = assignment;
+  if (sessions.has(intent)) return;
+  const loading = loadSaved(intent).then(
+    (stored) => new Session(assignment, stored, restarts.get(intent)),
+  );
+  sessions.set(intent, loading);
+  void loading
+    .then((session) => session.run())
+    .then(
+      (outcome) => {
+        sessions.delete(intent);
+        if (outcome === "ended") restarts.delete(intent);
+        if (outcome === "killed") start(assignment);
+        if (outcome === "retry") restartLater(assignment);
+      },
+      (error: unknown) => {
+        sessions.delete(intent);
+        console.error(`[fundtest] ${intent} stopped: ${describe(error)}`);
+        restartLater(assignment);
+      },
     );
 }
 
-function handle(item: HostFundingServeSubscribeItem): void {
-  switch (item.tag) {
-    case "Quote":
-      void answerQuote(item.value.askId, item.value.ask);
-      return;
-    case "Assigned": {
-      const { session } = item.value;
-      if (sessions.has(session.intent)) return;
-      const running = new Session(session, restarts.get(session.intent));
-      sessions.set(session.intent, running);
-      void running
-        .run()
-        .then(
-          (outcome) => {
-            if (outcome === "ended") restarts.delete(session.intent);
-            if (outcome === "killed") reopenStream?.();
-            if (outcome === "retry") restartLater(session.intent);
-          },
-          (error: unknown) =>
-            console.error(
-              `[fundtest] ${session.intent} stopped: ${describe(error)}`,
-            ),
-        )
-        .finally(() => sessions.delete(session.intent));
-      return;
-    }
-    case "Cancel":
-      sessions.get(item.value.intent)?.cancel();
-      return;
-    case "CancelAccepted":
-      sessions.get(item.value.intent)?.cancelAccepted();
-      return;
-    case "CancelDeclined":
-      sessions.get(item.value.intent)?.cancelDeclined();
-      return;
+/** Runs a session an error stopped again, after a wait that doubles each
+ *  time it stops in a row. */
+function restartLater(assignment: FundingAssignment): void {
+  const count = (restarts.get(assignment.intent) ?? 0) + 1;
+  restarts.set(assignment.intent, count);
+  const wait = Math.min(RESTART_MS * 2 ** (count - 1), MAX_RESTART_MS);
+  setTimeout(() => start(assignment), wait);
+}
+
+/** The running session `intent` names, waiting a while for its assignment,
+ *  which the core may send after the call. */
+async function sessionOf(intent: string): Promise<Session | undefined> {
+  const deadline = Date.now() + SESSION_WAIT_MS;
+  for (;;) {
+    const session = sessions.get(intent);
+    if (session) return session;
+    if (Date.now() >= deadline) return undefined;
+    await sleep(250);
   }
 }
 
-/** Has a session an error stopped handed out again, after a wait that
- *  doubles each time it stops in a row. */
-function restartLater(intent: string): void {
-  const count = (restarts.get(intent) ?? 0) + 1;
-  restarts.set(intent, count);
-  const wait = Math.min(RESUBSCRIBE_MS * 2 ** (count - 1), MAX_RESTART_MS);
-  setTimeout(() => reopenStream?.(), wait);
-}
-
-/** Serves the stream for as long as the worker lives, reopening it when it
- *  fails or ends. */
 async function serve(): Promise<void> {
   const client = await truapi();
-  for (;;) {
-    await new Promise<void>((resolve) => {
-      const subscription = client.fundingProvider.serveSubscribe().subscribe({
-        next: handle,
-        error: (error) => {
-          console.warn(`[fundtest] serve stream failed: ${describe(error)}`);
-          resolve();
-        },
-        complete: resolve,
-      });
-      reopenStream = () => {
-        subscription.unsubscribe();
-        resolve();
-      };
-    });
-    reopenStream = undefined;
-    await sleep(RESUBSCRIBE_MS);
-  }
+  client.fundingProvider.onQuote(({ ask }, send) => {
+    send(answerAsk(ask, Date.now()));
+  });
+  client.fundingProvider.onAssign(({ session }, send) => {
+    start(session);
+    send(undefined);
+  });
+  client.fundingProvider.onCancel(({ intent }, send) => {
+    void sessionOf(intent)
+      .then(
+        (session) =>
+          session?.cancel() ?? {
+            tag: "Refused" as const,
+            value: { reason: "This session is not running here" },
+          },
+      )
+      .then(send, (error: unknown) =>
+        console.warn(
+          `[fundtest] ${intent}: answering the cancel failed: ${describe(error)}`,
+        ),
+      );
+  });
+  client.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
+    void sessionOf(intent)
+      .then((session) =>
+        decision.tag === "Accepted"
+          ? session?.cancelAccepted()
+          : session?.cancelDeclined(),
+      )
+      .then(
+        () => send(undefined),
+        (error: unknown) =>
+          console.warn(
+            `[fundtest] ${intent}: keeping the cancel decision failed: ${describe(error)}`,
+          ),
+      );
+  });
 }
 
 void serve().catch((error: unknown) =>

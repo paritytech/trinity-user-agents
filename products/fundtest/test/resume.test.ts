@@ -1,12 +1,16 @@
-// A session that stops anywhere must finish when a restarted worker is handed
-// it again with what it saved, and must not move funds twice on the way. Each
-// case stops a session at one of its kill points, then runs it again from the
-// host's copy of its saved state, against a fake host and chain that answer a
-// repeated action the way the real ones do. The fake host orders reports as
+// A session that stops anywhere must finish when a restarted worker is
+// assigned it again and resumes from the state it stored, and must not move
+// funds twice on the way. Each case stops a session at one of its kill points,
+// then runs it again from the state it stored, against a fake host and chain
+// that answer a repeated action the way the real ones do. The fake host orders reports as
 // the core does (host_logic/funding.rs `report` and `follows`).
 
 import { beforeEach, expect, mock, test } from "bun:test";
-import type { FundingAssignment, FundingUpdate } from "@parity/truapi";
+import type {
+  FundingAssignment,
+  FundingCancelAnswer,
+  FundingUpdate,
+} from "@parity/truapi";
 
 process.env.FUNDTEST_CARD_ARRIVAL_MS = "0";
 process.env.FUNDTEST_PAYOUT_MS = "0";
@@ -59,9 +63,10 @@ interface World {
   /** Every update the host took, in order. */
   reports: string[];
   core: Core;
+  /** The state the session last stored. */
   saved: string | undefined;
-  /** The host's state just before each save, to resume from as if the worker
-   *  stopped there. */
+  /** The world just before each store of the session's state, to resume
+   *  from as if the worker stopped there. */
   checkpoints: Omit<World, "checkpoints">[];
   storage: Map<string, string>;
   topUps: string[];
@@ -144,17 +149,6 @@ function rankOf(update: FundingUpdate): number | undefined {
   }
 }
 
-/** The core's answer to a provider's answer to the user's cancel, which it
- *  takes only while the cancel waits on one. */
-function reportCancelAnswer(update: FundingUpdate): string | undefined {
-  const { core } = world;
-  if (core.failed || core.refunded || core.payout === "paid") return "NotFound";
-  if (core.cancel !== "requested" && core.cancel !== "offered")
-    return "OutOfOrder";
-  core.cancel = update.tag === "CancelOffer" ? "offered" : "refused";
-  return undefined;
-}
-
 /** The core's answer to `update` on an outbound session it released. */
 function reportReleased(update: FundingUpdate): string | undefined {
   const { core } = world;
@@ -227,12 +221,6 @@ const client = {
         world.reportFaults.splice(world.reportFaults.indexOf(fault), 1);
         return refused(fault.answer);
       }
-      if (update.tag === "CancelOffer" || update.tag === "CancelRefused") {
-        const refusal = reportCancelAnswer(update);
-        if (refusal) return refused(refusal);
-        world.reports.push(reportKey(update));
-        return ok();
-      }
       const afterRelease =
         update.tag === "Payout" ||
         update.tag === "Refunding" ||
@@ -243,12 +231,6 @@ const client = {
         : reportOpen(update);
       if (refusal) return refused(refusal);
       world.reports.push(reportKey(update));
-      return ok();
-    },
-    save: ({ state }: { state: string }) => {
-      const { checkpoints: _, ...now } = world;
-      world.checkpoints.push(structuredClone(now));
-      world.saved = state;
       return ok();
     },
     presentFrame: () =>
@@ -284,6 +266,11 @@ const client = {
   localStorage: {
     read: ({ key }: { key: string }) => ok({ value: world.storage.get(key) }),
     write: ({ key, value }: { key: string; value: string }) => {
+      if (key.startsWith("funding:")) {
+        const { checkpoints: _, ...now } = world;
+        world.checkpoints.push(structuredClone(now));
+        world.saved = value;
+      }
       world.storage.set(key, value);
       return ok();
     },
@@ -371,11 +358,21 @@ mock.module("../worker/accounts", () => ({
   topUpSecret: () => "0x00",
 }));
 
-const { Session, MAX_RESTARTS } = await import("../worker/session");
+const { Session: Running, MAX_RESTARTS } = await import("../worker/session");
 const { actionKey, toStored } = await import("../shared/channel");
 const { quoteIdOf } = await import("../worker/quotes");
 const { writeSaved } = await import("../worker/saved");
 type Saved = import("../worker/saved").Saved;
+
+/** An assignment, with the state the session stored before, if any. */
+type Handed = FundingAssignment & { saved?: string };
+
+/** A session run from what it was handed. */
+class Session extends Running {
+  constructor(handed: Handed, restarts = 0) {
+    super(handed, handed.saved, restarts);
+  }
+}
 
 /** Cents `.5N` stops the session at kill point N. */
 const amountStoppingAt = (point: number) =>
@@ -385,18 +382,18 @@ function assignment(
   direction: "In" | "Out",
   amount: bigint,
   saved?: string,
-): FundingAssignment {
+): Handed {
   return {
     intent: `${direction.toLowerCase()}-session`,
     direction,
     amount,
     expiresAt: 0n,
-    ...(saved === undefined ? {} : { saved: saved as `0x${string}` }),
+    ...(saved === undefined ? {} : { saved }),
   };
 }
 
 /** Runs a session to its kill point, then again as a restarted worker would,
- *  handed back what the host kept for it. */
+ *  from the state it stored. */
 async function stopAndResume(direction: "In" | "Out", point: number) {
   const amount = amountStoppingAt(point);
   const first = assignment(direction, amount);
@@ -582,15 +579,16 @@ test("a card payment declined on purpose fails before any money moves", async ()
   expect(world.drips).toBe(0);
 });
 
-test("a cancel while the user is on the provider's screen ends the session as cancelled", async () => {
+test("a cancel while the user is on the provider's screen stops the session", async () => {
   world.frame = "stays-open";
   const running = new Session(assignment("In", 25n * ONE_CASH));
   const outcome = running.run();
   await Bun.sleep(20);
-  running.cancel();
+  expect(await running.cancel()).toEqual({ tag: "Stopped" });
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["AwaitingPayment", "Details", "Failed"]);
-  expect(lastUpdate().value).toEqual({ reason: { tag: "Cancelled" } });
+  // The core ends the session on the answer; the worker reports nothing more.
+  expect(tags()).toEqual(["AwaitingPayment", "Details"]);
+  expect(world.storage.has("funding:in-session")).toBe(false);
 });
 
 // A report the host fails to take must not leave a top-up it made unnamed:
@@ -684,7 +682,7 @@ function releasedWithdrawal(
     cancel,
     debited = amount,
   }: { payoutInMs?: number; cancel?: Saved["cancel"]; debited?: bigint } = {},
-): FundingAssignment {
+): Handed {
   const paymentId = accounts.paymentIdFor("out-session");
   world.requests = [paymentId];
   world.core = {
@@ -694,7 +692,7 @@ function releasedWithdrawal(
     lastRank: 4,
     debited,
   };
-  // The host keeps what the session saved before the worker stopped.
+  // What the session stored before the worker stopped.
   world.saved = writeSaved({
     v: 1,
     amount: amount.toString(),
@@ -709,22 +707,38 @@ function releasedWithdrawal(
   return assignment("Out", amount, world.saved);
 }
 
-/** The user cancels and the core hands the request to the worker. */
-function userCancels(session: InstanceType<typeof Session>) {
+/** The user cancels, the core asks the worker, and takes its answer as the
+ *  core's `answer_cancel` does. */
+async function userCancels(
+  session: InstanceType<typeof Session>,
+): Promise<FundingCancelAnswer> {
   world.core.cancel = "requested";
-  session.cancel();
+  const answer = await session.cancel();
+  if (answer.tag === "Offer") world.core.cancel = "offered";
+  if (answer.tag === "Refused") world.core.cancel = "refused";
+  return answer;
 }
 
-/** The user answers the worker's offer once it reached the core. */
+/** The user answers the worker's offer, and the core settles the cancel
+ *  with the worker. */
 async function userAnswers(
   session: InstanceType<typeof Session>,
   accept: boolean,
 ) {
-  await until(() => world.core.cancel === "offered");
+  expect(world.core.cancel).toBe("offered");
   world.core.cancel = accept ? "accepted" : "declined";
-  if (accept) session.cancelAccepted();
-  else session.cancelDeclined();
+  if (accept) await session.cancelAccepted();
+  else await session.cancelDeclined();
 }
+
+/** The terms an answer offers, as the core would show them. */
+const offerOf = (answer: FundingCancelAnswer) =>
+  answer.tag === "Offer"
+    ? {
+        fee: answer.value.fee.toString(),
+        refund: answer.value.refund.toString(),
+      }
+    : answer;
 
 const updateOf = (tag: string) =>
   world.reports.map((key) => JSON.parse(key)).find((each) => each.tag === tag)
@@ -738,12 +752,12 @@ test("a cancel after the release is offered for a fee, and an accepted one refun
   const session = new Session(releasedWithdrawal(amount));
   const outcome = session.run();
   await until(() => tags().includes("Converting"));
-  userCancels(session);
+  const answer = await userCancels(session);
   await userAnswers(session, true);
   expect(await outcome).toBe("ended");
   const refundId = accounts.refundIdFor("out-session");
-  expect(tags()).toEqual(["Converting", "CancelOffer", "Refunding"]);
-  expect(updateOf("CancelOffer")).toMatchObject({
+  expect(tags()).toEqual(["Converting", "Refunding"]);
+  expect(offerOf(answer)).toEqual({
     fee: CANCEL_FEE.toString(),
     refund: (amount - CANCEL_FEE).toString(),
   });
@@ -762,7 +776,7 @@ test("an accepted cancel resumes from every checkpoint without refunding twice",
   const first = new Session(releasedWithdrawal(amount));
   const outcome = first.run();
   await until(() => tags().includes("Converting"));
-  userCancels(first);
+  await userCancels(first);
   await userAnswers(first, true);
   expect(await outcome).toBe("ended");
   const { checkpoints: stops, ...end } = world;
@@ -771,12 +785,10 @@ test("an accepted cancel resumes from every checkpoint without refunding twice",
     world = { ...structuredClone(stop), checkpoints: [] };
     const resumed = new Session(assignment("Out", amount, stop.saved));
     const run = resumed.run();
-    // The core hands the worker what it has not heard about the cancel.
-    if (world.core.cancel === "accepted") resumed.cancelAccepted();
+    // The core repeats what the worker has not answered about the cancel.
+    if (world.core.cancel === "accepted") await resumed.cancelAccepted();
     else {
-      // The core hands over a request the worker has not answered yet.
-      world.core.cancel ??= "requested";
-      resumed.cancel();
+      await userCancels(resumed);
       await userAnswers(resumed, true);
     }
     expect({ index, outcome: await run }).toEqual({ index, outcome: "ended" });
@@ -797,10 +809,10 @@ test("a declined cancel offer lets the payout go through", async () => {
   );
   const outcome = session.run();
   await until(() => tags().includes("Converting"));
-  userCancels(session);
+  await userCancels(session);
   await userAnswers(session, false);
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["Converting", "CancelOffer", "Payout"]);
+  expect(tags()).toEqual(["Converting", "Payout"]);
   expect(world.topUps).toEqual([]);
 });
 
@@ -826,7 +838,7 @@ test("an open cancel offer holds the payout until the core answers, even past it
   await Bun.sleep(50);
   expect(tags()).not.toContain("Payout");
   world.core.cancel = "declined";
-  session.cancelDeclined();
+  await session.cancelDeclined();
   expect(await outcome).toBe("ended");
   expect(tags()).toEqual(["Converting", "Payout"]);
 });
@@ -837,10 +849,10 @@ test("cents .73 refuse a cancel and the payout goes through", async () => {
   );
   const outcome = session.run();
   await until(() => tags().includes("Converting"));
-  userCancels(session);
+  const answer = await userCancels(session);
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["Converting", "CancelRefused", "Payout"]);
-  expect(world.core.cancel).toBe("refused");
+  expect(answer.tag).toBe("Refused");
+  expect(tags()).toEqual(["Converting", "Payout"]);
 });
 
 test("a cancel while the user's payment is still completing is refused", async () => {
@@ -861,10 +873,11 @@ test("a cancel while the user's payment is still completing is refused", async (
     ),
   );
   void session.run();
-  userCancels(session);
-  await until(() => tags().includes("CancelRefused"));
-  expect(updateOf("CancelRefused")).toEqual({
-    reason: "Your payment is still completing. Try again once it has",
+  expect(await userCancels(session)).toEqual({
+    tag: "Refused",
+    value: {
+      reason: "Your payment is still completing. Try again once it has",
+    },
   });
 });
 
@@ -895,10 +908,10 @@ test("an inbound cancel after the payment arrived is offered, and an accepted on
     ),
   );
   const outcome = session.run();
-  userCancels(session);
+  expect((await userCancels(session)).tag).toBe("Offer");
   await userAnswers(session, true);
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["CancelOffer", "Failed"]);
+  expect(tags()).toEqual(["Failed"]);
   expect(lastUpdate().value).toEqual({ reason: { tag: "Refunded" } });
   expect(world.topUps).toEqual([]);
 });
@@ -927,10 +940,10 @@ test("a cancel of a partly claimed withdrawal offers what was taken, less the fe
   );
   const outcome = session.run();
   await until(() => tags().includes("Converting"));
-  userCancels(session);
+  const answer = await userCancels(session);
   await userAnswers(session, true);
   expect(await outcome).toBe("ended");
-  expect(updateOf("CancelOffer")).toMatchObject({
+  expect(offerOf(answer)).toEqual({
     fee: CANCEL_FEE.toString(),
     refund: (PARTIAL - CANCEL_FEE).toString(),
   });
@@ -975,16 +988,15 @@ test("a cancel accepted after the credit started is ignored and the credit compl
       }),
     ),
   );
-  session.cancelAccepted();
+  await session.cancelAccepted();
   expect(await session.run()).toBe("ended");
   expect(tags()).toEqual(["Crediting", "Delivered"]);
   expect(tags()).not.toContain("Failed");
 });
 
-// The core hands a cancel over again while its offer is open, after any
-// restart of the stream: the worker must make the same offer again, not
-// withdraw it.
-test("a cancel handed over again while its offer is open makes the same offer", async () => {
+// The core asks again about a cancel it has no answer for after a restart:
+// the worker must make the same offer again, not withdraw it.
+test("a cancel asked again while its offer is open makes the same offer", async () => {
   const amount = 25n * ONE_CASH;
   world.ticksBeforeDone = 1_000;
   world.core = { ...freshCore(), lastRank: 3, cancel: "offered" };
@@ -1007,18 +1019,18 @@ test("a cancel handed over again while its offer is open makes the same offer", 
     ),
   );
   const outcome = session.run();
-  session.cancel();
-  await until(() => tags().includes("CancelOffer"));
-  expect(tags()).not.toContain("CancelRefused");
-  expect(updateOf("CancelOffer")).toEqual({
-    fee: offer.fee,
-    refund: offer.refund,
-    expiresAt: offer.expiresAt.toString(),
+  expect(await session.cancel()).toEqual({
+    tag: "Offer",
+    value: {
+      fee: BigInt(offer.fee),
+      refund: BigInt(offer.refund),
+      expiresAt: BigInt(offer.expiresAt),
+    },
   });
   // Nothing was credited while the offer stood.
   expect(world.topUps).toEqual([]);
   world.core.cancel = "declined";
-  session.cancelDeclined();
+  await session.cancelDeclined();
   expect(await outcome).toBe("ended");
   expect(tags().at(-1)).toBe("Delivered");
 });
@@ -1053,10 +1065,9 @@ test("a crypto session whose deposit was seen refuses a cancel after a restart",
     } as FundingAssignment["quote"],
   });
   void session.run();
-  userCancels(session);
-  await until(() => tags().includes("CancelRefused"));
-  expect(updateOf("CancelRefused")).toEqual({
-    reason: "This provider cannot send a crypto deposit back",
+  expect(await userCancels(session)).toEqual({
+    tag: "Refused",
+    value: { reason: "This provider cannot send a crypto deposit back" },
   });
   expect(tags()).not.toContain("Failed");
 });

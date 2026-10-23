@@ -54,9 +54,8 @@ payment quotes a two-day ETA, so `.33` on bank is seen through only with a short
 ### Stopping a session as if the worker crashed
 
 Cents `.51` to `.54` stop the session once at a kill point, just after an external action and before the step after it
-is saved. The worker drops what it held for the session in memory and opens its stream again, and the host hands the
-session back with what it saved, as it would after a restart. Force-quitting the app at any point exercises the same
-path.
+is stored. The worker drops what it held for the session in memory and runs it again from the state it stored, as it
+would after a restart. Force-quitting the app at any point exercises the same path.
 
 | Cents | Inbound                            | Outbound                        |
 | ----- | ---------------------------------- | ------------------------------- |
@@ -100,34 +99,35 @@ tops the user up by what the payment moved (the amount asked, or what a partial 
 session's intent, and the worker reports `Refunding { topUpId, amount }`. A user who declines the payment ends the
 session as `Cancelled`, and one without the balance as `InsufficientBalance`.
 
-**Cancel.** A cancel while the user has not paid stops the session, which ends as `Failed { Cancelled }`. After that a
-cancel is a request the worker answers:
+**Cancel.** The core asks the worker with `cancel`. While the user has not paid the session stops and the worker
+answers `Stopped`, and the core ends it as `Failed { Cancelled }`. After that the worker answers:
 
 | Where the session is                              | Answer                                                                                                                                       |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inbound, card or bank, before the first top-up    | `CancelOffer`. Accepted, the session ends as `Failed { Refunded }`, the payment returned on the user's rail                                  |
-| Inbound, crypto, once part of the deposit arrived | `CancelRefused`: this provider does not send a crypto deposit back                                                                           |
-| Inbound, once a top-up started                    | `CancelRefused`. The host itself refuses a cancel once a top-up started                                                                      |
-| Outbound, payment still completing                | `CancelRefused`, so the user can ask again once it completed                                                                                 |
-| Outbound, released and paying out                 | `CancelOffer`. Accepted, the reserve account tops the user up by the refund under the session's refund id and the worker reports `Refunding` |
-| Any, amount ending in `.73`                       | `CancelRefused`                                                                                                                              |
+| Inbound, card or bank, before the first top-up    | `Offer`. Accepted, the session ends as `Failed { Refunded }`, the payment returned on the user's rail                                        |
+| Inbound, crypto, once part of the deposit arrived | `Refused`: this provider does not send a crypto deposit back                                                                                 |
+| Inbound, once a top-up started                    | `Refused`. The host itself refuses a cancel once a top-up started                                                                            |
+| Outbound, payment still completing                | `Refused`, so the user can ask again once it completed                                                                                       |
+| Outbound, released and paying out                 | `Offer`. Accepted, the reserve account tops the user up by the refund under the session's refund id and the worker reports `Refunding`       |
+| Any, amount ending in `.73`                       | `Refused`                                                                                                                                    |
 
 An offer charges 1% of the amount, at least 0.50 CASH, and the refund is the rest. On a withdrawal the amount is what
 the payment moved. The offer stays open for 5 minutes on the host's clock. While it is open the session goes on but
-stops before the point it could not undo, the credit inbound and the payout outbound, until the host says the user
-answered or the offer lapsed: the worker never decides the lapse on its own clock. A declined or lapsed offer lets the
-session carry on. The offer, its terms and the user's acceptance are saved, and an accepted cancel refunds exactly the
-offered refund. The host hands an open offer's request back after a restart, and the worker makes the same offer again.
-An acceptance that arrives once the session is past the point it could undo is ignored.
+stops before the point it could not undo, the credit inbound and the payout outbound, until the core's `settleCancel`
+says the user answered or the offer lapsed: the worker never decides the lapse on its own clock. A declined or lapsed
+offer lets the session carry on. The offer, its terms and the user's acceptance are stored, and an accepted cancel
+refunds exactly the offered refund. The core asks again about an open offer after a restart, and the worker makes the
+same offer again. An acceptance that arrives once the session is past the point it could undo is ignored.
 
-**Errors.** A failure that may clear by itself is retried. A session an error stops is handed out again after a growing
-wait. After six such stops in a row a session no money moved for ends as `Failed { Other: provider_stuck }`; one that
-started moving money keeps being handed out, since only the provider can settle it.
+**Errors.** A failure that may clear by itself is retried. A session an error stops runs again after a growing wait.
+After six such stops in a row a session no money moved for ends as `Failed { Other: provider_stuck }`; one that started
+moving money keeps running again, since only the provider can settle it.
 
-**Restarts.** Each session saves its checkpoint with `fundingProvider.save` before every external action: the phase, the
-conversion plan, the pipeline's tick state, the faucet drip it is about to ask for and the top-ups it is about to make.
-A save is retried until the host keeps it, since an action taken after a save that did not stick could be repeated. The
-host hands the session back on `serveSubscribe` after a restart, and the worker continues from the saved checkpoint.
+**Restarts.** Each session stores its checkpoint in the worker's storage under `funding:<intent>` before every external
+action: the phase, the conversion plan, the pipeline's tick state, the faucet drip it is about to ask for and the
+top-ups it is about to make. A store is retried until it sticks, since an action taken after a checkpoint that did not
+stick could be repeated. When the worker connects after a restart the core assigns it every session it still serves,
+and the worker continues from the stored checkpoint, which it drops once the session ends or the core no longer has it.
 Every action a resumed step can repeat is safe to repeat:
 
 - Top-up ids are fixed by the session account and the attempt, and the payment id by the session's intent, so the host
@@ -136,14 +136,14 @@ Every action a resumed step can repeat is safe to repeat:
   waits for the first.
 - A report the host already took is refused as `OutOfOrder`, which the worker ignores. An update after the release is
   tried again for a few seconds first, since the host answers the same way before it has marked the session released.
-- A waited-for arrival, such as a bank transfer or the payout, has its due time saved, so a restart does not start the
+- A waited-for arrival, such as a bank transfer or the payout, has its due time stored, so a restart does not start the
   wait again.
 
 An action the user took on a screen is in product storage and is taken without showing the screen again.
 
 A report the host fails to take is tried again with a growing wait, up to 30 seconds apart, and a chain or network
 failure is retried a tick apart. A host refusal and a programming error are not retried. When a failure outlasts its
-retries, the worker logs it, drops the session from memory and has it handed out again: after 5 seconds the first time,
+retries, the worker logs it, drops the session from memory and runs it again: after 5 seconds the first time,
 doubling each time it stops in a row, up to 10 minutes. The resumed session continues from its checkpoint.
 
 ### The faucet
@@ -239,7 +239,7 @@ with code `no_faucet`.
 cd products/fundtest
 npm install      # also fetches getcash and generates the descriptors
 npm run typecheck
-npm test         # pricing, quote ids, triggers, saved state, the faucet request, and resuming after a stop
+npm test         # pricing, quote ids, triggers, stored state, the faucet request, and resuming after a stop
 npm run build    # dist/app and dist/worker
 ```
 

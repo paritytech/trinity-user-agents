@@ -39,6 +39,10 @@ export type ScreenAction =
   | { kind: "bank-sent"; amount?: string }
   | { kind: "payout-confirmed"; destination: string };
 
+/** Storage key of a session's own state, its checkpoint, which a restarted
+ *  worker resumes from. */
+export const stateKey = (intent: string) => `funding:${intent}`;
+
 /** Storage key of a session's view. */
 export const viewKey = (intent: string) => `fundtest:view:${intent}`;
 

@@ -1,8 +1,9 @@
-// What a session keeps with the host through `fundingProvider.save`, so a
+// What a session keeps in the worker's own storage, under its `intent`, so a
 // restarted worker resumes it: the step it reached and the figures it cannot
-// recompute. Bigints travel as decimal strings. The host keeps at most 4 KiB.
+// recompute. Bigints travel as decimal strings.
 
-import { fromStored, toStored } from "../shared/channel";
+import { fromStored, stateKey, toStored } from "../shared/channel";
+import { truapi, unwrap } from "./host";
 
 /** The step an inbound session reached. */
 export type InboundPhase =
@@ -150,5 +151,27 @@ export function readSaved(hex: string | undefined): Saved {
   return saved?.v === 1 ? saved : freshSaved();
 }
 
-/** The record as the bytes `save` takes. */
+/** The record as the bytes kept in storage. */
 export const writeSaved = (saved: Saved) => toStored(saved);
+
+/** The record session `intent` keeps in storage, as stored, if any. */
+export async function loadSaved(intent: string): Promise<string | undefined> {
+  const client = await truapi();
+  const { value } = await unwrap(
+    client.localStorage.read({ key: stateKey(intent) }),
+    "read the session's state",
+  );
+  return value;
+}
+
+/** Keeps `saved` as session `intent`'s record, in place of the one before. */
+export async function storeSaved(intent: string, saved: Saved): Promise<void> {
+  const client = await truapi();
+  await unwrap(
+    client.localStorage.write({
+      key: stateKey(intent),
+      value: writeSaved(saved),
+    }),
+    "store the session's state",
+  );
+}

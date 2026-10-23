@@ -12,6 +12,7 @@ import {
   fromStored,
   killedKey,
   screenUrl,
+  stateKey,
   toStored,
   viewKey,
   type ScreenAction,
@@ -106,10 +107,15 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
   }
 }
 
-/** Drops what a session left in the product's storage. */
+/** Drops what a session left in the product's storage, its state included. */
 export async function forgetSession(intent: string): Promise<void> {
   const client = await truapi();
-  for (const key of [viewKey(intent), actionKey(intent), killedKey(intent)]) {
+  for (const key of [
+    stateKey(intent),
+    viewKey(intent),
+    actionKey(intent),
+    killedKey(intent),
+  ]) {
     await client.localStorage.clear({ key }).match(
       () => undefined,
       (error) =>

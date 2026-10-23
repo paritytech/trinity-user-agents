@@ -1,17 +1,17 @@
 // One funding session, from its assignment to its last report.
 //
-// Each session moves through the phases in saved.ts and saves what it is
-// about to do before each external action (a faucet drip, a top-up, a payment
-// request), so a restarted worker that is handed the session again picks up
-// at that checkpoint. Every action a resumed phase can repeat is safe to
+// Each session moves through the phases in saved.ts and stores what it is
+// about to do in the worker's storage before each external action (a faucet
+// drip, a top-up, a payment request), so a restarted worker that is assigned
+// the session again picks up at that checkpoint. Every action a resumed phase can repeat is safe to
 // repeat: top-up and payment ids are fixed by the session, so the host answers
 // a repeat with `AlreadyExists`; the faucet drips an address once; and a
 // report the host already took is refused as `OutOfOrder`. A session stopped
-// by an error it cannot settle is handed out again later and resumes the same
-// way.
+// by an error it cannot settle is run again later and resumes the same way.
 
 import type {
   FundingAssignment,
+  FundingCancelAnswer,
   FundingFailure,
   FundingUpdate,
 } from "@parity/truapi";
@@ -69,7 +69,7 @@ import {
   type CryptoSymbol,
 } from "./onchain";
 import { payoutOf, priceOf, termsOfQuoteId, type QuoteTerms } from "./quotes";
-import { readSaved, writeSaved, type Saved } from "./saved";
+import { readSaved, storeSaved, type Saved } from "./saved";
 import {
   forgetSession,
   markKilled,
@@ -93,10 +93,10 @@ const PAST_ETA_MS = 60_000;
 /** How long a faucet drip may take to land on Asset Hub Next. */
 const DRIP_ARRIVAL_MS = 5 * 60_000;
 /** Times a failure that may clear by itself is retried, a tick apart, before
- *  the session stops and is handed out again later. */
+ *  the session stops and is run again later. */
 const RETRY_ATTEMPTS = 50;
 /** Times a report the host failed to take is made again before the session
- *  stops and is handed out again later. */
+ *  stops and is run again later. */
 const REPORT_ATTEMPTS = 8;
 /** Longest wait between two tries of a report. */
 const MAX_REPORT_RETRY_MS = 30_000;
@@ -114,7 +114,7 @@ const CANCEL_FEE_BPS = 100n;
 const CANCEL_FEE_MIN = ONE_CASH / 2n;
 /** Times in a row an error the session cannot settle may stop it before it
  *  gives up: a session no money moved for then ends as failed, and one money
- *  moved for keeps being handed out, since only it can settle that money. */
+ *  moved for keeps being run again, since only it can settle that money. */
 export const MAX_RESTARTS = 6;
 
 /** A failure the session ends on rather than retries. */
@@ -184,14 +184,16 @@ export class Session {
    *  kill point. */
   private demoFailure: SessionFailure | Killed | undefined;
 
-  /** `restarts` counts the times in a row an error stopped this session. */
+  /** `stored` is the record the session kept in storage, if any, and
+   *  `restarts` counts the times in a row an error stopped this session. */
   constructor(
     assignment: FundingAssignment,
+    stored: string | undefined,
     private readonly restarts = 0,
   ) {
     this.intent = assignment.intent;
     this.terms = termsOf(assignment);
-    this.saved = readSaved(assignment.saved);
+    this.saved = readSaved(stored);
     const amount = this.saved.amount ?? assignment.amount?.toString();
     if (amount !== undefined) this.saved.amount = amount;
   }
@@ -251,67 +253,22 @@ export class Session {
     return phase !== "new" && phase !== "awaiting-user";
   }
 
-  /** The user asked to cancel. While nothing has moved the session stops
-   *  and ends as cancelled. After that the cancel is a request: the session
-   *  offers to cancel for a fee, or refuses when it is past the point it can
-   *  undo. The host replays the request while an offer is open, so a
-   *  restarted worker answers it again. */
-  cancel(): void {
+  /** The user asked to cancel, and the core asks for the answer. While
+   *  nothing has moved the session stops: `Stopped`, and the core ends it as
+   *  cancelled. After that the session offers to cancel for a fee, or
+   *  refuses when it is past the point it can undo. The core asks again
+   *  after a restart while it has no answer, and an offer still open is made
+   *  again as it was. */
+  async cancel(): Promise<FundingCancelAnswer> {
     this.cancelRequested = true;
     if (this.cancellable) {
       this.abort.abort();
-      return;
+      return { tag: "Stopped" };
     }
-    this.answerCancel().catch((error: unknown) =>
-      console.warn(
-        `[fundtest] ${this.intent}: answering the cancel failed: ${describe(error)}`,
-      ),
-    );
-  }
-
-  /** The user accepted the cancel offer: the session stops what it is doing
-   *  and settles the cancel. */
-  cancelAccepted(): void {
-    const offer = this.saved.cancel;
-    if (offer?.state === "accepted") return;
-    if (offer === undefined || !this.undoable) {
-      console.warn(
-        `[fundtest] ${this.intent}: an accepted cancel arrived past the point it can be undone`,
-      );
-      return;
-    }
-    this.saved.cancel = { ...offer, state: "accepted" };
-    this.abort.abort();
-    this.save().catch((error: unknown) =>
-      console.warn(
-        `[fundtest] ${this.intent}: saving the accepted cancel failed: ${describe(error)}`,
-      ),
-    );
-  }
-
-  /** The user declined the cancel offer, or it lapsed: the session carries
-   *  on. */
-  cancelDeclined(): void {
-    if (this.saved.cancel?.state !== "offered") return;
-    delete this.saved.cancel;
-    this.cancelRequested = false;
-    this.save().catch((error: unknown) =>
-      console.warn(
-        `[fundtest] ${this.intent}: saving the declined cancel failed: ${describe(error)}`,
-      ),
-    );
-  }
-
-  /** Answers a cancel after money moved: a refusal, or an offer that is
-   *  saved before it is made. An offer still open is made again as it was. */
-  private async answerCancel(): Promise<void> {
-    if (this.saved.cancel?.state === "accepted") return;
     if (this.saved.cancel === undefined) {
       const refusal = this.cancelRefusal();
-      if (refusal !== undefined) {
-        await this.report({ tag: "CancelRefused", value: { reason: refusal } });
-        return;
-      }
+      if (refusal !== undefined)
+        return { tag: "Refused", value: { reason: refusal } };
       const { fee, refund } = this.cancelTerms();
       this.saved.cancel = {
         state: "offered",
@@ -322,14 +279,39 @@ export class Session {
       await this.save();
     }
     const offer = this.saved.cancel;
-    await this.report({
-      tag: "CancelOffer",
+    return {
+      tag: "Offer",
       value: {
         fee: BigInt(offer.fee),
         refund: BigInt(offer.refund),
         expiresAt: BigInt(offer.expiresAt),
       },
-    });
+    };
+  }
+
+  /** The user accepted the cancel offer: the session stores that, stops
+   *  what it is doing and settles the cancel. */
+  async cancelAccepted(): Promise<void> {
+    const offer = this.saved.cancel;
+    if (offer?.state === "accepted") return;
+    if (offer === undefined || !this.undoable) {
+      console.warn(
+        `[fundtest] ${this.intent}: an accepted cancel arrived past the point it can be undone`,
+      );
+      return;
+    }
+    this.saved.cancel = { ...offer, state: "accepted" };
+    await this.save();
+    this.abort.abort();
+  }
+
+  /** The user declined the cancel offer, or it lapsed: the session carries
+   *  on. */
+  async cancelDeclined(): Promise<void> {
+    if (this.saved.cancel?.state !== "offered") return;
+    delete this.saved.cancel;
+    this.cancelRequested = false;
+    await this.save();
   }
 
   /** Why a cancel after money moved is refused, or nothing when the session
@@ -368,9 +350,9 @@ export class Session {
   }
 
   /** Waits while a cancel offer is open, so the session does not pass the
-   *  point it can undo before the user answers. Only the host's answer ends
-   *  the wait: it sends `CancelDeclined` once the offer lapses on its clock,
-   *  so the worker's own clock never decides. */
+   *  point it can undo before the user answers. Only the core's answer ends
+   *  the wait: it settles the cancel as declined once the offer lapses on its
+   *  clock, so the worker's own clock never decides. */
   private async cancelGate(): Promise<void> {
     for (;;) {
       const cancel = this.saved.cancel;
@@ -398,7 +380,7 @@ export class Session {
 
   /** Runs the session until it ends, reporting as it goes. Answers `killed`
    *  when it stopped at its kill point, and `retry` when an error it cannot
-   *  settle stopped it: either way the worker hands it out again and it
+   *  settle stopped it: either way the worker runs it again and it
    *  resumes from its last checkpoint. */
   async run(): Promise<"ended" | "killed" | "retry"> {
     try {
@@ -417,6 +399,7 @@ export class Session {
       }
       if (error instanceof SessionOver) {
         console.info(`[fundtest] ${this.intent}: ${error.message}`);
+        await forgetSession(this.intent);
         return "ended";
       }
       if (this.restarts >= MAX_RESTARTS && !this.fundsStarted) {
@@ -438,8 +421,9 @@ export class Session {
   private async settle(error: unknown): Promise<void> {
     if (error instanceof Aborted && this.saved.cancel?.state === "accepted")
       return this.settleCancel();
+    // The core ended the session as cancelled on the `Stopped` answer.
     if (error instanceof Aborted && this.cancelRequested)
-      return this.end({ tag: "Cancelled" });
+      return forgetSession(this.intent);
     if (error instanceof SessionFailure) return this.end(error.reason);
     if (
       error instanceof FundingShortfallError ||
@@ -510,35 +494,15 @@ export class Session {
     }
   }
 
-  /** Saves the session's checkpoint, retrying until the host keeps it: an
-   *  action taken after a save that did not stick could be repeated by a
-   *  restarted worker. */
+  /** Stores the session's checkpoint, retrying until storage keeps it: an
+   *  action taken after a checkpoint that did not stick could be repeated by
+   *  a restarted worker. */
   private async save(): Promise<void> {
-    const client = await truapi();
-    await this.retrying("save", async () => {
-      try {
-        await unwrap(
-          client.fundingProvider.save({
-            intent: this.intent,
-            state: writeSaved(this.saved),
-          }),
-          "save",
-        );
-      } catch (error) {
-        if (error instanceof HostCallError && error.tag === "NotFound")
-          throw new SessionOver();
-        if (error instanceof HostCallError && error.tag === "TooLarge") {
-          throw new SessionFailure(
-            other("saved_too_large", "The session's state outgrew the host"),
-          );
-        }
-        throw error;
-      }
-    });
+    await this.retrying("save", () => storeSaved(this.intent, this.saved));
   }
 
   /** Stops the session at kill point `point` when its amount chose it, once:
-   *  the mark is kept in product storage, apart from the saved checkpoint,
+   *  the mark is kept in product storage, apart from the checkpoint,
    *  so the resumed session runs on past it. */
   private async killAt(point: KillPoint): Promise<void> {
     if (killPointOf(this.amount) !== point) return;
@@ -556,7 +520,7 @@ export class Session {
    *  may clear by itself. A host refusal, a programming error, a session
    *  failure and the pipeline's terminal errors are not retried, and neither
    *  is a failure that outlasts `RETRY_ATTEMPTS`: the session then stops and
-   *  is handed out again later. */
+   *  is run again later. */
   private async retrying<T>(what: string, work: () => Promise<T>): Promise<T> {
     for (let attempt = 1; ; attempt++) {
       try {
@@ -1243,7 +1207,7 @@ export class Session {
       );
       const paid = debited !== null;
       // The host ends the session from the payment's outcome. A released
-      // withdrawal keeps its saved state until the payout and any refund are
+      // withdrawal keeps its stored state until the payout and any refund are
       // reported, so a restart resumes the payout rather than looking for the
       // payment again.
       if (paid) {
