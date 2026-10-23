@@ -6,8 +6,6 @@ status: draft
 
 # RFC — Sharing between users
 
-Interactive flows: [Product Messages in Chat](https://claude.ai/artifact/LGne7mj44Y9hcqJpohR6gU).
-
 ## Summary
 
 - A product can share profile data with a contact, or with a public DotNS name through its sharing inbox.
@@ -91,7 +89,7 @@ See [Sharing inbox](#sharing-inbox) for how requests reach a DotNS name.
 Builds on
 [RFC 0002, Chat Extension v2](https://github.com/paritytech/trinity-user-agents/blob/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md).
 
-### 1. The product sends the sharing request: `sharing.send` (new)
+### 1. The product sends the sharing request: `sharing.send`
 
 ```rust
 /// Exchanges between users, carried from host to host. Callable from SPAs and Workers.
@@ -148,7 +146,7 @@ product's id.
 
 ```rust
 pub enum MessageContent {
-    ShareRequest(ShareRequest), // new
+    ShareRequest(ShareRequest),
     // ...
 }
 
@@ -183,7 +181,7 @@ chat, like a reaction. Answers travel in chat, so `ask` needs a `Contact`.
 
 ```rust
 pub enum MessageContent {
-    ShareResponse(ShareResponse), // new
+    ShareResponse(ShareResponse),
     // ...
 }
 
@@ -216,7 +214,7 @@ Where a host receives sharing requests from people who aren't contacts. It works
 - **Delivery:** the host passes each request to the product if its user uses it, and drops it otherwise, without telling
   the sender. Nothing reaches the chat list.
 
-### 4. How the products hear about it: `sharing.subscribe` (new)
+### 4. How the products hear about it: `sharing.subscribe`
 
 Hosts pass sharing requests and answers to products without the grants.
 
