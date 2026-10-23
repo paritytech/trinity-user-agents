@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use subxt::utils::H256;
+use subxt::utils::{AccountId32, H256};
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicBuilder,
@@ -69,7 +69,8 @@ impl ExtrinsicService {
 	) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
 		let mut builder = start_build(self.runtime_at_finalized_head(genesis).await?);
 		build(&mut builder);
-		let account_nonce = self.read_account_nonce(genesis, &builder).await?;
+		let nonce_account = account_needing_nonce(&builder);
+		let account_nonce = self.read_account_nonce(genesis, nonce_account).await?;
 		let host_extension_version = self.versions.extension_version(genesis).await?;
 		assemble(builder, host_extension_version, account_nonce)
 	}
@@ -88,14 +89,13 @@ impl ExtrinsicService {
 		})
 	}
 
-	/// The signer's next nonce, read only when the build signs and the caller
-	/// set none.
+	/// The next nonce of `account`, the signer that needs one, if any.
 	async fn read_account_nonce(
 		&self,
 		genesis: H256,
-		builder: &ExtrinsicBuilder<'_>,
+		account: Option<AccountId32>,
 	) -> Result<Option<u64>, ExtrinsicBuildError> {
-		let Some(account) = account_needing_nonce(builder) else {
+		let Some(account) = account else {
 			return Ok(None);
 		};
 		Ok(Some(self.nonces.next_nonce(genesis, &account).await?))

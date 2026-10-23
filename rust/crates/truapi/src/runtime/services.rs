@@ -170,12 +170,13 @@ impl RuntimeServices {
 			people_chain_genesis_hash,
 			spawner.clone(),
 		);
-		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
 		let extrinsics = Arc::new(ExtrinsicService::new(ExtrinsicServiceDeps {
 			storage: Arc::new(chain.clone()),
 			nonces: Arc::new(chain.clone()),
 			versions: platform.clone(),
 		}));
+		let bulletin =
+			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
 		Arc::new(Self {
 			platform,
 			host_info,

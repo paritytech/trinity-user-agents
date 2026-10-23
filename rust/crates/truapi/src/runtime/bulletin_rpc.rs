@@ -1,18 +1,19 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic at a best block no older than the finalized block its mortality is
-//! anchored to, dry-run it at that best block via Subxt's typed transaction
-//! validation, then submit through Subxt's transaction watch and classify the
-//! dispatch outcome from the inclusion block's events.
+//! extrinsic through the core's `ExtrinsicService`, mortal from the finalized
+//! head, dry-run it at a best block no older than that head via Subxt's typed
+//! transaction validation, then submit through Subxt's transaction watch and
+//! classify the dispatch outcome from the inclusion block's events.
 
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
 use crate::{
+	chain::{ExtrinsicBuildError, ExtrinsicService},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::{
 		bulletin::{
@@ -25,7 +26,7 @@ use crate::{
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	OnlineClient,
-	client::{Block, Blocks, OnlineClientAtBlock, OnlineClientAtBlockImpl},
+	client::{Block, Blocks, OnlineClientAtBlockImpl},
 	config::{HashFor, substrate::SubstrateConfig},
 	error::{
 		DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
@@ -36,6 +37,7 @@ use subxt::{
 		SubmittableTransaction, TransactionInBlock, TransactionInvalid, TransactionStatus,
 		TransactionUnknown, ValidationResult,
 	},
+	utils::H256,
 };
 use tracing::{instrument, warn};
 use truapi::CallContext;
@@ -121,9 +123,12 @@ pub enum BulletinSubmitError {
 	/// The host-owned physical connection could not provide a Subxt client.
 	#[display("bulletin chain unavailable: {_0}")]
 	Host(#[error(source)] RuntimeFailure),
-	/// Subxt failed while building, validating, submitting, or reading events.
+	/// Subxt failed while validating, submitting, or reading events.
 	#[display("subxt: {_0}")]
 	Subxt(#[error(source)] Box<subxt::Error>),
+	/// The store transaction could not be built.
+	#[display("building the store transaction: {_0}")]
+	Build(#[error(source)] ExtrinsicBuildError),
 	/// The allowance key could not be converted to its purpose-scoped signer.
 	#[display("invalid allowance key: {_0}")]
 	InvalidAllowanceKey(#[error(not(source))] String),
@@ -227,6 +232,7 @@ impl BulletinSubmitError {
 /// Bulletin-chain submission service shared by all product runtimes.
 pub struct BulletinRpc {
 	chain: ChainRuntime,
+	extrinsics: Arc<ExtrinsicService>,
 	genesis_hash: [u8; 32],
 	/// Serializes submissions: no same-account nonce races between
 	/// concurrent submits.
@@ -241,10 +247,16 @@ pub struct BulletinRpc {
 }
 
 impl BulletinRpc {
-	/// Build a bulletin submission service over the shared chain runtime.
-	pub fn new(chain: ChainRuntime, genesis_hash: [u8; 32]) -> Self {
+	/// Build a bulletin submission service over the shared chain runtime,
+	/// building its transactions through `extrinsics`.
+	pub fn new(
+		chain: ChainRuntime,
+		extrinsics: Arc<ExtrinsicService>,
+		genesis_hash: [u8; 32],
+	) -> Self {
 		Self {
 			chain,
+			extrinsics,
 			genesis_hash,
 			submit_lock: futures::lock::Mutex::new(()),
 			phase: StdMutex::new(SubmissionPhase::Connect),
@@ -355,9 +367,7 @@ impl BulletinRpc {
 		self.enter_phase(SubmissionPhase::Build);
 		let signer =
 			allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
-		let signed = self
-			.build_signed_and_dry_run(&mut best_blocks, head, &finalized, &signer, value)
-			.await?;
+		let signed = self.build_signed_and_dry_run(&mut best_blocks, head, &signer, value).await?;
 		drop(best_blocks);
 
 		self.enter_phase(SubmissionPhase::Watch);
@@ -416,7 +426,6 @@ impl BulletinRpc {
 		&self,
 		best_blocks: &mut Blocks<SubstrateConfig>,
 		head: Block<SubstrateConfig>,
-		finalized: &OnlineClientAtBlock<SubstrateConfig>,
 		signer: &Sr25519Signer,
 		value: &[u8],
 	) -> Result<SignedStore, BulletinSubmitError> {
@@ -429,9 +438,15 @@ impl BulletinRpc {
 				.at()
 				.await
 				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, finalized, signer, value)
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let built = build_signed_store_transaction(
+				&self.extrinsics,
+				H256(self.genesis_hash),
+				signer,
+				value,
+			)
+			.await
+			.map_err(BulletinSubmitError::Build)?;
+			let signed = at_block.tx().from_bytes(built.extrinsic.bytes().to_vec());
 
 			self.enter_phase(SubmissionPhase::DryRun);
 			let validity = signed
@@ -910,6 +925,7 @@ mod tests {
 	mod orchestration {
 		use super::*;
 		use crate::{
+			chain::ExtrinsicServiceDeps,
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 			host_internal::extrinsic::tests::{
 				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
@@ -1376,6 +1392,16 @@ mod tests {
 						})),
 					]
 				},
+				"chain_getFinalizedHead" => vec![response(json!(legacy_finalized_hash(state)))],
+				"chain_getHeader" => {
+					vec![response(legacy_header(request["params"][0].as_str().unwrap()))]
+				},
+				"state_call" => {
+					let runtime_method = request["params"][0].as_str().unwrap();
+					let output = runtime_call_output(runtime_method, ValidationOutcome::Valid);
+					vec![response(json!(format!("0x{}", hex::encode(output))))]
+				},
+				"system_accountNextIndex" => vec![response(json!(POOL_NONCE))],
 				"chainHead_v1_unpin" | "chainHead_v1_unfollow" | "transactionWatch_v1_unwatch" => {
 					vec![response(JsonValue::Null)]
 				},
@@ -1405,6 +1431,34 @@ mod tests {
 			[0u8; 32].encode_to(&mut bytes);
 			Vec::<u8>::new().encode_to(&mut bytes);
 			format!("0x{}", hex::encode(bytes))
+		}
+
+		/// The nonce `system_accountNextIndex` answers.
+		const POOL_NONCE: u64 = 7;
+
+		/// The newest finalized block the follow subscription announces.
+		fn legacy_finalized_hash(state: &ScriptedState) -> String {
+			match state.replayed_finalized_blocks {
+				0 => BLOCK_HASH.to_string(),
+				newest => scripted_block_hash(newest),
+			}
+		}
+
+		/// A header in the legacy JSON form, numbered as `encoded_header` numbers it.
+		fn legacy_header(hash: &str) -> JsonValue {
+			let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
+				1
+			} else {
+				u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
+			};
+			let zero = format!("0x{}", hex::encode([0u8; 32]));
+			json!({
+				"parentHash": zero,
+				"number": format!("0x{number:x}"),
+				"stateRoot": zero,
+				"extrinsicsRoot": zero,
+				"digest": {"logs": []}
+			})
 		}
 
 		fn scripted_block_hash(index: usize) -> String {
@@ -1456,12 +1510,20 @@ mod tests {
 			.unwrap()
 		}
 
+		/// A host that builds every chain as V4.
+		struct NoV5Chains;
+
+		impl crate::platform::ExtrinsicVersionHost for NoV5Chains {}
+
 		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-			BulletinRpc::new(
-				ChainRuntime::new(provider, thread_per_subscription_spawner()),
-				[0x42; 32],
-			)
-			.with_allowance_block_wait_timeout(Duration::from_millis(25))
+			let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+			let extrinsics = Arc::new(ExtrinsicService::new(ExtrinsicServiceDeps {
+				storage: Arc::new(chain.clone()),
+				nonces: Arc::new(chain.clone()),
+				versions: Arc::new(NoV5Chains),
+			}));
+			BulletinRpc::new(chain, extrinsics, [0x42; 32])
+				.with_allowance_block_wait_timeout(Duration::from_millis(25))
 		}
 
 		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
@@ -1503,7 +1565,7 @@ mod tests {
 		}
 
 		#[test]
-		fn submit_preimage_anchors_mortality_at_finalized_but_uses_best_state() {
+		fn submit_preimage_anchors_mortality_at_finalized_and_validates_at_best() {
 			let provider = Arc::new(
 				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_blocks(5),
 			);
@@ -1527,13 +1589,10 @@ mod tests {
 			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
 
 			assert_eq!(era, Era::mortal(64, 1));
-			assert_eq!(nonce, 7);
+			assert_eq!(nonce, POOL_NONCE);
 			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
 			assert!(!store_signature_verifies_at(&transaction, value, best_hash));
-			assert_eq!(
-				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
-				vec![best_hash]
-			);
+			assert_eq!(provider.method_count("system_accountNextIndex"), 1);
 			assert_eq!(
 				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
 				vec![best_hash]
@@ -1560,10 +1619,7 @@ mod tests {
 			let transactions = provider.submitted_transactions();
 			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
 			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
-			assert_eq!(
-				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
-				vec![finalized_hash]
-			);
+			assert_eq!(provider.method_count("system_accountNextIndex"), 1);
 			assert_eq!(
 				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
 				vec![finalized_hash]

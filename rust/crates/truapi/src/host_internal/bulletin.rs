@@ -1,26 +1,24 @@
 //! Bulletin store transaction construction and signing.
 
 use subxt::{
-	client::{ClientAtBlock, OnlineClientAtBlockT},
-	config::{DefaultExtrinsicParamsBuilder, substrate::SubstrateConfig},
-	error::ExtrinsicError,
 	ext::{
 		codec::Encode,
 		scale_encode::{self, EncodeAsFields, FieldIter, TypeResolver},
 		scale_type_resolver::{Primitive, visitor},
 	},
-	tx::{StaticPayload, SubmittableTransaction},
+	utils::H256,
 };
 
-use crate::{host_internal::extrinsic::Sr25519Signer, runtime::BulletinAllowanceKey};
+use crate::{
+	chain::{ExtrinsicBuildError, ExtrinsicService, MortalExtrinsic},
+	host_internal::extrinsic::Sr25519Signer,
+	runtime::BulletinAllowanceKey,
+};
 
 /// Pallet the store transaction targets.
 pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 /// Call name within [`STORE_PALLET_NAME`].
 pub const STORE_CALL_NAME: &str = "store";
-
-/// Mortality window for store transactions.
-const MORTAL_PERIOD_BLOCKS: u64 = 64;
 
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
@@ -52,23 +50,20 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
-/// Sign with a finalized mortality anchor and the client's current account nonce.
-pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
-	client: &ClientAtBlock<SubstrateConfig, C>,
-	finalized: &ClientAtBlock<SubstrateConfig, C>,
+/// Build the signed store transaction for `data` on the Bulletin chain
+/// `genesis`, born at its finalized head.
+pub async fn build_signed_store_transaction(
+	extrinsics: &ExtrinsicService,
+	genesis: H256,
 	signer: &Sr25519Signer,
 	data: &[u8],
-) -> Result<SubmittableTransaction<SubstrateConfig, C>, ExtrinsicError> {
-	let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
-	let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-		.mortal_from_unchecked(
-			MORTAL_PERIOD_BLOCKS,
-			finalized.block_number(),
-			finalized.block_hash(),
-		)
-		.build();
-	let mut tx = client.tx();
-	tx.create_signed(&payload, signer, params).await
+) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+	extrinsics
+		.build_mortal_extrinsic(genesis, |builder| {
+			builder.with_call_args(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
+			builder.with_signer(signer);
+		})
+		.await
 }
 
 /// The only [`BulletinAllowanceKey`] -> signer conversion in the crate. The
@@ -137,11 +132,14 @@ mod tests {
 	use schnorrkel::{PublicKey, Signature};
 	use subxt::{
 		client::{ClientAtBlock, OfflineClientAtBlockT},
+		config::{DefaultExtrinsicParamsBuilder, substrate::SubstrateConfig},
 		ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed, v14},
 		metadata::{ArcMetadata, Metadata},
-		tx::Signer,
-		utils::H256,
+		tx::{Signer, StaticPayload, SubmittableTransaction},
 	};
+
+	/// The period subxt signs these test transactions with.
+	const MORTAL_PERIOD_BLOCKS: u64 = 64;
 
 	#[derive(Debug, Clone, Copy)]
 	struct TestMortalityAnchor {

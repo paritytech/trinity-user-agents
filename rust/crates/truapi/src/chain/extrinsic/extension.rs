@@ -9,8 +9,9 @@ use subxt::utils::Encoded;
 ///
 /// The builder computes extensions from the last one in the runtime's
 /// pipeline to the first, so `explicit` sees every later extension's bytes
-/// and can prove or sign over them.
-pub trait TransactionExtension {
+/// and can prove or sign over them. Builds run on any thread, so an extension
+/// is `Send`.
+pub trait TransactionExtension: Send {
 	/// The value only the signer payload carries.
 	type Implicit: Encode;
 	/// The value the extrinsic carries.
@@ -120,7 +121,7 @@ pub struct SuppliedExtension<'a> {
 
 /// Computes an extension's encoded explicit value from its implication.
 type ComputeExplicit<'a> =
-	Box<dyn FnOnce(&InheritedImplication) -> Result<Vec<u8>, ExtensionError> + 'a>;
+	Box<dyn FnOnce(&InheritedImplication) -> Result<Vec<u8>, ExtensionError> + Send + 'a>;
 
 impl<'a> SuppliedExtension<'a> {
 	/// Encodes `extension`'s name and implicit value now and its explicit

@@ -2,7 +2,7 @@
 //! with an independent builder: the statement allowance assembler, its
 //! implication, or subxt's own V4 transaction.
 
-use std::{cell::RefCell, rc::Rc};
+use std::sync::{Arc, Mutex};
 
 use parity_scale_codec::{Compact, Decode};
 
@@ -102,7 +102,7 @@ fn long_term_storage_extra(allowance: &AllowanceMetadata) -> Vec<u8> {
 struct RecordingExtension {
 	name: &'static str,
 	explicit: Vec<u8>,
-	seen: Rc<RefCell<Option<InheritedImplication>>>,
+	seen: Arc<Mutex<Option<InheritedImplication>>>,
 }
 
 impl TransactionExtension for RecordingExtension {
@@ -119,7 +119,7 @@ impl TransactionExtension for RecordingExtension {
 		&self,
 		implication: &InheritedImplication,
 	) -> Result<subxt::utils::Encoded, ExtensionError> {
-		*self.seen.borrow_mut() = Some(implication.clone());
+		*self.seen.lock().unwrap() = Some(implication.clone());
 		Ok(subxt::utils::Encoded(self.explicit.clone()))
 	}
 }
@@ -153,7 +153,7 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 	let expected =
 		build_proof_message_after_extension(&allowance, &call, &allowance_state(), "AsResources")
 			.unwrap();
-	let seen = Rc::new(RefCell::new(None));
+	let seen = Arc::new(Mutex::new(None));
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
@@ -167,7 +167,7 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 		.with_extrinsic_version(ExtrinsicVersion::newest_declaring("AsResources"));
 	assemble(builder, None, None).unwrap();
 
-	assert_eq!(seen.borrow().as_ref().map(InheritedImplication::hash), Some(expected));
+	assert_eq!(seen.lock().unwrap().as_ref().map(InheritedImplication::hash), Some(expected));
 }
 
 /// Signs `call` on Bulletin through subxt, reusing `signature` so the bytes
