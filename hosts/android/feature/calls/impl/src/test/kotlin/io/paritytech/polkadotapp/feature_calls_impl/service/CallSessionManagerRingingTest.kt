@@ -27,7 +27,6 @@ class CallSessionManagerRingingTest {
         override fun observe(chatId: ChatId) = roomCall
     }
     private val manager = CallSessionManager(
-        externalCallSignaling = mockk(relaxed = true),
         callStateHolder = callStateHolder,
         callAudioRouteController = mockk(relaxed = true),
         peerChannelFactory = mockk(relaxed = true),

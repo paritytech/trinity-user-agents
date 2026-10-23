@@ -42,8 +42,7 @@ class ChatRequestsListViewModel @Inject constructor(
     override val declineConfirmationState = MutableStateFlow(ChatRequestDeclineConfirmationState.Hidden)
 
     override fun onRequestClick(request: ChatRequestsListUiState.ChatRequestItem) {
-        val payload = request.productRoom?.let { ChatFeedPayload.existingChat(it) } ?: ChatFeedPayload.existingContactChat(request.accountId)
-        router.openChatFeed(payload)
+        router.openChatFeed(ChatFeedPayload.existingChat(request.productRoom))
     }
 
     override fun onDeclineClick(request: ChatRequestsListUiState.ChatRequestItem) {
@@ -57,7 +56,7 @@ class ChatRequestsListViewModel @Inject constructor(
 
     override fun onConfirmDeclineClick() = launchUnit {
         declineConfirmationState.value.requestItem?.let { request ->
-            interactor.declineRequest(request.accountId, request.productRoom)
+            interactor.declineRequest(request.productRoom)
                 .onFailure { showPresentationError(it.asChatRequestError().toPresentationError()) }
         }
 

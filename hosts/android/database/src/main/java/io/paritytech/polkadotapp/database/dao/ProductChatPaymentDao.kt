@@ -28,6 +28,10 @@ abstract class ProductChatPaymentDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertIfAbsent(payment: ProductChatPaymentLocal): Long
 
+    /** As [insertIfAbsent], for several in one transaction: the row id of each, or -1 where the message id was kept already. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertAllIfAbsent(payments: List<ProductChatPaymentLocal>): List<Long>
+
     @Query("SELECT * FROM product_chat_payments WHERE messageId = :messageId")
     abstract suspend fun get(messageId: String): ProductChatPaymentLocal?
 

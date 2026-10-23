@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.Urls
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
@@ -39,7 +38,6 @@ class DebugMenuViewModel @Inject constructor(
     private val jwtTokenStore: JWTTokenStore,
     private val coinageDebugSettings: CoinageDebugSettings,
     private val productRuntimeSettings: ProductRuntimeSettings,
-    private val personChatMode: PersonChatMode,
     private val restartAppUseCase: RestartAppUseCase,
     private val devServerAddresses: DevServerAddresses,
 ) : BaseViewModel(), DebugMenuContract {
@@ -47,7 +45,6 @@ class DebugMenuViewModel @Inject constructor(
         DebugMenuState(
             truapiHostVersion = truapiHostVersion(),
             devServerAvailable = FeatureOption.DEV_SERVER_PRODUCTS.isEnabled,
-            productChatEnabled = personChatMode.isProductChat(),
         )
     )
 
@@ -164,26 +161,6 @@ class DebugMenuViewModel @Inject constructor(
         state.value.runtimeRestartRevertsTo?.let(productRuntimeSettings::setTrUAPIRuntimeEnabled)
         state.update { it.copy(runtimeRestartRevertsTo = null) }
         refreshTruapiRuntimeState()
-    }
-
-    /**
-     * The native chat and the chat product never run together, and each reads its own chats only at launch, so the
-     * switch takes a restart. Switching to the chat product moves the native chat's history over at that launch.
-     */
-    override fun onProductChatToggled(enabled: Boolean) {
-        val previous = state.value.productChatEnabled
-        personChatMode.setProductChat(enabled)
-        state.update { it.copy(productChatEnabled = enabled, chatModeRestartRevertsTo = previous) }
-    }
-
-    override fun onChatModeRestartConfirmed() {
-        restartAppUseCase()
-    }
-
-    override fun onChatModeRestartCancelled() {
-        val previous = state.value.chatModeRestartRevertsTo ?: return
-        personChatMode.setProductChat(previous)
-        state.update { it.copy(productChatEnabled = previous, chatModeRestartRevertsTo = null) }
     }
 
     private fun refreshJWTTokenState() {

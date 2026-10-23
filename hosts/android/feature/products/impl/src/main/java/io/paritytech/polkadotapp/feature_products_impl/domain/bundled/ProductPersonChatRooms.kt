@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -19,8 +20,13 @@ class ProductPersonChatRooms @Inject constructor(
     }
 
     override fun isPersonChatRoom(chatId: ChatId): Boolean {
+        val extensionId = chatId.extensionOrNull()?.extensionId ?: return false
+        return isPersonChatExtension(extensionId)
+    }
+
+    override fun isPersonChatExtension(extensionId: ChatExtensionId): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
-        return chatId.extensionOrNull()?.extensionId == ReservedProductIds.chat(tld).toChatExtensionId()
+        return extensionId == ReservedProductIds.chat(tld).toChatExtensionId()
     }
 
     private companion object {

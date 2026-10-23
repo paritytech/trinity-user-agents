@@ -16,10 +16,6 @@ import io.paritytech.polkadotapp.common.utils.mapResult
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.common.utils.progressStallReport.markRegion
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
-import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatPayments
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentKey
@@ -92,8 +88,6 @@ class RealSendEnterAmountInteractor @Inject constructor(
     private val transfersTypeRegistry: TokenTransfersTypeRegistry,
     private val sendRecipientRepository: SendRecipientRepository,
     private val freeTransactionOrigins: FreeTransactionOrigins,
-    private val chatMessageSender: ChatMessageSender,
-    private val personChatMode: PersonChatMode,
     private val productChatPayments: ProductChatPayments,
     private val prepareCoinageTransferUseCase: PrepareCoinageTransferUseCase,
     private val totalBalanceUseCase: TotalBalanceUseCase,
@@ -275,36 +269,17 @@ class RealSendEnterAmountInteractor @Inject constructor(
     }
 
     /**
-     * The message row is what carries the keys and what will be delivered from, so it is the moment the
-     * handoff becomes real. Committing inside its transaction is the only placement where a crash cannot
-     * either strand the coins or release keys a peer already has — and the commit also registers the
-     * payment's transactions, which are built and submitted once this transaction has committed.
-     *
-     * When the chat product runs the person chats, the product carries the message, so the host commits inside the
-     * transaction of its own record of the payment instead, which then goes to the contact's room under the same id
-     * until the product has it (HX2).
+     * The chat product carries the message, and the host keeps its own record of the payment, which goes to the
+     * contact's room under the same id until the product has it (HX2). That record is what carries the keys and what
+     * will be delivered from, so it is the moment the handoff becomes real. Committing inside its transaction is the
+     * only placement where a crash cannot either strand the coins or release keys a peer already has, and the commit
+     * also registers the payment's transactions, which are built and submitted once this transaction has committed.
      */
     private suspend fun sendChatMessage(recipient: AccountId, prepared: PreparedTransferMemo) {
-        val coinKeys = prepared.memo.coins.map { it.privateKey.value }
-        if (personChatMode.isProductChat()) {
-            productChatPayments.send(
-                recipient = recipient,
-                totalValue = prepared.memo.totalValue,
-                coinKeys = coinKeys,
-                onSaved = { prepared.handoffCommit.commit().getOrThrow() },
-            )
-            return
-        }
-
-        val chatId = ChatId.fromContact(recipient)
-        val content = ChatMessage.Content.CoinagePayment(
+        productChatPayments.send(
+            recipient = recipient,
             totalValue = prepared.memo.totalValue,
-            coinKeys = coinKeys,
-            status = ChatMessage.Content.CoinagePayment.Status.Detecting
-        )
-        chatMessageSender.sendUserMessage(
-            chatId = chatId,
-            content = content,
+            coinKeys = prepared.memo.coins.map { it.privateKey.value },
             onSaved = { prepared.handoffCommit.commit().getOrThrow() },
         )
     }

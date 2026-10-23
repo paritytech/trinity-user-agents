@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.repository
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.mapList
-import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao.MessageContentUpdateLocal
 import io.paritytech.polkadotapp.database.dao.ChatMessageReactionDao
@@ -128,12 +127,6 @@ interface ChatMessageRepository {
 
     suspend fun getMessageStatuses(messageIds: List<ChatMessageId>): Map<ChatMessageId, ChatMessage.Status>
 
-    suspend fun commitCompaction(commitId: ChatMessageId, originalIds: List<ChatMessageId>)
-
-    suspend fun propagateStatusToCompactedMessages(commitId: ChatMessageId, status: ChatMessage.Status)
-
-    suspend fun unwindUnackedCompactions(chatId: ChatId)
-
     suspend fun searchMessages(query: String, chatIds: List<ChatId>): Result<List<ChatMessageSearchHit>>
 
     companion object {
@@ -144,7 +137,6 @@ interface ChatMessageRepository {
 
 class RealChatMessageRepository @Inject constructor(
     private val chatMessageDao: ChatMessageDao,
-    private val chatMessageCompactionDao: ChatMessageCompactionDao,
     private val chatMessageReactionDao: ChatMessageReactionDao,
     private val chatRoomRepository: ChatRoomRepository,
     private val coroutineDispatchers: CoroutineDispatchers
@@ -405,29 +397,6 @@ class RealChatMessageRepository @Inject constructor(
         customContentDecoder: CustomContentDecoder
     ): ChatMessage? {
         return chatMessageDao.getMessage(messageId)?.toDomain(customContentDecoder)
-    }
-
-    override suspend fun unwindUnackedCompactions(chatId: ChatId) {
-        chatMessageCompactionDao.unwindUnackedCompactions(chatId.toLocal(), updatedAt = System.currentTimeMillis())
-    }
-
-    override suspend fun commitCompaction(commitId: ChatMessageId, originalIds: List<ChatMessageId>) {
-        if (originalIds.isEmpty()) return
-
-        chatMessageCompactionDao.commitCompaction(originalIds, commitId)
-    }
-
-    override suspend fun propagateStatusToCompactedMessages(commitId: ChatMessageId, status: ChatMessage.Status) {
-        if (status != ChatMessage.Status.IS_SENT && status != ChatMessage.Status.IS_READ) return
-
-        val upgradableFrom = ChatMessage.Status.entries.filter { it.deliveryRank < status.deliveryRank }
-
-        chatMessageCompactionDao.propagateStatusToCompactionDescendants(
-            commitId = commitId,
-            fromStatuses = upgradableFrom.map { it.toLocal() },
-            toStatus = status.toLocal(),
-            updatedAt = System.currentTimeMillis()
-        )
     }
 
     override suspend fun searchMessages(query: String, chatIds: List<ChatId>): Result<List<ChatMessageSearchHit>> {

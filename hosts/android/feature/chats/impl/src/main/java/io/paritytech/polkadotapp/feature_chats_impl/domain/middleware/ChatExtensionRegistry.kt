@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.middleware
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.shareInBackground
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
@@ -18,7 +19,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,16 +31,16 @@ class ChatExtensionRegistry @Inject constructor(
     private val paymentProcessingExtension: CoinagePaymentProcessingExtension,
     private val externalExtensionProvider: ExternalExtensionProvider,
     private val botStateController: ChatBotStateController,
+    private val personChatRooms: PersonChatRooms,
 ) : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default) {
     private val extensionsEnabled = FeatureOption.ALL_CHAT_EXTENSIONS.isEnabled
 
     private val enabledStaticExtensions = if (extensionsEnabled) staticExtensions else setOf(paymentProcessingExtension)
 
-    private val externalExtensions: SharedFlow<List<ExternalExtension>> = if (extensionsEnabled) {
-        externalExtensionProvider.observeExtensions()
-    } else {
-        flowOf(emptyList())
-    }.shareInBackground()
+    // The chat product runs the person chats in every build; without the other chat extensions it is the only one.
+    private val externalExtensions: SharedFlow<List<ExternalExtension>> = externalExtensionProvider.observeExtensions()
+        .map { extensions -> if (extensionsEnabled) extensions else extensions.filter { personChatRooms.isPersonChatExtension(it.id) } }
+        .shareInBackground()
 
     fun observeExternalExtensions(): Flow<List<ExternalExtension>> {
         return externalExtensions

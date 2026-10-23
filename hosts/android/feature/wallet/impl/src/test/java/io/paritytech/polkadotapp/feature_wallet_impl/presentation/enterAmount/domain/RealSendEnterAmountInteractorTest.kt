@@ -15,8 +15,6 @@ import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
-import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.NoProductChatRoomException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatPayments
@@ -64,9 +62,7 @@ class RealSendEnterAmountInteractorTest {
     )
 
     private val statusUseCase = mockk<CoinagePaymentStatusUseCase>()
-    private var productChat = false
     private val productPayments = RecordingProductPayments()
-    private val chatMessageSender = chatMessageSender()
 
     @Before
     fun mockDerivation() {
@@ -93,19 +89,7 @@ class RealSendEnterAmountInteractorTest {
     }
 
     @Test
-    fun `fails the send when the chat handoff commit is refused`() = runTest {
-        val refused = mockk<CoinageHandoffCommit> {
-            coEvery { commit() } returns Result.failure(IllegalStateException("handed off meanwhile"))
-        }
-
-        val states = sendViaChat(refused)
-
-        assertTrue(states.single() is SendState.Failed)
-    }
-
-    @Test
-    fun `with the chat product the payment goes to the contact's room, committed inside its record`() = runTest {
-        productChat = true
+    fun `the payment goes to the contact's room, committed inside its record`() = runTest {
         val handoff = committingHandoff()
 
         val states = sendViaChat(handoff)
@@ -116,12 +100,10 @@ class RealSendEnterAmountInteractorTest {
         assertEquals(memo.totalValue, sent.totalValue)
         assertArrayEquals(coinKey.value, sent.coinKeys.single())
         coVerify(exactly = 1) { handoff.commit() }
-        coVerify(exactly = 0) { chatMessageSender.sendUserMessage(any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun `with the chat product a refused commit fails the send`() = runTest {
-        productChat = true
+    fun `a refused commit fails the send`() = runTest {
         val refused = mockk<CoinageHandoffCommit> {
             coEvery { commit() } returns Result.failure(IllegalStateException("handed off meanwhile"))
         }
@@ -132,8 +114,7 @@ class RealSendEnterAmountInteractorTest {
     }
 
     @Test
-    fun `with the chat product and no established chat with the recipient the send fails without a commit`() = runTest {
-        productChat = true
+    fun `with no established chat with the recipient the send fails without a commit`() = runTest {
         productPayments.noRoom = true
         val handoff = committingHandoff()
 
@@ -173,8 +154,6 @@ class RealSendEnterAmountInteractorTest {
         transfersTypeRegistry = mockk(),
         sendRecipientRepository = mockk { coEvery { addSendRecipient(any()) } returns Result.success(Unit) },
         freeTransactionOrigins = mockk(),
-        chatMessageSender = chatMessageSender,
-        personChatMode = mockk<PersonChatMode> { every { isProductChat() } answers { productChat } },
         productChatPayments = productPayments,
         prepareCoinageTransferUseCase = prepareUseCase(handoffCommit),
         totalBalanceUseCase = mockk(),
@@ -187,14 +166,6 @@ class RealSendEnterAmountInteractorTest {
         timeProvider = mockk { every { now() } returns Instant.fromEpochMilliseconds(0) },
         sendValidation = mockk(),
     )
-
-    // Runs onSaved as the message transaction does, so whatever it throws leaves the send as it would at runtime.
-    private fun chatMessageSender() = mockk<ChatMessageSender> {
-        coEvery { sendUserMessage(any(), any(), any(), any(), any()) } coAnswers {
-            arg<suspend () -> Unit>(4).invoke()
-            mockk()
-        }
-    }
 
     // Runs onSaved as the record's transaction does, so whatever it throws leaves the send as it would at runtime.
     private class RecordingProductPayments : ProductChatPayments {

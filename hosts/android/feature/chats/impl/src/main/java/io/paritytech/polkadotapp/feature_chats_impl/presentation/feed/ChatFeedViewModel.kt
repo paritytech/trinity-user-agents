@@ -16,7 +16,6 @@ import io.paritytech.polkadotapp.common.utils.collectionIndexOrNull
 import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapResult
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
@@ -32,7 +31,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.computeChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.FirstNewMessageInfo
@@ -43,7 +41,6 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.isUnread
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.toOpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentError
-import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
@@ -204,10 +201,6 @@ class ChatFeedViewModel @Inject constructor(
         .mapResult { it.toUi() }
         .withLoading()
         .stateInBackground(initialValue = LoadingState.Loading)
-
-    override val headerRenderer = flowOf {
-        interactor.getHeaderRendererForChat(chatId)
-    }.stateInBackground(initialValue = null)
 
     override val config = interactor.getChatConfig(openChatRequest)
         .stateInBackground(initialValue = ChatConfig.Default)
@@ -562,32 +555,11 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onAcceptChatRequest() = launchUnit {
-        if (roomContact.first() != null) return@launchUnit answerProductChatRequest(accept = true)
-
-        val contactAccountId = chatId.contactOrNull()?.contactAccountId ?: return@launchUnit
-
-        chatRequestAnswerProgress.value = ChatRequestAnswerProgress.Accepting
-
-        interactor.acceptIncomingRequest(contactAccountId)
-            .onFailure {
-                chatRequestAnswerProgress.value = ChatRequestAnswerProgress.None
-                showPresentationError(it.asChatRequestError().toPresentationError())
-            }
+        if (roomContact.first() != null) answerProductChatRequest(accept = true)
     }
 
     override fun onDeclineChatRequest() = launchUnit {
-        if (roomContact.first() != null) return@launchUnit answerProductChatRequest(accept = false)
-
-        val contactAccountId = chatId.contactOrNull()?.contactAccountId ?: return@launchUnit
-
-        chatRequestAnswerProgress.value = ChatRequestAnswerProgress.Declining
-
-        interactor.declineIncomingRequest(contactAccountId)
-            .onSuccess { router.back() }
-            .onFailure {
-                chatRequestAnswerProgress.value = ChatRequestAnswerProgress.None
-                showPresentationError(it.asChatRequestError().toPresentationError())
-            }
+        if (roomContact.first() != null) answerProductChatRequest(accept = false)
     }
 
     override fun onAttachClick() = launchUnit {
@@ -658,19 +630,8 @@ class ChatFeedViewModel @Inject constructor(
 
     private suspend fun sendChatRequest(welcomeText: String) {
         // The first message in a room of the chat product with a new contact is the welcome message of its request.
-        if (roomContact.first() != null) {
-            return showActionOutcome(interactor.sendTextMessage(chatId, welcomeText, replyToMessageId = null, request = true))
-        }
-
-        val chatRequest = openChatRequest as? OpenChatRequest.StartChatWithContact
-        if (chatRequest == null) {
-            Timber.e("Expected open chat request to be StartChatWithContact, but got: $openChatRequest")
-            return
-        }
-
-        interactor.sendContactRequest(openChatRequest, welcomeText)
-            .logFailure("Failed to send contact request")
-            .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+        if (roomContact.first() == null) return Timber.e("A chat request needs a room of the chat product")
+        showActionOutcome(interactor.sendTextMessage(chatId, welcomeText, replyToMessageId = null, request = true))
     }
 
     private suspend fun sendMessageToActiveChat(messageText: String, relation: InputMessageRelation) {

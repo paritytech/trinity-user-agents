@@ -24,7 +24,6 @@ dependencies {
     implementation(project(":feature:usernames:api"))
     implementation(project(":feature:statement-store:api"))
     implementation(project(":feature:products:api"))
-    implementation(project(":feature:chats:api"))
     implementation(project(":feature:chain-resources:api"))
 
     testImplementation(project(":test-shared"))

@@ -65,9 +65,6 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
         onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
         onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
-        onProductChatToggled = contract::onProductChatToggled,
-        onChatModeRestartConfirmed = contract::onChatModeRestartConfirmed,
-        onChatModeRestartCancelled = contract::onChatModeRestartCancelled,
     )
 }
 
@@ -95,9 +92,6 @@ private fun DebugMenuScreenInternal(
     onTruapiRuntimeToggled: (Boolean) -> Unit,
     onRuntimeRestartConfirmed: () -> Unit,
     onRuntimeRestartCancelled: () -> Unit,
-    onProductChatToggled: (Boolean) -> Unit,
-    onChatModeRestartConfirmed: () -> Unit,
-    onChatModeRestartCancelled: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -129,14 +123,6 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
-            )
-
-            VerticalSpacer { large }
-
-            DebugMenuToggleItem(
-                title = stringResource(RCommon.string.debug_menu_product_chat),
-                checked = state.productChatEnabled,
-                onCheckedChange = onProductChatToggled
             )
 
             VerticalSpacer { extraLargeIncreased }
@@ -261,14 +247,6 @@ private fun DebugMenuScreenInternal(
             message = stringResource(RCommon.string.debug_menu_runtime_restart_message),
             onDismiss = onRuntimeRestartCancelled,
             onConfirm = onRuntimeRestartConfirmed,
-        )
-    }
-
-    if (state.chatModeRestartRevertsTo != null) {
-        RuntimeRestartDialog(
-            message = stringResource(RCommon.string.debug_menu_chat_mode_restart_message),
-            onDismiss = onChatModeRestartCancelled,
-            onConfirm = onChatModeRestartConfirmed,
         )
     }
 }
@@ -443,9 +421,6 @@ private fun DebugMenuScreenPreview() {
             onTruapiRuntimeToggled = {},
             onRuntimeRestartConfirmed = {},
             onRuntimeRestartCancelled = {},
-            onProductChatToggled = {},
-            onChatModeRestartConfirmed = {},
-            onChatModeRestartCancelled = {},
         )
     }
 }

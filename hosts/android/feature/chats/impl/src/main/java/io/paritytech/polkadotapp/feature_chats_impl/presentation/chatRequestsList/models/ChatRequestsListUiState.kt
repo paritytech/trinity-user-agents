@@ -15,8 +15,8 @@ data class ChatRequestsListUiState(
         val accountId: AccountId,
         val display: ChatDisplayUiModel,
         val timestamp: Long,
-        /** The room of the chat product that holds the request, or null for a request of the native chat. */
-        val productRoom: ChatId?,
+        /** The room of the chat product that holds the request. */
+        val productRoom: ChatId,
     ) {
         val uniqueKey: String = accountId.value.toHexString()
     }

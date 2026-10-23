@@ -11,13 +11,10 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.FakeProductChatPaymentStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
@@ -37,7 +34,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePayme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -53,9 +49,9 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
- * When a payment message is done with.
+ * When a payment is done with.
  *
- * Marking a message processed is what stops the app ever looking at it again, so it is the point of no
+ * Settling a payment's record is what stops the app ever looking at it again, so it is the point of no
  * return for money someone has already sent us. Everything here is about not reaching it early: an incoming
  * payment is finished only when the claim use case says so, and a claim that reported a partial amount
  * along the way has said nothing about being finished.
@@ -108,7 +104,7 @@ class CoinagePaymentProcessingExtensionTest {
 
         startWork(incomingPayment())
 
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertNothingSettled()
     }
 
     /**
@@ -122,7 +118,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -136,7 +132,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -162,7 +158,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify { claimReceivedCoinsUseCase.claim(any(), CoinageOperationGroupId("chat-claim:${message.id}"), any()) }
+        coVerify { claimReceivedCoinsUseCase.claim(any(), CoinageOperationGroupId("chat-claim:${message.messageId}"), any()) }
     }
 
     /** What the claim reports on the way is shown, whether or not it is the last thing it will say. */
@@ -173,13 +169,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detected(FULL) },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detected(FULL) })
     }
 
     /** A payment held up by a failed claim shows how much of it is already the user's. */
@@ -190,13 +180,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.PartiallyClaimed(PARTIAL) },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.PartiallyClaimed(PARTIAL) })
     }
 
     /**
@@ -210,7 +194,7 @@ class CoinagePaymentProcessingExtensionTest {
         startWork(incomingPayment())
         scope.cancel()
 
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertNothingSettled()
     }
 
     /**
@@ -225,14 +209,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Transferred(PARTIAL) },
-            )
-        }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Transferred(PARTIAL) })
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     @Test
@@ -242,13 +220,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detecting },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detecting })
     }
 
     /** A payment that lands while the app is open is picked up from the live feed, not only at startup. */
@@ -259,7 +231,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = incomingPayment()
         startWork(arriving = listOf(message))
 
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     // ---- outgoing ----
@@ -279,20 +251,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Detected },
-            )
-        }
-        coVerify(exactly = 0) {
-            context.modifyMessage(
-                any(),
-                any(),
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.PartiallyClaimed },
-            )
-        }
+        assertTrue(statusWritten { it is CoinagePayment.Status.Detected })
+        assertFalse(statusWritten { it is CoinagePayment.Status.PartiallyClaimed })
     }
 
     /** And it is not closed out while the peer can still take the rest. */
@@ -302,7 +262,7 @@ class CoinagePaymentProcessingExtensionTest {
 
         startWork(outgoingPayment())
 
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertNothingSettled()
     }
 
     /** Nothing the sender minted is on chain yet, so the payment still reads as being sent. */
@@ -313,13 +273,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detecting },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detecting })
     }
 
     /**
@@ -337,14 +291,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify(exactly = 0) {
-            context.modifyMessage(
-                any(),
-                any(),
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
-            )
-        }
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertFalse(statusWritten { it is CoinagePayment.Status.Transferred })
+        assertNothingSettled()
     }
 
     /**
@@ -358,14 +306,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
-            )
-        }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(statusWritten { it is CoinagePayment.Status.Transferred })
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -382,14 +324,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
-            )
-        }
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertTrue(statusWritten { it is CoinagePayment.Status.Transferred })
+        assertNothingSettled()
     }
 
     /**
@@ -407,14 +343,8 @@ class CoinagePaymentProcessingExtensionTest {
             val message = outgoingPayment()
             startWork(message)
 
-            coVerify {
-                context.modifyMessage(
-                    message.chatId,
-                    message.id,
-                    match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
-                )
-            }
-            coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+            assertTrue(statusWritten { it is CoinagePayment.Status.Transferred })
+            assertNothingSettled()
         }
 
     /** Nothing has been taken yet and some coins never will be: still sending, for the ones that can arrive. */
@@ -425,14 +355,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detecting },
-            )
-        }
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detecting })
+        assertNothingSettled()
     }
 
     /**
@@ -448,14 +372,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detecting },
-            )
-        }
+        assertNothingSettled()
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detecting })
     }
 
     /** Every coin taken: the payment is done and the message never needs looking at again. */
@@ -466,14 +384,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.Transferred },
-            )
-        }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(statusWritten { it is CoinagePayment.Status.Transferred })
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -487,14 +399,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.FailedDetection },
-            )
-        }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(statusWritten { it is CoinagePayment.Status.FailedDetection })
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -508,13 +414,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detecting },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detecting })
     }
 
     /** A rebuild can take hours while the payment's inputs are missing, and the message has to be watched throughout. */
@@ -524,7 +424,7 @@ class CoinagePaymentProcessingExtensionTest {
 
         startWork(outgoingPayment())
 
-        coVerify(exactly = 0) { context.markMessageProcessed(any(), any()) }
+        assertNothingSettled()
     }
 
     /**
@@ -538,14 +438,8 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status is CoinagePayment.Status.FailedDetection },
-            )
-        }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertTrue(statusWritten { it is CoinagePayment.Status.FailedDetection })
+        assertTrue(productPayments[message.messageId]!!.settled)
     }
 
     /**
@@ -562,13 +456,7 @@ class CoinagePaymentProcessingExtensionTest {
         val message = outgoingPayment()
         startWork(message)
 
-        coVerify {
-            context.modifyMessage(
-                message.chatId,
-                message.id,
-                match { it is CoinagePayment && it.status == CoinagePayment.Status.Detected(Balance.ZERO) },
-            )
-        }
+        assertTrue(statusWritten { it == CoinagePayment.Status.Detected(Balance.ZERO) })
     }
 
     // ---- payments of the chat product ----
@@ -630,35 +518,53 @@ class CoinagePaymentProcessingExtensionTest {
         assertTrue(productPayments[PRODUCT_MESSAGE]!!.settled)
     }
 
+    // ---- payments taken over from the native chat ----
+
     /**
-     * A product that pushes a payment to a room whose messages the host keeps sends no keys. Claiming nothing would
-     * settle it as an invalid transaction, so it is left alone.
+     * A native payment that the native flow had not finished is taken over unsettled, under its message id and time, so
+     * its claim joins the group and the window of the native claim. Taking it over again changes nothing.
      */
     @Test
-    fun `a payment without keys in a room the host keeps for a product is never claimed`() = runTest {
-        val message = incomingPayment().copy(
-            chatId = ChatId.fromChatBotId("ProductBot_some.product"),
-            content = CoinagePayment(totalValue = FULL, coinKeys = emptyList(), status = CoinagePayment.Status.Detecting),
-        )
+    fun `a native payment taken over unclaimed is claimed once under the native group and window`() = runTest {
+        givenClaimReports(CoinageTransferDetection.Claimed(FULL, finalized = true))
+        val adopted = incomingPayment().copy(messageId = "native-1", status = CoinagePayment.Status.Detected(FULL))
 
-        startWork(message)
+        startWork()
+        productPayments.adopt(listOf(adopted))
+        assertEquals(0, productPayments.adopt(listOf(adopted)))
+
+        val sentAt = Instant.fromEpochMilliseconds(SENT_AT)
+        coVerify(exactly = 1) {
+            claimReceivedCoinsUseCase.claim(any(), CoinageOperationGroupId("chat-claim:native-1"), sentAt + 7.days)
+        }
+        assertTrue(productPayments["native-1"]!!.settled)
+    }
+
+    @Test
+    fun `a native payment taken over settled is never claimed again`() = runTest {
+        startWork()
+        productPayments.adopt(listOf(incomingPayment().copy(status = CoinagePayment.Status.Transferred(FULL), settled = true)))
 
         coVerify(exactly = 0) { claimReceivedCoinsUseCase.claim(any(), any(), any()) }
-        coVerify(exactly = 0) { context.modifyMessage(any(), any(), any()) }
-        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+        assertEquals(emptyList<Pair<String, CoinagePayment.Status>>(), productPayments.statusWrites)
     }
 
     // ---- harness ----
 
-    private fun startWork(vararg unprocessed: ChatMessage, arriving: List<ChatMessage> = emptyList()) {
+    private fun startWork(vararg kept: ProductChatPayment, arriving: List<ProductChatPayment> = emptyList()) {
         scope = CoroutineScope(UnconfinedTestDispatcher())
+        kept.forEach(productPayments::put)
 
         every { context.scope } returns TestComputationalScope(scope)
-        every { context.subscribeNewMessages(any(), any()) } returns arriving.asFlow()
-        coEvery { context.getUnprocessedMessages(any(), any()) } returns unprocessed.toList()
 
         with(context) { extension.startGlobalWork() }
+        arriving.forEach(productPayments::put)
     }
+
+    private fun statusWritten(predicate: (CoinagePayment.Status) -> Boolean): Boolean =
+        productPayments.statusWrites.any { (_, status) -> predicate(status) }
+
+    private fun assertNothingSettled() = assertFalse(productPayments.records.value.values.any { it.settled })
 
     private fun givenClaimReports(
         vararg reports: CoinageTransferDetection,
@@ -710,32 +616,26 @@ class CoinagePaymentProcessingExtensionTest {
         status = status,
     )
 
-    private fun outgoingPayment() = incomingPayment().copy(origin = ChatMessageOrigin.User)
+    private fun outgoingPayment() = incomingPayment().copy(incoming = false, delivery = ProductChatPayment.Delivery.DELIVERED)
 
-    private fun productPayment(incoming: Boolean) = ProductChatPayment(
+    private fun productPayment(incoming: Boolean) = incomingPayment().copy(
         messageId = PRODUCT_MESSAGE,
         chatId = ChatId.fromChatBotId("ProductBot_chat.paseo"),
         incoming = incoming,
+        delivery = if (incoming) null else ProductChatPayment.Delivery.DELIVERED,
+    )
+
+    private fun incomingPayment() = ProductChatPayment(
+        messageId = "message-1",
+        chatId = ChatId.forExtensionRoom("ProductBot_chat.paseo", "dm-09"),
+        incoming = true,
         timestamp = SENT_AT,
         totalValue = FULL,
         coinKeys = listOf(byteArrayOf(1), byteArrayOf(2)),
-        delivery = if (incoming) null else ProductChatPayment.Delivery.DELIVERED,
+        delivery = null,
         refusals = 0,
         status = CoinagePayment.Status.Detecting,
         settled = false,
-    )
-
-    private fun incomingPayment() = ChatMessage(
-        id = "message-1",
-        chatId = ChatId.fromContact(byteArrayOf(9).intoAccountId()),
-        timestamp = SENT_AT,
-        origin = ChatMessageOrigin.Contact(byteArrayOf(9).intoAccountId()),
-        content = CoinagePayment(
-            totalValue = FULL,
-            coinKeys = listOf(byteArrayOf(1), byteArrayOf(2)),
-            status = CoinagePayment.Status.Detecting,
-        ),
-        status = ChatMessage.Status.IS_SENT,
     )
 
     /**

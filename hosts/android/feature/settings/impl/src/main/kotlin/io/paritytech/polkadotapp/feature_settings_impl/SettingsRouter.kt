@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_settings_impl
 
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.presentation.navigation.ReturnableRouter
 import io.paritytech.polkadotapp.feature_backup_api.presentation.BackupConflictPayload
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -16,7 +15,6 @@ interface SettingsRouter : ReturnableRouter {
     fun openLinkedDevices()
     fun openDeviceDetails(deviceId: String)
     fun openScanQr()
-    fun openContactChat(accountId: AccountId)
 
     fun openChat(chatId: ChatId)
     fun openNotificationSettings()

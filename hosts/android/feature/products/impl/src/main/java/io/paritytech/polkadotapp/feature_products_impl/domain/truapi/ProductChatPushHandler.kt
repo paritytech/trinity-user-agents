@@ -4,7 +4,6 @@ import dagger.Lazy
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatNotifications
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatPushContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
@@ -35,7 +34,7 @@ class CoreChatPushDecoder @Inject constructor() : ChatPushDecoder {
  * Shows the pushes of the chat product's contacts, which keep the native chat's shape (`pushId`, `message`), as the
  * native chat shows them: a message worded as its kind, an offer as the incoming call at once. A blocked contact shows
  * nothing, as in the native chat. It then wakes the chat worker, which takes the message from the statement store and
- * takes the answer to a call. It is asked before the native chat's handler, which would read the same fields.
+ * takes the answer to a call.
  */
 class ProductChatPushHandler @Inject constructor(
     private val routes: ProductChatPushRoutes,
@@ -43,15 +42,12 @@ class ProductChatPushHandler @Inject constructor(
     private val notifications: PersonChatNotifications,
     private val contacts: PersonChatContacts,
     private val fallbackUsernameGenerator: FallbackUsernameGenerator,
-    private val personChatMode: PersonChatMode,
     // Lazy: the runtime boots on first use, and a push must not boot it just to be checked.
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
 ) : PushNotificationHandler {
     override val priority: Int = 1
 
-    // In the native mode the native chat answers its pushes, whatever routes the chat product left (HX2).
-    override suspend fun canHandle(data: Map<String, String>): Boolean =
-        personChatMode.isProductChat() && data[PUSH_ID]?.let(routes::find) != null
+    override suspend fun canHandle(data: Map<String, String>): Boolean = data[PUSH_ID]?.let(routes::find) != null
 
     override suspend fun handle(data: Map<String, String>) {
         val route = data[PUSH_ID]?.let(routes::find) ?: return

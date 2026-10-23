@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_chats_api.deeplink.ChatDeeplinkMapper
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
@@ -29,7 +28,6 @@ internal class ChatDeepLinkHandler @Inject constructor(
     private val chatsRouter: ChatsRouter,
     private val chatDeeplinkMapper: ChatDeeplinkMapper,
     private val waitForChatExistsUseCase: WaitForChatExistsUseCase,
-    private val personChatMode: PersonChatMode,
     private val startChatDataUseCase: StartChatDataUseCase,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri) =
@@ -43,8 +41,8 @@ internal class ChatDeepLinkHandler @Inject constructor(
             val deeplinkPayload = chatDeeplinkMapper.fromDeeplink(data)
                 .getOrThrow()
 
-            // The chat with a contact is the chat product's on an install whose chats it runs (HX2).
-            val contact = deeplinkPayload.chatId.contactOrNull()?.takeIf { personChatMode.isProductChat() }
+            // The chat with a contact is the chat product's (HX2); a link or an older notification names the account.
+            val contact = deeplinkPayload.chatId.contactOrNull()
             val payload = if (contact != null) {
                 startChatDataUseCase(contact.contactAccountId).getOrThrow().toChatFeedPayload()
             } else {

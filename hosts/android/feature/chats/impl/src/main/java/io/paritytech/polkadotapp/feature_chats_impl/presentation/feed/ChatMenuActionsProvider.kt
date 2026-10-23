@@ -28,7 +28,6 @@ class ChatMenuActionsProvider @Inject constructor() {
 
         return when (chatRequest) {
             is OpenChatRequest.ExistingChat -> toolbarForExistingChat(chatRequest, userInputState, addMenuIconForcibly)
-            is OpenChatRequest.StartChatWithContact -> toolbarForContact(userInputState)
         }
     }
 

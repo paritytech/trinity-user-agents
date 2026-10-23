@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.common.domain.model.EncodedPublicKey
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
-import io.paritytech.polkadotapp.feature_chats_api.domain.devices.BroadcastDeviceLifecycleUseCase
 import io.paritytech.polkadotapp.feature_sso_api.domain.HandshakeResponse
 import io.paritytech.polkadotapp.feature_sso_api.domain.SsoHandshakeUseCase
 import io.paritytech.polkadotapp.feature_sso_api.domain.devices.RegisterDeviceProgress
@@ -25,12 +24,10 @@ class RealRegisterDeviceUseCase @Inject constructor(
     private val slotAllocator: StatementStoreSlotAllocator,
     private val ssoSessionRepository: SsoSessionRepository,
     private val ssoHandshakeUseCase: SsoHandshakeUseCase,
-    private val broadcastDeviceLifecycleUseCase: BroadcastDeviceLifecycleUseCase,
 ) : RegisterDeviceUseCase {
     context(diagnostics: StalenessReportCollector)
     override fun invoke(offer: HandshakeOffer): Flow<RegisterDeviceProgress> = flow {
         val deviceStatementAccountId = offer.device.statementAccountId
-        val deviceEncryptionPublicKey = offer.device.encryptionPublicKey
         Timber.d("register device $deviceStatementAccountId (session='${offer.metadata.hostName}')")
 
         emit(RegisterDeviceProgress.Verifying)
@@ -43,13 +40,8 @@ class RealRegisterDeviceUseCase @Inject constructor(
             .flatMap {
                 emit(RegisterDeviceProgress.Registering)
 
+                // The chat product reads the paired devices from the host (`pairedDevices`); nothing is announced here.
                 ssoHandshakeUseCase.respondToOffer(offer, HandshakeResponse.Success)
-                    .flatMap {
-                        broadcastDeviceLifecycleUseCase.broadcastDeviceAdded(
-                            statementAccountId = deviceStatementAccountId,
-                            encryptionPublicKey = deviceEncryptionPublicKey,
-                        )
-                    }
             }
             .logFailure("device registration failed for device $deviceStatementAccountId")
             .onFailure { throwable ->

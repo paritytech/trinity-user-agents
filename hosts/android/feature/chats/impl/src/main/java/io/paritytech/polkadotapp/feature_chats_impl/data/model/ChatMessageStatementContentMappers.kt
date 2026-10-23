@@ -1,26 +1,17 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.model
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
-import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.common.data.os.OperatingSystem
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
-import io.paritytech.polkadotapp.common.domain.model.requireX25519PublicKey
 import io.paritytech.polkadotapp.common.domain.model.scale.toDomain
 import io.paritytech.polkadotapp.common.domain.model.scale.toScale
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
 import io.paritytech.polkadotapp.common.utils.encodeToByteArrayCatching
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.flatRecover
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Attachment
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.HopTicket
-import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.AlwaysDecodableChatMessagePart
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageReactionStatementContent
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageStatement
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.ChatMessageStatementContent
@@ -59,51 +50,6 @@ private fun ChatMessage.toStatementStoreMessage(): Result<ChatMessageStatement> 
 internal fun ChatMessage.toWireContent(): Result<ChatMessageStatementContent> {
     return content.toStatementStoreContent()
         .map { it.wrapInReplyOrSelf(replyToMessageId) }
-}
-
-fun EncodedMessage.decodeChatMessageStatement(): Result<ChatMessageStatement> {
-    return runCatching { BinaryScale.decodeFromByteArray<ChatMessageStatement>(this) }
-}
-
-fun EncodedMessage.decodeAlwaysDecodableChatMessagePart(): Result<AlwaysDecodableChatMessagePart> {
-    return runCatching { BinaryScale.decodeFromByteArray<AlwaysDecodableChatMessagePart>(this) }
-        .logFailure("Failed to parse AlwaysDecodableChatMessagePart - this should never happen")
-}
-
-fun EncodedMessage.toChatMessage(
-    authorAccountId: AccountId,
-    contactAccountId: AccountId,
-    messageStatus: ChatMessage.Status,
-): Result<ChatMessage> {
-    return decodeChatMessageStatement()
-        .map { it.toChatMessage(authorAccountId, contactAccountId, messageStatus) }
-}
-
-fun EncodedMessage.toChatMessageOrUnsupported(
-    authorAccountId: AccountId,
-    contactAccountId: AccountId,
-    messageStatus: ChatMessage.Status,
-): Result<ChatMessage> {
-    return decodeChatMessageStatement()
-        .map { it.toChatMessage(authorAccountId, contactAccountId, messageStatus) }
-        .flatRecover { toUnsupportedChatMessage(authorAccountId, contactAccountId, messageStatus) }
-}
-
-fun EncodedMessage.toUnsupportedChatMessage(
-    authorAccountId: AccountId,
-    contactAccountId: AccountId,
-    messageStatus: ChatMessage.Status,
-): Result<ChatMessage> {
-    return decodeAlwaysDecodableChatMessagePart().map { alwaysDecodableChatMessagePart ->
-        ChatMessage(
-            id = alwaysDecodableChatMessagePart.id,
-            timestamp = alwaysDecodableChatMessagePart.timestamp.toLong(),
-            origin = ChatMessageOrigin.fromContactChat(authorAccountId, contactAccountId),
-            content = ChatMessage.Content.Unsupported(this),
-            status = messageStatus,
-            chatId = ChatId.fromContact(contactAccountId)
-        )
-    }
 }
 
 private fun ChatMessage.Content.toStatementStoreContent(): Result<ChatMessageStatementContent> {
@@ -171,95 +117,11 @@ private fun List<Attachment>.toData() = map {
     it.toFileVariant()
 }.ifEmpty { null }
 
-internal fun ChatMessageStatementContent.toChatMessageContent(): ChatMessage.Content {
-    return when (this) {
-        ChatMessageStatementContent.ContactAdded -> ChatMessage.Content.ContactAdded
-        is ChatMessageStatementContent.CoinagePayment -> ChatMessage.Content.CoinagePayment(
-            totalValue = totalValue,
-            coinKeys = coinKeys,
-            status = ChatMessage.Content.CoinagePayment.Status.Detecting
-        )
-
-        is ChatMessageStatementContent.Text -> ChatMessage.Content.Text(text)
-        is ChatMessageStatementContent.Reply -> ownContent.toChatMessageContent()
-        is ChatMessageStatementContent.Token -> ChatMessage.Content.Token(
-            content.token.toDataByteArray(),
-            content.platform.toOperatingSystem(),
-            isVoIP = content.platform == TokenPlatform.IOS_VOIP
-        )
-
-        is ChatMessageStatementContent.Reacted -> ChatMessage.Content.Reacted(messageId, ChatMessageReactionContent(content.emoji))
-        is ChatMessageStatementContent.ReactionRemoved -> ChatMessage.Content.ReactionRemoved(messageId, ChatMessageReactionContent(content.emoji))
-        is ChatMessageStatementContent.Edited -> ChatMessage.Content.Edited(messageId, newContent.toChatMessageContent())
-        is ChatMessageStatementContent.LeftChat -> ChatMessage.Content.LeftChat
-        is ChatMessageStatementContent.ChatAccepted -> ChatMessage.Content.ChatAccepted(requestId)
-        is ChatMessageStatementContent.DeviceChatAccepted -> ChatMessage.Content.DeviceChatAccepted(
-            requestId = requestId,
-            device = device.toDomain(),
-        )
-        is ChatMessageStatementContent.DataChannelAnswer -> ChatMessage.Content.DataChannelAnswer(offerMessageId, sdp)
-        is ChatMessageStatementContent.DataChannelIceCandidate -> ChatMessage.Content.DataChannelIceCandidate(offerMessageId, sdp)
-        is ChatMessageStatementContent.DataChannelOffer -> ChatMessage.Content.DataChannelOffer(sdp, purpose.toDomain())
-        is ChatMessageStatementContent.DataChannelClosed -> ChatMessage.Content.DataChannelClosed(offerMessageId)
-        is ChatMessageStatementContent.RichText -> content.toChatMessageContent()
-        is ChatMessageStatementContent.DeviceAdded -> ChatMessage.Content.DeviceAdded(statementAccountId, encryptionPublicKey.requireX25519PublicKey())
-        is ChatMessageStatementContent.DeviceRemoved -> ChatMessage.Content.DeviceRemoved(statementAccountId)
-        is ChatMessageStatementContent.CompactionCommit -> ChatMessage.Content.CompactionCommit(
-            claimIdentifier = claimIdentifier.toDataByteArray(),
-            claimTicket = HopTicket.fromRaw(claimTicket),
-            nodeUrl = node.toNodeUrl()
-        )
-    }
-}
-
-internal fun ChatMessageStatement.toChatMessage(
-    authorAccountId: AccountId,
-    contactAccountId: AccountId,
-    messageStatus: ChatMessage.Status,
-): ChatMessage {
-    return when (val versioned = versioned) {
-        is VersionedChatMessage.V1 -> versioned.message.toChatMessage(
-            id,
-            timestamp,
-            authorAccountId,
-            contactAccountId,
-            messageStatus
-        )
-    }
-}
-
-private fun ChatMessageV1.toChatMessage(
-    messageId: String,
-    timestamp: ULong,
-    authorAccountId: AccountId,
-    contactAccountId: AccountId,
-    messageStatus: ChatMessage.Status,
-): ChatMessage {
-    val extractedReplyId = (content as? ChatMessageStatementContent.Reply)?.messageId
-    return ChatMessage(
-        id = messageId,
-        timestamp = timestamp.toLong(),
-        origin = ChatMessageOrigin.fromContactChat(authorAccountId, contactAccountId),
-        content = content.toChatMessageContent(),
-        status = messageStatus,
-        chatId = ChatId.fromContact(contactAccountId),
-        replyToMessageId = extractedReplyId
-    )
-}
-
 private fun OperatingSystem.toTokenPlatform(): TokenPlatform {
     return when (this) {
         OperatingSystem.IOS -> TokenPlatform.IOS
         OperatingSystem.ANDROID -> TokenPlatform.ANDROID
         OperatingSystem.UNKNOWN -> error("Should be one of supported OS for push tokens")
-    }
-}
-
-private fun TokenPlatform.toOperatingSystem(): OperatingSystem {
-    return when (this) {
-        TokenPlatform.IOS -> OperatingSystem.IOS
-        TokenPlatform.IOS_VOIP -> OperatingSystem.IOS
-        TokenPlatform.ANDROID -> OperatingSystem.ANDROID
     }
 }
 

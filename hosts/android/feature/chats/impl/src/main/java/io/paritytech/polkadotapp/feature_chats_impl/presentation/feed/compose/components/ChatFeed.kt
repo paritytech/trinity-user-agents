@@ -29,7 +29,6 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.MessageDrawingContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -57,7 +56,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
 private const val GROUPING_TIME_LIMIT_MS = 60_000L
-private const val HEADER_INFO_KEY = "chat_header_info"
 
 private val SLIDE_IN_OFFSET = 24.dp
 private const val SLIDE_IN_DURATION_MS = 500
@@ -66,7 +64,6 @@ private const val SLIDE_IN_DURATION_MS = 500
 internal fun ChatFeed(
     chatMessagesState: ChatMessagesState,
     username: String,
-    headerRenderer: CustomChatHeaderRenderer?,
     footerRenderer: CustomChatFooterRenderer?,
     showTimestamps: Boolean,
     isInputEnabled: Boolean,
@@ -314,8 +311,6 @@ internal fun ChatFeed(
                     NewMessagesSeparator()
                 }
             }
-
-            showHeaderIfNeeded(headerRenderer = headerRenderer)
         }
 
         FloatingDateLabelOverlay(
@@ -360,16 +355,6 @@ private fun LazyListScope.showFooterIfNeeded(
         item {
             renderer.drawFooter()
             VerticalSpacer { mediumIncreased }
-        }
-    }
-}
-
-private fun LazyListScope.showHeaderIfNeeded(
-    headerRenderer: CustomChatHeaderRenderer?
-) {
-    headerRenderer?.let { renderer ->
-        item(key = HEADER_INFO_KEY) {
-            renderer.DrawHeader()
         }
     }
 }

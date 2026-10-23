@@ -46,6 +46,9 @@ interface ProductChatPaymentStore {
     /** Keeps an incoming payment unless the store has its message id already. */
     suspend fun insertReceived(payment: ProductChatPayment)
 
+    /** Keeps, in one transaction, each of [payments] whose message id the store does not have. Returns how many it kept. */
+    suspend fun adopt(payments: List<ProductChatPayment>): Int
+
     fun observeRoom(chatId: ChatId): Flow<List<ProductChatPayment>>
 
     fun observeAll(): Flow<List<ProductChatPayment>>

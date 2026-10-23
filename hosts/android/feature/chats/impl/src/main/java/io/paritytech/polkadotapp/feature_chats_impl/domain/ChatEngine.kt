@@ -12,9 +12,9 @@ import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.common.utils.requireNotNull
 import io.paritytech.polkadotapp.common.utils.withFlowScope
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
-import io.paritytech.polkadotapp.feature_account_api.data.repository.getAccountByIdOrThrow
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
@@ -25,7 +25,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderersById
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatOpenHandler
@@ -42,7 +41,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageDirec
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
@@ -51,11 +49,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeatures
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.personChatDisplayUsername
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
@@ -67,11 +62,9 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChat
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.MatchRendererCustomContentDecoder
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.MessageRevisionRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.getContactResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDisplayGenerator
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.getExtensionForChatResult
@@ -118,13 +111,10 @@ class ChatEngine @Inject constructor(
     private val chatMessageProcessingRepository: ChatMessageProcessingRepository,
     private val chatExtensionRegistry: ChatExtensionRegistry,
     private val accountRepository: AccountRepository,
-    private val contactsRepository: ContactsRepository,
+    private val personChatContacts: PersonChatContacts,
     private val messageRevisionRepository: MessageRevisionRepository,
     private val dmChatMessageOriginDisplayResolverFactory: DmChatMessageOriginDisplayResolver.Factory,
     private val chatDisplayGenerator: ChatDisplayGenerator,
-    private val messageSaveProcessors: Set<@JvmSuppressWildcards ChatMessageSaveProcessor>,
-    private val headerRenderers: Map<String, @JvmSuppressWildcards CustomChatHeaderRenderer>,
-    private val originConfigurations: Map<String, @JvmSuppressWildcards ChatOriginCustomConfiguration>,
     private val chatRoomRepository: ChatRoomRepository,
     private val deleteRoomUseCase: DeleteRoomUseCase,
     private val productRoomDeclarer: ProductRoomDeclarer,
@@ -141,7 +131,7 @@ class ChatEngine @Inject constructor(
 
         val defaultDisplay = when (val variant = chatId.chatVariant()) {
             is ChatVariant.Extension -> getDefaultChatExtensionDisplay(chatId)
-            is ChatVariant.Contact -> getContactChatDisplay(variant)
+            is ChatVariant.Contact -> Result.success(getAccountDisplay(variant.contactAccountId))
         }
 
         val roomMetadata = chatRoomRepository.getRoomMetadata(chatId)
@@ -151,12 +141,7 @@ class ChatEngine @Inject constructor(
 
     fun observeChatDisplay(chatId: ChatId): Flow<Result<ChatDisplay>> {
         return when (val variant = chatId.chatVariant()) {
-            is ChatVariant.Contact -> contactsRepository.subscribeContact(variant.contactAccountId)
-                .map { contact ->
-                    Result.success(contact)
-                        .requireNotNull { IllegalStateException("Contact with accountId=${variant.contactAccountId} not found") }
-                        .map(::getContactChatDisplay)
-                }
+            is ChatVariant.Contact -> flowOf { Result.success(getAccountDisplay(variant.contactAccountId)) }
 
             // A room of the chat product shows its contact, as a person chat does. Any other room reads its name and icon
             // once, as before the chat product.
@@ -184,11 +169,16 @@ class ChatEngine @Inject constructor(
         )
     }
 
-    fun getContactChatDisplay(contact: Contact): ChatDisplay {
+    /**
+     * A contact chat id only names an account, for a link or an older notification; its chat is the room of the chat
+     * product. It shows as that room shows its contact.
+     */
+    private suspend fun getAccountDisplay(accountId: AccountId): ChatDisplay {
+        val username = personChatContacts.getContacts().firstOrNull { it.accountId == accountId }?.username
         return chatDisplayGenerator.generateAccountChatDisplay(
-            accountId = contact.accountId,
-            username = contact.username,
-            avatarUrl = contact.avatarUrl
+            accountId = accountId,
+            username = username?.let(::personChatDisplayUsername),
+            avatarUrl = null
         )
     }
 
@@ -224,24 +214,10 @@ class ChatEngine @Inject constructor(
     }
 
     suspend fun originDisplayResolver(chatId: ChatId): MessageOriginDisplayResolver {
-        val contactVariant = chatId.contactOrNull()
-        val contact = contactVariant?.let { contactsRepository.getContact(it.contactAccountId) }
-        val ourAccountId = getOurAccountId(contact)
-
         return dmChatMessageOriginDisplayResolverFactory.create(
             chatDisplay = getChatDisplay(chatId).getOrThrow(),
-            ourAccountId = ourAccountId,
+            ourAccountId = accountRepository.getWalletAccount().defaultAccountId(),
         )
-    }
-
-    private suspend fun getOurAccountId(contact: Contact?): AccountId {
-        val ourAccount = if (contact != null) {
-            accountRepository.getAccountByIdOrThrow(contact.ourMetaAccountId)
-        } else {
-            accountRepository.getWalletAccount()
-        }
-
-        return ourAccount.defaultAccountId()
     }
 
     fun subscribeReactions(chatId: ChatId): Flow<Map<ChatMessageId, List<ChatMessageReaction>>> {
@@ -450,22 +426,6 @@ class ChatEngine @Inject constructor(
             .launchIn(scope)
     }
 
-    suspend fun sendAttachment(
-        chatId: ChatId,
-        content: ChatMessage.Content.RichText,
-        replyToMessageId: String?
-    ): ChatMessage {
-        val message = ChatMessage.new(
-            chatId = chatId,
-            content = content,
-            origin = ChatMessageOrigin.User,
-            status = ChatMessage.Status.PROCESSING,
-            replyToMessageId = replyToMessageId
-        )
-        saveMessage(message)
-        return message
-    }
-
     override suspend fun sendUserMessage(
         messageId: ChatMessageId,
         chatId: ChatId,
@@ -529,14 +489,6 @@ class ChatEngine @Inject constructor(
         chatMessageProcessingRepository.setLastRevealedTimestamp(extensionId, timestamp)
     }
 
-    suspend fun getHeaderRendererForChat(chatId: ChatId): CustomChatHeaderRenderer? {
-        val contactAccountId = chatId.contactOrNull()?.contactAccountId ?: return null
-        val contact = contactsRepository.getContact(contactAccountId) ?: return null
-        return headerRenderers[contact.origin]
-    }
-
-    fun findOriginConfiguration(origin: ContactOrigin) = originConfigurations[origin]
-
     suspend fun saveMessage(
         chatMessage: ChatMessage,
         onConflict: ChatMessageSaveConflictStrategy = ChatMessageSaveConflictStrategy.REPLACE,
@@ -547,7 +499,6 @@ class ChatEngine @Inject constructor(
         return chatMessageRepository.saveMessage(chatMessage, customContentDecoder, onConflict, placement, onSaved)
             .also { saved ->
                 if (saved) {
-                    messageSaveProcessors.forEach { it.onMessageSaved(chatMessage) }
                     savedMessagesFlow.tryEmit(chatMessage)
                     messagesChangedFlow.tryEmit(Unit)
                 }
@@ -565,7 +516,6 @@ class ChatEngine @Inject constructor(
         val savedMessages = chatMessageRepository.saveMessages(chatMessages, customContentDecoder, onConflict, placement)
 
         savedMessages.forEach { saved ->
-            messageSaveProcessors.forEach { it.onMessageSaved(saved) }
             savedMessagesFlow.tryEmit(saved)
         }
 
@@ -641,11 +591,6 @@ class ChatEngine @Inject constructor(
     private fun List<ChatExtension>.messageRenderersById(): CustomChatMessageRenderersById {
         return flatMap { it.customMessageRenderers() }
             .associateBy { it.id }
-    }
-
-    private suspend fun getContactChatDisplay(chatId: ChatVariant.Contact): Result<ChatDisplay> {
-        return contactsRepository.getContactResult(chatId.contactAccountId)
-            .map(::getContactChatDisplay)
     }
 
     private fun determineInitialMessageStatus(chatId: ChatId): ChatMessage.Status {

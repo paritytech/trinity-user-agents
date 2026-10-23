@@ -32,13 +32,3 @@ data class Contact(
 ) : Identifiable {
     override val identifier = accountId.value.contentToString()
 }
-
-fun Contact.pendingChatRequestIdOrThrow(): ChatRequestId {
-    return requireNotNull(pendingChatRequestId) {
-        "Pending chat request is expected but was not present for contact $username ($accountId)"
-    }
-}
-
-fun Contact.hasPendingChatRequest(): Boolean = pendingChatRequestId != null
-
-fun Contact.hasEstablishedChat(): Boolean = pendingChatRequestId == null

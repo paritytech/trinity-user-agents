@@ -4,7 +4,6 @@ import android.content.Context
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -22,8 +21,7 @@ class HostPlacedProductsTest {
         every { getString(RCommon.string.host_placed_chat_chats) } returns "Chats"
     }
     private val tldProvider: DotNsTldProvider = mockk()
-    private val productChat = mockk<PersonChatMode> { every { isProductChat() } returns true }
-    private val hostPlacedProducts = HostPlacedProducts(context, tldProvider, productChat)
+    private val hostPlacedProducts = HostPlacedProducts(context, tldProvider)
 
     private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
     private val chats = Product(ReservedProductIds.chat(tld), "Chats", icon = null)
@@ -36,15 +34,6 @@ class HostPlacedProductsTest {
         every { tldProvider.currentTldOrNull() } returns tld
 
         assertEquals(listOf(listOf(jollity, chats)), hostPlacedProducts.observe().toList())
-    }
-
-    // The native chat and the chat product must never both answer the same chats (HX2).
-    @Test
-    fun `an install that runs the native chat gets no chat product`() = runTest {
-        every { tldProvider.currentTldOrNull() } returns tld
-        val nativeChat = mockk<PersonChatMode> { every { isProductChat() } returns false }
-
-        assertEquals(listOf(listOf(jollity)), HostPlacedProducts(context, tldProvider, nativeChat).observe().toList())
     }
 
     // Every other product's extension is combined with this list, so a device that has never read

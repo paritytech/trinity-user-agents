@@ -32,6 +32,7 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.models.ChatRequestsListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
@@ -166,7 +167,7 @@ private fun ChatRequestListItemPreview() {
                         avatarModel = AvatarUiModel.Mock.fromName("alice.polkadot")
                     ),
                     timestamp = System.currentTimeMillis(),
-                    productRoom = null
+                    productRoom = ChatId.forExtensionRoom("chat.dot", "dm-preview")
                 ),
                 onClick = {},
                 onDeclineClick = {}

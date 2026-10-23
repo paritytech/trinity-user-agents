@@ -6,64 +6,10 @@ import android.content.Context
 import android.content.pm.ServiceInfo
 import androidx.annotation.StringRes
 import androidx.core.app.NotificationCompat
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
-import androidx.work.ListenableWorker
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkManager
-import java.util.concurrent.TimeUnit
-import kotlin.time.Clock
-import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
-// KEEP: a new trigger must not preempt a running transfer pass — the loop picks up newly queued items itself.
-internal inline fun <reified W : ListenableWorker> enqueueExpeditedTransfer(context: Context, workId: String) {
-    val request = OneTimeWorkRequestBuilder<W>()
-        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-        .setConstraints(
-            Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-        )
-        .build()
-
-    WorkManager.getInstance(context)
-        .enqueueUniqueWork(workId, ExistingWorkPolicy.KEEP, request)
-}
-
-// KEEP: same non-preemption rule as the expedited variant; quiet transfers never surface a notification.
-internal inline fun <reified W : ListenableWorker> enqueueQuietTransfer(context: Context, workId: String) {
-    val request = OneTimeWorkRequestBuilder<W>()
-        .setConstraints(
-            Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-        )
-        .build()
-
-    WorkManager.getInstance(context)
-        .enqueueUniqueWork(workId, ExistingWorkPolicy.KEEP, request)
-}
-
-// REPLACE: only the finishing pass schedules this, re-targeting the wake-up to the soonest backoff deadline.
-internal inline fun <reified W : ListenableWorker> enqueueDelayedTransfer(context: Context, workId: String, executeAt: Instant) {
-    val delay = executeAt - Clock.System.now()
-    val request = OneTimeWorkRequestBuilder<W>()
-        .setInitialDelay(delay.inWholeMilliseconds.coerceAtLeast(0), TimeUnit.MILLISECONDS)
-        .setConstraints(
-            Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-        )
-        .build()
-
-    WorkManager.getInstance(context)
-        .enqueueUniqueWork(workId, ExistingWorkPolicy.REPLACE, request)
-}
-
+/** The notification of a file transfer that runs in the foreground (an upload of the outbox of a room of the chat product). */
 internal fun hopTransferForegroundInfo(
     context: Context,
     notificationId: Int,

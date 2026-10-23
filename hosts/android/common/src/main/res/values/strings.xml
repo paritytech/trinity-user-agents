@@ -305,8 +305,6 @@
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>
-    <string name="debug_menu_product_chat">Chats in the chat product</string>
-    <string name="debug_menu_chat_mode_restart_message">The chat that runs your chats changed. Restart the app to apply it. Moving to the chat product brings the native chat\'s contacts and messages over.</string>
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>

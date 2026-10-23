@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.ChatRequestsListContract
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.compose.components.ChatRequestListItem
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.compose.components.DeclineConfirmationContent
@@ -183,7 +184,7 @@ private fun ChatRequestsListScreenLoadedPreview() {
                                 avatarModel = AvatarUiModel.Mock.fromName("alice.polkadot")
                             ),
                             timestamp = System.currentTimeMillis(),
-                            productRoom = null
+                            productRoom = ChatId.forExtensionRoom("chat.dot", "dm-preview")
                         ),
                         ChatRequestsListUiState.ChatRequestItem(
                             accountId = Random.randomBytes(32).intoAccountId(),
@@ -192,7 +193,7 @@ private fun ChatRequestsListScreenLoadedPreview() {
                                 avatarModel = AvatarUiModel.Mock.fromName("bob.polkadot")
                             ),
                             timestamp = System.currentTimeMillis(),
-                            productRoom = null
+                            productRoom = ChatId.forExtensionRoom("chat.dot", "dm-preview")
                         )
                     )
                 )

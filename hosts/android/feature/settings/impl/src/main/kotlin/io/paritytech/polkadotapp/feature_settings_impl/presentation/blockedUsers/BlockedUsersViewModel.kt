@@ -43,8 +43,7 @@ class BlockedUsersViewModel @Inject constructor(
     }
 
     override fun onChatClick(accountId: AccountId) = launchUnit {
-        val productRoom = interactor.productRoomOf(accountId)
-        if (productRoom != null) router.openChat(productRoom) else router.openContactChat(accountId)
+        interactor.productRoomOf(accountId)?.let(router::openChat)
     }
 
     private fun BlockedUser.toUiModel(): BlockedUserUiModel {

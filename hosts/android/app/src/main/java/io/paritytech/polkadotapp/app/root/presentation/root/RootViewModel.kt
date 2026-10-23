@@ -19,7 +19,6 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.common.utils.stateInBackground
 import io.paritytech.polkadotapp.design.theme.AppThemeSelector
-import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
@@ -59,7 +58,6 @@ class RootViewModel @Inject constructor(
     private val externalPaymentWorkerStarter: ExternalPaymentWorkerStarter,
     private val statementStoreSlotAllocator: StatementStoreSlotAllocator,
     private val ssoService: SsoService,
-    private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
@@ -116,7 +114,6 @@ class RootViewModel @Inject constructor(
             }
 
             launch { jwtAuthWarmUpService.warmUpToken() }
-            launch { chatRequestServiceCoordinator.runChatRequestServices() }
             launch { chatBotStateController.applyDefaultBotStates() }
             launch { rootInteractor.printAccountAddresses() }
             launch { checkDevReset() }

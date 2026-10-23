@@ -28,6 +28,12 @@ class FakeProductChatPaymentStore : ProductChatPaymentStore {
         if (payment.messageId !in records.value) put(payment)
     }
 
+    override suspend fun adopt(payments: List<ProductChatPayment>): Int {
+        val kept = payments.filter { it.messageId !in records.value }.distinctBy { it.messageId }
+        records.update { all -> all + kept.associateBy { it.messageId } }
+        return kept.size
+    }
+
     override fun observeRoom(chatId: ChatId): Flow<List<ProductChatPayment>> = records.map { all -> all.values.filter { it.chatId == chatId } }
 
     override fun observeAll(): Flow<List<ProductChatPayment>> = records.map { it.values.toList() }

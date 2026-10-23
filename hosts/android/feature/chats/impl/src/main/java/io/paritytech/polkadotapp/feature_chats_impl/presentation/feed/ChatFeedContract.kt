@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -33,7 +32,6 @@ interface ChatFeedContract {
     val chatMessagesState: StateFlow<LoadingState<ChatMessagesState>>
     val menuState: StateFlow<ChatMenuState>
     val footerRenderer: StateFlow<CustomChatFooterRenderer?>
-    val headerRenderer: StateFlow<CustomChatHeaderRenderer?>
     val menuRenderer: StateFlow<CustomChatMenuRenderer?>
     val customAppearance: StateFlow<CustomChatAppearance?>
     val revealingMessageId: StateFlow<ChatMessageId?>

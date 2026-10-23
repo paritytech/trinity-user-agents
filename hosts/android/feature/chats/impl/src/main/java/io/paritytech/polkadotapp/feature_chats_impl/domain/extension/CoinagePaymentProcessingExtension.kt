@@ -7,14 +7,8 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
-import io.paritytech.polkadotapp.feature_chats_api.domain.extension.markMessageProcessed
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment.Status
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.paymentContentOrNull
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPaymentStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.RealProductChatPayments
@@ -52,15 +46,16 @@ private const val COINAGE_LOG_TAG = "CoinageTransfer"
 private val CLAIM_RETRY_WINDOW = 7.days
 
 /**
- * Keeps a payment message's status in step with the ledger, in both directions.
+ * Keeps a payment's status in step with the ledger, in both directions.
  *
  * Neither direction owns any state of its own. An outgoing payment is answered by our own coins' presence and
  * the status of whatever minted them; an incoming one by the group its claims were registered under, found
- * again from the message's id. That is why a restart mid-payment needs nothing to resume from: the message
+ * again from the message's id. That is why a restart mid-payment needs nothing to resume from: the payment
  * says which coins, and the ledger says what happened to them.
  *
  * The rooms of the chat product keep their messages in the product, so the host keeps each of their payments in a
- * [ProductChatPaymentStore] record under the message id, and the same flows run over it and write its status there.
+ * [ProductChatPaymentStore] record under the message id, and these flows run over it and write its status there. The
+ * payment messages of the native chat were handed over to such records when the install moved to the chat product.
  */
 @OptIn(ExperimentalTime::class)
 class CoinagePaymentProcessingExtension @Inject constructor(
@@ -70,25 +65,16 @@ class CoinagePaymentProcessingExtension @Inject constructor(
     private val productPayments: ProductChatPaymentStore,
     private val productPaymentDelivery: RealProductChatPayments,
 ) : ChatExtension {
-    override val id = "CoinagePaymentProcessing"
+    override val id = ID
 
     override val activationStateExternallyControlled: Boolean = false
 
-    // A product payment is followed once while the work runs, as a native message is: its record is listed again on
-    // every change. Work that stops with its scope lets the next start follow it again.
+    // A payment is followed once while the work runs: its record is listed again on every change. Work that stops with
+    // its scope lets the next start follow it again.
     private val followedProductPayments = ConcurrentHashMap.newKeySet<String>()
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
-        chatExtensionContext.scope.launch {
-            chatExtensionContext.getUnprocessedMessages(contentTypes = listOf(CoinagePayment::class))
-                .forEach { message -> processPayment(message) }
-        }
-
-        chatExtensionContext.subscribeNewMessages(contentTypes = listOf(CoinagePayment::class))
-            .onEach { message -> processPayment(message) }
-            .launchIn(chatExtensionContext.scope)
-
         productPayments.observeUnsettled()
             .onEach { payments -> payments.forEach { processProductPayment(it) } }
             .launchIn(chatExtensionContext.scope)
@@ -96,42 +82,7 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         chatExtensionContext.scope.launch { productPaymentDelivery.resumeDeliveries() }
     }
 
-    context(chatExtensionContext: ChatExtensionContext)
-    private fun processPayment(message: ChatMessage) {
-        val content = message.paymentContentOrNull() ?: return
-
-        // A product that pushes a payment to a room whose messages the host keeps sends no keys: the coins are not the
-        // host's to claim or to watch, and an empty claim would settle the payment as an invalid one.
-        if (content.coinKeys.isEmpty() && message.chatId.extensionOrNull() != null) {
-            chatExtensionContext.scope.launch { with(chatExtensionContext) { markMessageProcessed(message) } }
-            return
-        }
-
-        Timber.tag(COINAGE_LOG_TAG)
-            .d("Payment processing message=${message.id} incoming=${message.isIncoming} coins=${content.coinKeys.size}")
-
-        chatExtensionContext.scope.launch {
-            val coinKeys = content.coinKeys.map { it.toDataByteArray() }
-
-            val outcome = if (message.isIncoming) {
-                claimStatuses(message.id, message.timestamp, content.totalValue, coinKeys)
-            } else {
-                handoffStatuses(coinKeys)
-            }
-                .distinctUntilChanged()
-                .onEach { status -> modifyPaymentContent(message, status) }
-                .lastOrNull()
-
-            // Reaching the end of the flow is the finish, not any status seen along the way. An incoming
-            // payment's claim keeps retrying while a coin is still there to be claimed, so a partial
-            // Transferred is a progress report; treating it as the end is what settled a 1.00 payment as
-            // 0.12. A claim cut short by shutdown throws instead, leaving the message for the next launch.
-            logSettled(message.id, message.isIncoming, outcome)
-            with(chatExtensionContext) { markMessageProcessed(message) }
-        }
-    }
-
-    /** The same flows as a payment message, over the record that the host keeps for a payment of the chat product. */
+    /** Claims or follows the coins of a payment that the host keeps for the chat product, writing its status. */
     context(chatExtensionContext: ChatExtensionContext)
     private fun processProductPayment(payment: ProductChatPayment) {
         if (!followedProductPayments.add(payment.messageId)) return
@@ -154,6 +105,10 @@ class CoinagePaymentProcessingExtension @Inject constructor(
                 }
                 .lastOrNull()
 
+            // Reaching the end of the flow is the finish, not any status seen along the way. An incoming
+            // payment's claim keeps retrying while a coin is still there to be claimed, so a partial
+            // Transferred is a progress report; treating it as the end is what settled a 1.00 payment as
+            // 0.12. A claim cut short by shutdown throws instead, leaving the payment for the next launch.
             logSettled(payment.messageId, payment.incoming, outcome)
             productPayments.settle(payment.messageId)
         }.invokeOnCompletion { cause ->
@@ -259,21 +214,15 @@ class CoinagePaymentProcessingExtension @Inject constructor(
             .logFailure("Failed to value payment coins")
             .getOrDefault(Balance.ZERO)
 
-    context(chatExtensionContext: ChatExtensionContext)
-    private suspend fun modifyPaymentContent(message: ChatMessage, status: Status) {
-        val content = message.paymentContentOrNull() ?: return
-
-        Timber.tag(COINAGE_LOG_TAG)
-            .d("Payment status message=${message.id} incoming=${message.isIncoming} status=$status")
-
-        chatExtensionContext.modifyMessage(message.chatId, message.id, content.copy(status = status))
-    }
-
     private fun logSettled(messageId: ChatMessageId, incoming: Boolean, status: Status?) {
         val outcome = if (incoming) "claimed" else "collectedByPeer"
         val group = if (incoming) claimGroupOf(messageId).value else "none"
 
         Timber.tag(COINAGE_LOG_TAG).i("Payment settled message=$messageId outcome=$outcome group=$group status=$status")
+    }
+
+    companion object {
+        const val ID = "CoinagePaymentProcessing"
     }
 }
 

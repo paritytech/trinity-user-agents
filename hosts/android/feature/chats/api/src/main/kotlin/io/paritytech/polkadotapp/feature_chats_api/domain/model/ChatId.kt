@@ -68,10 +68,6 @@ value class ChatId private constructor(val value: DataByteArray) {
     }
 }
 
-fun ChatId.contactOrThrow(): ChatVariant.Contact {
-    return chatVariant() as ChatVariant.Contact
-}
-
 fun ChatId.extensionOrFailure(): Result<ChatVariant.Extension> {
     val chatVariant = chatVariant()
     return if (chatVariant is ChatVariant.Extension) {
@@ -95,9 +91,4 @@ fun ChatId.isContactChat(): Boolean {
 
 fun ChatId.isExtensionChat(): Boolean {
     return chatVariant() is ChatVariant.Extension
-}
-
-inline fun ChatId.onContact(action: (contactId: ChatVariant.Contact) -> Unit) {
-    val contact = contactOrNull() ?: return
-    action(contact)
 }

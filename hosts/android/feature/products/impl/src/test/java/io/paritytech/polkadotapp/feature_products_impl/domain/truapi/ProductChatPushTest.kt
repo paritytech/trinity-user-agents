@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatNotifications
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatPushContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
@@ -88,14 +87,6 @@ class ProductChatPushTest {
     }
 
     @Test
-    fun `in the native mode the product handler leaves every push to the native chat`() = runTest {
-        val routes = routes().apply { replace("chat.paseo", listOf(HostChatPushRoute(pushId, "dm-1", "Alice", key))) }
-        val handler = handler(routes, mockk(relaxed = true), contacts = emptyList(), productChat = false) { null }
-
-        assertFalse(handler.canHandle(mapOf("pushId" to pushId, "message" to "00")))
-    }
-
-    @Test
     fun `the product handler takes only pushes of its routes, words a message as the native chat and rings a call at once`() =
         runTest {
             val routes = routes().apply { replace("chat.paseo", listOf(HostChatPushRoute(pushId, "dm-1", "Alice", key))) }
@@ -171,7 +162,6 @@ class ProductChatPushTest {
         notifications: PersonChatNotifications,
         contacts: List<PersonChatContact>,
         runtimeProvider: TrUAPIHostRuntimeProvider = mockk { coEvery { runtime() } returns Result.failure(IllegalStateException("not booted")) },
-        productChat: Boolean = true,
         preview: () -> ChatPushPreview?,
     ) = ProductChatPushHandler(
         routes = routes,
@@ -179,7 +169,6 @@ class ProductChatPushTest {
         notifications = notifications,
         contacts = mockk<PersonChatContacts> { coEvery { getContacts() } returns contacts },
         fallbackUsernameGenerator = mockk<FallbackUsernameGenerator> { every { generateFromAccountId(any()) } returns "fallback" },
-        personChatMode = mockk<PersonChatMode> { every { isProductChat() } returns productChat },
         runtimeProvider = { runtimeProvider },
     )
 }

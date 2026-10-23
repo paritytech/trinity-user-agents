@@ -24,6 +24,11 @@ class RoomProductChatPaymentStore @Inject constructor(
         dao.insertIfAbsent(payment.toLocal())
     }
 
+    override suspend fun adopt(payments: List<ProductChatPayment>): Int {
+        if (payments.isEmpty()) return 0
+        return dao.insertAllIfAbsent(payments.map { it.toLocal() }).count { it != NOT_INSERTED }
+    }
+
     override fun observeRoom(chatId: ChatId): Flow<List<ProductChatPayment>> =
         dao.observeRoom(chatId.value.value).map { list -> list.map { it.toDomain() } }
 
@@ -118,3 +123,6 @@ private fun ProductChatPaymentLocal.Delivery.toDomain() = when (this) {
 }
 
 private const val KEY_SEPARATOR = ","
+
+// The row id Room gives for a row that a conflict kept out.
+private const val NOT_INSERTED = -1L

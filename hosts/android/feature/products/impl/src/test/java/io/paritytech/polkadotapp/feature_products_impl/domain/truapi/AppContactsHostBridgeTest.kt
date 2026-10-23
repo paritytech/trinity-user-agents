@@ -5,11 +5,12 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
-import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -27,7 +28,7 @@ class AppContactsHostBridgeTest {
     private val otherKey = ByteArray(32) { 0x12 }
     private val alice = ByteArray(32) { 0xA1.toByte() }
     private val bob = ByteArray(32) { 0xB0.toByte() }
-    private val bridge = AppContactsHostBridge(mockk<ContactDirectory>(), mockk<PersonChatContacts>(), mockk(relaxed = true))
+    private val bridge = AppContactsHostBridge(mockk<PersonChatContacts>(), mockk(relaxed = true))
 
     @Test
     fun `a handle resolves to the contact it hashes from`() {
@@ -64,30 +65,52 @@ class AppContactsHostBridgeTest {
     }
 
     @Test
-    fun `the picker offers the chat product's unblocked contacts beside the native ones, each person once`() = runBlocking {
+    fun `the picker offers the chat product's unblocked contacts, each person once`() = runBlocking {
         val carol = ByteArray(32) { 0xC0.toByte() }
-        val directory = mockk<ContactDirectory> {
-            coEvery { getContacts() } returns listOf(mockk<Contact> {
-                every { accountId } returns DataByteArray(alice)
-                every { username } returns "alice"
-            })
-        }
         val personChat = mockk<PersonChatContacts> {
             coEvery { getContacts() } returns listOf(
                 productContact(alice, "alice.product", blocked = false),
                 productContact(bob, "bob", blocked = false),
                 productContact(carol, "carol", blocked = true),
+                productContact(bob, "bob", blocked = false),
             )
         }
         val request = slot<ContactPickRequest>()
         val picks = mockk<TrUAPIContactPicks> { coEvery { ask(capture(request)) } returns null }
 
-        AppContactsHostBridge(directory, personChat, picks).pickContact("notes.dot")
+        AppContactsHostBridge(personChat, picks).pickContact("notes.dot")
 
         assertEquals(
-            listOf(DataByteArray(alice) to "alice", DataByteArray(bob) to "bob"),
+            listOf(DataByteArray(alice) to "alice.product", DataByteArray(bob) to "bob"),
             request.captured.options.map { DataByteArray(it.account) to it.displayName },
         )
+    }
+
+    // Lookups answer from what the chat product syncs: before any snapshot they read it, and a blocked contact is gone.
+    @Test
+    fun `before a snapshot a handle resolves through the chat product's contacts`() {
+        val personChat = mockk<PersonChatContacts> {
+            coEvery { getContacts() } returns listOf(productContact(alice, "alice", blocked = false), productContact(bob, "bob", blocked = true))
+        }
+        val matches = AppContactsHostBridge(personChat, mockk(relaxed = true))
+            .contacts(HostContactLookup(key, listOf(contactHandle(key, alice), contactHandle(key, bob))))
+
+        assertArrayEquals(alice, matches.accounts[0])
+        assertNull(matches.accounts[1])
+    }
+
+    @Test
+    fun `a contact the chat product drops or blocks is a removal`() = runBlocking {
+        val synced = MutableStateFlow(listOf(productContact(alice, "alice", blocked = false), productContact(bob, "bob", blocked = false)))
+        val personChat = mockk<PersonChatContacts> { every { observeContacts() } returns synced }
+        val removals = mutableListOf<Unit>()
+        val collection = launch(Dispatchers.Unconfined) { AppContactsHostBridge(personChat, mockk(relaxed = true)).contactRemovals().collect { removals += it } }
+
+        synced.value = synced.value + productContact(ByteArray(32) { 0xC0.toByte() }, "carol", blocked = false)
+        assertEquals(0, removals.size)
+        synced.value = listOf(productContact(alice, "alice", blocked = false), productContact(bob, "bob", blocked = true))
+        assertEquals(1, removals.size)
+        collection.cancel()
     }
 
     private fun contact(account: ByteArray) = PickableContact(DataByteArray(account), username = null)

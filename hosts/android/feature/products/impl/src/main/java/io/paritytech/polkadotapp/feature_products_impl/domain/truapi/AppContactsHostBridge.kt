@@ -5,13 +5,11 @@ import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.blake2b256
-import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import uniffi.truapi.HostContactLookup
@@ -19,13 +17,13 @@ import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import javax.inject.Inject
 
-/** A person the picker offers: a contact of the native chat or of the chat product. */
+/** A person the picker offers: an unblocked contact of the chat product. */
 internal data class PickableContact(val accountId: AccountId, val username: String?)
 
 /**
  * Resolves the contact handles a transaction names back to accounts, and draws
- * the picker. Its people are the contacts of the native chat and the unblocked
- * contacts of the chat product (`publishContacts`), each account once. The list never leaves the host: the core asks about handles, and
+ * the picker. Its people are the unblocked contacts of the chat product
+ * (`publishContacts`), each account once. The list never leaves the host: the core asks about handles, and
  * a product gets 32 bytes for the one person the user picked.
  *
  * The lookup runs inline on the core's dispatcher thread, so it answers from
@@ -33,7 +31,6 @@ internal data class PickableContact(val accountId: AccountId, val username: Stri
  * read, not a store query. Only before the first snapshot does it query.
  */
 class AppContactsHostBridge @Inject constructor(
-    private val directory: ContactDirectory,
     private val personChatContacts: PersonChatContacts,
     private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
@@ -68,7 +65,7 @@ class AppContactsHostBridge @Inject constructor(
             index?.takeIf { it.handleKey.contentEquals(handleKey) }?.let { return it.accountsByHandle }
             accounts
         }
-        val current = snapshot ?: runBlocking { pickable(directory.getContacts(), personChatContacts.getContacts()).map { it.accountId.value } }
+        val current = snapshot ?: runBlocking { pickable(personChatContacts.getContacts()).map { it.accountId.value } }
         val built = current.associateBy { contactHandle(handleKey, it).toDataByteArray() }
         synchronized(lock) {
             // Kept only if no newer snapshot landed while hashing.
@@ -86,7 +83,7 @@ class AppContactsHostBridge @Inject constructor(
      * resolves, because that goes through [contacts] alone.
      */
     override suspend fun pickContact(productId: String): HostContactPick {
-        val options = pickable(directory.getContacts(), personChatContacts.getContacts()).map { contact ->
+        val options = pickable(personChatContacts.getContacts()).map { contact ->
             ContactPickOption(
                 account = contact.accountId.value,
                 displayName = contact.username,
@@ -107,13 +104,13 @@ class AppContactsHostBridge @Inject constructor(
      * cached so a removed contact stops resolving. Collecting it also keeps
      * this bridge's lookup snapshot current.
      */
-    fun contactRemovals(): Flow<Unit> = combine(directory.observeContacts(), personChatContacts.observeContacts(), ::pickable)
+    fun contactRemovals(): Flow<Unit> = personChatContacts.observeContacts()
+        .map(::pickable)
         .onEach(::update)
         .contactRemovals()
 
-    private fun pickable(native: List<Contact>, product: List<PersonChatContact>): List<PickableContact> =
-        (native.map { PickableContact(it.accountId, it.username) } + product.filterNot { it.blocked }.map { PickableContact(it.accountId, it.username) })
-            .distinctBy { it.accountId }
+    private fun pickable(contacts: List<PersonChatContact>): List<PickableContact> =
+        contacts.filterNot { it.blocked }.map { PickableContact(it.accountId, it.username) }.distinctBy { it.accountId }
 }
 
 /** The handle the core knows [account] by under [handleKey]. */

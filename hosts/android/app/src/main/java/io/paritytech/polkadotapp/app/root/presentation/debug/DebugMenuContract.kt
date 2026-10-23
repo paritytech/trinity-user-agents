@@ -44,10 +44,4 @@ interface DebugMenuContract {
     fun onRuntimeRestartConfirmed()
 
     fun onRuntimeRestartCancelled()
-
-    fun onProductChatToggled(enabled: Boolean)
-
-    fun onChatModeRestartConfirmed()
-
-    fun onChatModeRestartCancelled()
 }

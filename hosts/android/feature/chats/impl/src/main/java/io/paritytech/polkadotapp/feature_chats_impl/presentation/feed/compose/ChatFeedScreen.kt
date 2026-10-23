@@ -30,7 +30,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.colors.LocalPolkadotColors
 import io.paritytech.polkadotapp.designsystem.colors.PolkadotColorsPalette
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
@@ -63,7 +62,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val displayState by contract.chatDisplay.collectAsStateWithLifecycle()
     val toolbarActions by contract.toolbarActions.collectAsStateWithLifecycle()
     val footerRenderer by contract.footerRenderer.collectAsStateWithLifecycle()
-    val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
@@ -102,7 +100,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         chatInputUiState = chatInputState,
         chatMessagesLoadingState = chatMessagesState,
         footerRenderer = footerRenderer,
-        headerRenderer = headerRenderer,
         customAppearance = customAppearance,
         revealingMessageId = revealingMessageId,
         onMessageRevealComplete = contract::onMessageRevealComplete,
@@ -171,7 +168,6 @@ private fun ChatFeedScreenInternal(
     chatInputUiState: ChatInputUiState,
     chatMessagesLoadingState: LoadingState<ChatMessagesState>,
     footerRenderer: CustomChatFooterRenderer?,
-    headerRenderer: CustomChatHeaderRenderer?,
     customAppearance: CustomChatAppearance?,
     revealingMessageId: ChatMessageId?,
     onMessageRevealComplete: (ChatMessageId) -> Unit,
@@ -237,7 +233,6 @@ private fun ChatFeedScreenInternal(
                         ChatFeed(
                             chatMessagesState = it,
                             username = username,
-                            headerRenderer = headerRenderer,
                             footerRenderer = footerRenderer,
                             showTimestamps = config.showTimestamps,
                             highlightEvents = highlightEvents,
@@ -344,7 +339,6 @@ private fun ChatFeedPreview() {
                         )
                     ),
                     footerRenderer = null,
-                    headerRenderer = null,
                     customAppearance = null,
                     revealingMessageId = null,
                     onMessageRevealComplete = {},

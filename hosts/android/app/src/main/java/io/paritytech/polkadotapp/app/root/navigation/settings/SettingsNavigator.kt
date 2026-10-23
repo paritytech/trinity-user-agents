@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
 import io.paritytech.polkadotapp.app.root.navigation.LegalUrls
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.navigation.SupportContact
-import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.presentation.BrowserNavigator
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.openAppLanguageSettings
@@ -74,13 +73,6 @@ class SettingsNavigator @Inject constructor(
     override fun openScanQr() {
         if (isCurrentDestination(R.id.scanQrFragment)) return
         performNavigation(R.id.action_global_to_scan_graph)
-    }
-
-    override fun openContactChat(accountId: AccountId) {
-        performNavigation(
-            actionId = R.id.action_global_to_chatFeedFragment,
-            args = ChatFeedPayload.existingContactChat(accountId).toPayloadBundle()
-        )
     }
 
     override fun openChat(chatId: ChatId) {

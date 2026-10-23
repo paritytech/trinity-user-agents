@@ -12,7 +12,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.StartChatData
 import kotlinx.coroutines.test.runTest
@@ -27,15 +26,10 @@ class StartChatDataUseCaseTest {
     private val registry = mockk<ChatExtensionRegistry> {
         coEvery { getExtensionForChat(home) } returns mockk<ChatExtension> { every { roomQuerying(home) } returns querying }
     }
-    private val contacts = mockk<ContactsRepository>()
-
-    private fun useCase(productChat: Boolean) = StartChatDataUseCase(
+    private val useCase = StartChatDataUseCase(
         knownChains = KnownChains(people = "people", assetHub = "asset-hub", bulletIn = "bullet-in", hydration = null),
         chainRegistry = mockk(),
         resourcesRepository = mockk(),
-        accountRepository = mockk(),
-        contactsRepository = contacts,
-        personChatMode = mockk { every { isProductChat() } returns productChat },
         personChatRooms = mockk<PersonChatRooms> { every { homeRoom() } returns home },
         chatExtensionRegistry = registry,
         personChatContacts = mockk<PersonChatContacts> {
@@ -43,13 +37,12 @@ class StartChatDataUseCaseTest {
         },
     )
 
-    // The native chat does not run beside the chat product, so a chat started anywhere in the app opens in it (HX2).
+    // The chat product runs the person chats, so a chat started anywhere in the app opens in it (HX2).
     @Test
-    fun `with the chat product a chat with an account opens the product's room for it`() = runTest {
-        val started = useCase(productChat = true)(bob).getOrThrow()
+    fun `a chat with an account opens the product's room for it`() = runTest {
+        val started = useCase(bob).getOrThrow()
 
         assertEquals(StartChatData.ProductRoom(bobRoom), started)
         coVerify { querying.openLink(home, "contact:" + "b0".repeat(32)) }
-        coVerify(exactly = 0) { contacts.getContact(any()) }
     }
 }

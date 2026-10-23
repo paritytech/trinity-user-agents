@@ -5,9 +5,6 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
-import dagger.multibindings.Multibinds
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_impl.RealChatStarter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch.ChatSearchInteractor
@@ -42,10 +39,4 @@ interface ChatsFeatureModule {
 
     @Binds
     fun bindChatStarter(real: RealChatStarter): ChatStarter
-
-    @Multibinds
-    fun customChatHeaderRenderers(): Map<String, CustomChatHeaderRenderer>
-
-    @Multibinds
-    fun chatOriginCustomConfigurations(): Map<String, ChatOriginCustomConfiguration>
 }

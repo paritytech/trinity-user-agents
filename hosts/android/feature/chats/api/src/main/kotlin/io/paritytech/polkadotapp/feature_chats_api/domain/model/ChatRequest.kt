@@ -42,15 +42,3 @@ fun ChatRequest.isOutgoing(): Boolean {
 fun ChatRequest.isIncoming(): Boolean {
     return direction == ChatRequest.Direction.INCOMING
 }
-
-fun ChatRequest.userDeclinedIncomingRequest(): Boolean {
-    return isIncoming() && status == ChatRequest.Status.DECLINED
-}
-
-fun ChatRequest.isPendingIncoming(): Boolean {
-    return isIncoming() && status == ChatRequest.Status.PENDING
-}
-
-fun ChatRequest.isPendingOutgoing(): Boolean {
-    return isOutgoing() && status == ChatRequest.Status.PENDING
-}

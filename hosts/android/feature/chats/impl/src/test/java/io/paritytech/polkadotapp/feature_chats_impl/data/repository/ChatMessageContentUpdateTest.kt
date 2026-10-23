@@ -17,7 +17,6 @@ class ChatMessageContentUpdateTest {
 
     private val repository = RealChatMessageRepository(
         chatMessageDao = chatMessageDao,
-        chatMessageCompactionDao = mockk(),
         chatMessageReactionDao = mockk(),
         chatRoomRepository = mockk(),
         coroutineDispatchers = RealCoroutineDispatchers(),

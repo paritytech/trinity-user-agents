@@ -17,13 +17,14 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_chats_api.domain.NativeChatHistoryExporter
+import io.paritytech.polkadotapp.feature_chats_api.domain.NativeChatPaymentAdoption
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatHopFiles
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdProvider
@@ -517,13 +518,15 @@ internal interface ProductsModule {
         @Singleton
         fun provideProductChatMigration(
             @ApplicationContext context: Context,
-            mode: PersonChatMode,
             exporter: NativeChatHistoryExporter,
+            payments: NativeChatPaymentAdoption,
+            tldProvider: DotNsTldProvider,
             deviceKeys: OurDeviceKeypairProvider,
             runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
         ): ProductChatMigration = ProductChatMigration(
-            mode = mode,
             exporter = exporter,
+            payments = payments,
+            tldProvider = tldProvider,
             deviceKeys = deviceKeys,
             runtimeProvider = runtimeProvider,
             preferences = context.getSharedPreferences("product_chat_migration", Context.MODE_PRIVATE),

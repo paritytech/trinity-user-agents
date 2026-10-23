@@ -3,12 +3,10 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.interactors
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_calls_api.domain.models.ActiveCallState
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderersById
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
@@ -38,11 +36,9 @@ interface ChatListInteractor {
 
 class RealChatListInteractor @Inject constructor(
     private val chatEngine: ChatEngine,
-    private val contactsRepository: ContactsRepository,
     private val callStateTracker: CallStateTracker,
     private val chatDraftRepository: ChatDraftRepository,
     private val subscribeActiveChats: SubscribeActiveChatsUseCase,
-    private val personChatMode: PersonChatMode,
     private val productContactRooms: ProductContactRooms,
 ) : ChatListInteractor {
     context(scope: ComputationalScope)
@@ -55,12 +51,9 @@ class RealChatListInteractor @Inject constructor(
 
     override fun subscribeAllCustomMessageRenderers() = chatEngine.observeActiveCustomMessageRenderers()
 
-    // While the chat product runs the chats, its rooms hold the requests.
-    override fun subscribePendingIncomingRequestsCount(): Flow<Int> = if (personChatMode.isProductChat()) {
+    // The rooms of the chat product hold the requests.
+    override fun subscribePendingIncomingRequestsCount(): Flow<Int> =
         productContactRooms.observeIncomingRequests().map { it.size }
-    } else {
-        contactsRepository.subscribePendingIncomingRequestsCount()
-    }
 
     override suspend fun handleChatOpen(chatId: ChatId): Boolean =
         chatEngine.getOpenHandlerForChat(chatId)?.handleOpen() ?: false
