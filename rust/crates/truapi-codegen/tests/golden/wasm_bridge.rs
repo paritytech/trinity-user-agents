@@ -38,6 +38,7 @@ pub struct JsBridge {
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
+    pub transaction_extension_versions: Function,
     pub feature_supported: Function,
     pub supported_chains: Function,
     pub schedule_game_reminder: Function,
@@ -92,6 +93,10 @@ impl JsBridge {
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
+            transaction_extension_versions: get_function(
+                callbacks,
+                "transactionExtensionVersions",
+            )?,
             feature_supported: get_function(callbacks, "featureSupported")?,
             supported_chains: get_function(callbacks, "supportedChains")?,
             schedule_game_reminder: get_optional_function(callbacks, "scheduleGameReminder")?
@@ -351,6 +356,22 @@ impl crate::platform::CoreStorage for WasmPlatform {
             vec![Uint8Array::from(key.encode().as_slice()).into()],
         )
         .await
+        .map_err(generic)
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::ExtrinsicVersionHost for WasmPlatform {
+    async fn transaction_extension_versions(
+        &self,
+    ) -> Result<crate::platform::ExtensionVersionMap, latest::GenericError> {
+        let bytes = invoke_bytes_return(&self.bridge.transaction_extension_versions, Vec::new())
+            .await
+            .map_err(generic)?;
+        decode_bytes::<crate::platform::ExtensionVersionMap>(
+            bytes,
+            "transactionExtensionVersions response did not decode",
+        )
         .map_err(generic)
     }
 }

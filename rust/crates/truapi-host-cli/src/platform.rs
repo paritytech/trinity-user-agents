@@ -710,6 +710,10 @@ impl Permissions for CliPlatform {
 	}
 }
 
+/// The CLI keeps no per-chain transaction settings, so it builds every chain
+/// as V4.
+impl truapi::platform::ExtrinsicVersionHost for CliPlatform {}
+
 #[async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(

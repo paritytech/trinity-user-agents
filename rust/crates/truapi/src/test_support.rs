@@ -1224,6 +1224,8 @@ impl PlatformPermissions for StubPlatform {
 	}
 }
 
+impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
+
 #[crate::platform::async_trait]
 impl PlatformFeatures for StubPlatform {
 	async fn feature_supported(
