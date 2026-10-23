@@ -22,7 +22,9 @@
 
                 // Set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring.
                 // We recommend adjusting this value in production.
-                options.tracesSampleRate = 0
+                options.tracesSampleRate = 1
+                // Automatic HTTP spans include full URLs; enable only when a URL scrubber is available.
+                options.enableNetworkTracking = false
             }
         }
     }
