@@ -3,45 +3,106 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::funding_provider::{
-		HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-		HostFundingReportResponse, HostFundingSaveError, HostFundingSaveRequest,
-		HostFundingSaveResponse, HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
-		HostFundingServeSubscribeRequest,
+		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignItem,
+		ProductFundingAssignRequest, ProductFundingCancelError, ProductFundingCancelItem,
+		ProductFundingCancelRequest, ProductFundingQuoteError, ProductFundingQuoteItem,
+		ProductFundingQuoteRequest, ProductFundingSettleCancelError,
+		ProductFundingSettleCancelItem, ProductFundingSettleCancelRequest,
 	},
 	wire, wire_trait,
 };
 
-/// Serve the funding sessions the user chose this provider for.
+/// Serve the funding sessions the user chooses this provider for.
 ///
-/// The provider's worker runs each session it is assigned and reports its
-/// progress. The host stores every report, and decides `Delivered` and
-/// `Released` itself from the top-ups and payments the provider names.
+/// The core calls the provider's worker to hand it sessions and cancels, and
+/// each call takes one answer item: the worker sends it and nothing after,
+/// and the core ends the call once it has it. The worker calls the core to
+/// report progress. The core decides `Delivered` and `Released` itself, from
+/// the top-ups and payments the worker names.
+///
+/// When the worker connects, the core assigns it every session it still
+/// serves, then repeats any cancel or cancel settlement it never answered.
+/// The worker keeps its own state per session, such as an onramp order id, in
+/// its storage under the session's `intent`.
 #[wire_trait(id = 24)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {
-	/// Receive the sessions assigned to the calling provider, and requests to
-	/// cancel them.
-	///
-	/// Emits every session still in flight first, so a restarted worker picks
-	/// up where it stopped, then each new assignment and cancel request.
+	/// Price an ask for the host's quote list, or say why the provider will
+	/// not. The core asks every provider and drops an answer later than 10
+	/// seconds. The worker answers with one item.
 	///
 	/// ```ts
-	/// import { firstValueFrom, from } from "rxjs";
-	///
-	/// const item = await firstValueFrom(
-	///   from(truapi.fundingProvider.serveSubscribe()),
-	/// );
-	/// console.log("funding provider item:", item);
+	/// truapi.fundingProvider.onQuote(({ ask }, send) => {
+	///   console.log("asked to price:", ask.amount);
+	///   send({ tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } });
+	/// });
 	/// ```
-	#[wire(id = 0)]
-	async fn serve_subscribe(
+	#[wire(host_initiated, id = 0)]
+	fn quote(
 		&self,
 		_cx: &CallContext,
-		_request: HostFundingServeSubscribeRequest,
-	) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>> {
+		_request: ProductFundingQuoteRequest,
+	) -> Subscription<ProductFundingQuoteItem, CallError<ProductFundingQuoteError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Take a session the user chose this provider for, or resume one after
+	/// the worker restarted: `last_update` says where it stopped. The worker
+	/// answers with one item once it holds the session.
+	///
+	/// ```ts
+	/// truapi.fundingProvider.onAssign(({ session }, send) => {
+	///   console.log("assigned:", session.intent);
+	///   send(undefined);
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 1)]
+	fn assign(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingAssignRequest,
+	) -> Subscription<ProductFundingAssignItem, CallError<ProductFundingAssignError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Stop a session the user wants to cancel. Before money moved the
+	/// provider answers `Stopped`; after, `Offer` or `Refused`.
+	///
+	/// ```ts
+	/// truapi.fundingProvider.onCancel(({ intent }, send) => {
+	///   console.log("cancel:", intent);
+	///   send({ tag: "Stopped", value: undefined });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 2)]
+	fn cancel(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingCancelRequest,
+	) -> Subscription<ProductFundingCancelItem, CallError<ProductFundingCancelError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Hear whether the user accepted the provider's cancel offer. On
+	/// `Accepted` the provider returns the refund and reports `Failed`; on
+	/// `Declined` it carries on. The worker answers with one item once it
+	/// has the decision.
+	///
+	/// ```ts
+	/// truapi.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
+	///   console.log("cancel decision:", intent, decision.tag);
+	///   send(undefined);
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 3)]
+	fn settle_cancel(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingSettleCancelRequest,
+	) -> Subscription<ProductFundingSettleCancelItem, CallError<ProductFundingSettleCancelError>> {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
@@ -56,7 +117,7 @@ pub trait FundingProvider: Send + Sync {
 	/// });
 	/// console.log("funding report:", result);
 	/// ```
-	#[wire(id = 1)]
+	#[wire(id = 4)]
 	async fn report(
 		&self,
 		_cx: &CallContext,
@@ -76,53 +137,12 @@ pub trait FundingProvider: Send + Sync {
 	/// });
 	/// console.log("provider frame:", result);
 	/// ```
-	#[wire(id = 2)]
+	#[wire(id = 5)]
 	async fn present_frame(
 		&self,
 		_cx: &CallContext,
 		_request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
-		Err(CallError::unavailable())
-	}
-
-	/// Answer a `Quote` the host sent on `serveSubscribe`, with the
-	/// provider's price or why it will not give one. The worker prices it
-	/// from its own API.
-	///
-	/// ```ts
-	/// const result = await truapi.fundingProvider.answerQuote({
-	///   askId: "qa_example",
-	///   answer: { tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } },
-	/// });
-	/// console.log("quote answered:", result);
-	/// ```
-	#[wire(id = 3)]
-	async fn answer_quote(
-		&self,
-		_cx: &CallContext,
-		_request: HostFundingAnswerQuoteRequest,
-	) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
-		Err(CallError::unavailable())
-	}
-
-	/// Save the provider's own state for a session it serves, such as its
-	/// order id, so a restarted worker can carry on. The host keeps it with
-	/// the session, hands it back in `Assigned`, and drops it once the
-	/// session ends.
-	///
-	/// ```ts
-	/// const result = await truapi.fundingProvider.save({
-	///   intent: "fs_example",
-	///   state: "0x6f5f31",
-	/// });
-	/// console.log("state saved:", result);
-	/// ```
-	#[wire(id = 4)]
-	async fn save(
-		&self,
-		_cx: &CallContext,
-		_request: HostFundingSaveRequest,
-	) -> Result<HostFundingSaveResponse, CallError<HostFundingSaveError>> {
 		Err(CallError::unavailable())
 	}
 }

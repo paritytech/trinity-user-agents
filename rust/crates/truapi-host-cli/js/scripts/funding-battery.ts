@@ -4,9 +4,11 @@
 // Run via:
 //   scripts/battery.sh --funding-host
 //
-// which builds the CLI with `--features test-host` and starts a signing host
-// with a scripted funding overlay, so a product's requests are shown, started
-// or dismissed, and settled with no chain behind them.
+// which starts a signing host whose funding overlay offers this product as
+// the provider, with ledger engines for top-ups and payments and no chain
+// behind them. This script is both the product asking for funds and the
+// provider's worker serving them, and the battery types the user's commands
+// into the host through TRUAPI_FUNDING_USER.
 //
 // The battery runs this script twice, as a Worker, around a host restart.
 // `TRUAPI_FUNDING_STAGE=start` runs the product's cases and the provider's up
@@ -21,6 +23,7 @@ import type { DiagnosisRow } from "../diagnosis.ts";
 import { runFundingE2e } from "../funding-e2e.ts";
 import {
   type ProviderState,
+  ScriptedProvider,
   runProviderResume,
   runProviderStart,
 } from "../funding-provider-e2e.ts";
@@ -52,6 +55,9 @@ if (
   );
 }
 
+// The worker takes the core's calls from the start, as the core repeats the
+// sessions it serves as soon as the worker connects.
+const provider = new ScriptedProvider(truapi);
 const fundingLog = process.env.TRUAPI_FUNDING_LOG;
 const stage = process.env.TRUAPI_FUNDING_STAGE;
 const statePath = process.env.TRUAPI_FUNDING_STATE;
@@ -72,7 +78,7 @@ interface SavedRun {
  *  the product's cases alone without a stage. */
 async function rowsToReport(): Promise<DiagnosisRow[]> {
   if (stage !== "resume") {
-    const rows = await runFundingE2e(truapi, fundingLog);
+    const rows = await runFundingE2e(truapi, provider, fundingLog);
     print(rows);
     return rows;
   }
@@ -84,7 +90,12 @@ async function rowsToReport(): Promise<DiagnosisRow[]> {
   const saved: SavedRun = existsSync(statePath)
     ? JSON.parse(readFileSync(statePath, "utf8"))
     : { rows: [] };
-  const resumed = await runProviderResume(truapi, fundingLog, saved.provider);
+  const resumed = await runProviderResume(
+    truapi,
+    provider,
+    fundingLog,
+    saved.provider,
+  );
   print(resumed);
   return [...saved.rows, ...resumed];
 }
@@ -95,11 +106,11 @@ if (stage === "start") {
       "the start stage needs TRUAPI_FUNDING_STATE and TRUAPI_FUNDING_LOG",
     );
   }
-  const consumer = await runFundingE2e(truapi, fundingLog);
-  const provider = await runProviderStart(truapi, fundingLog);
+  const consumer = await runFundingE2e(truapi, provider, fundingLog);
+  const served = await runProviderStart(truapi, provider, fundingLog);
   const saved: SavedRun = {
-    rows: [...consumer, ...provider.rows],
-    provider: provider.state,
+    rows: [...consumer, ...served.rows],
+    provider: served.state,
   };
   print(saved.rows);
   writeFileSync(statePath, JSON.stringify(saved));

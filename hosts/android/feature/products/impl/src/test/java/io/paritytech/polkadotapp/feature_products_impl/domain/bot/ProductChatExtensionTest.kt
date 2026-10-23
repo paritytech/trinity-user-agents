@@ -46,7 +46,7 @@ class ProductChatExtensionTest {
     private val extensionId = product.id.toChatExtensionId()
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -106,7 +106,7 @@ class ProductChatExtensionTest {
         )
 
         withChatHost(incoming = flowOf(message)) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker)).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk()).startGlobalWork()
         }
 
         assertEquals(listOf<Pair<ProductChatIdParameter?, String>>(ProductChatIdParameter(ROOM) to "hello"), worker.delivered)
@@ -115,7 +115,7 @@ class ProductChatExtensionTest {
     @Test
     fun `a boot failure does not take the chat host down with it`() = runTest {
         val refCounter = FakeRefCounter(bootFailure = IllegalStateException("core runtime unavailable"))
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter)
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk())
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -132,7 +132,7 @@ class ProductChatExtensionTest {
     fun `disposing stops the inbound collector instead of leaking it`() = runTest {
         val worker = RecordingWorker()
         val incoming = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 4)
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker))
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk())
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -161,7 +161,7 @@ class ProductChatExtensionTest {
     @Test
     fun `an empty footer hides the input of that room alone`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter)
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk())
 
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
@@ -180,7 +180,7 @@ class ProductChatExtensionTest {
         val ownRooms = flowOf(listOf(ChatId.forExtension(extensionId), ChatId.forExtensionRoom(extensionId, ROOM)))
 
         withChatHost(ownRooms) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk()).startGlobalWork()
         }
 
         val rooms = requireNotNull(refCounter.chatSurface).subscribeChatRooms().first()
@@ -208,7 +208,7 @@ class ProductChatExtensionTest {
 
     @Test
     fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()))
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk())
 
         assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
     }

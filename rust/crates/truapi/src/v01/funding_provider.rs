@@ -22,8 +22,6 @@ pub struct FundingAssignment {
 	pub last_update: Option<FundingUpdate>,
 	/// The quote the user chose this provider on, when it was quoted.
 	pub quote: Option<FundingQuote>,
-	/// What the provider last saved for the session with `save`.
-	pub saved: Option<Vec<u8>>,
 }
 
 /// How the user pays or is paid.
@@ -200,27 +198,6 @@ pub enum FundingUpdate {
 		/// transfer reference.
 		reference: Option<String>,
 	},
-	/// The provider will not cancel a session the user asked to cancel once
-	/// money moved. The session carries on. Outside the order of steps.
-	#[codec(index = 7)]
-	CancelRefused {
-		/// Why, shown to the user.
-		reason: String,
-	},
-	/// The provider can cancel a session the user asked to cancel once money
-	/// moved, on these terms. The user accepts or declines in the host, and
-	/// the provider hears which on its serve stream. Outside the order of
-	/// steps.
-	#[codec(index = 8)]
-	CancelOffer {
-		/// What the provider keeps, in the user's payment balance units.
-		fee: u128,
-		/// What the user gets back, in the user's payment balance units.
-		refund: u128,
-		/// When the offer lapses, in Unix milliseconds. A lapsed offer is
-		/// declined.
-		expires_at: Option<u64>,
-	},
 }
 
 /// Where and what the user pays a provider.
@@ -280,58 +257,71 @@ pub struct FundingReceived {
 	pub amount: u128,
 }
 
-/// Item of [`crate::api::FundingProvider::serve_subscribe`].
+/// A session the core hands to the provider the user chose.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingServeSubscribeItem {
-	/// A session the user chose this provider for, or one still in flight
-	/// when the stream opened.
+pub struct ProductFundingAssignRequest {
+	/// The session, with the provider's last update when it resumes one.
+	pub session: FundingAssignment,
+}
+
+/// A session the user wants to cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingCancelRequest {
+	/// The session to stop.
+	pub intent: String,
+}
+
+/// How a provider answers a cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelAnswer {
+	/// No money had moved and the provider stopped. The core ends the
+	/// session as cancelled.
 	#[codec(index = 0)]
-	Assigned {
-		/// The session.
-		session: Box<FundingAssignment>,
-	},
-	/// The user asked to cancel a session. Before money moved the provider
-	/// reports `Failed` with `Cancelled` if it can still stop. After, it
-	/// answers with `CancelOffer` or `CancelRefused`.
+	Stopped,
+	/// Money has moved, and the provider can return `refund` and keep `fee`.
+	/// The user accepts or declines in the host.
 	#[codec(index = 1)]
-	Cancel {
-		/// Session to cancel.
-		intent: String,
+	Offer {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+		/// When the offer lapses, in Unix milliseconds. A lapsed offer is
+		/// declined.
+		expires_at: Option<u64>,
 	},
-	/// The host asks for a price, answered with `answerQuote` and this
-	/// `ask_id`. An ask still unanswered when the stream opens is sent again.
-	#[codec(index = 4)]
-	Quote {
-		/// Id the answer names.
-		ask_id: String,
-		/// What to price.
-		ask: FundingQuoteAsk,
-	},
-	/// The user accepted the provider's `CancelOffer`. The provider settles
-	/// the cancel: it refunds the user and ends the session.
+	/// The provider will not stop. The session carries on.
 	#[codec(index = 2)]
-	CancelAccepted {
-		/// The session.
-		intent: String,
-	},
-	/// The user declined the provider's `CancelOffer`, or it lapsed. The
-	/// session carries on.
-	#[codec(index = 3)]
-	CancelDeclined {
-		/// The session.
-		intent: String,
+	Refused {
+		/// Why, shown to the user.
+		reason: String,
 	},
 }
 
-/// Error from [`crate::api::FundingProvider::serve_subscribe`].
+/// The user's answer to a provider's cancel offer.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingServeSubscribeError {
-	/// Catch-all.
+pub struct ProductFundingSettleCancelRequest {
+	/// The session the offer was made for.
+	pub intent: String,
+	/// What the user decided.
+	pub decision: FundingCancelDecision,
+}
+
+/// What the user decided about a cancel offer.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelDecision {
+	/// Accepted on these terms, as the host showed them. The provider returns
+	/// `refund` and reports `Failed`.
 	#[codec(index = 0)]
-	Unknown {
-		/// Human-readable failure reason.
-		reason: String,
+	Accepted {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
 	},
+	/// Declined, or the offer lapsed. The session carries on.
+	#[codec(index = 1)]
+	Declined,
 }
 
 /// Request to report progress on a session.
@@ -440,54 +430,9 @@ pub enum HostFundingPresentFrameError {
 	},
 }
 
-/// Request to save the provider's own state for a session.
+/// An ask for the provider to price.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostFundingSaveRequest {
-	/// Session the state belongs to.
-	pub intent: String,
-	/// The state, opaque to the host. Replaces what was saved before.
-	pub state: Vec<u8>,
-}
-
-/// Error from [`crate::api::FundingProvider::save`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingSaveError {
-	/// No open session with this id is assigned to the caller.
-	#[codec(index = 0)]
-	NotFound,
-	/// The state is larger than the host keeps.
-	#[codec(index = 1)]
-	TooLarge {
-		/// The most bytes the host keeps for a session.
-		max: u32,
-	},
-	/// Catch-all.
-	#[codec(index = 2)]
-	Unknown {
-		/// Human-readable failure reason.
-		reason: String,
-	},
-}
-
-/// Request to answer a quote ask.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostFundingAnswerQuoteRequest {
-	/// The ask being answered.
-	pub ask_id: String,
-	/// The answer.
-	pub answer: FundingQuoteAnswer,
-}
-
-/// Error from [`crate::api::FundingProvider::answer_quote`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingAnswerQuoteError {
-	/// No open ask with this id was sent to the caller; it may have timed out.
-	#[codec(index = 0)]
-	NotFound,
-	/// Catch-all.
-	#[codec(index = 1)]
-	Unknown {
-		/// Human-readable failure reason.
-		reason: String,
-	},
+pub struct ProductFundingQuoteRequest {
+	/// What the user wants to move, by which rail, in which country.
+	pub ask: FundingQuoteAsk,
 }

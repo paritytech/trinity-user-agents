@@ -5,6 +5,11 @@ public extension MessageExchange {
     struct Request<M: MessageExchange.CodableMessage> {
         public let requestId: String
         public let messages: [M]
+
+        public init(requestId: String, messages: [M]) {
+            self.requestId = requestId
+            self.messages = messages
+        }
     }
 }
 

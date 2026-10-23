@@ -1,0 +1,5 @@
+node_modules/
+# Build outputs: `tsc -b` writes dist/, `npm run build:wasm` writes wasm/.
+dist/
+wasm/
+tsconfig.tsbuildinfo

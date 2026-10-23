@@ -1,4 +1,5 @@
 use crate::{Error, Pointer, Verified, envelope::open};
+use serde::{Serialize, Serializer};
 
 /// The result of fetching a stack's descriptor.
 #[derive(Clone, Copy, Debug)]
@@ -10,7 +11,9 @@ pub enum Fetched<'a> {
 }
 
 /// What [`accept`] did with a fetched descriptor.
-#[derive(Clone, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, strum::IntoStaticStr)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[serde(tag = "status", content = "refused", rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum Status {
 	/// The fetched descriptor replaces the stored one.
@@ -23,8 +26,16 @@ pub enum Status {
 	Rollback,
 	/// Nothing was fetched. The stored copy is kept.
 	Unreachable,
-	/// The fetched bytes break a rule. The stored copy is kept.
-	Refused(Error),
+	/// The fetched bytes break a rule, named by its [`Error::code`]. The stored copy is kept.
+	Refused(
+		#[serde(serialize_with = "code")]
+		#[cfg_attr(feature = "js", tsify(type = "string"))]
+		Error,
+	),
+}
+
+fn code<S: Serializer>(error: &Error, serializer: S) -> Result<S::Ok, S::Error> {
+	serializer.serialize_str(error.code())
 }
 
 impl Status {
@@ -35,13 +46,21 @@ impl Status {
 }
 
 /// The descriptor a reader uses next, and what changed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
+#[serde(rename_all = "camelCase")]
 pub struct Accepted {
 	/// What happened to the fetched descriptor.
+	// Named as an override so tsify writes an intersection: an interface cannot extend a union.
+	#[serde(flatten)]
+	#[cfg_attr(feature = "js", tsify(type = "Status"))]
 	pub status: Status,
 	/// The bytes to store and pass back as `stored` next time.
+	#[serde(serialize_with = "crate::format::serialize_bytes")]
+	#[cfg_attr(feature = "js", tsify(type = "Uint8Array"))]
 	pub document: Vec<u8>,
 	/// The descriptor to use.
+	#[serde(flatten)]
 	pub stack: Verified,
 	/// The chains restarted: drop cached chain data such as a light client's database.
 	pub new_generation: bool,

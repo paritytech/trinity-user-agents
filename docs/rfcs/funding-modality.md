@@ -44,7 +44,7 @@ flowchart LR
     payments["Payment API<br/>topUp · request"]
   end
   subgraph worker["Provider worker"]
-    provider["Provider worker<br/>answerQuote · serve · report"]
+    provider["Provider worker<br/>quote · assign · cancel · report"]
     ephemeral["Ephemeral accounts<br/>deriveEntropy"]
   end
   onramp["Onramp provider<br/>KYC · card · bank"]
@@ -55,7 +55,7 @@ flowchart LR
   overlay <-->|quotes · select| discovery
   sessions -->|balance · history| pocket
   discovery -->|quote| provider
-  sessions -->|Assigned / Cancel| provider
+  sessions -->|assign / cancel| provider
   provider -->|report| sessions
   provider -->|payment.topUp| payments
   provider -->|signs in · quotes · orders| onramp
@@ -71,35 +71,44 @@ The worker prices quotes and runs sessions against that API.
 
 Products keep `Funding`; the worker side is a trait of its own because execution gating applies to a whole trait.
 
+The core asks the worker through host-initiated calls, each answered with one item, and the worker tells the core through
+ordinary calls.
+
 ```rust
 #[wire_trait(id = 24)]
 #[service(required_execution = Worker)]
 pub trait FundingProvider {
-    #[wire(id = 0)] // sessions in flight first, then new items
-    async fn serve_subscribe(&self, cx) -> Subscription<HostFundingServeSubscribeItem, _>;
-    #[wire(id = 1)] // stored before it answers
+    #[wire(host_initiated, id = 0)] // every provider, each quote round; 10 s to answer
+    fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Subscription<FundingQuoteAnswer, _>;
+    #[wire(host_initiated, id = 1)] // the user picked it; again when the worker connects
+    fn assign(&self, cx, request: ProductFundingAssignRequest) -> Subscription<(), _>;
+    #[wire(host_initiated, id = 2)] // the user asked to cancel
+    fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Subscription<FundingCancelAnswer, _>;
+    #[wire(host_initiated, id = 3)] // the user answered the provider's offer
+    fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Subscription<(), _>;
+    #[wire(id = 4)] // stored before it answers
     async fn report(&self, cx, request: HostFundingReportRequest) -> Result<(), HostFundingReportError>;
-    #[wire(id = 2)] // an App route or an external https page, answers once the frame closes
+    #[wire(id = 5)] // an App route or an external https page, answers once the frame closes
     async fn present_frame(&self, cx, request: HostFundingPresentFrameRequest)
         -> Result<HostFundingPresentFrameResponse, HostFundingPresentFrameError>;
-    #[wire(id = 3)]
-    async fn answer_quote(&self, cx, request: HostFundingAnswerQuoteRequest) -> Result<(), HostFundingAnswerQuoteError>;
-    #[wire(id = 4)] // at most 4 KiB
-    async fn save(&self, cx, request: HostFundingSaveRequest) -> Result<(), HostFundingSaveError>;
 }
 ```
 
-### `serve_subscribe`
+```
+CORE   --- quote(ask) ----------------------> WORKER   every provider, each quote round
+CORE   --- assign(session) -----------------> WORKER   user picked it; again after a restart
+WORKER --- report / present_frame ----------> CORE     while it works the session
+CORE   --- cancel(intent) ------------------> WORKER   user asked to cancel
+CORE   --- settle_cancel(decision) ---------> WORKER   user answered the offer
+```
+
+The worker registers one handler per call, as `truapi.renderer.onRender` does: `onQuote`, `onAssign`, `onCancel` and
+`onSettleCancel`. A handler sends its one answer item and nothing after; the core ends the call once it has it, since a
+frame ending the call could overtake the item on a host that handles a connection's frames concurrently.
+
+### `assign`
 
 ```rust
-enum HostFundingServeSubscribeItem {
-    Assigned { session: FundingAssignment },  // chosen for this provider, or still in flight on open
-    Cancel { intent: String },                // the user asked to cancel
-    CancelAccepted { intent: String },        // the user accepted the provider's CancelOffer
-    CancelDeclined { intent: String },        // the user declined it, or it lapsed
-    Quote { ask_id: String, ask: FundingQuoteAsk },
-}
-
 struct FundingAssignment {
     intent: String,
     direction: FundingDirection,             // In | Out
@@ -107,19 +116,22 @@ struct FundingAssignment {
     expires_at: Option<u64>,                 // Unix ms; None once funds move
     last_update: Option<FundingUpdate>,      // where a restarted worker resumes
     quote: Option<FundingQuote>,             // the quote the user chose
-    saved: Option<Vec<u8>>,                  // what `save` last stored
 }
 ```
 
-The stream replays every session still in flight and every unanswered ask when it opens, so a restarted worker carries
-on without its own bookkeeping, including a cancel it has not answered and the user's answer to its offer. Before money
-moved, a worker answers `Cancel` by reporting `Failed { Cancelled }` if it can still stop. After, it answers with
-`CancelOffer` or `CancelRefused` (see [Cancel](#cancel)).
+When a worker's connection completes its handshake, the core assigns it every session it still serves, with its last
+update, then repeats any `cancel` or `settle_cancel` it never answered. Calls to one worker have no order between them,
+so a worker treats every call as idempotent and looks sessions up by `intent`.
 
-### `answer_quote`
+The worker keeps its own state, such as its onramp order id, in its storage under the session's `intent`. It writes
+before every external action, reads the entry when `assign` arrives, and deletes it after its last report. A session the
+core ended without it, by expiry or a second cancel, shows up as `NotFound` on its next `report`, and it deletes the
+entry then.
 
-The core sends every ask to every funding provider, whatever its manifest declares. The worker prices it from its own
-API and answers by `ask_id`.
+### `quote`
+
+The core asks every funding provider, whatever its manifest declares, holding its worker while it waits. The worker
+prices the ask from its own API and answers the call.
 
 ```rust
 struct FundingQuoteAsk {
@@ -172,8 +184,6 @@ enum FundingUpdate {
     Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
     Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
     Payout { outcome: FundingPayout },                // Out: once, after release
-    CancelRefused { reason: String },                 // answers a Cancel, outside the order
-    CancelOffer { fee: u128, refund: u128, expires_at: Option<u64> }, // answers a Cancel, outside the order
 }
 
 enum FundingDeposit {
@@ -220,11 +230,6 @@ enum FundingFrameOutcome {
 - When the page navigates to `return_url`, the host closes the frame and hands the URL back, so the worker reads the
   result from its query. This works the same in an iframe and a native WebView, where a page has no parent to post to.
 
-### `save`
-
-`save` stores opaque state for a session, such as the provider's order id, and replaces what was saved before. It
-comes back in `Assigned.saved` and is dropped when the session ends.
-
 ## Outcome
 
 - **The core decides success, never the worker.** An inbound session is `Delivered { credited }` with the recorded
@@ -252,18 +257,19 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 `cancel_funding` answers `Ended`, `Requested`, `Pending`, `TooLate` or `Refused` (ended, or its overlay is up).
 
 - **No provider serves the session:** it ends as `Failed { Cancelled }`.
-- **Before money moved:** the provider gets `Cancel` and stops with `Failed { Cancelled }`. Asked again, the session
-  ends as `Failed { Cancelled }` and the worker is let go, so a provider that went silent cannot hold it.
-- **After money moved:** a cancel is a request and never ends the session. The provider answers `CancelRefused
-  { reason }`, and the session carries on, or, on an inbound session whose credit has not started, `CancelOffer { fee,
-  refund, expires_at }`: amounts in the user's balance units, `fee + refund` at most the session amount. The host shows
-  the offer from the session's `cancel` and answers it with `confirm_funding_cancel(intent, terms)`, passing the fee and
-  refund it showed to accept or `None` to decline. The provider hears `CancelAccepted` or `CancelDeclined`; while an
-  offer is open it is not sent `Cancel` again. The answer is `Changed` when the provider replaced the offer since the
-  host showed it, and nothing is accepted; `TooLate` when the credit started meanwhile, and the offer is declined; and
-  `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `CancelAccepted` the provider returns
-  the user's payment and ends the session with `Failed`. An outbound session is refunded only once refunds of a released
-  withdrawal exist, so until then its provider can only refuse.
+- **Before money moved:** the core calls `cancel` and the provider answers `Stopped`; the core ends the session as
+  `Failed { Cancelled }`. Asked again, the session ends as `Failed { Cancelled }` and the worker is let go, so a
+  provider that went silent cannot hold it.
+- **After money moved:** a cancel is a request and never ends the session. The provider answers `Refused { reason }`,
+  and the session carries on, or, on an inbound session whose credit has not started, `Offer { fee, refund,
+  expires_at }`: amounts in the user's balance units, `fee + refund` at most the session amount. One offer per `cancel`
+  call: the provider cannot replace it. The host shows the offer from the session's `cancel` and answers it with
+  `confirm_funding_cancel(intent, terms)`, passing the fee and refund it showed to accept or `None` to decline. The
+  provider hears `settle_cancel` with `Accepted { fee, refund }` or `Declined`; while an offer is open it is not asked
+  again. The answer is `NoOffer` for terms other than the offer's; `TooLate` when the credit started meanwhile, and the
+  offer is declined; and `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `Accepted`
+  the provider returns the user's payment and ends the session with `Failed`. An outbound session is refunded only once
+  refunds of a released withdrawal exist, so until then its provider can only refuse.
 - **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
   provider is not asked.
 

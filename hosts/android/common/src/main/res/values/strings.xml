@@ -245,6 +245,13 @@
 
     <string name="settings_backup_not_backed_up">Not backed up.\nSet up a backup to stay protected</string>
 
+    <string name="settings_payments_backup">Payments backup</string>
+    <string name="settings_payments_backup_in_progress">In progress</string>
+    <string name="settings_payments_backup_delayed">Delayed</string>
+    <string name="settings_payments_backup_done">Done</string>
+
+    <string name="payments_setup_notice_message">We\'re still setting up payments. You can keep using them, but settlement will be delayed until setup is finished.</string>
+
     <string name="settings_backup_recovery_phrase_warning_title">View Private Key</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_1">Never share your recovery phrase or enter it into other apps or websites.</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_2">Anyone who has your recovery phrase can access your account.</string>
@@ -448,6 +455,9 @@
     <string name="product_permission_account_subtitle">Account access is required to read account data. %1$s</string>
     <string name="product_permission_balance_title">%1$s would Like to Access Your Balance</string>
     <string name="product_permission_balance_subtitle">Balance access lets the product see funds available for spending. %1$s</string>
+    <string name="product_permission_nft_purse_read_title">%1$s would Like to See the NFTs of %2$s</string>
+    <string name="product_permission_nft_purse_read_subtitle">NFT purse access lets the product see these purses and the items in them. %1$s</string>
+    <string name="product_permission_nft_purse_read_owner_account">your account</string>
     <string name="product_permission_user_identity_title">%1$s Would like to know your identity</string>
     <string name="product_permission_user_identity_subtitle">This reveals your primary username to the product. %1$s</string>
     <string name="product_payment_request_title">Product %1$s requests payment of %2$s</string>
@@ -520,6 +530,9 @@
     <string name="chat_message_compaction_unavailable">Some messages could not be retrieved and are permanently unavailable.</string>
     <string name="chat_message_edited">Edited</string>
     <string name="chat_message_edited_time">Edited %s</string>
+    <string name="chat_echo_title">🔊 Echo</string>
+    <string name="chat_echo_watch_time">You watched this message for total of %s</string>
+    <string name="chat_echo_decode_failed">Failed to decode echo message</string>
     <string name="chat_edit_history">Edit history</string>
     <string name="chat_reply_to">Reply to %1$s</string>
 
@@ -736,7 +749,6 @@
     <string name="asset_details_transfer_button">Transfer</string>
     <string name="asset_details_actions_disabled">Actions will be available after you finish updating your balance</string>
     <string name="asset_details_backup_in_progress">Updating balance</string>
-    <string name="pocket_digital_dollar_account_backup_pending">Account backup is still in progress…</string>
     <string name="asset_details_backup_in_progress_subsequent">Continue updating balance</string>
     <string name="asset_details_balance_restored">Balance restored</string>
     <string name="asset_details_balance_restored_description">If it differs from the previous value, press Update until correct</string>
@@ -806,6 +818,7 @@
     <string name="products_message_custom_preview">Custom message</string>
     <string name="products_message_load_failed">Couldn\'t load this message.</string>
     <string name="products_message_render_failed">Couldn\'t display this message.</string>
+    <string name="products_widget_image_unavailable">This image is not available</string>
     <string name="product_settings_version">version %1$s</string>
     <string name="product_settings_created_by">created by %1$s</string>
     <string name="product_settings_section_privacy">Privacy &amp; Security</string>
@@ -816,6 +829,7 @@
     <string name="product_permission_type_account_access">Account access</string>
     <string name="product_permission_type_balance_access">Balance</string>
     <string name="product_permission_type_balance_access_description">Balance access</string>
+    <string name="product_permission_type_nft_purse_read_description">NFT purse access</string>
     <string name="product_permission_type_user_identity_access">Identity</string>
     <string name="product_permission_type_user_identity_access_description">Primary username disclosure</string>
     <string name="product_permission_capability_notifications">Notifications</string>
@@ -850,7 +864,7 @@
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
     <string name="notification_channel_name_video_game_alarm">Weekly game urgent</string>
-    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games are about to start</string>
+    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games start</string>
 
     <string name="notification_channel_name_calls">Calls</string>
     <string name="notification_channel_description_calls">Notifications about incoming calls</string>
@@ -928,8 +942,13 @@
     <string name="pocket_debug_coinage_test_states">All states</string>
     <string name="pocket_debug_coinage_test_fifty">50</string>
     <string name="pocket_debug_coinage_test_five_hundred">500</string>
-    <string name="pocket_coinage_trace_hops">Hops since last clearing: %d</string>
-    <string name="pocket_coinage_trace_quality">Clearing quality: %s</string>
+    <string name="pocket_debug_coinage_coin_set">Coins</string>
+    <string name="pocket_debug_coinage_coin_set_varied">Varied</string>
+    <string name="pocket_debug_coinage_coin_set_plain">Plain</string>
+    <string name="pocket_coinage_trace_prior_owners">Prior owners: %d</string>
+    <string name="pocket_coinage_trace_quality">Coin Quality: %s</string>
+    <string name="pocket_coinage_trace_quality_explanation">The degree to which the coin is indistinguishable from other coins</string>
+    <string name="pocket_coinage_trace_quality_explanation_aside">(also known as fungibility)</string>
     <string name="pocket_coinage_trace_quality_unknown">Unknown</string>
     <string name="pocket_coinage_trace_quality_very_low">Very low</string>
     <string name="pocket_coinage_trace_quality_low">Low</string>
