@@ -10,10 +10,10 @@
 #
 # This builds `truapi-host` from the checkout, so it always tests the code in
 # front of it rather than whatever binary is installed. The allocations are
-# real statement-store slot registrations on the People chain, so the signing
-# host must be a person: it uses its default base path, which holds its
-# attested account, as `scripts/battery.sh` does. A run takes about three
-# minutes and registers one slot from the person's budget for the period.
+# real statement-store slot registrations on the People chain, so each run
+# provisions and attests a new lite identity in its state directory. A shared
+# identity would renew every device it ever paired before answering this
+# pairing. A run takes about five minutes.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +21,8 @@ cd "$repo_root"
 
 # Homebrew LLVM on DYLD_LIBRARY_PATH makes rustc load a mismatched libLLVM.
 unset DYLD_LIBRARY_PATH
+# The signer is a fresh identity provisioned below, not one from the environment.
+unset HOST_CLI_SIGNER_MNEMONIC
 # This script sets it for the signing host alone; an inherited value would
 # reach the pairing host too.
 unset TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS
@@ -59,6 +61,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+signer=(--network "$network" --base-path "$state/signer")
+name="retry$(openssl rand -hex 4 | tr 0-9 a-j)"
+echo "==> provisioning lite identity $name"
+if ! "$host" signing-host "${signer[@]}" --session "$name" exec "/session $name" \
+  > "$state/provision.log" 2>&1; then
+  echo "==> provisioning $name failed" >&2
+  tail -5 "$state/provision.log" >&2
+  exit 1
+fi
+
 echo "==> starting the product on a pairing host"
 "$host" pairing-host \
   --network "$network" \
@@ -87,8 +99,7 @@ fi
 echo "==> answering the pairing link with a signing host that approves late"
 TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS="0,130000,0" \
 RUST_LOG="${RUST_LOG:-warn,truapi=info},truapi::runtime::signing_host::allowance=debug" \
-  "$host" signing-host \
-  --network "$network" \
+  "$host" signing-host "${signer[@]}" --session "$name" \
   --auto-accept \
   --product-id "$product" \
   --frame-listen 127.0.0.1:0 \
