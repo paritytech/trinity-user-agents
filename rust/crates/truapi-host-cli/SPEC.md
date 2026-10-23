@@ -1795,11 +1795,10 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 ### 14.3 Chain JSON-RPC
 
 Every chain connection opens a fresh WebSocket through `truapi-provider`'s
-WebSocket backend. Its queue depth, message size limit, keepalive interval and
-read timeout are constants in [`ws.rs`](../truapi-provider/src/ws.rs). The
-handshake uses jsonrpsee's default connect timeout. `wss://` certificates are
-checked against bundled webpki root certificates, so the binary does not need a
-system certificate store.
+WebSocket backend. The limits and timeouts described below are set in
+[`ws.rs`](../truapi-provider/src/ws.rs). The connect timeout is jsonrpsee's
+default. `wss://` certificates are checked against bundled webpki root
+certificates, not the operating system's trust store.
 
 Outgoing requests use a bounded queue. `responses()` returns the live response
 stream on its first call; later calls return a stream that has already ended.
