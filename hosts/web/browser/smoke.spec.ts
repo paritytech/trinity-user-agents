@@ -41,6 +41,10 @@ import {
   testBrowser,
 } from "./fixtures.js";
 import { PASEO_DOTNS } from "../src/dotns.js";
+import type {
+  SyntheticChatProduct,
+  SyntheticSeen,
+} from "./synthetic-chat-product.js";
 
 const NAME = "smoke.paseo";
 const STEP_MS = 60_000;
@@ -649,16 +653,6 @@ describe("the dock", () => {
         expect(
           await page.locator('[data-action^="chat-"], .chat-toggle').count(),
         ).toBe(0);
-
-        // The draft worker-owned chat is off until turned on, then runs in a
-        // Web Worker of the host's own, beside Nova in the same list.
-        expect(await page.locator('[data-provider="draft"]').count()).toBe(0);
-        await page.click('[data-action="manage-workers"]');
-        await page.check('[data-action="draft-chat"]');
-        await page.click('[aria-label="Back to chats"]');
-        await page.locator('[data-conversation="draft/ada"]').click();
-        await page.locator('[data-message-id="ada-120"]').waitFor();
-        await page.click('[aria-label="Back to chats"]');
 
         // The inspector's Chat view lists the engine's events with no product
         // open, apart from the TrUAPI traces.
@@ -1338,6 +1332,318 @@ describe("chat as a product", () => {
         const outcome = (await picked).outcome;
         expect(outcome?.tag).toBe("Picked");
         expect(JSON.stringify(outcome?.value)).not.toContain(KIM.slice(2));
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
+describe("the local chat product demo", () => {
+  const WALLET_ID = "chat-product-demo-wallet";
+
+  interface ProductWindow {
+    __syntheticChat: SyntheticChatProduct;
+  }
+
+  test(
+    "starts the synthetic chat product from the Workers page as a product worker, and serves its rooms, pages, sends, feed and calls",
+    async () => {
+      const context = await browser.newContext();
+      context.setDefaultTimeout(STEP_MS);
+      // No chain and no peer: every socket is closed, and every request
+      // outside this host is refused and listed.
+      await context.routeWebSocket(/.*/, (socket) => socket.close());
+      const outside: string[] = [];
+      await context.route(/.*/, (route) => {
+        const url = route.request().url();
+        if (url.startsWith(host.origin)) return route.fallback();
+        outside.push(url);
+        return route.abort();
+      });
+      try {
+        const page = await openHost(context);
+        await page.evaluate(
+          ({ id, mnemonic }) =>
+            localStorage.setItem(
+              "truapi-web-signing-host:wallets:v1",
+              JSON.stringify([{ id, name: "Chat product demo", mnemonic }]),
+            ),
+          { id: WALLET_ID, mnemonic: SYNTHETIC_MNEMONIC },
+        );
+        await page.reload();
+        await page
+          .locator("#core-status")
+          .filter({ hasText: "Core ready" })
+          .waitFor({ state: "attached" });
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+
+        // Chat, Workers, Start demo.
+        await page.click('#dock [data-destination="chat"]');
+        await page.click('[data-action="manage-workers"]');
+        const panel = page.locator(".local-demo");
+        expect(await panel.innerText()).toContain(
+          "not the Verbosity chat product",
+        );
+        const PRODUCT = `localhost:${new URL(host.origin).port}`;
+        expect(await panel.innerText()).toContain(`Product id ${PRODUCT}`);
+        const before = outside.length;
+        await page.click('[data-action="demo-start"]');
+        await page
+          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
+          .waitFor();
+        expect(
+          await page.locator(`[data-worker="${PRODUCT}"]`).innerText(),
+        ).toContain("added by this host");
+        await page.locator('.local-demo[data-demo="running"]').waitFor();
+        await page.click('[aria-label="Back to chats"]');
+
+        const workerFrame = page
+          .frames()
+          .find((frame) => frame.url().includes("__truapi-worker.html"))!;
+        await workerFrame.waitForFunction(
+          () =>
+            (window as unknown as ProductWindow).__syntheticChat?.seen.ready,
+          undefined,
+          { timeout: STEP_MS },
+        );
+        const seen = () =>
+          workerFrame.evaluate(
+            () => (window as unknown as ProductWindow).__syntheticChat.seen,
+          );
+        expect((await seen()).errors).toEqual([]);
+        expect((await seen()).rooms).toEqual(["ada", "design", "lin"]);
+        // Only what this host serves end to end is listed.
+        expect((await seen()).capabilities?.features).toEqual([
+          "product_source_rooms",
+          "participants",
+          "inline_attachments",
+          "call_buttons",
+        ]);
+
+        const ada = `[data-conversation="chat-v2:${PRODUCT}/ada"]`;
+        const design = `[data-conversation="chat-v2:${PRODUCT}/design"]`;
+        const lin = `[data-conversation="chat-v2:${PRODUCT}/lin"]`;
+        // The list draws each room from what the product declared, with the
+        // product's own unread badge, without asking for its messages.
+        await page.locator(design, { hasText: "Design group" }).waitFor();
+        await page.locator(ada, { hasText: "#120" }).waitFor();
+        expect(
+          await page.locator(lin).locator(".chat-unread").innerText(),
+        ).toBe("3");
+        expect((await seen()).queries).toEqual([]);
+
+        // The host asks the product for pages: the newest first, then older
+        // ones with the product's cursor. Nothing was pushed up front.
+        await page.click(ada);
+        await page.locator('[data-message-id="ada-120"]').waitFor();
+        expect(await page.locator('[data-message-id="ada-90"]').count()).toBe(
+          0,
+        );
+        await page.locator(".chat-thread").evaluate((thread) => {
+          thread.scrollTop = 0;
+          thread.dispatchEvent(new Event("scroll"));
+        });
+        await page.locator('[data-message-id="ada-90"]').waitFor();
+        const anchors = (await seen()).queries
+          .filter((query) => query.roomId === "ada")
+          .map((query) => query.anchor);
+        expect(anchors[0]).toEqual({ tag: "Before", value: {} });
+        expect(anchors[1]).toEqual({
+          tag: "Before",
+          value: { cursor: "ada-91" },
+        });
+
+        // The user's own messages are the user's; the product's peers are named
+        // through participants_query.
+        expect(
+          await page
+            .locator('[data-message-id="ada-120"]')
+            .getAttribute("class"),
+        ).toContain("chat-message-out");
+        expect(
+          await page
+            .locator('[data-message-id="ada-119"]')
+            .getAttribute("data-sender"),
+        ).toBe("ada");
+
+        // A sent message becomes the product's stored message under the id it
+        // was first drawn with, moves on through the feed, and Ada's answer
+        // arrives as a new message.
+        await page.fill(".chat-composer-input", "hello");
+        await page.press(".chat-composer-input", "Enter");
+        await page
+          .locator('[data-message-id="local-1"][data-status="read"]', {
+            hasText: "hello",
+          })
+          .waitFor();
+        await page
+          .locator(".chat-message-in", { hasText: 'Got it: "hello"' })
+          .waitFor();
+        expect(
+          await page.locator(".chat-message-out", { hasText: "hello" }).count(),
+        ).toBe(1);
+        const actions = (await seen()).actions.map((entry) => entry.action);
+        expect(actions).toContainEqual({
+          tag: "NewMessage",
+          value: { body: { tag: "Text", value: { text: "hello" } } },
+        });
+        expect(actions.some((action) => action.tag === "Seen")).toBe(true);
+
+        // A message the product rejects stays failed, with its reason.
+        await page.fill(".chat-composer-input", "reject me");
+        await page.press(".chat-composer-input", "Enter");
+        await page
+          .locator('.chat-message-out[data-status="failed"]', {
+            hasText: "Ada does not take this message.",
+          })
+          .waitFor();
+
+        // Edits and deletes the product pushes reach the open room.
+        await workerFrame.evaluate(() =>
+          (window as unknown as ProductWindow).__syntheticChat.edit(
+            "ada",
+            "ada-119",
+            "edited by Ada",
+          ),
+        );
+        await page
+          .locator('[data-message-id="ada-119"]', { hasText: "edited by Ada" })
+          .waitFor();
+        await workerFrame.evaluate(() =>
+          (window as unknown as ProductWindow).__syntheticChat.remove(
+            "ada",
+            "ada-118",
+          ),
+        );
+        await page
+          .locator('[data-message-id="ada-118"]')
+          .waitFor({ state: "detached" });
+
+        // Calls: the room declares both buttons. A press goes to the product,
+        // which places the call its own way; the host runs the media.
+        await page.click('[data-action="audio-call"]');
+        await page.locator('.chat-call[data-state="connected"]').waitFor();
+        const placed = await seen();
+        expect(placed.events[0]).toEqual({
+          roomId: "ada",
+          event: { tag: "CallRequested", value: { video: false } },
+        });
+        expect(placed.media).toEqual([
+          { callId: "call-1", offerer: false, ok: true, error: null },
+        ]);
+        // The host's engine answered the other side's offer. The product only
+        // carried the bytes to the other side.
+        const signals = (events: SyntheticSeen["events"]) =>
+          events
+            .filter((entry) => entry.event.tag === "CallSignal")
+            .map((entry) =>
+              Buffer.from(
+                (entry.event.value as { signal: string }).signal.slice(2),
+                "hex",
+              ).toString(),
+            );
+        expect(signals(placed.events)).toEqual(["synthetic-answer:call-1"]);
+        await page.click('[data-action="hang-up"]');
+        await page.locator('.chat-call[data-state="ended"]').waitFor();
+        expect((await seen()).events.at(-1)?.event).toEqual({
+          tag: "CallEnded",
+          value: { callId: "call-1" },
+        });
+        await page.locator(".chat-call").waitFor({ state: "hidden" });
+
+        // Ada rings: the host shows the ring, the user accepts, and the
+        // accepting side makes the offer.
+        await workerFrame.evaluate(() =>
+          (window as unknown as ProductWindow).__syntheticChat.ring(
+            "ada",
+            false,
+          ),
+        );
+        await page.locator('.chat-call[data-state="incoming"]').waitFor();
+        await page.click('[data-action="accept-call"]');
+        await page.locator('.chat-call[data-state="connected"]').waitFor();
+        expect((await seen()).media.at(-1)).toEqual({
+          callId: "call-2",
+          offerer: true,
+          ok: true,
+          error: null,
+        });
+        expect(signals((await seen()).events).at(-1)).toBe(
+          "synthetic-offer:call-2",
+        );
+        await page.click('[data-action="hang-up"]');
+        await page.locator(".chat-call").waitFor({ state: "hidden" });
+        await page.click('[aria-label="Back to chats"]');
+
+        // The group room: Grace and Ada are named, the notice is a system row,
+        // and no call can be placed.
+        await page.click(design);
+        await page
+          .locator(".chat-system", { hasText: "Grace joined the group" })
+          .waitFor();
+        await page
+          .locator(".chat-bar", { hasText: "Ada, Grace and you" })
+          .waitFor();
+        expect(
+          new Set(await page.locator(".chat-bubble-sender").allInnerTexts()),
+        ).toEqual(new Set(["Ada", "Grace"]));
+        expect(
+          await page.locator('[data-action="audio-call"]').isDisabled(),
+        ).toBe(true);
+        expect((await seen()).errors).toEqual([]);
+        if (process.env.CHAT_SCREENSHOTS)
+          await page.screenshot({
+            path: `${process.env.CHAT_SCREENSHOTS}/chat-product-group.png`,
+          });
+        // The demo needed nothing outside this host.
+        expect(outside.slice(before)).toEqual([]);
+
+        // Restart: a fresh product, which lost what it was sent.
+        await page.click('[aria-label="Back to chats"]');
+        await page.click('[data-action="manage-workers"]');
+        await page.click('[data-action="demo-restart"]');
+        await page
+          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
+          .waitFor();
+        await page.click('[aria-label="Back to chats"]');
+        await page.locator(ada, { hasText: "#120" }).waitFor();
+
+        // Stop: the worker frame, its rooms and its provider go.
+        await page.click('[data-action="manage-workers"]');
+        await page.click('[data-action="demo-stop"]');
+        await page.locator(`[data-worker="${PRODUCT}"]`).waitFor({
+          state: "detached",
+        });
+        await page.click('[aria-label="Back to chats"]');
+        await page.locator(ada).waitFor({ state: "detached" });
+        expect(
+          page
+            .frames()
+            .some((frame) => frame.url().includes("__truapi-worker.html")),
+        ).toBe(false);
+
+        // Started again, then signing out stops it, and signing back in
+        // does not start it: nothing is saved.
+        await page.click('[data-action="manage-workers"]');
+        await page.click('[data-action="demo-start"]');
+        await page
+          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
+          .waitFor();
+        await openMenu(page);
+        await page.click("#sign-out");
+        await page.waitForFunction(
+          () =>
+            !document.querySelector("#worker-frames")?.querySelector("iframe"),
+        );
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        await page.click('#dock [data-destination="chat"]');
+        await page.click('[data-action="manage-workers"]');
+        await page.locator('.local-demo[data-demo="stopped"]').waitFor();
+        expect(await page.locator(`[data-worker="${PRODUCT}"]`).count()).toBe(
+          0,
+        );
       } finally {
         await context.close();
       }

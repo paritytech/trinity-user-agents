@@ -4,12 +4,8 @@ import type {
   ChatProvider,
   ProviderEvent,
 } from "./chat-provider.js";
-import {
-  DraftChatProvider,
-  draftCacheKey,
-  draftEnabledKey,
-  type DraftPort,
-} from "./draft-chat.js";
+import type { ChatV2Host } from "./chat-v2/host.js";
+import { ChatV2Provider } from "./chat-v2/provider.js";
 import { startNovaChat, type ChatSession } from "./nova-chat-provider.js";
 import {
   ProductRoomProvider,
@@ -20,9 +16,9 @@ import {
  * The chat providers of the signed-in session, as the Chat screen sees them.
  *
  * One session (wallet, network and identity) has: the host's Nova chat, one
- * provider per product whose worker is listed or has rooms, and the draft
- * worker-owned chat when the user turned it on. All of them run for the
- * session, whichever screen or conversation is in front, and all of them are
+ * provider per product whose worker is listed or has rooms, and, when the
+ * host runs the Chat Extension v2 draft bridge, one chat product provider per
+ * listed worker. All of them run for the session, whichever screen or conversation is in front, and all of them are
  * disposed when the session ends or changes, so nothing one session started
  * answers into the next.
  */
@@ -47,12 +43,13 @@ export interface ChatInboxDeps {
   rooms: ProductRoomDeps;
   /** The products whose workers are listed for the session. */
   workerNames(): string[];
-  /** Start the draft fixture's worker. */
-  draftWorker(): DraftPort;
   log(text: string): void;
+  /**
+   * The host end of the Chat Extension v2 draft bridge. Each listed worker
+   * then also gets a provider for the rooms it declares there.
+   */
+  chatV2?: ChatV2Host;
 }
-
-export const DRAFT_PROVIDER_ID = "draft";
 
 const sessionKey = (session: ChatSession): string =>
   `${session.network}:${session.walletId}:${session.identityAccountId ?? ""}:${session.chatPublicKey ?? ""}`;
@@ -62,8 +59,8 @@ export class ChatInbox implements ChatInboxView {
   private key: string | null = null;
   private refusal: string | null = null;
   private nova: ChatProvider | null = null;
-  private draft: DraftChatProvider | null = null;
   private readonly products = new Map<string, ProductRoomProvider>();
+  private readonly v2Products = new Map<string, ChatV2Provider>();
   private readonly unsubscribe = new Map<string, () => void>();
   private readonly listeners = new Set<(change: InboxChange) => void>();
 
@@ -93,7 +90,7 @@ export class ChatInbox implements ChatInboxView {
     return [
       ...(this.nova === null ? [] : [this.nova]),
       ...this.products.values(),
-      ...(this.draft === null ? [] : [this.draft]),
+      ...this.v2Products.values(),
     ];
   }
 
@@ -115,8 +112,8 @@ export class ChatInbox implements ChatInboxView {
     this.key = key;
     for (const provider of this.providers()) this.remove(provider);
     this.nova = null;
-    this.draft = null;
     this.products.clear();
+    this.v2Products.clear();
     // Events of one session are not shown in the next.
     this.deps.diagnostics.clear();
     this.refusal = null;
@@ -124,7 +121,6 @@ export class ChatInbox implements ChatInboxView {
       const nova = startNovaChat(session, this.deps);
       if (typeof nova === "string") this.refusal = nova;
       else this.nova = this.add(nova);
-      if (this.draftEnabled()) this.draft = this.add(this.newDraft(session));
       this.syncProducts(false);
     }
     this.emit({ type: "session" });
@@ -171,49 +167,32 @@ export class ChatInbox implements ChatInboxView {
         );
         changed = true;
       }
+    if (this.syncV2Products()) changed = true;
     if (changed && announce) this.emit({ type: "providers" });
   }
 
-  private newDraft(session: ChatSession): DraftChatProvider {
-    return new DraftChatProvider({
-      id: DRAFT_PROVIDER_ID,
-      label: "Draft worker chat",
-      connect: this.deps.draftWorker,
-      storage: this.deps.storage,
-      cacheKey: draftCacheKey(session.network, session.walletId),
-      log: this.deps.log,
-    });
-  }
-
-  /** Whether the user turned the draft worker-owned chat on for this wallet and network. */
-  draftEnabled(): boolean {
-    const session = this.session;
-    return (
-      session !== null &&
-      this.deps.storage.getItem(
-        draftEnabledKey(session.network, session.walletId),
-      ) === "on"
+  /** One v2 draft provider per listed worker, when the host runs the bridge. */
+  private syncV2Products(): boolean {
+    const host = this.deps.chatV2;
+    if (host === undefined) return false;
+    const wanted = new Set(
+      this.session === null ? [] : this.deps.workerNames(),
     );
-  }
-
-  /** Turn the draft worker-owned chat on or off for this wallet and network. */
-  setDraftEnabled(on: boolean): void {
-    const session = this.session;
-    if (session === null || on === this.draftEnabled()) return;
-    const key = draftEnabledKey(session.network, session.walletId);
-    if (on) {
-      this.deps.storage.setItem(key, "on");
-      this.draft = this.add(this.newDraft(session));
-    } else {
-      this.deps.storage.removeItem(key);
-      if (this.draft !== null) this.remove(this.draft);
-      this.draft = null;
-    }
-    this.emit({ type: "providers" });
-  }
-
-  /** Stop the draft worker and start a fresh one, as a crash or an update would. */
-  restartDraft(): void {
-    this.draft?.restart();
+    let changed = false;
+    for (const [productId, provider] of this.v2Products)
+      if (!wanted.has(productId)) {
+        this.remove(provider);
+        this.v2Products.delete(productId);
+        changed = true;
+      }
+    for (const productId of wanted)
+      if (!this.v2Products.has(productId)) {
+        this.v2Products.set(
+          productId,
+          this.add(new ChatV2Provider(productId, host)),
+        );
+        changed = true;
+      }
+    return changed;
   }
 }

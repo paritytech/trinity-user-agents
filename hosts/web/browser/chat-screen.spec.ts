@@ -1,9 +1,9 @@
 /**
  * Headless-browser test of the Chat screen over its chat providers, mounted
  * alone on a stand-in page of the host's Vite server by
- * `browser/chat-screen-harness.ts`. The draft provider talks to the synthetic
- * source in a real Web Worker; the Nova and product providers have stand-ins
- * behind them. Nothing reaches a network: every request outside this host is
+ * `browser/chat-screen-harness.ts`. The chat product provider talks to the
+ * synthetic chat product over the Chat Extension v2 draft bridge in the page;
+ * the Nova and product room providers have stand-ins behind them. Nothing reaches a network: every request outside this host is
  * refused and counted. Set CHAT_SCREENSHOTS to a directory to keep
  * screenshots of the synthetic screens. It needs a Chromium: playwright-core
  * finds the one it installs, or set CHROMIUM_PATH.
@@ -91,7 +91,8 @@ const harness = <T>(page: Page, run: (chat: ChatHarness) => T) =>
 
 const unread = (page: Page, conversationId: string) =>
   page.evaluate(
-    (id) => (window as unknown as ChatWindow).__chat.unread("draft", id),
+    (id) =>
+      (window as unknown as ChatWindow).__chat.unread("chat-v2:chat.test", id),
     conversationId,
   );
 
@@ -118,7 +119,7 @@ describe("chat screen over providers", () => {
     async () => {
       const { context, page, outside } = await open();
       try {
-        await row(page, "draft/ada").waitFor();
+        await row(page, "chat-v2:chat.test/ada").waitFor();
         const order = await page
           .locator("[data-conversation]")
           .evaluateAll((rows) =>
@@ -126,7 +127,7 @@ describe("chat screen over providers", () => {
           );
         // One list, newest activity first, whatever provider holds the conversation.
         expect(new Set(order.map((id) => id!.split("/")[0]))).toEqual(
-          new Set(["nova", "product:quiz.test", "draft"]),
+          new Set(["nova", "product:quiz.test", "chat-v2:chat.test"]),
         );
         const times = await page
           .locator("[data-conversation]")
@@ -147,9 +148,11 @@ describe("chat screen over providers", () => {
         expect(await page.getAttribute("#chat-screen", "data-pending")).toBe(
           "1",
         );
-        // The draft worker counts unread messages; the others do not.
+        // The chat product counts unread messages; the others do not.
         expect(
-          await row(page, "draft/lin").locator(".chat-unread").innerText(),
+          await row(page, "chat-v2:chat.test/lin")
+            .locator(".chat-unread")
+            .innerText(),
         ).toBe("3");
         expect(await page.locator(".chat-unread").count()).toBe(1);
         await screenshot(page, "inbox");
@@ -169,18 +172,18 @@ describe("chat screen over providers", () => {
   );
 
   test(
-    "pages a worker-owned history on scroll, and sends through the worker",
+    "pages a product-owned history on scroll, and sends through the product",
     async () => {
       const { context, page, outside } = await open();
       try {
-        await row(page, "draft/ada").click();
+        await row(page, "chat-v2:chat.test/ada").click();
         await message(page, "#120 ").waitFor();
         expect(await page.locator("[data-message-id]").count()).toBe(30);
         expect(await message(page, "#90 ").count()).toBe(0);
         // One sender per side in a direct chat, so no sender names.
         expect(await page.locator(".chat-bubble-sender").count()).toBe(0);
 
-        // Scrolling to the top asks the worker for the page before, and the
+        // Scrolling to the top asks the product for the page before, and the
         // reader stays where they were instead of jumping to the oldest message.
         await page
           .locator(".chat-thread")
@@ -197,7 +200,7 @@ describe("chat screen over providers", () => {
             .evaluate((element) => element.scrollTop),
         ).toBeGreaterThan(0);
 
-        // Sending: the worker answers with the message, then moves it on to read.
+        // Sending: the product answers with the message, then moves it on to read.
         await page
           .locator(".chat-thread")
           .evaluate((thread) => (thread.scrollTop = thread.scrollHeight));
@@ -220,8 +223,10 @@ describe("chat screen over providers", () => {
         // The answer was on screen, so it was reported seen and is not unread.
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "ada") ===
-            0,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "ada",
+            ) === 0,
         );
         await screenshot(page, "conversation");
         expect(outside).toEqual([]);
@@ -233,23 +238,19 @@ describe("chat screen over providers", () => {
   );
 
   test(
-    "names group senders, draws custom cards, buttons and files, and retries a failed message once",
+    "names group senders, retries a failed message once, restarts the product, and draws product room cards, buttons and files",
     async () => {
       const { context, page } = await open();
       try {
-        await row(page, "draft/design").click();
+        await row(page, "chat-v2:chat.test/design").click();
         await message(page, "#9 ").waitFor();
         expect(
           new Set(await page.locator(".chat-bubble-sender").allInnerTexts()),
         ).toEqual(new Set(["Ada", "Grace"]));
 
-        // The worker draws its poll as a tree, and a press goes back to it.
-        const poll = page.locator(
-          '.product-card[data-message-type="draft.poll"]',
-        );
-        await poll.locator(".pr-text", { hasText: "0 votes" }).waitFor();
-        await poll.locator("button", { hasText: "Vote" }).click();
-        await poll.locator(".pr-text", { hasText: "1 vote" }).waitFor();
+        await page
+          .locator(".chat-system", { hasText: "Grace joined the group" })
+          .waitFor();
 
         // A failed message is retried as the same message, never a second one.
         await page.fill(".chat-composer-input", "[fail] lunch?");
@@ -274,9 +275,9 @@ describe("chat screen over providers", () => {
         expect(await mine.count()).toBe(1);
         await screenshot(page, "group");
 
-        // A restarted worker starts from its own state: the host kept no history for it.
-        await harness(page, (chat) => chat.restartDraft());
-        await poll.locator(".pr-text", { hasText: "0 votes" }).waitFor();
+        // A restarted product starts from its own state: the host kept no history for it.
+        await harness(page, (chat) => chat.restartProduct());
+        await mine.waitFor({ state: "detached" });
         await message(page, "#9 ").waitFor();
         expect(await mine.count()).toBe(0);
         await back(page);
@@ -322,26 +323,30 @@ describe("chat screen over providers", () => {
   );
 
   test(
-    "keeps the worker running behind another room, and reads only what was on screen",
+    "keeps the product answering behind another room, and reads only what was on screen",
     async () => {
       const { context, page } = await open();
       try {
         // Opening Lin does not read it by itself: its messages are reported once on screen.
-        await row(page, "draft/lin").waitFor();
+        await row(page, "chat-v2:chat.test/lin").waitFor();
         expect(await unread(page, "lin")).toBe(3);
-        await row(page, "draft/lin").click();
+        await row(page, "chat-v2:chat.test/lin").click();
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "lin") ===
-            0,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "lin",
+            ) === 0,
         );
         await back(page);
         expect(
-          await row(page, "draft/lin").locator(".chat-unread").count(),
+          await row(page, "chat-v2:chat.test/lin")
+            .locator(".chat-unread")
+            .count(),
         ).toBe(0);
 
-        // Send to Ada, then go to another room: the worker answers while Ada is not shown.
-        await row(page, "draft/ada").click();
+        // Send to Ada, then go to another room: the product answers while Ada is not shown.
+        await row(page, "chat-v2:chat.test/ada").click();
         await page.fill(".chat-composer-input", "are you there?");
         await page.press(".chat-composer-input", "Enter");
         await page
@@ -351,19 +356,25 @@ describe("chat screen over providers", () => {
         await row(page, "product:quiz.test/quiz").click();
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "ada") ===
-            1,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "ada",
+            ) === 1,
         );
         await back(page);
         expect(
-          await row(page, "draft/ada").locator(".chat-unread").innerText(),
+          await row(page, "chat-v2:chat.test/ada")
+            .locator(".chat-unread")
+            .innerText(),
         ).toBe("1");
-        await row(page, "draft/ada").click();
+        await row(page, "chat-v2:chat.test/ada").click();
         await message(page, 'Got it: "are you there?"').waitFor();
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "ada") ===
-            0,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "ada",
+            ) === 0,
         );
 
         // With the screen hidden, an answer arriving in the open conversation stays unread.
@@ -375,24 +386,30 @@ describe("chat screen over providers", () => {
         await harness(page, (chat) => chat.show(false));
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "ada") ===
-            1,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "ada",
+            ) === 1,
         );
         await harness(page, (chat) => chat.show(true));
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "ada") ===
-            0,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "ada",
+            ) === 0,
         );
 
         // A new session closes the conversation and starts every provider again.
         await harness(page, (chat) => chat.newSession());
-        await row(page, "draft/ada").waitFor();
+        await row(page, "chat-v2:chat.test/ada").waitFor();
         expect(await page.locator(".chat-thread").count()).toBe(0);
         await page.waitForFunction(
           () =>
-            (window as unknown as ChatWindow).__chat.unread("draft", "lin") ===
-            3,
+            (window as unknown as ChatWindow).__chat.unread(
+              "chat-v2:chat.test",
+              "lin",
+            ) === 3,
         );
       } finally {
         await context.close();

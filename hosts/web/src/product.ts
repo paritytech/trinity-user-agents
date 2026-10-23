@@ -1,6 +1,7 @@
 import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
+import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "./chat-v2/contract.js";
 import type { FrameTap } from "./frame-tap.js";
 
 /** A product URL the host can embed: http or https only. */
@@ -92,6 +93,12 @@ export interface OpenProductOptions {
    * alone may reach Chat and the renderer.
    */
   executionKind?: "App" | "Widget" | "Worker";
+  /**
+   * Called with the port the frame hands over for the Chat Extension v2
+   * draft bridge (`src/chat-v2/`). Only the product frame's own window, on
+   * the product's origin, is heard; without this the hello is ignored.
+   */
+  onChatV2Port?(port: MessagePort): void;
 }
 
 /**
@@ -121,6 +128,7 @@ export async function openProduct(
     onSandboxStatus,
     mounted = false,
     executionKind = "App",
+    onChatV2Port,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
     throw new Error(
@@ -162,15 +170,25 @@ export async function openProduct(
     if (event.origin !== url.origin) return;
     const data = event.data as {
       type?: unknown;
+      protocol?: unknown;
       state?: unknown;
       detail?: unknown;
     } | null;
+    if (
+      data?.type === CHAT_V2_CONNECT &&
+      data.protocol === CHAT_V2_DRAFT &&
+      event.ports.length === 1
+    ) {
+      onChatV2Port?.(event.ports[0]);
+      return;
+    }
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
       return;
     if (data.state === "loading" || data.state === "error")
       onSandboxStatus?.(data.state, data.detail);
   };
-  if (onSandboxStatus) window.addEventListener("message", onWindowMessage);
+  if (onSandboxStatus || onChatV2Port)
+    window.addEventListener("message", onWindowMessage);
   return {
     url,
     productId,

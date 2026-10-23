@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chatProductDemo } from "./chat-product-demo-plugin.js";
 import { sandboxAssets } from "./sandbox-plugin.js";
 import type { BuildInfo } from "./src/versions.js";
 
@@ -132,7 +133,7 @@ export default defineConfig({
   define: {
     __BUILD_INFO__: JSON.stringify(readBuildInfo()),
   },
-  plugins: [sandboxAssets(), assetLicenses],
+  plugins: [sandboxAssets(), chatProductDemo(), assetLicenses],
   resolve: { alias: [signingCore] },
   worker: { format: "es" },
   server: {

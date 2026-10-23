@@ -126,6 +126,8 @@ export interface ResolvedWorker {
   cid: string;
   kind: Exclude<ContentKind, "other">;
   manifest: WorkerManifest;
+  /** Where the archive's blocks are fetched. Absent uses the network's gateway. */
+  gateway?: string;
 }
 
 /** What resolving reads from the outside, so tests can stand in for it. */

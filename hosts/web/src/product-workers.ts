@@ -61,6 +61,14 @@ export interface ProductWorkersDeps {
    * like any other worker and cannot be removed.
    */
   defaults?(network: NetworkConfig): readonly string[];
+  /**
+   * The host end of the Chat Extension v2 draft bridge. A chat worker's frame
+   * may hand it a port; the link ends when the worker stops.
+   */
+  chatV2?: {
+    connect(productId: string, port: MessagePort): void;
+    disconnect(productId: string): void;
+  };
 }
 
 interface Running {
@@ -224,6 +232,12 @@ export class ProductWorkers {
     return this.settle(name);
   }
 
+  /** Start or stop workers after the host's defaults changed. */
+  defaultsChanged(): void {
+    for (const name of new Set([...this.workers.keys(), ...this.names()]))
+      void this.settle(name);
+  }
+
   /** Stop `name`'s worker for Pocket; it keeps running if Chat lists it. */
   releaseForPocket(name: string): void {
     if (!this.pocketCards.delete(name)) return;
@@ -344,7 +358,7 @@ export class ProductWorkers {
         base: this.deps.base,
         origin: window.location.origin,
         scope,
-        gateway: session.network.dotns.contentGateway,
+        gateway: worker.gateway ?? session.network.dotns.contentGateway,
         kind: worker.kind,
         start: `/${WORKER_SHELL}?entry=${encodeURIComponent(worker.manifest.entrypoint)}`,
         entry: worker.manifest.entrypoint,
@@ -358,6 +372,14 @@ export class ProductWorkers {
           mounted: true,
           executionKind: "Worker",
           tap: this.deps.tap(`${name} (worker)`),
+          ...(this.deps.chatV2 !== undefined && worker.manifest.includes.chat
+            ? {
+                onChatV2Port: (port: MessagePort) => {
+                  if (current()) this.deps.chatV2?.connect(name, port);
+                  else port.close();
+                },
+              }
+            : {}),
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
               running.state = { state: "failed", reason: detail };
@@ -394,6 +416,7 @@ export class ProductWorkers {
   private stop(name: string): void {
     const running = this.workers.get(name);
     if (running === undefined) return;
+    this.deps.chatV2?.disconnect(name);
     if (running.handle !== null) {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();
