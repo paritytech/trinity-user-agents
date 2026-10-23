@@ -11,7 +11,8 @@ public enum ProductLoadErrorClass: Equatable, Sendable {
         switch error {
         case is CancellationError:
             self = .cancelled
-        case is ProductLoadBackgroundExpiredError:
+        case is ProductLoadBackgroundExpiredError,
+             is ProductUpdateFetchError:
             self = .transient
         case let urlError as URLError:
             self = Self.classify(urlError)

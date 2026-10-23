@@ -3,10 +3,11 @@ import os
 @testable import Products
 
 final class StubDotNsContractApi: DotNsContractApiProtocol, @unchecked Sendable {
-    private struct State {
+    fileprivate struct State {
         var texts: [String: String] = [:]
         var contentHashes: [String: Data] = [:]
         var failure: Error?
+        var queuedFailures: [Error] = []
         var callCount = 0
     }
 
@@ -26,10 +27,18 @@ final class StubDotNsContractApi: DotNsContractApiProtocol, @unchecked Sendable 
         state.withLock { $0.failure = error }
     }
 
+    func failNextReads(with errors: [Error]) {
+        state.withLock { $0.queuedFailures = errors }
+    }
+
+    func removeContentHash(name: String) {
+        state.withLock { _ = $0.contentHashes.removeValue(forKey: name) }
+    }
+
     func resolveContentHash(dotNsName: String) async throws -> Data {
         let (hash, failure) = state.withLock { state in
             state.callCount += 1
-            return (state.contentHashes[dotNsName], state.failure)
+            return (state.contentHashes[dotNsName], state.nextFailure())
         }
 
         if let failure {
@@ -46,7 +55,7 @@ final class StubDotNsContractApi: DotNsContractApiProtocol, @unchecked Sendable 
     func getMetadata(dotNsName: String, key: String) async throws -> String? {
         let (text, failure) = state.withLock { state in
             state.callCount += 1
-            return (state.texts["\(dotNsName)|\(key)"], state.failure)
+            return (state.texts["\(dotNsName)|\(key)"], state.nextFailure())
         }
 
         if let failure {
@@ -57,4 +66,10 @@ final class StubDotNsContractApi: DotNsContractApiProtocol, @unchecked Sendable 
     }
 
     func clearCache() {}
+}
+
+private extension StubDotNsContractApi.State {
+    mutating func nextFailure() -> Error? {
+        queuedFailures.isEmpty ? failure : queuedFailures.removeFirst()
+    }
 }

@@ -28,9 +28,6 @@ public protocol DotNsResolverProtocol {
 
     func stageContent(dotNsName: String) async throws -> DotNsResolvedContent
 
-    /// Fetch a metadata entry for a .dot domain (e.g., "url", "description").
-    func getMetadataEntry(dotNsName: String, key: String) async throws -> String?
-
     /// Observe load progress for a `.dot` domain. Emits `.idle` when nothing is in flight.
     func progressStream(dotNsName: String) -> AnyAsyncSequence<DotNsLoadProgress>
 
@@ -74,10 +71,6 @@ public final class DotNsResolver: DotNsResolverProtocol {
 
     public func progressStream(dotNsName: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         progressRegistry.observe(domain: dotNsName)
-    }
-
-    public func getMetadataEntry(dotNsName: String, key: String) async throws -> String? {
-        try await contractApi.getMetadata(dotNsName: dotNsName, key: key)
     }
 
     public func clearCache() throws {

@@ -1,13 +1,18 @@
 import Foundation
 
-public enum DotNsSnapshotRecord: Equatable, Sendable {
+public enum DotNsSnapshotRecord: Hashable, Sendable {
     case absent
     case value(String)
+
+    public init(_ value: String?) {
+        self = value.map { .value($0) } ?? .absent
+    }
 }
 
 public protocol DotNsRecordSnapshotProtocol: Sendable {
     func record(name: String, key: String) -> DotNsSnapshotRecord?
     func store(_ record: DotNsSnapshotRecord, name: String, key: String)
+    func remove(name: String, key: String)
     func clearAll()
 }
 
@@ -43,6 +48,10 @@ public final class DotNsRecordSnapshot: DotNsRecordSnapshotProtocol, @unchecked 
             }
 
         defaults.set(entry, forKey: storageKey(name: name, key: key))
+    }
+
+    public func remove(name: String, key: String) {
+        defaults.removeObject(forKey: storageKey(name: name, key: key))
     }
 
     public func clearAll() {

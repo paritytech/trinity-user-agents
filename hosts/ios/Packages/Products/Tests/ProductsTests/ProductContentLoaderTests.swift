@@ -1,171 +1,252 @@
 import Foundation
 import FoundationExt
-import os
 import Revive
 import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import Testing
 @testable import Products
 
-struct ProductContentLoaderTests {
-    private struct ChainUnreachable: Error {}
+final class ProductContentLoaderTests {
+    private struct Unreachable: Error {}
 
-    private static let resolver = EvmAddress(repeating: 0xF1, count: EvmAddressFormat.size)
-    private static let productId = "shop.dot"
-    private static let contentHashHex = Data(repeating: 0xCD, count: 34).toHex()
+    private static let contentHash = Data(repeating: 0xCD, count: 34)
+    private static let updatedContentHash = Data(repeating: 0xCE, count: 34)
+
+    private let suiteName = "ProductContentLoaderTests.\(UUID().uuidString)"
+    private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
+    private let clock = ManualClock()
+    private let contracts = StubDotNsContractApi()
+    private let storage = InMemoryDotNsContentStorage()
+    private let contentHashCache = ContentHashCache()
+
+    init() {
+        contracts.set(contentHash: Self.contentHash, name: productId)
+    }
+
+    deinit {
+        UserDefaults().removePersistentDomain(forName: suiteName)
+        contentHashCache.removeContentHash(name: productId)
+    }
 
     @Test func retriesAnUnreachableChainWithCappedExponentialBackoff() async throws {
-        let environment = Environment(chainFailures: Array(repeating: ChainUnreachable(), count: 4))
+        contracts.failNextReads(with: Array(repeating: chainUnreachable, count: 4))
+        let environment = try Environment(self)
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
 
         for delay in [1, 2, 4, 4] {
-            await environment.clock.resumeSleep(for: .seconds(delay))
+            await clock.resumeSleep(for: .seconds(delay))
         }
 
-        #expect(try await load.value == environment.storage.directory(for: Self.contentHashHex))
-        #expect(environment.contracts.calls(to: Self.resolver).count == 5)
+        #expect(try await open.value.appContent.localURL == storage.directory(for: Self.contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func retriesAGatewayThatCannotReachTheContentYet() async throws {
-        let environment = Environment(fetchFailures: [HTTPResponseError(statusCode: 504)])
+        let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 504)])
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
 
-        await environment.clock.resumeSleep(for: .seconds(1))
+        await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await load.value == environment.storage.directory(for: Self.contentHashHex))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 2)
-        #expect(environment.storage.savedHashes == [Self.contentHashHex])
     }
 
     @Test func failsWithoutRetryingWhenTheContractRefusesTheRead() async throws {
-        let environment = Environment(chainFailures: [ReviveContractRevertedError(data: Data([0x08]))])
+        contracts
+            .failNextReads(with: [DotNsContractError
+                    .contractCallFailed(ReviveContractRevertedError(data: Data([0x08])))])
+        let environment = try Environment(self)
 
         await #expect(throws: DotNsContractError.self) {
-            try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled)
+            try await environment.loader.open(self.productId, policy: .untilCancelled)
         }
 
-        #expect(environment.contracts.calls(to: Self.resolver).count == 1)
         #expect(environment.fetcher.fetchCount == 0)
     }
 
     @Test func failsWithoutRetryingWhenTheGatewayRejectsTheRequest() async throws {
-        let environment = Environment(fetchFailures: [HTTPResponseError(statusCode: 404)])
+        let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 404)])
 
         await #expect(throws: HTTPResponseError.self) {
-            try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled)
+            try await environment.loader.open(self.productId, policy: .untilCancelled)
         }
 
         #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func waitsForTheNetworkWithoutSpendingAnAttempt() async throws {
-        let environment = Environment(fetchFailures: [URLError(.notConnectedToInternet)], isPathSatisfied: false)
+        let environment = try Environment(
+            self,
+            fetchFailures: [URLError(.notConnectedToInternet)],
+            isPathSatisfied: false
+        )
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .attempts(1)) }
+        let open = Task { try await environment.loader.open(productId, policy: .attempts(1)) }
 
         await environment.path.waitForStreamRequests(2)
         environment.path.simulate(isSatisfied: true)
 
-        #expect(try await load.value == environment.storage.directory(for: Self.contentHashHex))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 2)
     }
 
     @Test func givesUpOnceThePolicyAttemptsAreSpent() async throws {
-        let environment = Environment(fetchFailures: Array(repeating: URLError(.timedOut), count: 3))
+        let environment = try Environment(self, fetchFailures: Array(repeating: URLError(.timedOut), count: 3))
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .attempts(2)) }
+        let open = Task { try await environment.loader.open(productId, policy: .attempts(2)) }
 
-        await environment.clock.resumeSleep(for: .seconds(1))
+        await clock.resumeSleep(for: .seconds(1))
 
-        await #expect(throws: URLError.self) { try await load.value }
+        await #expect(throws: URLError.self) { try await open.value }
         #expect(environment.fetcher.fetchCount == 2)
     }
 
     @Test func retriesAnAttemptCutShortByTheBackgroundWindow() async throws {
-        let environment = Environment(expiringBackgroundRuns: 1)
+        let environment = try Environment(self, expiringBackgroundRuns: 1)
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
 
-        await environment.clock.resumeSleep(for: .seconds(1))
+        await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await load.value == environment.storage.directory(for: Self.contentHashHex))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func stopsRetryingWhenTheCallerCancels() async throws {
-        let environment = Environment(fetchFailures: Array(repeating: URLError(.timedOut), count: 10))
+        let environment = try Environment(self, fetchFailures: Array(repeating: URLError(.timedOut), count: 10))
 
-        let load = Task { try await environment.loader.loadAppContent(of: Self.productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
 
-        await environment.clock.waitForSleep(for: .seconds(1))
-        load.cancel()
+        await clock.waitForSleep(for: .seconds(1))
+        open.cancel()
 
-        await #expect(throws: CancellationError.self) { try await load.value }
+        await #expect(throws: CancellationError.self) { try await open.value }
         #expect(environment.fetcher.fetchCount == 1)
+    }
+
+    @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
+        let environment = try Environment(self)
+        let first = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.failAllReads(with: Unreachable())
+        environment.path.simulate(isSatisfied: false)
+
+        let second = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        #expect(first.source == .network)
+        #expect(second.source == .cache)
+        #expect(second.appContent == first.appContent)
+        #expect(second.version == first.version)
+    }
+
+    @Test func refreshPublishesAnUpdateOnlyOnceTheNewVersionIsOnDisk() async throws {
+        let environment = try Environment(self)
+        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+        var updates = environment.loader.updates().makeAsyncIterator()
+
+        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+
+        #expect(update.previous == opened.version)
+        #expect(update.latest.appContent.contentHash == Self.updatedContentHash.toHex())
+        #expect(storage.contentExists(contentHash: Self.updatedContentHash.toHex()))
+        #expect(try await updates.next() == update)
+    }
+
+    @Test func refreshLeavesTheAppliedVersionServedUntilTheUpdateIsApplied() async throws {
+        let environment = try Environment(self)
+        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+
+        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == opened.version)
+
+        await environment.loader.apply(update)
+
+        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == update.latest.version)
+    }
+
+    @Test func refreshPublishesNothingWhenTheProductIsUnchanged() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        #expect(await environment.loader.refresh(productId) == nil)
+    }
+
+    @Test func pendingUpdateIsNotPublishedAgain() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+
+        #expect(await environment.loader.refresh(productId) != nil)
+        #expect(await environment.loader.refresh(productId) == nil)
+    }
+
+    @Test func unpublishedProductIsDroppedFromTheCache() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.removeContentHash(name: productId)
+
+        #expect(await environment.loader.refresh(productId) == nil)
+
+        await #expect(throws: DotNsContractError.self) {
+            try await environment.loader.open(self.productId, policy: .attempts(1))
+        }
     }
 }
 
 private extension ProductContentLoaderTests {
+    var chainUnreachable: Error {
+        DotNsContractError.contractCallFailed(Unreachable())
+    }
+
     struct Environment {
-        let clock = ManualClock()
-        let contracts: StubReviveContractApi
         let fetcher: StubCarFetcher
-        let storage = InMemoryDotNsContentStorage()
         let path: StubNetworkPath
         let loader: ProductContentLoader
 
         init(
-            chainFailures: [Error] = [],
+            _ suite: ProductContentLoaderTests,
             fetchFailures: [Error] = [],
             isPathSatisfied: Bool = true,
             expiringBackgroundRuns: Int = 0
-        ) {
-            contracts = StubReviveContractApi(answers: [
-                ProductContentLoaderTests.resolver: Self.contentHashAnswer(failures: chainFailures)
-            ])
+        ) throws {
             fetcher = StubCarFetcher(failures: fetchFailures)
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
 
-            let config = DotNsConfig(
-                contractsChainId: "asset-hub",
-                resolverContractAddress: ProductContentLoaderTests.resolver,
-                nameRegistryContractAddress: nil,
-                ipfsGatewayBaseUrl: URL(fileURLWithPath: "/ipfs")
-            )
-
-            let dotNsResolver = DotNsResolver(
-                contractApi: ReviveDotNsContractApi(contractApi: contracts) { config },
-                carFetcher: fetcher,
-                contentStorage: storage,
-                contentHashCache: ContentHashCache()
-            )
+            let localStorage = DotNsLocalStorage(content: suite.storage, contentHashes: suite.contentHashCache)
+            let snapshot = try DotNsRecordSnapshot(defaults: #require(UserDefaults(suiteName: suite.suiteName)))
 
             loader = ProductContentLoader(
-                productResolver: ProductResolver(
-                    dotNsResolver: dotNsResolver,
+                fetcher: ProductUpdateFetcher(
+                    contractApi: suite.contracts,
+                    carFetcher: fetcher,
+                    storage: localStorage,
                     hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
                     logger: SilentLogger()
                 ),
-                dotNsResolver: dotNsResolver,
-                pathProvider: path,
-                backgroundExecutor: StubBackgroundExecutor(expiringRuns: expiringBackgroundRuns),
-                timing: ProductContentLoader.Timing(maxBackoff: .seconds(4), clock: clock)
+                cache: ProductVersionCache(
+                    snapshot: snapshot,
+                    storage: localStorage,
+                    tldProvider: StubTldProvider(),
+                    logger: SilentLogger()
+                ),
+                environment: ProductContentLoader.Environment(
+                    pathProvider: path,
+                    backgroundExecutor: StubBackgroundExecutor(expiringRuns: expiringBackgroundRuns)
+                ),
+                timing: ProductContentLoader.Timing(
+                    maxBackoff: .seconds(4),
+                    refreshPolicy: .attempts(1),
+                    clock: suite.clock
+                ),
+                logger: SilentLogger()
             )
-        }
-
-        static func contentHashAnswer(failures: [Error]) -> @Sendable (Data) throws -> Data {
-            let remaining = OSAllocatedUnfairLock(initialState: failures)
-
-            return { _ in
-                if let failure = remaining.withLock({ $0.isEmpty ? nil : $0.removeFirst() }) {
-                    throw failure
-                }
-
-                return AbiOutput.dynamicBytes(Eip1577.ipfsPrefix + Data(repeating: 0xCD, count: 34))
-            }
         }
     }
 }

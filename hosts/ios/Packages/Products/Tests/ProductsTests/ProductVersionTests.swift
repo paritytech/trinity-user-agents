@@ -25,26 +25,25 @@ final class ProductVersionTests {
 
     @Test func appliedVersionOpensWithoutTheChainOrTheGateway() async throws {
         publishManifestProduct()
-        let staged = try await makeStager().stage(baseName)
-        try makeApplier().apply(staged.version)
+        let staged = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(staged.version)
         let calls = contracts.callCount
 
-        let cached = try makeCachedStack()
-        let resolved = try await cached.products.resolve(baseName)
-        let appContent = try await cached.dotNs.resolveContent(dotNsName: resolved.appContentId)
+        let cached = try await makeCache().open(baseName)
 
-        #expect(resolved == staged.resolved)
-        #expect(appContent == staged.appContent)
+        #expect(cached.resolved == staged.resolved)
+        #expect(cached.appContent == staged.appContent)
+        #expect(cached.version == staged.version)
         #expect(contracts.callCount == calls)
         #expect(fetcher.fetchCount == 2)
     }
 
     @Test func legacyProductOpensFromItsAppliedVersion() async throws {
         contracts.set(contentHash: Self.appHash, name: baseName)
-        let staged = try await makeStager().stage(baseName)
-        try makeApplier().apply(staged.version)
+        let staged = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(staged.version)
 
-        let resolved = try await makeCachedStack().products.resolve(baseName)
+        let resolved = try await makeCache().open(baseName).resolved
 
         #expect(!resolved.hasManifest)
         #expect(resolved == staged.resolved)
@@ -52,22 +51,22 @@ final class ProductVersionTests {
 
     @Test func stagedVersionIsNotServedUntilApplied() async throws {
         publishManifestProduct()
-        let applied = try await makeStager().stage(baseName)
-        try makeApplier().apply(applied.version)
+        let applied = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(applied.version)
 
         contracts.set(contentHash: Self.updatedAppHash, name: appName)
-        let update = try await makeStager().stage(baseName)
+        let update = try await makeFetcher().fetch(baseName)
 
-        #expect(try await cachedAppContent() == applied.appContent)
+        #expect(try await makeCache().open(baseName).appContent == applied.appContent)
 
-        try makeApplier().apply(update.version)
+        try await makeCache().apply(update.version)
 
-        #expect(try await cachedAppContent() == update.appContent)
+        #expect(try await makeCache().open(baseName).appContent == update.appContent)
     }
 
     @Test func runningWorkerKeepsReadingTheAppliedVersionUntilTheStagedOneIsApplied() async throws {
         publishManifestProduct()
-        try await makeApplier().apply(makeStager().stage(baseName).version)
+        try await makeCache().apply(makeFetcher().fetch(baseName).version)
         let workerFiles = CompositeProductFileProvider(
             dotNsContentStorage: storage,
             chatScriptStorage: FileChatScriptStorage(),
@@ -75,11 +74,11 @@ final class ProductVersionTests {
         )
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
-        let update = try await makeStager().stage(baseName)
+        let update = try await makeFetcher().fetch(baseName)
 
         #expect(workerFiles.load(for: workerName, relativePath: "worker.js") == Data(Self.workerHash.toHex().utf8))
 
-        try makeApplier().apply(update.version)
+        try await makeCache().apply(update.version)
 
         #expect(workerFiles
             .load(for: workerName, relativePath: "worker.js") == Data(Self.updatedWorkerHash.toHex().utf8))
@@ -87,11 +86,11 @@ final class ProductVersionTests {
 
     @Test func versionChangesWhenOnlyTheWorkerIsRepublished() async throws {
         publishManifestProduct()
-        let first = try await makeStager().stage(baseName).version
-        let unchanged = try await makeStager().stage(baseName).version
+        let first = try await makeFetcher().fetch(baseName).version
+        let unchanged = try await makeFetcher().fetch(baseName).version
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
-        let republished = try await makeStager().stage(baseName).version
+        let republished = try await makeFetcher().fetch(baseName).version
 
         #expect(unchanged == first)
         #expect(republished != first)
@@ -99,48 +98,72 @@ final class ProductVersionTests {
 
     @Test func failedStagingKeepsServingTheAppliedVersion() async throws {
         publishManifestProduct()
-        let applied = try await makeStager().stage(baseName)
-        try makeApplier().apply(applied.version)
+        let applied = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(applied.version)
 
         contracts.failAllReads(with: Unreachable())
 
         await #expect(throws: Unreachable.self) {
-            try await self.makeStager().stage(self.baseName)
+            try await self.makeFetcher().fetch(self.baseName)
         }
 
-        #expect(try await cachedAppContent() == applied.appContent)
+        #expect(try await makeCache().open(baseName).appContent == applied.appContent)
     }
 
     @Test func productNeverAppliedIsNotServedFromCache() async throws {
         publishManifestProduct()
-        _ = try await makeStager().stage(baseName)
+        _ = try await makeFetcher().fetch(baseName)
 
         await #expect(throws: DotNsSnapshotError.self) {
-            try await self.makeCachedStack().products.resolve(self.baseName)
+            try await self.makeCache().open(self.baseName)
         }
     }
 
     @Test func archiveMissingFromDiskIsNotDownloadedWhenOpeningFromCache() async throws {
         publishManifestProduct()
-        let staged = try await makeStager().stage(baseName)
-        try makeApplier().apply(staged.version)
+        let staged = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(staged.version)
 
         try storage.deleteAll()
 
         await #expect(throws: DotNsSnapshotError.archiveNotOnDisk) {
-            try await self.makeCachedStack().dotNs.resolveContent(dotNsName: staged.resolved.appContentId)
+            try await self.makeCache().open(self.baseName)
         }
 
         #expect(fetcher.fetchCount == 2)
     }
+
+    @Test func cachedVersionMissingTheWorkerArchiveDiffersSoRefreshRestoresIt() async throws {
+        publishManifestProduct()
+        let fetched = try await makeFetcher().fetch(baseName)
+        try await makeCache().apply(fetched.version)
+
+        try storage.deleteContent(contentHash: Self.workerHash.toHex())
+
+        #expect(try await makeCache().open(baseName).version != fetched.version)
+    }
+
+    @Test func cachedOpenNeedsAKnownTldInsteadOfFallingBackToLegacy() async throws {
+        publishManifestProduct()
+        try await makeCache().apply(makeFetcher().fetch(baseName).version)
+
+        await #expect(throws: DotNsContractError.self) {
+            try await self.makeCache(tldProvider: FailingTldProvider()).open(self.baseName)
+        }
+    }
+
+    @Test func fetchNeedsAReadableTldInsteadOfFallingBackToLegacy() async throws {
+        publishManifestProduct()
+
+        await #expect(throws: ProductUpdateFetchError.tldUnavailable) {
+            try await self.makeFetcher(tldProvider: FailingTldProvider()).fetch(self.baseName)
+        }
+
+        #expect(contracts.callCount == 0)
+    }
 }
 
 private extension ProductVersionTests {
-    struct Stack {
-        let products: ProductResolver
-        let dotNs: DotNsResolver
-    }
-
     var appName: String { ProductManifestRecords.subname(base: baseName, kind: .app) }
     var workerName: String { ProductManifestRecords.subname(base: baseName, kind: .worker) }
 
@@ -171,40 +194,23 @@ private extension ProductVersionTests {
         try DotNsRecordSnapshot(defaults: #require(UserDefaults(suiteName: suiteName)))
     }
 
-    func makeApplier() throws -> ProductVersionApplier {
-        try ProductVersionApplier(snapshot: makeSnapshot(), contentHashCache: contentHashCache)
-    }
-
-    func makeStager() -> ProductVersionStager {
-        ProductVersionStager(
-            contractApi: contracts,
-            carFetcher: fetcher,
-            storage: ProductVersionStager.Storage(content: storage, contentHashes: contentHashCache),
-            hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
+    func makeCache(tldProvider: DotNsTldProviding = StubTldProvider(resolveError: Unreachable())) throws
+        -> ProductVersionCache {
+        try ProductVersionCache(
+            snapshot: makeSnapshot(),
+            storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
+            tldProvider: tldProvider,
             logger: SilentLogger()
         )
     }
 
-    func makeCachedStack() throws -> Stack {
-        let dotNs = try DotNsResolver(
-            contractApi: SnapshotDotNsContractApi(snapshot: makeSnapshot(), contentHashCache: contentHashCache),
-            carFetcher: SnapshotCarFetcher(),
-            contentStorage: storage,
-            contentHashCache: contentHashCache
-        )
-        let tldProvider = SnapshotDotNsTldProvider(tldProvider: StubTldProvider(resolveError: Unreachable()))
-        let products = ProductResolver(
-            dotNsResolver: dotNs,
+    func makeFetcher(tldProvider: DotNsTldProviding = StubTldProvider()) -> ProductUpdateFetcher {
+        ProductUpdateFetcher(
+            contractApi: contracts,
+            carFetcher: fetcher,
+            storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
             hostProvider: ProductHostFactory(tldProvider: tldProvider),
             logger: SilentLogger()
         )
-
-        return Stack(products: products, dotNs: dotNs)
-    }
-
-    func cachedAppContent() async throws -> DotNsResolvedContent {
-        let cached = try makeCachedStack()
-        let resolved = try await cached.products.resolve(baseName)
-        return try await cached.dotNs.resolveContent(dotNsName: resolved.appContentId)
     }
 }

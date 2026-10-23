@@ -55,7 +55,7 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
         )
 
         let productResolver = ProductResolver(
-            dotNsResolver: resolver,
+            metadataRepository: ProductMetadataRepository(contractApi: contractApi),
             hostProvider: hostProvider,
             logger: Logger.shared,
             screening: .core
