@@ -1,6 +1,7 @@
 // Subframes need the same gates even though only the main frame has an endpoint.
 import { installContainer } from './container.js';
-import { createHostConnection } from '@parity/truapi/internal';
+import { createHostConnection, createWebSocketProviderFactory } from '@parity/truapi/internal';
+import { logActionStreams } from './action-stream-log.js';
 import { freezeAndDelete, freezeValue } from './freeze.js';
 import { reloadAfterMessagePortLoss } from './message-port-loss.js';
 import { createPermissionAuthorization } from './network-transport.js';
@@ -12,8 +13,10 @@ const config = (window as Window & {
   __truapi_localhost?: { url?: string; nativeHttp?: boolean };
 }).__truapi_localhost;
 freezeAndDelete(window, '__truapi_localhost');
+// Captured before product code runs, since a product can replace the console.
+const log = console.log.bind(console);
 const connection = typeof config?.url === 'string'
-  ? createHostConnection(config.url)
+  ? createHostConnection(config.url, logActionStreams(createWebSocketProviderFactory(), log))
   : undefined;
 if (connection) {
   freezeValue(window, '__HOST_WEBVIEW_MARK__', true);

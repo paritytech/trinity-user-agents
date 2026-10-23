@@ -10,6 +10,8 @@ export {
   type InternalTrUApiClient,
 } from "./generated/internal-client.js";
 
+export { createWebSocketProviderFactory } from "./transport.js";
+
 /** Protects result handling when host authorization shares the product's realm. */
 export function freezeInternalResults(): void {
   for (const constructor of [Err, Ok, ResultAsync]) {

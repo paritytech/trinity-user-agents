@@ -155,6 +155,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
                 actionId: actionId,
                 payload: payload.map { Data($0.utf8) } ?? Data()
             ))
+            logger.debug("Rust chat runtime dispatched event \(actionId) for message \(messageId) to \(productId)")
         } catch is CancellationError {
             logger.debug("Rust chat runtime disposed before event \(actionId)")
         } catch {
