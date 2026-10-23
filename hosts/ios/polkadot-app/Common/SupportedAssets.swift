@@ -3,7 +3,8 @@ import SubstrateSdk
 
 enum SupportedAssets {
     #if UNSTABLE
-        static let dDollar = ChainAssetId(chainId: KnownChainId.previewNetPeople, assetId: 65)
+        // The nightly People chain carries its main asset at 1, not previewnet's 65.
+        static let dDollar = ChainAssetId(chainId: KnownChainId.previewNetPeople, assetId: 1)
         static let usdt = ChainAssetId(chainId: KnownChainId.previewAH, assetId: 1)
         static let usdc = ChainAssetId(chainId: KnownChainId.previewAH, assetId: 2)
         static let pas = ChainAssetId(chainId: KnownChainId.previewAH, assetId: 0)
