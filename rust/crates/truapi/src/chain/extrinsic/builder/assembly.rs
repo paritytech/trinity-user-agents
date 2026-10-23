@@ -29,7 +29,7 @@ use crate::chain::{
 		extension::{ExtensionValueTypes, SuppliedExtension},
 		signature::VerifySignatureExtension,
 		version::{choose_version, pipeline_names},
-		well_known::{ChainValues, EncodedExtensionValues, unset_value_default, well_known_values},
+		well_known::{ChainValues, EncodedExtensionValues, default_extension, unset_value_default},
 	},
 };
 
@@ -58,7 +58,6 @@ pub fn assemble(
 		transaction_version: builder.runtime.transaction_version,
 		mortality,
 		nonce: builder.nonce.or(account_nonce).unwrap_or(0),
-		restrict_origins: builder.restrict_origins,
 	};
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
 	let encoded = fold.fill_pipeline(extensions, &metadata)?;
@@ -181,23 +180,20 @@ impl PipelineFold<'_> {
 		InheritedImplication::new(encoded, self.version)
 	}
 
-	/// An extension's values: the supplied extension's, else a well-known value,
-	/// else the type's unset default.
+	/// An extension's values: the supplied extension's, else its well-known
+	/// default, else the type's unset default.
 	fn extension_values(
 		&self,
 		declared: &ExtrinsicExtensionInfoArg<'_, u32>,
 		supplied: Option<SuppliedExtension<'_>>,
 		implication: &InheritedImplication,
 	) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
-		if let Some(extension) = supplied {
-			let types =
-				ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
-			return (extension.encode)(implication, types, self.types);
-		}
-		if let Some(values) = well_known_values(declared, &self.chain, self.types)? {
-			return Ok(values);
-		}
-		unset_extension_values(declared, self.types)
+		let Some(extension) = supplied.or_else(|| default_extension(&declared.name, &self.chain))
+		else {
+			return unset_extension_values(declared, self.types);
+		};
+		let types = ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
+		(extension.encode)(implication, types, self.types)
 	}
 }
 

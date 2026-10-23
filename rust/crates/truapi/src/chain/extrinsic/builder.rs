@@ -9,7 +9,7 @@ use subxt::{
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension, extension::SuppliedExtension,
-	signature::VerifySignatureExtension,
+	signature::VerifySignatureExtension, well_known::restrict_origins,
 };
 use crate::{chain::HashAndNumber, host_internal::extrinsic::Sr25519Signer};
 
@@ -48,7 +48,6 @@ pub struct ExtrinsicBuilder<'a> {
 	nonce: Option<u64>,
 	period: u64,
 	version: Option<ExtrinsicVersion>,
-	restrict_origins: bool,
 }
 
 /// A builder for an extrinsic born at `runtime`'s birth block.
@@ -61,7 +60,6 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 		nonce: None,
 		period: DEFAULT_MORTALITY_PERIOD,
 		version: None,
-		restrict_origins: false,
 	}
 }
 
@@ -155,7 +153,6 @@ impl<'a> ExtrinsicBuilder<'a> {
 
 	/// Sets `RestrictOrigins`, which is unrestricted unless set.
 	pub fn with_restrict_origins(&mut self, restrict: bool) -> &mut Self {
-		self.restrict_origins = restrict;
-		self
+		self.with_extension(restrict_origins(restrict))
 	}
 }

@@ -1,18 +1,18 @@
-//! Values the builder fills in for extensions the caller leaves unset.
+//! The well-known transaction extensions, as typed values, and the defaults
+//! the builder uses for extensions the caller leaves unset.
 
-use parity_scale_codec::{Compact, Encode};
 use scale_info::{PortableRegistry, TypeDef};
 use subxt::{
-	config::{substrate::SubstrateConfig, transaction_extensions::VerifySignatureDetails},
 	ext::{
-		frame_decode::extrinsics::ExtrinsicExtensionInfoArg,
 		scale_decode::visitor::{IgnoreVisitor, decode_with_visitor},
 		scale_encode::EncodeAsType,
 	},
-	utils::H256,
+	utils::{Era, H256},
 };
 
-use super::error::ExtrinsicBuildError;
+use super::{
+	ExtensionError, InheritedImplication, TransactionExtension, extension::SuppliedExtension,
+};
 use crate::chain::Mortality;
 
 /// The V5 signature extension's name in metadata.
@@ -31,8 +31,6 @@ pub struct ChainValues {
 	pub mortality: Mortality,
 	/// The nonce `CheckNonce` carries.
 	pub nonce: u64,
-	/// Whether `RestrictOrigins` restricts the origin.
-	pub restrict_origins: bool,
 }
 
 /// One extension's encoded values.
@@ -44,39 +42,141 @@ pub struct EncodedExtensionValues {
 	pub implicit: Vec<u8>,
 }
 
-/// The values of an unset extension every caller would fill the same way, or
-/// `None` when `declared` is not one of them. An unset `VerifyMultiSignature`
-/// is `Disabled`, leaving authorization to another extension.
-pub fn well_known_values(
-	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
-	chain: &ChainValues,
-	types: &PortableRegistry,
-) -> Result<Option<EncodedExtensionValues>, ExtrinsicBuildError> {
-	if declared.name == VERIFY_MULTI_SIGNATURE {
-		let explicit = disabled_signature(declared.id, types)?;
-		return Ok(Some(EncodedExtensionValues { explicit, implicit: Vec::new() }));
-	}
-	Ok(constant_values(&declared.name, chain))
+/// An extension whose values are known before the build starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConstantExtension<I, E> {
+	name: &'static str,
+	implicit: I,
+	explicit: E,
 }
 
-fn constant_values(name: &str, chain: &ChainValues) -> Option<EncodedExtensionValues> {
-	let (explicit, implicit) = match name {
-		"CheckSpecVersion" => (Vec::new(), chain.spec_version.encode()),
-		"CheckTxVersion" => (Vec::new(), chain.transaction_version.encode()),
-		"CheckGenesis" => (Vec::new(), chain.genesis.0.to_vec()),
-		"CheckMortality" => {
-			(chain.mortality.era_bytes().to_vec(), chain.mortality.birth().hash.0.to_vec())
-		},
-		"CheckNonce" => (Compact(chain.nonce).encode(), Vec::new()),
-		// No tip, paid in the native asset.
-		"ChargeAssetTxPayment" => (vec![0x00, 0x00], Vec::new()),
-		"ChargeTransactionPayment" => (vec![0x00], Vec::new()),
-		// `Mode::Disabled`, and no metadata hash in the signer payload.
-		"CheckMetadataHash" => (vec![0x00], vec![0x00]),
-		"RestrictOrigins" => (vec![u8::from(chain.restrict_origins)], Vec::new()),
+impl<I, E> TransactionExtension for ConstantExtension<I, E>
+where
+	I: EncodeAsType + Clone + Send,
+	E: EncodeAsType + Clone + Send,
+{
+	type Implicit = I;
+	type Explicit = E;
+
+	fn name(&self) -> &str {
+		self.name
+	}
+
+	fn implicit(&self) -> I {
+		self.implicit.clone()
+	}
+
+	fn explicit(&self, _implication: &InheritedImplication) -> Result<E, ExtensionError> {
+		Ok(self.explicit.clone())
+	}
+}
+
+/// `CheckSpecVersion`: the runtime's spec version, signed but not carried.
+pub fn check_spec_version(spec_version: u32) -> ConstantExtension<u32, ()> {
+	ConstantExtension { name: "CheckSpecVersion", implicit: spec_version, explicit: () }
+}
+
+/// `CheckTxVersion`: the runtime's transaction version, signed but not
+/// carried.
+pub fn check_tx_version(transaction_version: u32) -> ConstantExtension<u32, ()> {
+	ConstantExtension { name: "CheckTxVersion", implicit: transaction_version, explicit: () }
+}
+
+/// `CheckGenesis`: the chain's genesis hash, signed but not carried.
+pub fn check_genesis(genesis: H256) -> ConstantExtension<H256, ()> {
+	ConstantExtension { name: "CheckGenesis", implicit: genesis, explicit: () }
+}
+
+/// `CheckMortality`'s value: the runtime wraps the era in a one-field struct,
+/// which `Era`'s own encoder does not look through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct MortalityEra(pub Era);
+
+/// `CheckMortality`: the era, and the birth block's hash it is signed over.
+pub fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
+	let birth = mortality.birth();
+	let era = MortalityEra(Era::mortal(mortality.period(), birth.number));
+	ConstantExtension { name: "CheckMortality", implicit: birth.hash, explicit: era }
+}
+
+/// `CheckNonce`: the sender's nonce.
+pub fn check_nonce(nonce: u64) -> ConstantExtension<(), u64> {
+	ConstantExtension { name: "CheckNonce", implicit: (), explicit: nonce }
+}
+
+/// `ChargeAssetTxPayment`'s value.
+#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct AssetTxPayment {
+	/// The tip to the block author.
+	pub tip: u128,
+	/// The asset the fee is paid in; `None` is the native asset.
+	pub asset_id: Option<()>,
+}
+
+/// `ChargeAssetTxPayment` with no tip, paid in the native asset.
+pub fn charge_asset_tx_payment() -> ConstantExtension<(), AssetTxPayment> {
+	let payment = AssetTxPayment { tip: 0, asset_id: None };
+	ConstantExtension { name: "ChargeAssetTxPayment", implicit: (), explicit: payment }
+}
+
+/// `ChargeTransactionPayment` with no tip.
+pub fn charge_transaction_payment() -> ConstantExtension<(), u128> {
+	ConstantExtension { name: "ChargeTransactionPayment", implicit: (), explicit: 0 }
+}
+
+/// `CheckMetadataHash`'s mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub enum MetadataHashMode {
+	/// The extrinsic does not commit to a metadata hash.
+	Disabled,
+}
+
+/// `CheckMetadataHash` disabled: no metadata hash in the signed content.
+pub fn check_metadata_hash_disabled() -> ConstantExtension<Option<[u8; 32]>, MetadataHashMode> {
+	let mode = MetadataHashMode::Disabled;
+	ConstantExtension { name: "CheckMetadataHash", implicit: None, explicit: mode }
+}
+
+/// `RestrictOrigins`: whether the call's origin is restricted.
+pub fn restrict_origins(restrict: bool) -> ConstantExtension<(), bool> {
+	ConstantExtension { name: "RestrictOrigins", implicit: (), explicit: restrict }
+}
+
+/// `VerifyMultiSignature`'s value when nothing is signed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub enum UnsignedVerification {
+	/// No signature; another extension authorizes the extrinsic.
+	Disabled,
+}
+
+/// `VerifyMultiSignature` disabled, leaving authorization to another
+/// extension.
+pub fn verify_signature_disabled() -> ConstantExtension<(), UnsignedVerification> {
+	let disabled = UnsignedVerification::Disabled;
+	ConstantExtension { name: VERIFY_MULTI_SIGNATURE, implicit: (), explicit: disabled }
+}
+
+/// The extension the builder adds for `name` when the caller leaves it
+/// unset, or `None` when `name` has no well-known default.
+pub fn default_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExtension<'static>> {
+	let extension = match name {
+		"CheckSpecVersion" => SuppliedExtension::new(check_spec_version(chain.spec_version)),
+		"CheckTxVersion" => SuppliedExtension::new(check_tx_version(chain.transaction_version)),
+		"CheckGenesis" => SuppliedExtension::new(check_genesis(chain.genesis)),
+		"CheckMortality" => SuppliedExtension::new(check_mortality(chain.mortality)),
+		"CheckNonce" => SuppliedExtension::new(check_nonce(chain.nonce)),
+		"ChargeAssetTxPayment" => SuppliedExtension::new(charge_asset_tx_payment()),
+		"ChargeTransactionPayment" => SuppliedExtension::new(charge_transaction_payment()),
+		"CheckMetadataHash" => SuppliedExtension::new(check_metadata_hash_disabled()),
+		"RestrictOrigins" => SuppliedExtension::new(restrict_origins(false)),
+		VERIFY_MULTI_SIGNATURE => SuppliedExtension::new(verify_signature_disabled()),
 		_ => return None,
 	};
-	Some(EncodedExtensionValues { explicit, implicit })
+	Some(extension)
 }
 
 /// The value an unset extension value of type `type_id` takes: nothing for an
@@ -107,20 +207,4 @@ fn defaults_to_none(type_id: u32, types: &PortableRegistry) -> bool {
 		},
 		_ => false,
 	}
-}
-
-/// `VerifyMultiSignature`'s `Disabled` value, encoded by variant name
-/// against the runtime's type.
-fn disabled_signature(
-	type_id: u32,
-	types: &PortableRegistry,
-) -> Result<Vec<u8>, ExtrinsicBuildError> {
-	VerifySignatureDetails::<SubstrateConfig>::Disabled
-		.encode_as_type(type_id, types)
-		.map_err(|error| ExtrinsicBuildError::ExtensionEncode {
-			extension: VERIFY_MULTI_SIGNATURE.to_string(),
-			value: "explicit",
-			type_id,
-			reason: error.to_string(),
-		})
 }
