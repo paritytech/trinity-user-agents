@@ -109,8 +109,10 @@ configuration update in the embedding app's package upgrade.
 The runtime takes the host's services before any product execution opens, each
 installed once: `setPush` (`PushHostBridge`, the push service), `setPersonChat`
 (`PersonChatHostBridge`: the HOP nodes it trusts, the devices paired with the
-wallet, the chat's contacts it keeps for the rest of the app, and the native
-chat history it staged for the chat product) and `setCallMedia`
+wallet, the chat's contacts it keeps for the rest of the app, the native
+chat history it staged for the chat product, and `paymentReceived`, the claim
+of the coins of a payment a contact sent, which defaults to `.unsupported`)
+and `setCallMedia`
 (`CallMediaHostBridge`, its call engine for the calls of product rooms). An app
 that moves its native chat to the chat product gives the core the native
 device key with `importChatDeviceKey` before the product first runs.

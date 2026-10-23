@@ -134,6 +134,17 @@ impl crate::platform::PersonChatPlatform for PersonChatCallbackPlatform {
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
+
+	async fn payment_received(
+		&self,
+		product: &ProductContext,
+		payment: truapi::latest::HostPersonChatPaymentReceivedRequest,
+	) -> Result<crate::platform::HostChatPaymentReceipt, v01::GenericError> {
+		self.person_chat
+			.payment_received(product.product_id.clone(), payment)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
 }
 
 /// [`crate::platform::CallMediaPlatform`] served by host-provided

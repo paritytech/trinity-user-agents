@@ -20,7 +20,6 @@ import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressParcel
 import io.paritytech.polkadotapp.feature_balances_api.presentation.provider.BalanceFlowAvailableBalanceProvider
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentPlan
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.StrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferPlan
@@ -56,7 +55,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import javax.inject.Inject
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
 class SendEnterAmountViewModel @Inject constructor(
@@ -65,7 +63,6 @@ class SendEnterAmountViewModel @Inject constructor(
     private val walletRouter: PocketRouter,
     private val interactor: SendEnterAmountInteractor,
     private val tokenAmountMapper: TokenAmountMapper,
-    private val personChatMode: PersonChatMode,
 ) : BaseViewModel(), SendEnterAmountContract {
     private val sendProgress = MutableStateFlow<SendProgress>(SendProgress.Idle)
 
@@ -162,12 +159,6 @@ class SendEnterAmountViewModel @Inject constructor(
     }
 
     override fun onConfirmClick() {
-        // The native chat does not run beside the chat product, which carries no coins yet (HX2, M9).
-        if (transferMethod is TransferMethod.CoinsViaChat && personChatMode.isProductChat()) {
-            showMessage(RCommon.string.send_payment_chat_product_unavailable)
-            return
-        }
-
         // The validation can present a confirmation sheet, but it opens no region, so the time the user
         // spends reading it cannot trip the report's reveal timer.
         launchWithDiagnostics(stalenessReport) {

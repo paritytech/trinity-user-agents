@@ -12,8 +12,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment.Status
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.paymentContentOrNull
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPaymentStore
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.RealProductChatPayments
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.formatCoinsToBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
@@ -26,6 +30,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePayme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinagePaymentStatusUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.isTerminal
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.lastOrNull
@@ -35,6 +40,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.days
 import kotlin.time.ExperimentalTime
@@ -52,16 +58,25 @@ private val CLAIM_RETRY_WINDOW = 7.days
  * the status of whatever minted them; an incoming one by the group its claims were registered under, found
  * again from the message's id. That is why a restart mid-payment needs nothing to resume from: the message
  * says which coins, and the ledger says what happened to them.
+ *
+ * The rooms of the chat product keep their messages in the product, so the host keeps each of their payments in a
+ * [ProductChatPaymentStore] record under the message id, and the same flows run over it and write its status there.
  */
 @OptIn(ExperimentalTime::class)
 class CoinagePaymentProcessingExtension @Inject constructor(
     private val paymentStatusUseCase: CoinagePaymentStatusUseCase,
     private val claimReceivedCoinsUseCase: ClaimReceivedCoinsUseCase,
     private val balanceConverterUseCase: CoinageBalanceConverterUseCase,
+    private val productPayments: ProductChatPaymentStore,
+    private val productPaymentDelivery: RealProductChatPayments,
 ) : ChatExtension {
     override val id = "CoinagePaymentProcessing"
 
     override val activationStateExternallyControlled: Boolean = false
+
+    // A product payment is followed once while the work runs, as a native message is: its record is listed again on
+    // every change. Work that stops with its scope lets the next start follow it again.
+    private val followedProductPayments = ConcurrentHashMap.newKeySet<String>()
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -73,11 +88,24 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         chatExtensionContext.subscribeNewMessages(contentTypes = listOf(CoinagePayment::class))
             .onEach { message -> processPayment(message) }
             .launchIn(chatExtensionContext.scope)
+
+        productPayments.observeUnsettled()
+            .onEach { payments -> payments.forEach { processProductPayment(it) } }
+            .launchIn(chatExtensionContext.scope)
+
+        chatExtensionContext.scope.launch { productPaymentDelivery.resumeDeliveries() }
     }
 
     context(chatExtensionContext: ChatExtensionContext)
     private fun processPayment(message: ChatMessage) {
         val content = message.paymentContentOrNull() ?: return
+
+        // A product that pushes a payment to a room whose messages the host keeps sends no keys: the coins are not the
+        // host's to claim or to watch, and an empty claim would settle the payment as an invalid one.
+        if (content.coinKeys.isEmpty() && message.chatId.extensionOrNull() != null) {
+            chatExtensionContext.scope.launch { with(chatExtensionContext) { markMessageProcessed(message) } }
+            return
+        }
 
         Timber.tag(COINAGE_LOG_TAG)
             .d("Payment processing message=${message.id} incoming=${message.isIncoming} coins=${content.coinKeys.size}")
@@ -86,7 +114,7 @@ class CoinagePaymentProcessingExtension @Inject constructor(
             val coinKeys = content.coinKeys.map { it.toDataByteArray() }
 
             val outcome = if (message.isIncoming) {
-                claimStatuses(message, content, coinKeys)
+                claimStatuses(message.id, message.timestamp, content.totalValue, coinKeys)
             } else {
                 handoffStatuses(coinKeys)
             }
@@ -98,8 +126,38 @@ class CoinagePaymentProcessingExtension @Inject constructor(
             // payment's claim keeps retrying while a coin is still there to be claimed, so a partial
             // Transferred is a progress report; treating it as the end is what settled a 1.00 payment as
             // 0.12. A claim cut short by shutdown throws instead, leaving the message for the next launch.
-            logSettled(message, outcome)
+            logSettled(message.id, message.isIncoming, outcome)
             with(chatExtensionContext) { markMessageProcessed(message) }
+        }
+    }
+
+    /** The same flows as a payment message, over the record that the host keeps for a payment of the chat product. */
+    context(chatExtensionContext: ChatExtensionContext)
+    private fun processProductPayment(payment: ProductChatPayment) {
+        if (!followedProductPayments.add(payment.messageId)) return
+
+        Timber.tag(COINAGE_LOG_TAG)
+            .d("Payment processing product message=${payment.messageId} incoming=${payment.incoming} coins=${payment.coinKeys.size}")
+
+        chatExtensionContext.scope.launch {
+            val coinKeys = payment.coinKeys.map { it.toDataByteArray() }
+
+            val outcome = if (payment.incoming) {
+                claimStatuses(payment.messageId, payment.timestamp, payment.totalValue, coinKeys)
+            } else {
+                handoffStatuses(coinKeys)
+            }
+                .distinctUntilChanged()
+                .onEach { status ->
+                    Timber.tag(COINAGE_LOG_TAG).d("Payment status product message=${payment.messageId} status=$status")
+                    productPayments.setStatus(payment.messageId, status)
+                }
+                .lastOrNull()
+
+            logSettled(payment.messageId, payment.incoming, outcome)
+            productPayments.settle(payment.messageId)
+        }.invokeOnCompletion { cause ->
+            if (cause is CancellationException) followedProductPayments.remove(payment.messageId)
         }
     }
 
@@ -111,20 +169,21 @@ class CoinagePaymentProcessingExtension @Inject constructor(
      * closes once the chain has answered. Coins that are on chain are claimed whenever they are seen.
      */
     private fun claimStatuses(
-        message: ChatMessage,
-        content: CoinagePayment,
+        messageId: ChatMessageId,
+        timestamp: Long,
+        totalValue: Balance,
         coinKeys: List<CoinPrivateKey>,
     ): Flow<Status> {
-        val groupId = claimGroupOf(message.id)
+        val groupId = claimGroupOf(messageId)
         // TODO: this deadline is persisted in every durable claim's submission params. If it is ever changed,
         //  add a migration that updates the stored deadlines too
-        val retryUntil = Instant.fromEpochMilliseconds(message.timestamp) + CLAIM_RETRY_WINDOW
+        val retryUntil = Instant.fromEpochMilliseconds(timestamp) + CLAIM_RETRY_WINDOW
 
         Timber.tag(COINAGE_LOG_TAG)
-            .i("Payment claiming message=${message.id} group=${groupId.value} coins=${coinKeys.size} until=$retryUntil")
+            .i("Payment claiming message=$messageId group=${groupId.value} coins=${coinKeys.size} until=$retryUntil")
 
         return claimReceivedCoinsUseCase.claim(coinKeys, groupId, retryUntil)
-            .map { it.toPaymentStatus(expected = content.totalValue) }
+            .map { it.toPaymentStatus(expected = totalValue) }
     }
 
     /**
@@ -210,11 +269,11 @@ class CoinagePaymentProcessingExtension @Inject constructor(
         chatExtensionContext.modifyMessage(message.chatId, message.id, content.copy(status = status))
     }
 
-    private fun logSettled(message: ChatMessage, status: Status?) {
-        val outcome = if (message.isIncoming) "claimed" else "collectedByPeer"
-        val group = if (message.isIncoming) claimGroupOf(message.id).value else "none"
+    private fun logSettled(messageId: ChatMessageId, incoming: Boolean, status: Status?) {
+        val outcome = if (incoming) "claimed" else "collectedByPeer"
+        val group = if (incoming) claimGroupOf(messageId).value else "none"
 
-        Timber.tag(COINAGE_LOG_TAG).i("Payment settled message=${message.id} outcome=$outcome group=$group status=$status")
+        Timber.tag(COINAGE_LOG_TAG).i("Payment settled message=$messageId outcome=$outcome group=$group status=$status")
     }
 }
 

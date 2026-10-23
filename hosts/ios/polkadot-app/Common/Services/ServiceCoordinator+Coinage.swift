@@ -58,6 +58,7 @@ extension ServiceCoordinator {
             transferStatusService: coinageService.transferStatusService,
             denominationContext: { try await coinageService.denominationContext() },
             transferStateStore: TransferStateCoreDataStore(storageFacade: UserDataStorageFacade.shared),
+            productPayments: ProductChatPayments.shared,
             storageFacade: UserDataStorageFacade.shared
         )
 

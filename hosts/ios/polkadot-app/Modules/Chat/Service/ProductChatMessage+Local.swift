@@ -16,7 +16,13 @@ extension ChatMessage {
     ///   - chatId: The chat of the room.
     ///   - extensionId: The extension of the product. Messages of other participants come from it.
     ///   - isSeen: True when the user saw the message on this device and the product has not marked it read yet.
-    func localMessage(chatId: Chat.Id, extensionId: ChatExtension.Id, isSeen: Bool = false) -> Chat.LocalMessage {
+    ///   - transferState: The state of the transfer of a payment, which the host keeps by message id.
+    func localMessage(
+        chatId: Chat.Id,
+        extensionId: ChatExtension.Id,
+        isSeen: Bool = false,
+        transferState: Chat.LocalMessage.Content.Transfer.State? = nil
+    ) -> Chat.LocalMessage {
         let localStatus: Chat.LocalMessage.Status = isFromUser
             ? .outgoing(status.outgoingStatus)
             : .incoming(isUnreadByUser && !isSeen ? .new : .seen)
@@ -28,7 +34,7 @@ extension ChatMessage {
             creationSource: .localDevice,
             status: localStatus,
             timestamp: timestamp,
-            content: nativeContent,
+            content: nativeContent(transferState: transferState),
             reactions: localReactions(chatId: chatId, extensionId: extensionId),
             compactionId: nil,
             relatedMessages: relatedMessages(status: localStatus)
@@ -63,6 +69,12 @@ extension ChatMessage {
     /// The content of the native chat. The welcome message of a chat request is the request of the native chat,
     /// which draws the "Request message sent" row above an outgoing one.
     var nativeContent: Chat.LocalMessage.Content {
+        nativeContent(transferState: nil)
+    }
+
+    /// The content of the native chat, with the state of the transfer of a payment. The native transfer bubble reads
+    /// it as it reads the state row of a native message: no state is a payment that the monitor did not follow yet.
+    func nativeContent(transferState: Chat.LocalMessage.Content.Transfer.State?) -> Chat.LocalMessage.Content {
         if request, case let .text(text) = body {
             return .versionedChatRequest(.v1(Chat.RequestContentV1(
                 pushToken: nil,
@@ -70,14 +82,9 @@ extension ChatMessage {
             )))
         }
 
-        // The native transfer bubble of the user reads the state of its transfer. The product gives the payment
-        // once it went out, so the status of the message is the state of the transfer.
-        if case let .payment(payment) = body, !payment.legacy, isFromUser {
-            return .coinageSend(.init(
-                totalValue: Balance(payment.amount) ?? 0,
-                coinKeys: [],
-                state: .outgoing(.init(status: status.outgoingTransferStatus))
-            ))
+        // The coin keys stay with the host, which keeps the payment and its state by message id.
+        if case let .payment(payment) = body, !payment.legacy {
+            return .coinageSend(.init(totalValue: Balance(payment.amount) ?? 0, coinKeys: [], state: transferState))
         }
 
         return body.nativeContent(replyTo: replyTo)
@@ -154,17 +161,6 @@ extension ChatMessage {
 }
 
 extension ChatMessageStatus {
-    /// The state of an outgoing transfer, from the status of its message.
-    var outgoingTransferStatus: OutgoingTransferState.Status {
-        switch self {
-        case .preparing: .sending
-        case .sent,
-             .delivered,
-             .read: .sent
-        case .failed: .failed
-        }
-    }
-
     /// The tick of an outgoing message, as the native chat draws it. `Preparing` is a message on its way. The
     /// product sends `Read` when a device of the contact took the message, which the native chat draws as
     /// delivered.

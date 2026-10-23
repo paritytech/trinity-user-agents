@@ -462,6 +462,17 @@ contacts keep reaching this device). The product reads the staged history with
 and calls `historyImported` once it has imported it. The history is the SCALE
 `HistoryExport::V1` of the chat product's `packages/core/src/wire/history.ts`.
 
+Payments in a contact room keep the native coinage flow on the host. When the
+user pays, the host plans and reserves the coins and hands them off, then sends
+the user action `SendPayment` with the message id and time it chose and the
+coin keys; the product sends the payment message to the contact under that id
+and answers with a `Payment` message. When a payment arrives, the product hands
+its coin keys to the host with `paymentReceived`, and the host claims the coins
+under the message id, through `PersonChatPlatform::payment_received`. Both
+sides key the claim state they draw on the `Payment` message by its id; the
+protocol carries no claim state. A host without coinage, the CLI host roles
+among them, answers `Unsupported`, and the product keeps the keys.
+
 `CallMedia` (`start`, `signal`, `stop`) runs the audio and the video of a call
 of a chat room with the call engine of the host (RFC "Call media of chat
 rooms"). A start needs a press on a call button or on Accept in that room in

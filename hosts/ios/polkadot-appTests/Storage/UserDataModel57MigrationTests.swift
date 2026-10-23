@@ -56,10 +56,8 @@ final class UserDataModel57MigrationTests {
     }
 
     /// The facade opens the current model, so the app reads the contact through its mappers.
-    @Test func theCurrentModelIsModel57() async throws {
-        #expect(UserStorageParams.modelVersion == .version57)
+    @Test func theCurrentModelKeepsTheContactOfARoom() async throws {
         #expect(UserStorageVersion.version56.nextVersion() == .version57)
-        #expect(UserStorageVersion.version57.nextVersion() == nil)
 
         let facade = UserDataStorageTestFacade()
         let contact = Chat.RoomContact(account: Data(repeating: 4, count: 32), username: "alice", state: .outgoing)
@@ -97,7 +95,7 @@ private extension UserDataModel57MigrationTests {
         UserStorageMigrator(
             storeURL: storeURL,
             modelDirectory: UserStorageParams.modelDirectory,
-            model: .version57,
+            model: UserStorageParams.modelVersion,
             fileManager: .default
         )
     }
@@ -176,7 +174,8 @@ private extension UserDataModel57MigrationTests {
 
     /// Reads the attributes inside the context: a managed object has no values once its context is gone.
     func readFirst(_ entityName: String, from storeURL: URL) throws -> [String: Any] {
-        let coordinator = try openStore(.version57, storeURL: storeURL)
+        // The migrator takes a store to the current model, through 57.
+        let coordinator = try openStore(UserStorageParams.modelVersion, storeURL: storeURL)
         let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
         context.persistentStoreCoordinator = coordinator
 

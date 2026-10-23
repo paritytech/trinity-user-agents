@@ -16,6 +16,7 @@ use truapi::{
 			HostPersonChatHopDownloadRequest, HostPersonChatHopDownloadResponse,
 			HostPersonChatHopUploadRequest, HostPersonChatHopUploadResponse,
 			HostPersonChatNotifyPeerRequest, HostPersonChatNotifyPeerResponse,
+			HostPersonChatPaymentReceivedRequest, HostPersonChatPaymentReceivedResponse,
 			HostPersonChatPrepareDeliveryRequest, HostPersonChatPrepareDeliveryResponse,
 			HostPersonChatProveChatRequestRequest, HostPersonChatProveChatRequestResponse,
 			HostPersonChatProveDeliveryRequest, HostPersonChatProveDeliveryResponse,
@@ -40,14 +41,16 @@ use crate::{
 		},
 	},
 	platform::{
-		CoreStorageKey, HostChatContact, HostChatPushRoute, HostPushDelivery, HostPushService,
-		PushPlatform, normalize_chat_identifier,
+		CoreStorageKey, HostChatContact, HostChatPaymentReceipt, HostChatPushRoute,
+		HostPushDelivery, HostPushService, PushPlatform, normalize_chat_identifier,
+		validate_chat_payment_coin_keys,
 	},
 	runtime::{
 		ProductRuntimeHost,
 		authority::{AuthorityError, ChatDelivery},
 		hop_client::{HopCallError, HopClient},
 		until_cancelled,
+		versioning::version,
 	},
 	unix_time::current_unix_millis,
 };
@@ -714,6 +717,43 @@ impl PersonChat for ProductRuntimeHost {
 		result
 			.map(|response| HostPersonChatHistoryImportedResponse::from_latest(response, version))
 			.map_err(|error| from_latest_error(error, version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "person_chat.payment_received"))]
+	async fn payment_received(
+		&self,
+		cx: &CallContext,
+		request: HostPersonChatPaymentReceivedRequest,
+	) -> Result<HostPersonChatPaymentReceivedResponse, CallError<HostPersonChatError>> {
+		version(request)
+			.exec(|payment: latest::HostPersonChatPaymentReceivedRequest| async move {
+				self.person_chat_session()?;
+				let room_id = normalize_chat_identifier("room_id", &payment.room_id)
+					.map_err(|_| invalid(format!("{} is not a room id", payment.room_id)))?;
+				let message_id = normalize_chat_identifier("message_id", &payment.message_id)
+					.map_err(|_| invalid(format!("{} is not a message id", payment.message_id)))?;
+				validate_chat_payment_coin_keys(&payment.coin_keys)
+					.map_err(|error| invalid(error.to_string()))?;
+				let platform = self
+					.connection
+					.services
+					.person_chat_platform()
+					.ok_or(CallError::Unsupported)?;
+				let payment =
+					latest::HostPersonChatPaymentReceivedRequest { room_id, message_id, ..payment };
+				let receipt = until_cancelled(
+					cx,
+					platform.payment_received(&self.connection.product, payment),
+				)
+				.await
+				.map_err(|error| unknown(error.to_string()))?
+				.map_err(|error| unknown(error.reason))?;
+				match receipt {
+					HostChatPaymentReceipt::Accepted => Ok(()),
+					HostChatPaymentReceipt::Unsupported => Err(CallError::Unsupported),
+				}
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "person_chat.hop_upload"))]

@@ -555,6 +555,16 @@ pub trait NativePersonChatCallbacks: Send + Sync {
 
 	/// `product_id` imported the staged history.
 	async fn history_imported(&self, product_id: ProductId) -> Result<(), HostRejection>;
+
+	/// Take the coin keys of a payment a contact sent in a room of
+	/// `product_id`, and claim the coins with the host's coinage flow keyed by
+	/// `payment.message_id`. Idempotent by message id. A host without coinage
+	/// answers `Unsupported`.
+	async fn payment_received(
+		&self,
+		product_id: ProductId,
+		payment: truapi::latest::HostPersonChatPaymentReceivedRequest,
+	) -> Result<crate::platform::HostChatPaymentReceipt, HostRejection>;
 }
 
 /// Native form of [`crate::platform::PushPlatform`], whose rules it follows.

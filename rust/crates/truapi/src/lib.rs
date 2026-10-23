@@ -438,6 +438,9 @@ pub mod latest {
 	/// Request to tell the host that the staged history is imported.
 	pub type HostPersonChatHistoryImportedRequest =
 		LatestOf<versioned::person_chat::HostPersonChatHistoryImportedRequest>;
+	/// Request to hand the host the coins of a payment the contact sent.
+	pub type HostPersonChatPaymentReceivedRequest =
+		LatestOf<versioned::person_chat::HostPersonChatPaymentReceivedRequest>;
 	/// Why a `PersonChat` call failed.
 	pub type HostPersonChatError = LatestOf<versioned::person_chat::HostPersonChatError>;
 	/// Storage key change pushed to a subscriber.

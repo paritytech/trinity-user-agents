@@ -347,7 +347,6 @@
     <string name="send_payment_search_placeholder">Type username or wallet address</string>
     <string name="send_payment_to">To:</string>
     <string name="send_payment_open_chat_message">You need to first establish a chat before sending a payment</string>
-    <string name="send_payment_chat_product_unavailable">Sending coins to a contact through chat is not available yet</string>
     <string name="send_payment_send_to_yourself">Send to yourself</string>
     <string name="send_payment_send_to_yourself_description">Bank account or crypto wallet</string>
 

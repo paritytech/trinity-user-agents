@@ -27,4 +27,36 @@ struct HostBridgeDefaultsTests {
 
         #expect(outcome == .unsupported)
     }
+
+    /// An app without coinage must say so, so the chat product keeps the keys
+    /// of a received payment instead of dropping them.
+    @Test
+    func defaultPaymentReceivedIsUnsupported() async throws {
+        let bridge: PersonChatHostBridge = NoCoinagePersonChat()
+        let payment = HostPersonChatPaymentReceivedRequest(
+            roomId: "dm-ab",
+            messageId: "payment",
+            timestamp: 1_700_000_000_000,
+            totalValue: "5000000",
+            coinKeys: [Data(repeating: 0x11, count: 64)]
+        )
+
+        let receipt = try await bridge.paymentReceived(productId: "chat.dot", payment: payment)
+
+        #expect(receipt == .unsupported)
+    }
+}
+
+private final class NoCoinagePersonChat: PersonChatHostBridge, @unchecked Sendable {
+    func hopNodes() async throws -> [String] { [] }
+
+    func pairedDevices() async throws -> [HostPairedDevice] { [] }
+
+    func setContacts(productId _: String, contacts _: [HostChatContact]) async throws {}
+
+    func historyExport(productId _: String, offset _: UInt64, maxLen _: UInt32) async throws -> HostHistoryExportChunk {
+        HostHistoryExportChunk(total: 0, data: Data())
+    }
+
+    func historyImported(productId _: String) async throws {}
 }

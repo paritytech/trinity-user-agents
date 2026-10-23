@@ -525,8 +525,8 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
 
 /// The person chat services of the host, following the rules on the core's
 /// `PersonChatPlatform`: the `wss://` URLs of the HOP nodes of the network's
-/// Bulletin chain, the devices paired with the wallet, and the chat's contacts
-/// for the rest of the app.
+/// Bulletin chain, the devices paired with the wallet, the chat's contacts
+/// for the rest of the app, and the claim of the coins contacts pay with.
 public protocol PersonChatHostBridge: AnyObject, Sendable {
     func hopNodes() async throws -> [String]
 
@@ -543,6 +543,25 @@ public protocol PersonChatHostBridge: AnyObject, Sendable {
 
     /// `productId` imported the staged history: drop it.
     func historyImported(productId: String) async throws
+
+    /// Take the coin keys of a payment a contact sent in a room of
+    /// `productId`, and claim the coins with the app's coinage flow keyed by
+    /// `payment.messageId`, from which the app also draws the claim state of
+    /// the room's payment message. Idempotent by message id.
+    func paymentReceived(
+        productId: String,
+        payment: HostPersonChatPaymentReceivedRequest
+    ) async throws -> HostChatPaymentReceipt
+}
+
+public extension PersonChatHostBridge {
+    /// An app without coinage says so, and the chat product keeps the keys.
+    func paymentReceived(
+        productId _: String,
+        payment _: HostPersonChatPaymentReceivedRequest
+    ) async throws -> HostChatPaymentReceipt {
+        .unsupported
+    }
 }
 
 /// The push service of the host for `push.address` and `push.notify`. The
@@ -942,6 +961,15 @@ private final class PersonChatCallbackAdapter: NativePersonChatCallbacks, @unche
     func historyImported(productId: String) async throws {
         try await withHostRejection {
             try await bridge.historyImported(productId: productId)
+        }
+    }
+
+    func paymentReceived(
+        productId: String,
+        payment: HostPersonChatPaymentReceivedRequest
+    ) async throws -> HostChatPaymentReceipt {
+        try await withHostRejection {
+            try await bridge.paymentReceived(productId: productId, payment: payment)
         }
     }
 }
@@ -1827,9 +1855,9 @@ public extension TrUAPIProductExecutionProtocol {
 public enum ChatQueryTimeout {
     /// A page of messages.
     public static let messages: Duration = .seconds(10)
-    /// A message that the user sent.
+    /// A message or a payment that the user sent.
     public static let sentMessage: Duration = .seconds(30)
-    /// A user action that is not a sent message.
+    /// A user action that sends nothing.
     public static let userAction: Duration = .seconds(10)
     /// Reactions or the edit history of a message.
     public static let lookup: Duration = .seconds(5)
@@ -1839,7 +1867,10 @@ public enum ChatQueryTimeout {
 
     /// The timeout of one user action.
     public static func timeout(for action: ChatUserAction) -> Duration {
-        if case .newMessage = action { sentMessage } else { userAction }
+        switch action {
+        case .newMessage, .sendPayment: sentMessage
+        default: userAction
+        }
     }
 }
 

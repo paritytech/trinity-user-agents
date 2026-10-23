@@ -13,11 +13,11 @@ class RealGetContactsUseCase @Inject constructor(
     private val personChatMode: PersonChatMode,
     private val personChatContacts: PersonChatContacts,
 ) : GetContactsUseCase {
-    // Coins through the chat product come with M9; until then its contacts are listed but not paid through chat.
+    // The chat product lists the contacts whose chat is established, and blocked contacts.
     override suspend operator fun invoke(): List<AddressBookContact> =
         if (personChatMode.isProductChat()) {
             personChatContacts.getContacts().map {
-                AddressBookContact(it.accountId, it.username, it.blocked, established = true, paysViaChat = false)
+                AddressBookContact(it.accountId, it.username, it.blocked, established = true)
             }
         } else {
             contactsRepository.getContacts().map {
@@ -26,7 +26,6 @@ class RealGetContactsUseCase @Inject constructor(
                     username = it.username,
                     blocked = it.isBlocked,
                     established = it.hasEstablishedChat(),
-                    paysViaChat = it.hasEstablishedChat(),
                 )
             }
         }

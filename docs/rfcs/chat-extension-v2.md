@@ -712,6 +712,17 @@ pub enum ChatUserAction {
     Block,
     Unblock,
     Leave,
+    /// The user paid the contact: see [Contact rooms](chat-extension-v2-additions.md#contact-rooms).
+    SendPayment {
+        /// The id the host chose for the payment message.
+        message_id: String,
+        /// When the user paid, in milliseconds since the Unix epoch.
+        timestamp: u64,
+        /// The sum of the coins, in the smallest unit.
+        total_value: u128,
+        /// The 64-byte sr25519 secret key of each coin.
+        coin_keys: Vec<Vec<u8>>,
+    },
 }
 
 /// The host reports one user action.
@@ -724,8 +735,8 @@ pub struct ProductChatUserActionRequest {
 
 /// The product's answer to a user action.
 pub enum ProductChatUserActionItem {
-    /// For `NewMessage`: the message as the product stored it, with its id (the one the host chose, when it chose one),
-    /// timestamp and status.
+    /// For `NewMessage` and `SendPayment`: the message as the product stored it, with its id (the one the host chose,
+    /// when it chose one), timestamp and status.
     MessageCreated(ChatMessage),
     /// For every other action: the product applied it.
     Acknowledged,
@@ -917,7 +928,7 @@ How long the host waits for a query:
 | Query                                                                      | Wait | Then                                                       |
 | -------------------------------------------------------------------------- | ---- | ---------------------------------------------------------- |
 | `messages_query`                                                           | 10 s | Keeps what it shows and offers a retry                     |
-| `user_action` with `NewMessage`                                            | 30 s | Marks the message `Failed`                                 |
+| `user_action` with `NewMessage` or `SendPayment`                           | 30 s | Marks the message `Failed`                                 |
 | `user_action`, any other                                                   | 10 s | Reverts the change and says so                             |
 | `reactions_query`                                                          | 5 s  | Applies its default for the item                           |
 

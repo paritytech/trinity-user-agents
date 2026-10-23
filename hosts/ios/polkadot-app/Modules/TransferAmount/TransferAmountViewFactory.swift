@@ -7,10 +7,13 @@ import ChainRegistry
 
 @MainActor
 enum TransferAmountViewFactory {
+    /// `productRoom` is the room of the chat product that the payment starts from, when the chat product runs person
+    /// chat.
     static func createChatTransfer(
         for chainAsset: ChainAsset,
         recipient: RecipientModel,
-        coinageService: CoinageServicing
+        coinageService: CoinageServicing,
+        productRoom: ProductPaymentRoom? = nil
     ) -> TransferAmountViewProtocol? {
         let wireframe = ChatTransferAmountWireframe(chainAsset: chainAsset)
         return createView(
@@ -19,7 +22,7 @@ enum TransferAmountViewFactory {
             wireframe: wireframe,
             transferMethod: .coinage,
             coinageService: coinageService,
-            chatSubmitter: makeContactChatSubmitter()
+            chatSubmitter: makeContactChatSubmitter(productRoom: productRoom)
         )
     }
 
@@ -194,8 +197,18 @@ enum TransferAmountViewFactory {
         )
     }
 
-    private static func makeContactChatSubmitter() -> TransferSubmitting {
-        guard !PersonChatMode.isProductChat else { return ChatInProductSubmitter() }
+    private static func makeContactChatSubmitter(productRoom: ProductPaymentRoom? = nil) -> TransferSubmitting {
+        if PersonChatMode.isProductChat {
+            let contacts = ProductContactSearch()
+            return ProductChatSubmitter(
+                room: productRoom,
+                contactRoom: { account in
+                    try await contacts.contacts().first { $0.accountId == account }?.chatId.productPaymentRoom
+                },
+                payments: .shared,
+                logger: Logger.shared
+            )
+        }
 
         return ContactChatSubmitter(
             chatContactsProvider: ContactsLocalStorageService(),

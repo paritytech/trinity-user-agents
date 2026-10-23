@@ -46,7 +46,8 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
             let destination = TransferAmountViewFactory.createChatTransfer(
                 for: chainAsset,
                 recipient: .init(accountId: accountId, username: chatMetadata.peerMetadata.name),
-                coinageService: flowState.coinageService
+                coinageService: flowState.coinageService,
+                productRoom: chatMetadata.chatId.productPaymentRoom
             )
         else {
             return

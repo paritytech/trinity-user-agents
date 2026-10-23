@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
 import io.mockk.mockk
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
@@ -31,6 +32,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatHopFileCa
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.FakeProductChatPaymentStore
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -65,7 +68,8 @@ class ProductAttachmentStagerTest {
     private val rooms = FakeRooms()
     private val feedListeners = mockk<ProductFeedListeners>(relaxed = true)
     private val hopCache = mockk<ChatHopFileCache>(relaxed = true)
-    private val stager by lazy { ProductAttachmentStager(outbox, staging, scheduler, rooms, feedListeners, hopCache) }
+    private val payments = FakeProductChatPaymentStore()
+    private val stager by lazy { ProductAttachmentStager(outbox, staging, scheduler, rooms, feedListeners, hopCache, payments) }
 
     @Test
     fun `a host-store room stores the message with the HOP file and keeps its bytes, so this device never opens its own upload`() =
@@ -355,6 +359,123 @@ class ProductAttachmentStagerTest {
 
         assertSame(window, window.withOutbox(stager.observe(room).first(), stager::preview))
     }
+
+    // ---- payments ----
+
+    @Test
+    fun `a payment goes as SendPayment under its id, time, amount and keys, and the room shows the product's message`() = runBlocking {
+        val querying = productRoom()
+        val payment = sendingPayment("pay-1", timestamp = 2_000)
+        payments.put(payment)
+        val created = productMessage("pay-1")
+        coEvery { querying.userAction(room, any()) } returns Result.success(ChatUserActionOutcome.MessageCreated(created))
+
+        assertTrue(stager.processRoom(room))
+
+        coVerify {
+            querying.userAction(
+                room,
+                match { action ->
+                    action is ChatUserActionModel.SendPayment && action.messageId == "pay-1" && action.timestamp == 2_000L &&
+                        action.totalValue == payment.totalValue && action.coinKeys.single().contentEquals(payment.coinKeys.single())
+                },
+            )
+        }
+        coVerify { feedListeners.deliver(room, ProductFeedUpdateModel.New(created)) }
+        assertEquals(ProductChatPayment.Delivery.DELIVERED, payments["pay-1"]!!.delivery)
+        assertTrue(staging.holds > 0)
+    }
+
+    @Test
+    fun `a payment and the messages of the room go in the order the user sent them`() = runBlocking {
+        val querying = productRoom()
+        clock = 1_000
+        val before = stager.enqueueText(room, "before", replyTo = null, request = false)
+        payments.put(sendingPayment("pay-1", timestamp = 2_000))
+        clock = 3_000
+        val after = stager.enqueueText(room, "after", replyTo = null, request = false)
+        coEvery { querying.userAction(room, any()) } returns Result.success(ChatUserActionOutcome.Acknowledged)
+
+        assertTrue(stager.processRoom(room))
+
+        coVerifyOrder {
+            querying.userAction(room, match { it.isText("before", replyTo = null, messageId = before.id) })
+            querying.userAction(room, match { (it as? ChatUserActionModel.SendPayment)?.messageId == "pay-1" })
+            querying.userAction(room, match { it.isText("after", replyTo = null, messageId = after.id) })
+        }
+    }
+
+    @Test
+    fun `a payment that did not go goes again under the same id, before the messages after it`() = runBlocking {
+        val querying = productRoom()
+        payments.put(sendingPayment("pay-1", timestamp = 500))
+        stager.enqueueText(room, "after", replyTo = null, request = false)
+        coEvery { querying.userAction(room, any()) } returns Result.failure(ProductChatQueryException.TimedOut())
+
+        assertFalse(stager.processRoom(room))
+
+        coVerify(exactly = 1) { querying.userAction(room, any()) }
+        assertEquals(ProductChatPayment.Delivery.SENDING, payments["pay-1"]!!.delivery)
+
+        coEvery { querying.userAction(room, any()) } returns Result.success(ChatUserActionOutcome.Acknowledged)
+        assertTrue(stager.processRoom(room))
+
+        coVerify(exactly = 2) { querying.userAction(room, match { (it as? ChatUserActionModel.SendPayment)?.messageId == "pay-1" }) }
+        assertEquals(ProductChatPayment.Delivery.DELIVERED, payments["pay-1"]!!.delivery)
+    }
+
+    @Test
+    fun `a payment that the product refuses does not go again, and the next message goes`() = runBlocking {
+        val querying = productRoom()
+        payments.put(sendingPayment("pay-1", timestamp = 500))
+        val next = stager.enqueueText(room, "next", replyTo = null, request = false)
+        coEvery { querying.userAction(room, match { it is ChatUserActionModel.SendPayment }) } returns
+            Result.failure(ProductChatQueryException.Rejected("no"))
+        coEvery { querying.userAction(room, match { it is ChatUserActionModel.NewMessage }) } returns
+            Result.success(ChatUserActionOutcome.Acknowledged)
+
+        assertTrue(stager.processRoom(room))
+        assertTrue(stager.processRoom(room))
+
+        assertEquals(ProductChatPayment.Delivery.REFUSED, payments["pay-1"]!!.delivery)
+        coVerify(exactly = 1) { querying.userAction(room, match { it is ChatUserActionModel.SendPayment }) }
+        assertNull(outbox.get(next.id))
+    }
+
+    @Test
+    fun `a payment that the product keeps answering with an error stops going after a few tries`() = runBlocking {
+        val querying = productRoom()
+        payments.put(sendingPayment("pay-1", timestamp = 500))
+        coEvery { querying.userAction(room, any()) } returns Result.failure(ProductChatQueryException.Failed("lost"))
+
+        repeat(4) { assertFalse(stager.processRoom(room)) }
+        assertEquals(ProductChatPayment.Delivery.SENDING, payments["pay-1"]!!.delivery)
+        assertTrue(stager.processRoom(room))
+
+        assertEquals(ProductChatPayment.Delivery.REFUSED, payments["pay-1"]!!.delivery)
+    }
+
+    @Test
+    fun `opening a room sends again a payment that waits`() = runBlocking {
+        payments.put(sendingPayment("pay-1", timestamp = 500))
+
+        stager.resume(room)
+
+        assertEquals(listOf(room), scheduler.scheduled)
+    }
+
+    private fun sendingPayment(id: String, timestamp: Long) = ProductChatPayment(
+        messageId = id,
+        chatId = room,
+        incoming = false,
+        timestamp = timestamp,
+        totalValue = 1_500.intoBalance(),
+        coinKeys = listOf(ByteArray(64) { 3 }),
+        delivery = ProductChatPayment.Delivery.SENDING,
+        refusals = 0,
+        status = ChatMessage.Content.CoinagePayment.Status.Detecting,
+        settled = false,
+    )
 
     private fun draft(kind: ProductAttachmentDraft.Kind = ProductAttachmentDraft.Kind.IMAGE) = ProductAttachmentDraft(
         kind = kind,

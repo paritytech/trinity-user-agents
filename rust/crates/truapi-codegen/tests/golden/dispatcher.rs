@@ -3278,7 +3278,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::PERSON_CHAT_HISTORY_IMPORTED, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -3301,6 +3301,40 @@ where
                 let result: Result<versioned::person_chat::HostPersonChatHistoryImportedResponse, truapi::CallError<versioned::person_chat::HostPersonChatError>> =
                     match host.history_imported(&cx, request).await {
                         Ok(response) => Ok(<versioned::person_chat::HostPersonChatHistoryImportedResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::PERSON_CHAT_PAYMENT_RECEIVED, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::person_chat::HostPersonChatPaymentReceivedRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::person_chat::HostPersonChatError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::person_chat::HostPersonChatPaymentReceivedResponse, truapi::CallError<versioned::person_chat::HostPersonChatError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::person_chat::HostPersonChatError> = truapi::CallError::Denied;
+                    let result: Result<versioned::person_chat::HostPersonChatPaymentReceivedResponse, truapi::CallError<versioned::person_chat::HostPersonChatError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::person_chat::HostPersonChatPaymentReceivedResponse, truapi::CallError<versioned::person_chat::HostPersonChatError>> =
+                    match host.payment_received(&cx, request).await {
+                        Ok(response) => Ok(<versioned::person_chat::HostPersonChatPaymentReceivedResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

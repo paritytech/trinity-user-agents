@@ -18,12 +18,15 @@ final class CoinageTransferMonitor {
     private let transferStatusService: any CoinageTransferStatusServicing
     private let denominationContext: DenominationContextProvider
     private let transferStateStore: any TransferStateStoring
+    /// The payments of the rooms of the chat product, followed and claimed as the messages of the native chat.
+    private let productPayments: (any ProductChatPaymentsMonitoring)?
     private let messageProviderFactory: ChatMessageDataProviderMaking
     private let logger: LoggerProtocol
 
     /// Top-level tasks that listen to the CoreData message streams.
     private var incomingTransfersSubscription: Task<Void, Never>?
     private var outgoingTransfersSubscription: Task<Void, Never>?
+    private var productPaymentsSubscription: Task<Void, Never>?
 
     /// Per-message tasks keyed by messageId. Each resolves independently, avoiding head-of-line
     /// blocking across messages.
@@ -34,6 +37,7 @@ final class CoinageTransferMonitor {
         transferStatusService: any CoinageTransferStatusServicing,
         denominationContext: @escaping DenominationContextProvider,
         transferStateStore: any TransferStateStoring,
+        productPayments: (any ProductChatPaymentsMonitoring)? = nil,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
@@ -42,6 +46,7 @@ final class CoinageTransferMonitor {
         self.transferStatusService = transferStatusService
         self.denominationContext = denominationContext
         self.transferStateStore = transferStateStore
+        self.productPayments = productPayments
         self.logger = logger
 
         let repositoryFactory = ChatMessageRepositoryFactory(storageFacade: storageFacade)
@@ -57,11 +62,13 @@ extension CoinageTransferMonitor: CoinageTransferMonitoring {
     func setup() async {
         subscribeIncomingMessages()
         subscribeOutgoingMessages()
+        subscribeProductPayments()
     }
 
     func throttle() async {
         incomingTransfersSubscription?.cancel()
         outgoingTransfersSubscription?.cancel()
+        productPaymentsSubscription?.cancel()
         await taskRegistry.cancelAll()
     }
 }
@@ -94,12 +101,17 @@ private extension CoinageTransferMonitor {
 
     func startIncoming(for message: Chat.LocalMessage) async {
         guard case let .coinageSend(content) = message.content else { return }
-        let messageId = message.messageId
+        await startIncoming(messageId: message.messageId, memo: content.transferMemo, stateStore: transferStateStore)
+    }
+
+    func startIncoming(
+        messageId: Chat.MessageId,
+        memo: TransferMemo,
+        stateStore transferStateStore: any TransferStateStoring
+    ) async {
         guard await taskRegistry.contains(messageId) == false else { return }
 
-        let memo = content.transferMemo
-
-        let task = Task { [claimCoinsService, denominationContext, transferStateStore, taskRegistry, logger] in
+        let task = Task { [claimCoinsService, denominationContext, taskRegistry, logger] in
             defer { Task { await taskRegistry.remove(forMessageId: messageId) } }
             do {
                 let context = try await denominationContext()
@@ -157,11 +169,17 @@ private extension CoinageTransferMonitor {
 
     func startOutgoing(for message: Chat.LocalMessage) async {
         guard case let .coinageSend(content) = message.content else { return }
-        let messageId = message.messageId
+        await startOutgoing(messageId: message.messageId, memo: content.transferMemo, stateStore: transferStateStore)
+    }
+
+    func startOutgoing(
+        messageId: Chat.MessageId,
+        memo: TransferMemo,
+        stateStore transferStateStore: any TransferStateStoring
+    ) async {
         guard await taskRegistry.contains(messageId) == false else { return }
 
-        let memo = content.transferMemo
-        let task = Task { [transferStatusService, denominationContext, transferStateStore, taskRegistry, logger] in
+        let task = Task { [transferStatusService, denominationContext, taskRegistry, logger] in
             defer { Task { await taskRegistry.remove(forMessageId: messageId) } }
             do {
                 let context = try await denominationContext()
@@ -184,6 +202,40 @@ private extension CoinageTransferMonitor {
             }
         }
         await taskRegistry.register(task, forMessageId: messageId)
+    }
+}
+
+// MARK: - Payments of the chat product
+
+private extension CoinageTransferMonitor {
+    /// The payments of the rooms of the chat product take the same claim and the same status as the payments of the
+    /// native chat, keyed by their message id. Only their store differs.
+    func subscribeProductPayments() {
+        guard let productPayments else { return }
+
+        logger.debug("Going to subscribe to chat product payments")
+
+        productPaymentsSubscription = Task { [weak self] in
+            for await payments in await productPayments.unsettledPayments() {
+                guard let self, !Task.isCancelled else { return }
+
+                for payment in payments {
+                    if payment.incoming {
+                        await startIncoming(
+                            messageId: payment.messageId,
+                            memo: payment.memo,
+                            stateStore: productPayments.transferStates
+                        )
+                    } else {
+                        await startOutgoing(
+                            messageId: payment.messageId,
+                            memo: payment.memo,
+                            stateStore: productPayments.transferStates
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

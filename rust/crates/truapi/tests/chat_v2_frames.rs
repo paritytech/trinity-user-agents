@@ -345,6 +345,20 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
+			"17.user_action.pay",
+			wire_table::CHAT_USER_ACTION,
+			MESSAGE_TYPE_START,
+			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+				room_id: room(),
+				action: v01::ChatUserAction::SendPayment {
+					message_id: "m2".into(),
+					timestamp: 1_700_000_000_000,
+					total_value: 5_000_000,
+					coin_keys: vec![vec![0x11; 64]],
+				},
+			}),
+		),
+		line(
 			"17.user_action.receive",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,

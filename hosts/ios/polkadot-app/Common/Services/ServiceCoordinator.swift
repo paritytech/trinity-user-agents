@@ -231,7 +231,7 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 
 @MainActor
 extension ServiceCoordinator {
-     // swiftlint:disable:next function_body_length
+    // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 
@@ -409,6 +409,8 @@ extension ServiceCoordinator {
         // messages that wait from before go now, as the native chat sends its waiting messages when it starts.
         ProductOutboxDelivery.shared.attach(registry: chatExtensionsRegistry)
         Task { await ProductOutbox.shared.resume() }
+        // The payments of the user that the product does not have yet go the same way.
+        Task { await ProductChatPayments.shared.resume() }
 
         let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
         let fiatOnrampStorage = FiatOnrampStorage()

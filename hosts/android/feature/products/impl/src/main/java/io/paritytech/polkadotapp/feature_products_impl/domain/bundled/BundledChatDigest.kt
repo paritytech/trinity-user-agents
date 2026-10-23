@@ -2,4 +2,4 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
 /** SHA-256 of `assets/person-chat/index.js`, pinned when the bundle was installed. */
-internal const val BUNDLED_CHAT_WORKER_SHA256 = "5e04c3480003f3341fe95ec67aa9c8751ac155cddfc7bb6c2b05d10d19bfdefc"
+internal const val BUNDLED_CHAT_WORKER_SHA256 = "0efbbff0cd3d1ddd6be5044b14aac3dc106825e9dbb09e7edc0c78ef736fbd85"

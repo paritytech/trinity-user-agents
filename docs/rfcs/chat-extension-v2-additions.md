@@ -276,6 +276,8 @@ pub enum ChatUserAction {
     Block,
     Unblock,
     Leave,
+    /// The user paid the contact with coins the host planned, reserved and handed off.
+    SendPayment { message_id: String, timestamp: u64, total_value: u128, coin_keys: Vec<Vec<u8>> },
 }
 ```
 
@@ -364,6 +366,15 @@ looks and behaves as the native chat of that host.
   as `NewMessage.message_id`, with the time the user wrote it as `NewMessage.timestamp`. The product stores and sends
   the message under that id and with that time, so the message keeps its id and time from the moment the user sent it,
   and the host can act on it before the answer arrives. The core screens the id as every message id.
+- **Payments.** The host runs the coinage flow of its native chat. When the user pays, it plans and reserves the
+  coins, hands them off, and sends `SendPayment` with the message id it chose (a UUID, the id its coinage records
+  track the payment under), the time, the total value and the 64-byte key of each coin (1 to 1,024 keys). The product
+  sends the payment message to the contact under that id and answers `MessageCreated` with a `Payment` body; the keys
+  appear in no body, preview or reply quote, and an action repeated with the same id sends nothing new. When a payment
+  arrives, the product hands its keys to the host with `PersonChat.paymentReceived` (room, message id, time, total
+  value, keys), and the host claims the coins under the message id; a repeated call changes nothing. A host without
+  coinage answers `Unsupported`, and the product keeps the keys. The protocol carries no claim state: each host draws
+  the state of its own records over the `Payment` message with that id, with the labels of its native chat.
 - **Replies, media and reactions.** A reply carries `reply_preview`, so the host draws the quote without loading the
   quoted message. `duration_ms` is the length of a video. A reaction summary with `unseen` set is a reaction of the
   contact the user has not seen, and each entry of the who-reacted list carries the time of its reaction.

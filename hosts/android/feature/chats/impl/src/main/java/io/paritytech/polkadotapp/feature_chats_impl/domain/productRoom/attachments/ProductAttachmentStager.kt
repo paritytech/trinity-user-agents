@@ -25,6 +25,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatHopFileCa
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.adjustReaction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.withEditedText
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPaymentStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.CancellationException
@@ -72,7 +74,8 @@ class EngineProductAttachmentRooms @Inject constructor(
  * host chose, and again under the same id until the product has it. An attachment goes first to a HOP node of the person
  * chat. A product-source room gets `user_action` `NewMessage`, a host-store room a stored message and `MessagePosted`.
  * An edit or a reaction that the user made before the product had the message goes right after it. Only a message that
- * cannot go keeps a failure, as the native chat marks a message it cannot deliver.
+ * cannot go keeps a failure, as the native chat marks a message it cannot deliver. A payment of the user goes in the same
+ * order as `user_action` `SendPayment`, as the native chat sends a payment message with the other messages.
  */
 @Singleton
 class ProductAttachmentStager @Inject constructor(
@@ -82,6 +85,7 @@ class ProductAttachmentStager @Inject constructor(
     private val rooms: ProductAttachmentRooms,
     private val feedListeners: ProductFeedListeners,
     private val hopCache: ChatHopFileCache,
+    private val payments: ProductChatPaymentStore,
 ) {
     private sealed interface Outcome {
         data object Sent : Outcome
@@ -91,6 +95,19 @@ class ProductAttachmentStager @Inject constructor(
 
         /** The message did not go now. It goes again later, before the entries after it. */
         data object Later : Outcome
+    }
+
+    /** What waits to go to the product, at the time the user sent it. */
+    private sealed interface Pending {
+        val at: Long
+
+        class Entry(val entry: ProductOutboxEntry) : Pending {
+            override val at = entry.createdAt
+        }
+
+        class Payment(val payment: ProductChatPayment) : Pending {
+            override val at = payment.timestamp
+        }
     }
 
     // The bytes that the node holds and the size of each attachment that goes to HOP now, by entry id.
@@ -131,9 +148,9 @@ class ProductAttachmentStager @Inject constructor(
         return entry
     }
 
-    /** Sends the entries of a room again, for example when its room screen opens. */
+    /** Sends the entries and the payments of a room again, for example when its room screen opens. */
     suspend fun resume(chatId: ChatId) {
-        if (outbox.observe(chatId).first().any { !it.isFailed }) scheduler.schedule(chatId)
+        if (outbox.observe(chatId).first().any { !it.isFailed } || payments.sending(chatId).isNotEmpty()) scheduler.schedule(chatId)
     }
 
     /** True when an entry of the room still has bytes to upload, so its run shows the upload notification. */
@@ -156,22 +173,68 @@ class ProductAttachmentStager @Inject constructor(
     suspend fun toggleReactionPending(entryId: ChatMessageId, emoji: String): Boolean =
         outbox.update(entryId) { it.copy(reaction = if (it.reaction == emoji) null else emoji) } != null
 
-    /** Sends the entries of a room, the oldest first. False when an entry has to go again later. */
+    /** Sends the entries and the payments of a room, the oldest first. False when one has to go again later. */
     suspend fun processRoom(chatId: ChatId): Boolean {
-        for (entry in outbox.observe(chatId).first()) {
-            if (entry.isFailed) continue
-            if (process(entry) == Outcome.Later) return false
+        val entries = outbox.observe(chatId).first().filter { !it.isFailed }.map(Pending::Entry)
+        val sending = payments.sending(chatId).map(Pending::Payment)
+        for (pending in (entries + sending).sortedBy { it.at }) {
+            val outcome = when (pending) {
+                is Pending.Entry -> process(chatId, pending.entry.id) { send(pending.entry) }
+                is Pending.Payment -> process(chatId, pending.payment.messageId) { sendPayment(pending.payment) }
+            }
+            if (outcome == Outcome.Later) return false
         }
         return true
     }
 
-    private suspend fun process(entry: ProductOutboxEntry): Outcome = try {
-        staging.holdingWorker(entry.chatId) { send(entry) }
+    private suspend fun process(chatId: ChatId, id: ChatMessageId, block: suspend () -> Outcome): Outcome = try {
+        staging.holdingWorker(chatId) { block() }
     } catch (error: CancellationException) {
         throw error
     } catch (error: Exception) {
-        Timber.w(error, "truapi.chat.stage %s goes again later", entry.id)
+        Timber.w(error, "truapi.chat.stage %s goes again later", id)
         Outcome.Later
+    }
+
+    /** Sends a payment that the host kept with its coins, under its id, until the product has it. */
+    private suspend fun sendPayment(payment: ProductChatPayment): Outcome {
+        val querying = rooms.querying(payment.chatId) ?: return Outcome.Later
+        val action = ChatUserActionModel.SendPayment(payment.messageId, payment.timestamp, payment.totalValue, payment.coinKeys)
+        val result = querying.userAction(payment.chatId, action)
+        val error = result.exceptionOrNull()
+        if (error != null) return paymentFailed(payment, error)
+
+        // An open room shows the message that the product made before the pending payment leaves it.
+        (result.getOrNull() as? ChatUserActionOutcome.MessageCreated)?.let { created ->
+            feedListeners.deliver(payment.chatId, ProductFeedUpdateModel.New(created.message))
+        }
+        payments.setDelivery(payment.messageId, ProductChatPayment.Delivery.DELIVERED)
+        Timber.i("truapi.chat.payment %s sent", payment.messageId)
+        return Outcome.Sent
+    }
+
+    // As a message of the outbox, except that the payment stays with the host: its coins are handed off already.
+    private suspend fun paymentFailed(payment: ProductChatPayment, error: Throwable): Outcome {
+        if (error is CancellationException) throw error
+        Timber.w(error, "truapi.chat.payment %s not sent", payment.messageId)
+
+        return when (error) {
+            is ProductChatQueryException.Rejected,
+            is ProductChatQueryException.UnknownRoom -> {
+                payments.setDelivery(payment.messageId, ProductChatPayment.Delivery.REFUSED)
+                Outcome.Failed
+            }
+
+            is ProductChatQueryException.Failed,
+            is ProductChatQueryException.UnknownMessage,
+            is ProductChatQueryException.NotAvailable -> {
+                if (payments.countRefusal(payment.messageId) < MAX_REFUSALS) return Outcome.Later
+                payments.setDelivery(payment.messageId, ProductChatPayment.Delivery.REFUSED)
+                Outcome.Failed
+            }
+
+            else -> Outcome.Later
+        }
     }
 
     private suspend fun send(entry: ProductOutboxEntry): Outcome {

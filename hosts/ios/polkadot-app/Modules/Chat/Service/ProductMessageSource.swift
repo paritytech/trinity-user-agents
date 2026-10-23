@@ -58,6 +58,9 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     let outbox: ProductOutbox
     /// Takes the photos and the videos of the contact that the window shows.
     let downloads: ProductMediaDownloads?
+    /// The payments of the room that the host keeps. Their payments of the user show at the end of the window until
+    /// the product has them, and the transfer bubbles read the state of each payment.
+    let payments: ProductChatPayments?
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
@@ -65,6 +68,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     var olderTask: Task<ChatPageOutcome, Never>?
     var newerTask: Task<ChatPageOutcome, Never>?
     var outboxTask: Task<Void, Never>?
+    var paymentsTask: Task<Void, Never>?
 
     var pages: [Page] = []
     var messages: [String: ChatMessage] = [:]
@@ -72,6 +76,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     var uploads: [String: ProductOutgoingMessage] = [:]
     /// The messages of the user in the outbox, which the product does not have yet, oldest first.
     var pending: [String] = []
+    /// The state of the transfer of each payment of the room, by message id.
+    var paymentStates: [String: Chat.LocalMessage.Content.Transfer.State] = [:]
     /// The pages that the window dropped at each end. The last page is next to the window.
     var droppedOlder: [ChatPageAnchor] = []
     var droppedNewer: [ChatPageAnchor] = []
@@ -101,6 +107,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
         outbox: ProductOutbox? = nil,
         downloads: ProductMediaDownloads? = nil,
+        payments: ProductChatPayments? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -113,6 +120,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         // A room without the outbox of the app sends through an outbox of its own.
         self.outbox = outbox ?? .inMemory(querying: querying, logger: logger)
         self.downloads = downloads
+        self.payments = payments
         self.logger = logger
         subject = AsyncCurrentValueSubject(MessageListSnapshot(
             messages: [],
@@ -126,6 +134,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         olderTask?.cancel()
         newerTask?.cancel()
         outboxTask?.cancel()
+        paymentsTask?.cancel()
     }
 
     // MARK: - ProductFeedListening
@@ -167,6 +176,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         }
 
         await followOutbox()
+        await followPayments()
         emit()
 
         firstPageTask = Task { [weak self] in

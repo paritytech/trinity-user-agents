@@ -332,3 +332,21 @@ pub struct HostPersonChatHistoryExportResponse {
 /// Request to tell the host that the staged history is imported.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostPersonChatHistoryImportedRequest {}
+
+/// Request to hand the host the coins of a payment the contact sent, for it
+/// to claim with its own coinage flow.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, derive_more::Debug)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct HostPersonChatPaymentReceivedRequest {
+	/// The room of the chat product that holds the payment message.
+	pub room_id: String,
+	/// The id of the payment message: the id the host keeps the claim under.
+	pub message_id: String,
+	/// Milliseconds since the Unix epoch when the contact paid.
+	pub timestamp: u64,
+	/// The sum of the coins the message names, in the smallest unit.
+	pub total_value: u128,
+	/// The 64-byte sr25519 secret key of each coin.
+	#[debug("{} keys", coin_keys.len())]
+	pub coin_keys: Vec<Vec<u8>>,
+}

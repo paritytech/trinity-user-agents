@@ -10,6 +10,7 @@ use crate::{
 		HostPersonChatHopDownloadRequest, HostPersonChatHopDownloadResponse,
 		HostPersonChatHopUploadRequest, HostPersonChatHopUploadResponse,
 		HostPersonChatNotifyPeerRequest, HostPersonChatNotifyPeerResponse,
+		HostPersonChatPaymentReceivedRequest, HostPersonChatPaymentReceivedResponse,
 		HostPersonChatPrepareDeliveryRequest, HostPersonChatPrepareDeliveryResponse,
 		HostPersonChatProveChatRequestRequest, HostPersonChatProveChatRequestResponse,
 		HostPersonChatProveDeliveryRequest, HostPersonChatProveDeliveryResponse,
@@ -307,6 +308,30 @@ pub trait PersonChat: Send + Sync {
 		_cx: &CallContext,
 		_request: HostPersonChatHistoryImportedRequest,
 	) -> Result<HostPersonChatHistoryImportedResponse, CallError<HostPersonChatError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Hand the host the coin keys of a payment the contact sent, for it to
+	/// claim with its own coinage flow under the message id. Calling again
+	/// for the same message changes nothing. A host without coinage answers
+	/// `Unsupported`, and the product keeps the keys.
+	///
+	/// ```ts
+	/// const result = await truapi.personChat.paymentReceived({
+	///   roomId: "dm-ab",
+	///   messageId: "6f1d0c52-3a0e-4c8b-9a7e-2d4b5f1e8c90",
+	///   timestamp: BigInt(Date.now()),
+	///   totalValue: 1_000_000n,
+	///   coinKeys: [`0x${"11".repeat(64)}`],
+	/// });
+	/// console.log("paymentReceived ok:", result.isOk());
+	/// ```
+	#[wire(id = 15)]
+	async fn payment_received(
+		&self,
+		_cx: &CallContext,
+		_request: HostPersonChatPaymentReceivedRequest,
+	) -> Result<HostPersonChatPaymentReceivedResponse, CallError<HostPersonChatError>> {
 		Err(CallError::unavailable())
 	}
 }

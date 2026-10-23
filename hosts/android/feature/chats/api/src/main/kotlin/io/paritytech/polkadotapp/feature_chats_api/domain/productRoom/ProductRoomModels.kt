@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_api.domain.productRoom
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 
 /** The reserved participant ids of Chat Extension v2. */
@@ -86,6 +87,18 @@ sealed interface ChatUserActionModel {
     data object Unblock : ChatUserActionModel
 
     data object Leave : ChatUserActionModel
+
+    /**
+     * A coinage payment of the user to the contact of a room of the chat product. The host chose [messageId] and
+     * committed the handoff of the coins under it; the product sends the native payment message under that id and
+     * [timestamp], and a second `SendPayment` with the same id sends nothing new.
+     */
+    class SendPayment(
+        val messageId: String,
+        val timestamp: Long,
+        val totalValue: Balance,
+        val coinKeys: List<ByteArray>,
+    ) : ChatUserActionModel
 }
 
 sealed interface ChatUserActionOutcome {

@@ -3,6 +3,7 @@ import DurableTransactions
 import ExtrinsicService
 import Foundation
 import FoundationExt
+import StructuredConcurrency
 
 /// A payment's recycler unload, read back from the ledger: the vouchers it redeems and the coins it
 /// mints, in order.
@@ -83,7 +84,10 @@ struct UnloadRebuild: CoinageRebuild {
             )
         }
 
-        return try await builder.build(unloads, currentDate: dateProvider.read())
+        // The durable executor builds outside any user flow; the origin factory's stall regions need a root.
+        return try await markStallActivity("Build unload") {
+            try await builder.build(unloads, currentDate: dateProvider.read())
+        }
     }
 }
 

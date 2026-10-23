@@ -4,7 +4,9 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
@@ -12,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,6 +28,7 @@ import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPaymentRecord
 import uniffi.truapi.ChatReactionSummary
 import uniffi.truapi.ChatReplyPreview
+import uniffi.truapi.ChatUserAction
 import uniffi.truapi.NativeChatFeedRejection
 import uniffi.truapi.ChatMessage as CoreChatMessage
 
@@ -81,8 +85,22 @@ class ProductChatHostBridgeFeedTest {
         )
         val payment = ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent()
         assertEquals(1_000.toBigInteger(), (payment as ChatMessage.Content.CoinagePayment).totalValue.value)
+        // The host draws its own status over a payment by message id; without one it reads as a native unprocessed payment.
+        assertEquals(ChatMessage.Content.CoinagePayment.Status.Detecting, payment.status)
         // The native Android chat has no legacy Send message.
         assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = true)).toContent() is ChatMessage.Content.Unsupported)
+    }
+
+    @Test
+    fun `a payment of the user goes to the product under the host's id, time, amount and keys`() {
+        val keys = listOf(ByteArray(64) { 4 })
+        val action = ChatUserActionModel.SendPayment("pay-1", timestamp = 1_234L, totalValue = 2_500.intoBalance(), coinKeys = keys).toCore()
+
+        val payment = action as ChatUserAction.SendPayment
+        assertEquals("pay-1", payment.messageId)
+        assertEquals(1_234uL, payment.timestamp)
+        assertEquals("2500", payment.totalValue)
+        assertArrayEquals(keys.single(), payment.coinKeys.single())
     }
 
     @Test

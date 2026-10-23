@@ -10,11 +10,10 @@ interface GetContactsUseCase {
     suspend operator fun invoke(): List<AddressBookContact>
 }
 
-/** A contact as the wallet lists it. Only a native chat with an established chat carries coins today. */
+/** A contact as the wallet lists it. A contact with an established chat is paid through the chat. */
 data class AddressBookContact(
     val accountId: AccountId,
     val username: String?,
     val blocked: Boolean,
     val established: Boolean,
-    val paysViaChat: Boolean,
 )

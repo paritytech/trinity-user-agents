@@ -59,6 +59,7 @@ import type {
   HostPaymentTopUpRequest,
   HostPaymentTopUpStatusSubscribeError,
   HostPaymentTopUpStatusSubscribeItem,
+  HostPersonChatPaymentReceivedRequest,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
@@ -423,6 +424,11 @@ export interface HostChatContact {
    */
   blocked: boolean;
 }
+
+/**
+ * What a host did with the coin keys of a received chat payment.
+ */
+export type HostChatPaymentReceipt = "Accepted" | "Unsupported";
 
 /**
  * How the host shows the chat pushes of one contact while no worker runs:
@@ -1182,6 +1188,13 @@ export const HostChatContact: S.Codec<HostChatContact> = S.lazy(
       roomId: S.str,
       blocked: S.bool,
     }) as S.Codec<HostChatContact>,
+);
+
+/**
+ * What a host did with the coin keys of a received chat payment.
+ */
+export const HostChatPaymentReceipt: S.Codec<HostChatPaymentReceipt> = S.lazy(
+  (): S.Codec<HostChatPaymentReceipt> => S.Status("Accepted", "Unsupported"),
 );
 
 /**
@@ -2249,9 +2262,10 @@ export interface Permissions {
  * Host services of the person-to-person chat product that only the app
  * knows or keeps: the HOP nodes of the network's Bulletin chain (its chain
  * registry's `externalApi.hop`), the devices paired with the wallet, the
- * chat's contacts for the rest of the app, and the native chat history it
- * staged for the chat product. Optional; a host without it leaves the
- * `PersonChat` HOP, contact and history calls `Unsupported`.
+ * chat's contacts for the rest of the app, the native chat history it
+ * staged for the chat product, and the claim of the coins contacts pay with.
+ * Optional; a host without it leaves the `PersonChat` HOP, contact, history
+ * and payment calls `Unsupported`.
  */
 export interface PersonChatPlatform {
   /**
@@ -2292,6 +2306,21 @@ export interface PersonChatPlatform {
    * `product` imported the staged history: the host may drop it.
    */
   historyImported(product: ProductContext): Promise<void>;
+
+  /**
+   * Take the coin keys of a payment a contact sent in a room of `product`,
+   * and claim the coins with the host's own coinage flow, keyed by the
+   * message id, which is also what the host draws the claim state of the
+   * room's `Payment` message from. Idempotent by message id: a later call
+   * for a message the host took changes nothing.
+   *
+   * Defaults to `HostChatPaymentReceipt::Unsupported`, for a host
+   * without coinage.
+   */
+  paymentReceived?(
+    product: ProductContext,
+    payment: HostPersonChatPaymentReceivedRequest,
+  ): Promise<HostChatPaymentReceipt>;
 }
 
 /**

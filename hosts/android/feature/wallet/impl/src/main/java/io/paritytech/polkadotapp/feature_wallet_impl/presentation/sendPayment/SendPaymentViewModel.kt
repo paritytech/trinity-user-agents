@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.toParcel
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.error.asStartChatError
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
@@ -46,7 +45,6 @@ class SendPaymentViewModel @Inject constructor(
     private val clipboardService: ClipboardService,
     private val getContactsUseCase: GetContactsUseCase,
     private val chatStarter: ChatStarter,
-    private val personChatMode: PersonChatMode,
     addressInputMixinFactory: AddressInputMixin.Factory,
     usernameAddressConverterFactory: UsernameAddressConverterFactory,
     parseAddressConverterFactory: ParseAddressConverterFactory,
@@ -111,15 +109,10 @@ class SendPaymentViewModel @Inject constructor(
     }
 
     override fun onRecipientSelect(recipient: PaymentSearchResultUiModel) = launchUnit {
-        // The native chat does not run beside the chat product, which carries no coins yet (HX2, M9).
-        if (personChatMode.isProductChat()) {
-            _messageEvents.trySend(RCommon.string.send_payment_chat_product_unavailable)
-            return@launchUnit
-        }
         val accountId = recipient.extractedAddress.accountId
         val contact = contacts.first().find { it.accountId == accountId }
 
-        if (contact != null && contact.paysViaChat) {
+        if (contact != null && contact.established) {
             walletRouter.openSendEnterAmount(
                 SendEnterAmountPayload(
                     showTransactionResult = true,

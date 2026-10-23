@@ -50,6 +50,9 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private var isInitialScrollDone = false
     private var isAutoScrolling = false
     private var pendingSendScroll = false
+    /// An update scrolled to the bottom while the chat was off screen, under a full screen flow such as a payment:
+    /// its cells had no real heights yet, so the chat scrolls to the bottom again when it is back on screen.
+    private var scrollsToBottomOnScreen = false
     private var scrollDownButtonVisible = false
     private var scrollToReactionButtonVisible = false
     private var dismissedReactionTargetId: String?
@@ -65,6 +68,18 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             self?.provideSupplementaryView(for: collectionView, indexPath: indexPath, kind: kind)
         }
         super.baseSetup()
+    }
+
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, scrollsToBottomOnScreen else { return }
+        scrollsToBottomOnScreen = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, window != nil else { return }
+            collectionView.layoutIfNeeded()
+            scrollToBottom(animated: false)
+            updateScrollDownButtonVisibility()
+        }
     }
 
     override public func setupViews() {
@@ -510,6 +525,9 @@ private extension ChatViewLayout {
 
         let closure: () -> Void = { [weak self] in
             guard let self else { return }
+            if isInitialScrollDone, window == nil {
+                scrollsToBottomOnScreen = true
+            }
             performScrollToBottom(animated: animated)
             markInitialScrollDone()
             updateScrollDownButtonVisibility()
@@ -766,6 +784,7 @@ extension ChatViewLayout: UICollectionViewDelegate {
 
     public func scrollViewWillBeginDragging(_: UIScrollView) {
         isAutoScrolling = false
+        scrollsToBottomOnScreen = false
     }
 
     public func collectionView(

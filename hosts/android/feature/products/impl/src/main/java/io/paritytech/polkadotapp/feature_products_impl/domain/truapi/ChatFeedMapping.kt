@@ -59,12 +59,12 @@ fun ChatMessageBody.toContent(): ChatMessage.Content = when (this) {
     is ChatMessageBody.Payment -> if (v1.legacy) {
         ChatMessage.Content.Unsupported(ByteArray(0))
     } else {
-        // The product claims the coins of a payment itself, so the room shows the payment as transferred.
-        val amount = Balance(BigInteger(v1.amount))
+        // The host keeps the coins and the status of a payment under its message id, and the room draws that status
+        // over this one. Until the host has it, the payment reads as a native payment message that is not processed yet.
         ChatMessage.Content.CoinagePayment(
-            totalValue = amount,
+            totalValue = Balance(BigInteger(v1.amount)),
             coinKeys = emptyList(),
-            status = ChatMessage.Content.CoinagePayment.Status.Transferred(amount),
+            status = ChatMessage.Content.CoinagePayment.Status.Detecting,
         )
     }
 }
@@ -140,6 +140,7 @@ fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
     ChatUserActionModel.Block -> ChatUserAction.Block
     ChatUserActionModel.Unblock -> ChatUserAction.Unblock
     ChatUserActionModel.Leave -> ChatUserAction.Leave
+    is ChatUserActionModel.SendPayment -> ChatUserAction.SendPayment(messageId, timestamp.toULong(), totalValue.value.toString(), coinKeys)
 }
 
 fun ProductChatMessagesQueryItem.toModel() =

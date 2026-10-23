@@ -226,9 +226,16 @@ struct ChatQueryTests {
             messageId: nil,
             timestamp: nil
         )
+        let paid = ChatUserAction.sendPayment(
+            messageId: "payment",
+            timestamp: 1_700_000_000_000,
+            totalValue: "5000000",
+            coinKeys: [Data(repeating: 0x11, count: 64)]
+        )
         let seen = ChatUserAction.seen(messageId: "message")
 
         #expect(ChatQueryTimeout.timeout(for: sent) == .seconds(30))
+        #expect(ChatQueryTimeout.timeout(for: paid) == .seconds(30))
         #expect(ChatQueryTimeout.timeout(for: seen) == .seconds(10))
     }
 

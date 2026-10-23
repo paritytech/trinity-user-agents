@@ -324,8 +324,8 @@ pub trait Chat: Send + Sync {
 
 	/// Apply what the user did in a room the product keeps. Send one item,
 	/// then the host closes the query: the stored message for a new message,
-	/// under the `messageId` the host chose when it chose one, or an
-	/// acknowledgement.
+	/// under the `messageId` the host chose when it chose one, or for a
+	/// payment, under its `messageId`; or an acknowledgement.
 	///
 	/// ```ts
 	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {

@@ -38,6 +38,7 @@ import io.paritytech.polkadotapp.database.dao.MessageRevisionDao
 import io.paritytech.polkadotapp.database.dao.MetaAccountDao
 import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProcessedChatMessageDao
+import io.paritytech.polkadotapp.database.dao.ProductChatPaymentDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
@@ -121,6 +122,7 @@ import io.paritytech.polkadotapp.database.model.MetaAccountLocal
 import io.paritytech.polkadotapp.database.model.PocketCardFaceLocal
 import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import io.paritytech.polkadotapp.database.model.ProcessedChatMessageLocal
+import io.paritytech.polkadotapp.database.model.ProductChatPaymentLocal
 import io.paritytech.polkadotapp.database.model.ProductFundingOperationLocal
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.database.model.ProductLocal
@@ -147,7 +149,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 74,
+    version = 75,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -203,6 +205,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         PocketCardLocal::class,
         PocketCardFaceLocal::class,
         ChatRoomDeclarationsLocal::class,
+        ProductChatPaymentLocal::class,
     ],
     autoMigrations = [
         // Add ChatMessageReactionLocal
@@ -297,6 +300,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         // Add the contact of a room to chat_room_declarations, and drop the parts of Chat Extension v2 that the app
         // does not draw any more: the avatar and the user state of a room, chat_bots and chat_messages.originParticipantId
         AutoMigration(from = 73, to = 74, spec = Migration73To74Spec::class),
+        // Add product_chat_payments (the payments of the rooms of the chat product, keyed by message id)
+        AutoMigration(from = 74, to = 75),
     ]
 )
 @TypeConverters(
@@ -415,6 +420,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chatRoomDao(): ChatRoomDao
 
     abstract fun chatRoomDeclarationsDao(): ChatRoomDeclarationsDao
+
+    abstract fun productChatPaymentDao(): ProductChatPaymentDao
 
     abstract fun fileUploadDao(): FileUploadDao
 

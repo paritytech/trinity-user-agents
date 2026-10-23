@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "cf1eff64a1dadb54";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "11c4d032a50fb7e3";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -860,6 +860,12 @@ pub const PERSON_CHAT_HISTORY_IMPORTED: MethodIds = MethodIds {
     method_id: 14,
 };
 
+/// Wire discriminants for `person_chat_payment_received`.
+pub const PERSON_CHAT_PAYMENT_RECEIVED: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 15,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -1407,5 +1413,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "person_chat_history_imported",
         kind: WireKind::Request(PERSON_CHAT_HISTORY_IMPORTED),
+    },
+    WireEntry {
+        method: "person_chat_payment_received",
+        kind: WireKind::Request(PERSON_CHAT_PAYMENT_RECEIVED),
     },
 ];

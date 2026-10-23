@@ -18,6 +18,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.FakeProductChatPaymentStore
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
@@ -40,6 +42,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.math.BigInteger
@@ -61,10 +66,14 @@ class CoinagePaymentProcessingExtensionTest {
     private val claimReceivedCoinsUseCase: ClaimReceivedCoinsUseCase = mockk()
     private val balanceConverterUseCase: CoinageBalanceConverterUseCase = mockk()
 
+    private val productPayments = FakeProductChatPaymentStore()
+
     private val extension = CoinagePaymentProcessingExtension(
         paymentStatusUseCase = paymentStatusUseCase,
         claimReceivedCoinsUseCase = claimReceivedCoinsUseCase,
         balanceConverterUseCase = balanceConverterUseCase,
+        productPayments = productPayments,
+        productPaymentDelivery = mockk(relaxed = true),
     )
 
     /** The outgoing path derives a keypair per coin key; only the seam matters, and the real one needs JNI. */
@@ -562,6 +571,83 @@ class CoinagePaymentProcessingExtensionTest {
         }
     }
 
+    // ---- payments of the chat product ----
+
+    /** The record of a payment of the chat product runs the claim of a payment message: same group, same week. */
+    @Test
+    fun `a payment of the chat product is claimed under its message id within a week of its time`() = runTest {
+        givenClaimReports(CoinageTransferDetection.Claiming, CoinageTransferDetection.Claimed(FULL, finalized = true))
+        productPayments.put(productPayment(incoming = true))
+
+        startWork()
+
+        val sentAt = Instant.fromEpochMilliseconds(SENT_AT)
+        coVerify(exactly = 1) {
+            claimReceivedCoinsUseCase.claim(any(), CoinageOperationGroupId("chat-claim:$PRODUCT_MESSAGE"), sentAt + 7.days)
+        }
+        assertEquals(
+            listOf(CoinagePayment.Status.Detected(FULL), CoinagePayment.Status.Transferred(FULL)),
+            productPayments.statusWrites.map { it.second },
+        )
+        assertTrue(productPayments[PRODUCT_MESSAGE]!!.settled)
+    }
+
+    /** A claim still working leaves the record open, as it leaves a payment message unprocessed. */
+    @Test
+    fun `a payment of the chat product stays open while its claim works and is claimed once`() = runTest {
+        givenClaimReports(CoinageTransferDetection.ClaimingRest(PARTIAL)) { awaitCancellation() }
+        productPayments.put(productPayment(incoming = true))
+
+        startWork()
+
+        // Each status write lists the record again; the claim is not started twice.
+        coVerify(exactly = 1) { claimReceivedCoinsUseCase.claim(any(), any(), any()) }
+        assertEquals(CoinagePayment.Status.PartiallyClaimed(PARTIAL), productPayments[PRODUCT_MESSAGE]!!.status)
+        assertFalse(productPayments[PRODUCT_MESSAGE]!!.settled)
+    }
+
+    /** An outgoing payment of the chat product reads the coins as a sent payment message does. */
+    @Test
+    fun `an outgoing payment of the chat product shows what the peer did with the coins`() = runTest {
+        givenPeerHasTaken(claimed = 1, awaiting = 1, detecting = 0, failed = 0, finalized = true)
+        productPayments.put(productPayment(incoming = false))
+
+        startWork()
+
+        assertEquals(CoinagePayment.Status.Detected(PARTIAL + PARTIAL), productPayments[PRODUCT_MESSAGE]!!.status)
+        assertFalse(productPayments[PRODUCT_MESSAGE]!!.settled)
+        coVerify(exactly = 0) { claimReceivedCoinsUseCase.claim(any(), any(), any()) }
+    }
+
+    @Test
+    fun `an outgoing payment of the chat product closes once the peer took every coin`() = runTest {
+        givenPeerHasTaken(claimed = 2, awaiting = 0, detecting = 0, failed = 0, finalized = true)
+        productPayments.put(productPayment(incoming = false))
+
+        startWork()
+
+        assertEquals(CoinagePayment.Status.Transferred(PARTIAL + PARTIAL), productPayments[PRODUCT_MESSAGE]!!.status)
+        assertTrue(productPayments[PRODUCT_MESSAGE]!!.settled)
+    }
+
+    /**
+     * A product that pushes a payment to a room whose messages the host keeps sends no keys. Claiming nothing would
+     * settle it as an invalid transaction, so it is left alone.
+     */
+    @Test
+    fun `a payment without keys in a room the host keeps for a product is never claimed`() = runTest {
+        val message = incomingPayment().copy(
+            chatId = ChatId.fromChatBotId("ProductBot_some.product"),
+            content = CoinagePayment(totalValue = FULL, coinKeys = emptyList(), status = CoinagePayment.Status.Detecting),
+        )
+
+        startWork(message)
+
+        coVerify(exactly = 0) { claimReceivedCoinsUseCase.claim(any(), any(), any()) }
+        coVerify(exactly = 0) { context.modifyMessage(any(), any(), any()) }
+        coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
+    }
+
     // ---- harness ----
 
     private fun startWork(vararg unprocessed: ChatMessage, arriving: List<ChatMessage> = emptyList()) {
@@ -626,6 +712,19 @@ class CoinagePaymentProcessingExtensionTest {
 
     private fun outgoingPayment() = incomingPayment().copy(origin = ChatMessageOrigin.User)
 
+    private fun productPayment(incoming: Boolean) = ProductChatPayment(
+        messageId = PRODUCT_MESSAGE,
+        chatId = ChatId.fromChatBotId("ProductBot_chat.paseo"),
+        incoming = incoming,
+        timestamp = SENT_AT,
+        totalValue = FULL,
+        coinKeys = listOf(byteArrayOf(1), byteArrayOf(2)),
+        delivery = if (incoming) null else ProductChatPayment.Delivery.DELIVERED,
+        refusals = 0,
+        status = CoinagePayment.Status.Detecting,
+        settled = false,
+    )
+
     private fun incomingPayment() = ChatMessage(
         id = "message-1",
         chatId = ChatId.fromContact(byteArrayOf(9).intoAccountId()),
@@ -647,6 +746,7 @@ class CoinagePaymentProcessingExtensionTest {
 
     private companion object {
         const val SENT_AT = 1_700_000_000_000L
+        const val PRODUCT_MESSAGE = "product-message-1"
         const val DERIVATION_FILE = "io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferMemoKt"
 
         val FULL = BigInteger.valueOf(100).intoBalance()

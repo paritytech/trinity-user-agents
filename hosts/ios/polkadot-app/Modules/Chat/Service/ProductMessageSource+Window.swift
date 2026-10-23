@@ -160,7 +160,12 @@ extension ProductMessageSource {
                     false
                 }
 
-            return message.localMessage(chatId: chatId, extensionId: productId, isSeen: isSeen)
+            return message.localMessage(
+                chatId: chatId,
+                extensionId: productId,
+                isSeen: isSeen,
+                transferState: paymentStates[id]
+            )
         }
 
         if let downloads {

@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSou
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.FakeProductChatPaymentStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
@@ -230,5 +231,6 @@ class ChatFeedInteractorProductRoomTest {
         productAttachmentEncoder = productAttachmentEncoder,
         attachmentStager = attachmentStager,
         personChatRooms = personChatRooms,
+        productPayments = FakeProductChatPaymentStore(),
     )
 }

@@ -14,6 +14,8 @@ struct ProductRoomServices: Sendable {
     let outbox: ProductOutbox?
     /// Takes the photos and the videos of the contact. Nil takes none.
     let downloads: ProductMediaDownloads?
+    /// The payments that the host keeps for the rooms. Nil shows the payments as the product gives them.
+    let payments: ProductChatPayments?
 
     init(
         querying: ProductChatQuerying?,
@@ -22,7 +24,8 @@ struct ProductRoomServices: Sendable {
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: ProductMessageSource.Settings = .init(),
         outbox: ProductOutbox? = nil,
-        downloads: ProductMediaDownloads? = nil
+        downloads: ProductMediaDownloads? = nil,
+        payments: ProductChatPayments? = nil
     ) {
         self.querying = querying
         self.lifecycle = lifecycle
@@ -31,6 +34,7 @@ struct ProductRoomServices: Sendable {
         self.settings = settings
         self.outbox = outbox
         self.downloads = downloads
+        self.payments = payments
     }
 
     /// The services that the bot of a product gives. A bot conforms to ``ProductChatQuerying`` and
@@ -40,7 +44,8 @@ struct ProductRoomServices: Sendable {
             querying: bot as? ProductChatQuerying,
             lifecycle: (bot as? ChatRoomLifecycle) ?? NoChatRoomLifecycle(),
             outbox: .shared,
-            downloads: .shared
+            downloads: .shared,
+            payments: .shared
         )
     }
 }
@@ -164,6 +169,7 @@ private extension ChatRoomSourceContext {
             settings: settings,
             outbox: services.outbox,
             downloads: services.downloads,
+            payments: services.payments,
             logger: logger
         )
         registration = services.feedListeners.register(source, for: chatId)

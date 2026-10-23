@@ -9,6 +9,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductOutboxEntry
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.toChatMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.toPendingMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.toPendingMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.withPaymentStatus
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 
 /**
@@ -51,6 +54,24 @@ internal fun ChatSummary.withPendingMessage(
     // The row shows the newest text of the message, with the edit that waits with it.
     val shown = entry.copy(text = entry.editedText ?: entry.text)
     return copy(preview = ChatPreview.Message(shown.toPendingMessage(preview)), timestamp = entry.createdAt)
+}
+
+/**
+ * The payments of a person chat of the chat product in its row: the newest message reads with the status that the host
+ * keeps for its payment, as the native row reads the status of a payment message, and a payment that waits for the
+ * product shows at once when it is newer, as the native list shows a message it sends.
+ */
+internal fun ChatSummary.withPayments(payments: List<ProductChatPayment>, policy: ChatRoomPolicy?): ChatSummary {
+    if (payments.isEmpty() || policy?.contact == null) return this
+
+    val pending = payments.filter { !it.incoming && it.isUndelivered }.maxByOrNull { it.timestamp }
+    if (pending != null && pending.timestamp >= timestamp) {
+        return copy(preview = ChatPreview.Message(pending.toPendingMessage()), timestamp = pending.timestamp)
+    }
+
+    val message = (preview as? ChatPreview.Message)?.message ?: return this
+    val payment = payments.firstOrNull { it.messageId == message.id } ?: return this
+    return copy(preview = ChatPreview.Message(message.withPaymentStatus(payment)))
 }
 
 private fun unreadBadge(count: Int): ChatSummaryBadge = if (count > 0) ChatSummaryBadge.Unread(count) else ChatSummaryBadge.None

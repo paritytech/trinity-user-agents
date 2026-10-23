@@ -55,10 +55,11 @@ use truapi::{
 		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
 		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
 		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem,
+		HostPersonChatPaymentReceivedRequest, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductChatEditHistoryQueryItem,
@@ -636,6 +637,12 @@ pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
 /// The longest media signal of a `ChatRoomEvent::CallSignal`.
 pub const CHAT_CALL_SIGNAL_MAX_BYTES: usize = 64 * 1024;
 
+/// The length of each coin key of a chat payment: an sr25519 secret key.
+pub const CHAT_PAYMENT_COIN_KEY_BYTES: usize = 64;
+
+/// The most coins one chat payment carries.
+pub const CHAT_PAYMENT_COINS_MAX: usize = 1024;
+
 /// Largest accepted number of `set_room_call` calls for one room in one
 /// second.
 pub const CHAT_CALL_UPDATES_PER_SECOND: u32 = 2;
@@ -710,7 +717,8 @@ pub fn validate_chat_room_event(event: ChatRoomEvent) -> Result<ChatRoomEvent, C
 }
 
 /// Validate a user action a host sends to the product: the id a host chose
-/// for a new message is an identifier like every message id.
+/// for a new message or a payment is an identifier like every message id,
+/// and a payment carries well-formed coin keys.
 pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserAction, ChatFieldError> {
 	Ok(match action {
 		ChatUserAction::NewMessage { body, reply_to, message_id, timestamp } => {
@@ -723,8 +731,33 @@ pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserActio
 				timestamp,
 			}
 		},
+		ChatUserAction::SendPayment { message_id, timestamp, total_value, coin_keys } => {
+			validate_chat_payment_coin_keys(&coin_keys)?;
+			ChatUserAction::SendPayment {
+				message_id: normalize_chat_identifier("messageId", &message_id)?,
+				timestamp,
+				total_value,
+				coin_keys,
+			}
+		},
 		action => action,
 	})
+}
+
+/// Validate the coin keys of a chat payment: at least one, at most
+/// [`CHAT_PAYMENT_COINS_MAX`], each an sr25519 secret key.
+pub fn validate_chat_payment_coin_keys(coin_keys: &[Vec<u8>]) -> Result<(), ChatFieldError> {
+	let field = "coinKeys";
+	if coin_keys.is_empty() {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if coin_keys.len() > CHAT_PAYMENT_COINS_MAX {
+		return Err(ChatFieldError::TooMany { field, limit: CHAT_PAYMENT_COINS_MAX });
+	}
+	if coin_keys.iter().any(|key| key.len() != CHAT_PAYMENT_COIN_KEY_BYTES) {
+		return Err(ChatFieldError::WrongLength { field, length: CHAT_PAYMENT_COIN_KEY_BYTES });
+	}
+	Ok(())
 }
 
 /// Largest accepted payload of an opened link, in bytes of UTF-8.
@@ -2642,6 +2675,45 @@ mod tests {
 	}
 
 	#[test]
+	fn a_payment_the_user_sends_carries_one_message_id_and_real_coin_keys() {
+		let payment = |message_id: &str, coin_keys: Vec<Vec<u8>>| ChatUserAction::SendPayment {
+			message_id: message_id.to_string(),
+			timestamp: 1_763_164_800_000,
+			total_value: 5_000_000,
+			coin_keys,
+		};
+		let key = vec![7u8; CHAT_PAYMENT_COIN_KEY_BYTES];
+
+		// The host tracks the payment under this id, so it is screened as an
+		// identifier like any message id.
+		assert_eq!(
+			validate_chat_user_action(payment(" pay-1 ", vec![key.clone()])),
+			Ok(payment("pay-1", vec![key.clone()]))
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay\u{200d}-1", vec![key.clone()])),
+			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+		// A payment with no coins, too many coins or a key that is no sr25519
+		// secret would reach the contact as a payment nobody can claim.
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", Vec::new())),
+			Err(ChatFieldError::Empty { field: "coinKeys" })
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", vec![key; CHAT_PAYMENT_COINS_MAX + 1])),
+			Err(ChatFieldError::TooMany { field: "coinKeys", limit: CHAT_PAYMENT_COINS_MAX })
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", vec![vec![7u8; 32]])),
+			Err(ChatFieldError::WrongLength { field: "coinKeys", length: 64 })
+		);
+		// The keys spend the coins, so a logged action never shows them.
+		let printed = format!("{:?}", payment("pay-1", vec![vec![0xab; 64]]));
+		assert!(printed.contains("1 keys") && !printed.contains("171"), "{printed}");
+	}
+
+	#[test]
 	fn auth_session_storage_key_has_stable_encoding() {
 		assert_eq!(CoreStorageKey::AuthSession.encode(), [0]);
 	}
@@ -4395,9 +4467,10 @@ pub struct HostPushTokens {
 /// Host services of the person-to-person chat product that only the app
 /// knows or keeps: the HOP nodes of the network's Bulletin chain (its chain
 /// registry's `externalApi.hop`), the devices paired with the wallet, the
-/// chat's contacts for the rest of the app, and the native chat history it
-/// staged for the chat product. Optional; a host without it leaves the
-/// `PersonChat` HOP, contact and history calls `Unsupported`.
+/// chat's contacts for the rest of the app, the native chat history it
+/// staged for the chat product, and the claim of the coins contacts pay with.
+/// Optional; a host without it leaves the `PersonChat` HOP, contact, history
+/// and payment calls `Unsupported`.
 #[async_trait]
 pub trait PersonChatPlatform: Send + Sync {
 	/// The `wss://` URLs of the HOP nodes the app trusts: a sender picks one,
@@ -4430,6 +4503,34 @@ pub trait PersonChatPlatform: Send + Sync {
 
 	/// `product` imported the staged history: the host may drop it.
 	async fn history_imported(&self, product: &ProductContext) -> Result<(), GenericError>;
+
+	/// Take the coin keys of a payment a contact sent in a room of `product`,
+	/// and claim the coins with the host's own coinage flow, keyed by the
+	/// message id, which is also what the host draws the claim state of the
+	/// room's `Payment` message from. Idempotent by message id: a later call
+	/// for a message the host took changes nothing.
+	///
+	/// Defaults to [`HostChatPaymentReceipt::Unsupported`], for a host
+	/// without coinage.
+	async fn payment_received(
+		&self,
+		_product: &ProductContext,
+		_payment: HostPersonChatPaymentReceivedRequest,
+	) -> Result<HostChatPaymentReceipt, GenericError> {
+		Ok(HostChatPaymentReceipt::Unsupported)
+	}
+}
+
+/// What a host did with the coin keys of a received chat payment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostChatPaymentReceipt {
+	/// The host keeps the keys and claims the coins, or already took them for
+	/// this message.
+	Accepted,
+	/// The host has no coinage: the product keeps the keys, and the user
+	/// cannot claim the coins on this device.
+	Unsupported,
 }
 
 /// A part of the native chat history a host staged for the chat product.

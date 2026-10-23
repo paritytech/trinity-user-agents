@@ -250,6 +250,8 @@ class ProductChatExtension(
             ChatUserActionModel.Block,
             ChatUserActionModel.Unblock,
             ChatUserActionModel.Leave,
+            // The host chose the id of a payment, and the product sends the payment under it.
+            is ChatUserActionModel.SendPayment,
             -> this
         }
     }

@@ -172,7 +172,7 @@ struct TrUAPIProductHopUploads: ProductHopUploading {
 final class ProductOutboxDelivery: ProductOutboxDelivering, @unchecked Sendable {
     static let shared = ProductOutboxDelivery()
 
-    private let registry = OSAllocatedUnfairLock<ChatExtensionsRegistering?>(uncheckedState: nil)
+    fileprivate let registry = OSAllocatedUnfairLock<ChatExtensionsRegistering?>(uncheckedState: nil)
 
     /// The registry that gives the bot of each product. The app attaches it when it starts.
     func attach(registry: ChatExtensionsRegistering) {
@@ -192,6 +192,17 @@ final class ProductOutboxDelivery: ProductOutboxDelivering, @unchecked Sendable 
     struct ProductUnavailable: Error {}
 }
 
+extension ProductOutboxDelivery: ProductPaymentDelivering {
+    func deliver(_ payment: ProductChatPayment) async throws -> ChatMessage? {
+        let bot = registry.withLockUnchecked { $0 }?.getChatExtensionBot(for: payment.productId)
+        guard let querying = bot as? ProductChatQuerying else {
+            throw ProductUnavailable()
+        }
+
+        return try await ProductQueryingDelivery(querying: querying).deliver(payment)
+    }
+}
+
 /// Gives the messages to the product through its queries: `NewMessage` under the id of the message.
 struct ProductQueryingDelivery: ProductOutboxDelivering {
     let querying: ProductChatQuerying
@@ -205,6 +216,30 @@ struct ProductQueryingDelivery: ProductOutboxDelivering {
                     replyTo: message.replyTo,
                     messageId: message.id,
                     timestamp: message.createdAt
+                )
+            ))
+            if case let .messageCreated(created) = answer {
+                return created
+            }
+            return nil
+        } catch let ChatQueryError.actionRefused(.rejected(reason)) {
+            throw ProductOutboxRefusal(reason: reason)
+        }
+    }
+}
+
+/// Gives a payment to the product: `SendPayment` under the id of the payment, which the coinage records of the host
+/// keep too. The product answers a second send of the same id with the same message.
+extension ProductQueryingDelivery: ProductPaymentDelivering {
+    func deliver(_ payment: ProductChatPayment) async throws -> ChatMessage? {
+        do {
+            let answer = try await querying.userAction(ProductChatUserActionRequest(
+                roomId: payment.roomId,
+                action: .sendPayment(
+                    messageId: payment.messageId,
+                    timestamp: payment.timestamp,
+                    totalValue: String(payment.totalValue),
+                    coinKeys: payment.coinKeys
                 )
             ))
             if case let .messageCreated(created) = answer {

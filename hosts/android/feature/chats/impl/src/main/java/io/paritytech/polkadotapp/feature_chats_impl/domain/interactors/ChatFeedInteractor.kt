@@ -78,6 +78,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatM
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPaymentStore
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.withPayments
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductContactInput
@@ -125,6 +127,7 @@ class ChatFeedInteractor @Inject internal constructor(
     private val productAttachmentEncoder: ProductAttachmentEncoder,
     private val attachmentStager: ProductAttachmentStager,
     private val personChatRooms: PersonChatRooms,
+    private val productPayments: ProductChatPaymentStore,
 ) {
     private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
 
@@ -202,13 +205,15 @@ class ChatFeedInteractor @Inject internal constructor(
 
     /**
      * The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). The attachments
-     * that the host stages show at the newest end until the host sends them (07-LATER §7).
+     * that the host stages show at the newest end until the host sends them (07-LATER §7). A payment shows the status
+     * that the host keeps for it.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = combine(
         roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() },
         attachmentStager.observe(chatId),
-    ) { snapshot, outbox -> snapshot.withOutbox(outbox, attachmentStager::preview) }
+        productPayments.observeRoom(chatId),
+    ) { snapshot, outbox, payments -> snapshot.withOutbox(outbox, attachmentStager::preview).withPayments(payments) }
 
     suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
 

@@ -11,7 +11,7 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesCategory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesSection
-import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
+import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.AddressBookContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
@@ -19,6 +19,8 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaymentsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.ParseAddressUsernameConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
+import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
+import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.OFFRAMP_URL
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.ONRAMP_URL
@@ -29,6 +31,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetNev
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedOnce
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedTwice
 import io.paritytech.polkadotapp.test_shared.any
+import io.paritytech.polkadotapp.test_shared.argThat
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +51,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.timeout
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -61,7 +66,6 @@ class SendPaymentViewModelTest {
     private val clipboardService: ClipboardService = mock(ClipboardService::class.java)
     private val getContactsUseCase: GetContactsUseCase = mock(GetContactsUseCase::class.java)
     private val chatStarter: ChatStarter = mock(ChatStarter::class.java)
-    private val personChatMode: PersonChatMode = mock(PersonChatMode::class.java)
     private val addressInputMixinFactory: AddressInputMixin.Factory = mock(AddressInputMixin.Factory::class.java)
     private val addressInputMixin: AddressInputMixin = mock(AddressInputMixin::class.java)
     private val usernameAddressConverterFactory: UsernameAddressConverterFactory =
@@ -101,17 +105,18 @@ class SendPaymentViewModelTest {
         Dispatchers.resetMain()
     }
 
-    // The native chat does not run beside the chat product, which sends no coins yet (HX2, M9).
+    // In both chat modes a contact with an established chat is paid through the chat: the chat product lists those.
     @Test
-    fun `with the chat product a contact is not paid through chat and no native chat starts`() = runBlocking<Unit> {
-        whenever(personChatMode.isProductChat()).thenReturn(true)
+    fun `a contact with an established chat is paid through the chat and no chat opens`() = runBlocking<Unit> {
+        val bob = address("bob")
+        whenever(getContactsUseCase()).thenReturn(listOf(AddressBookContact(bob.accountId, "bob", blocked = false, established = true)))
         val viewModel = createViewModel()
 
-        viewModel.onRecipientSelect(
-            PaymentSearchResultUiModel(address("bob"), AvatarUiModel.Name("bob", AvatarColorScheme.from("bob".encodeToByteArray())))
-        )
+        viewModel.onRecipientSelect(PaymentSearchResultUiModel(bob, AvatarUiModel.Name("bob", AvatarColorScheme.from("bob".encodeToByteArray()))))
 
-        assertEquals(RCommon.string.send_payment_chat_product_unavailable, withTimeout(STATE_TIMEOUT) { viewModel.messageEvents.first() })
+        verify(router, timeout(STATE_TIMEOUT.inWholeMilliseconds)).openSendEnterAmount(
+            argThat<SendEnterAmountPayload> { it.showTransactionResult && it.transferMethod is TransferMethodPayload.CoinsViaChat }
+        )
         verifyNoInteractions(chatStarter)
     }
 
@@ -272,7 +277,6 @@ class SendPaymentViewModelTest {
         clipboardService = clipboardService,
         getContactsUseCase = getContactsUseCase,
         chatStarter = chatStarter,
-        personChatMode = personChatMode,
         addressInputMixinFactory = addressInputMixinFactory,
         usernameAddressConverterFactory = usernameAddressConverterFactory,
         parseAddressConverterFactory = parseAddressConverterFactory,

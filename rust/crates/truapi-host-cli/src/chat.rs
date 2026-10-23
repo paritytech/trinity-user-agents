@@ -451,7 +451,7 @@ impl CliChatHost {
 		};
 		let changed = match (action, answer) {
 			(
-				ChatUserAction::NewMessage { .. },
+				ChatUserAction::NewMessage { .. } | ChatUserAction::SendPayment { .. },
 				ProductChatUserActionItem::MessageCreated(message),
 			) => match room.position(&message.message_id) {
 				Some(index) => {
@@ -485,6 +485,7 @@ impl CliChatHost {
 			// feed updates of its own.
 			(
 				ChatUserAction::NewMessage { .. } |
+				ChatUserAction::SendPayment { .. } |
 				ChatUserAction::AcceptRequest |
 				ChatUserAction::DeclineRequest |
 				ChatUserAction::Block |

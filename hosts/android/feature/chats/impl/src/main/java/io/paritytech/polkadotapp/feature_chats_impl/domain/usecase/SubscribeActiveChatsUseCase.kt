@@ -25,13 +25,17 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummary
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatListOrder
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withPayments
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withPendingMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPaymentStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -48,6 +52,7 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     private val personChatMode: PersonChatMode,
     private val attachmentStager: ProductAttachmentStager,
     private val personChatRooms: PersonChatRooms,
+    private val productPayments: ProductChatPaymentStore,
 ) {
     context(scope: ComputationalScope)
     operator fun invoke(): Flow<List<Chat>> = combineToPair(
@@ -57,14 +62,15 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     ).flatMapLatest { (activeExtensions, contacts) ->
         val context = buildActiveChatsContext(activeExtensions, contacts)
 
-        combineToPair(withRoomPolicies(chatEngine.subscribeChatSummaries()), pendingMessages())
-            .map { (summariesAndPolicies, pending) ->
+        combine(withRoomPolicies(chatEngine.subscribeChatSummaries()), pendingMessages(), roomPayments(), ::Triple)
+            .map { (summariesAndPolicies, pending, payments) ->
                 val (summaries, policies) = summariesAndPolicies
                 // The person chats of the chat product sort by the time their product gives; the native chat keeps its order.
                 val ordered = if (personChatMode.isProductChat()) {
                     val productTimestamps = policies.mapNotNull { (chatId, policy) ->
                         val pendingAt = pending[chatId]?.createdAt
-                        listOfNotNull(policy.listTimestamp, pendingAt).maxOrNull()?.let { chatId to it }
+                        val paymentAt = payments[chatId]?.filter { !it.incoming && it.isUndelivered }?.maxOfOrNull { it.timestamp }
+                        listOfNotNull(policy.listTimestamp, pendingAt, paymentAt).maxOrNull()?.let { chatId to it }
                     }.toMap()
                     chatListOrder(summaries, productTimestamps)
                 } else {
@@ -83,7 +89,9 @@ class SubscribeActiveChatsUseCase @Inject constructor(
                     if (policy?.contact == null && personChatRooms.isPersonChatRoom(chatId)) return@mapNotNull null
 
                     // As the native list shows a message it sends at once, a room shows its newest pending message.
-                    val summary = messageSummary.withRoomPolicy(policy).withPendingMessage(pending[chatId], policy, attachmentStager::preview)
+                    val summary = messageSummary.withRoomPolicy(policy)
+                        .withPendingMessage(pending[chatId], policy, attachmentStager::preview)
+                        .withPayments(payments[chatId].orEmpty(), policy)
                     val display = constructChatDisplay(chatId, summary, policy, context.activeContactsById) ?: return@mapNotNull null
 
                     Chat(
@@ -101,6 +109,9 @@ class SubscribeActiveChatsUseCase @Inject constructor(
 
     private fun pendingMessages(): Flow<Map<ChatId, ProductOutboxEntry>> =
         if (personChatMode.isProductChat()) attachmentStager.observeNewest() else flowOf(emptyMap())
+
+    private fun roomPayments(): Flow<Map<ChatId, List<ProductChatPayment>>> =
+        if (personChatMode.isProductChat()) productPayments.observeAll().map { all -> all.groupBy { it.chatId } } else flowOf(emptyMap())
 
     context(scope: ComputationalScope)
     private fun withRoomPolicies(summaries: Flow<List<ChatSummary>>): Flow<Pair<List<ChatSummary>, Map<ChatId, ChatRoomPolicy>>> {

@@ -13,12 +13,12 @@ use truapi::{
 		HostPersonChatError, HostPersonChatGetProfileRequest, HostPersonChatGetProfileResponse,
 		HostPersonChatHistoryExportRequest, HostPersonChatHistoryExportResponse,
 		HostPersonChatHistoryImportedRequest, HostPersonChatNotifyPeerRequest,
-		HostPersonChatNotifyPeerResponse, HostPersonChatProveChatRequestRequest,
-		HostPersonChatProveChatRequestResponse, HostPersonChatProveStatementRequest,
-		HostPersonChatProveStatementResponse, HostPersonChatPublishContactsRequest,
-		HostPersonChatPushTokensRequest, HostPersonChatPushTokensResponse,
-		HostPersonChatSecretsRequest, HostPersonChatSecretsResponse,
-		HostPersonChatSetPushRoutesRequest,
+		HostPersonChatNotifyPeerResponse, HostPersonChatPaymentReceivedRequest,
+		HostPersonChatProveChatRequestRequest, HostPersonChatProveChatRequestResponse,
+		HostPersonChatProveStatementRequest, HostPersonChatProveStatementResponse,
+		HostPersonChatPublishContactsRequest, HostPersonChatPushTokensRequest,
+		HostPersonChatPushTokensResponse, HostPersonChatSecretsRequest,
+		HostPersonChatSecretsResponse, HostPersonChatSetPushRoutesRequest,
 	},
 };
 
@@ -334,13 +334,16 @@ fn push_routes_reach_the_host_as_its_notification_receiver_reads_them() {
 	));
 }
 
-/// Person chat services that record the contacts the product publishes, and
-/// serve a staged native chat history.
+/// Person chat services that record the contacts the product publishes and,
+/// with coinage, the payments it hands over, and serve a staged native chat
+/// history.
 #[derive(Default)]
 struct RecordingPersonChat {
 	contacts: Mutex<Vec<(String, Vec<crate::platform::HostChatContact>)>>,
 	history: Vec<u8>,
 	imported: Mutex<Vec<String>>,
+	coinage: bool,
+	payments: Mutex<Vec<(String, v01::HostPersonChatPaymentReceivedRequest)>>,
 }
 
 #[truapi::async_trait]
@@ -384,6 +387,18 @@ impl crate::platform::PersonChatPlatform for RecordingPersonChat {
 	) -> Result<(), truapi::latest::GenericError> {
 		self.imported.lock().unwrap().push(product.product_id.to_string());
 		Ok(())
+	}
+
+	async fn payment_received(
+		&self,
+		product: &ProductContext,
+		payment: v01::HostPersonChatPaymentReceivedRequest,
+	) -> Result<crate::platform::HostChatPaymentReceipt, truapi::latest::GenericError> {
+		if !self.coinage {
+			return Ok(crate::platform::HostChatPaymentReceipt::Unsupported);
+		}
+		self.payments.lock().unwrap().push((product.product_id.to_string(), payment));
+		Ok(crate::platform::HostChatPaymentReceipt::Accepted)
 	}
 }
 
@@ -436,6 +451,81 @@ fn the_chat_product_reads_the_staged_history_in_parts_and_says_when_it_is_import
 		history_part(&chat_host_with(platform, "notes.dot"), 0),
 		Err(CallError::Unsupported)
 	));
+}
+
+fn hand_over_payment(
+	host: &ProductRuntimeHost,
+	payment: v01::HostPersonChatPaymentReceivedRequest,
+) -> Result<(), CallError<HostPersonChatError>> {
+	futures::executor::block_on(host.payment_received(
+		&CallContext::default(),
+		HostPersonChatPaymentReceivedRequest::V1(payment),
+	))
+	.map(|_| ())
+}
+
+#[test]
+fn the_chat_product_hands_received_coins_to_the_host_that_claims_them() {
+	let platform =
+		Arc::new(RecordingPersonChat { coinage: true, ..RecordingPersonChat::default() });
+	let payment =
+		|message_id: &str, coin_keys: Vec<Vec<u8>>| v01::HostPersonChatPaymentReceivedRequest {
+			room_id: "dm-ab".to_string(),
+			message_id: message_id.to_string(),
+			timestamp: 1_763_164_800_000,
+			total_value: 5_000_000,
+			coin_keys,
+		};
+	let key = vec![0x5a; 64];
+
+	// The host keys its claim by the message id, as it does for the native chat.
+	hand_over_payment(
+		&chat_host_with(platform.clone(), CHAT_PRODUCT),
+		payment(" pay-1 ", vec![key.clone()]),
+	)
+	.expect("taken");
+	assert_eq!(
+		*platform.payments.lock().unwrap(),
+		vec![(CHAT_PRODUCT.to_string(), payment("pay-1", vec![key.clone()]))]
+	);
+
+	// Only the chat product may give the host coins to claim.
+	assert!(matches!(
+		hand_over_payment(
+			&chat_host_with(platform.clone(), "notes.dot"),
+			payment("pay-2", vec![key.clone()])
+		),
+		Err(CallError::Unsupported)
+	));
+	// A key that is no sr25519 secret controls no coin.
+	assert!(matches!(
+		hand_over_payment(
+			&chat_host_with(platform.clone(), CHAT_PRODUCT),
+			payment("pay-3", vec![vec![0x5a; 32]])
+		),
+		Err(CallError::Domain(HostPersonChatError::V1(
+			v01::HostPersonChatError::InvalidRequest { .. }
+		)))
+	));
+	assert_eq!(platform.payments.lock().unwrap().len(), 1);
+
+	// A host without coinage, or without person chat services, says so, and
+	// the product keeps the keys.
+	assert!(matches!(
+		hand_over_payment(
+			&chat_host_with(Arc::new(RecordingPersonChat::default()), CHAT_PRODUCT),
+			payment("pay-4", vec![key.clone()])
+		),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		hand_over_payment(&signed_in(CHAT_PRODUCT), payment("pay-5", vec![key.clone()])),
+		Err(CallError::Unsupported)
+	));
+
+	// The keys spend the coins, so a logged request never shows them.
+	let printed = format!("{:?}", payment("pay-1", vec![key]));
+	assert!(printed.contains("1 keys") && !printed.contains("90, 90"), "{printed}");
 }
 
 fn publish_contacts(

@@ -874,7 +874,7 @@ pub enum ProductChatQueryError {
 }
 
 /// Something the user did in a room the product keeps.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Clone, PartialEq, Eq, Encode, Decode, derive_more::Debug)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatUserAction {
 	/// The user sent a message. In a room whose contact is `Invite`, it is the
@@ -930,6 +930,24 @@ pub enum ChatUserAction {
 	Unblock,
 	/// The user left the chat.
 	Leave,
+	/// The user paid the contact. The host planned and reserved the coins and
+	/// handed their keys off before it sends the action; the product sends
+	/// them to the contact as one payment message under `message_id`, and
+	/// answers `MessageCreated` with a `Payment` body. The keys appear in no
+	/// body, preview or reply quote. Sending the action again with the same
+	/// `message_id` sends nothing new.
+	SendPayment {
+		/// The id the host chose for the message: the id its own coinage
+		/// records track the payment under.
+		message_id: String,
+		/// Milliseconds since the Unix epoch when the user paid.
+		timestamp: u64,
+		/// The sum of the coins, in the smallest unit.
+		total_value: u128,
+		/// The 64-byte sr25519 secret key of each coin.
+		#[debug("{} keys", coin_keys.len())]
+		coin_keys: Vec<Vec<u8>>,
+	},
 }
 
 /// Host request that tells the product what the user did.
@@ -948,7 +966,8 @@ pub struct ProductChatUserActionRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ProductChatUserActionItem {
-	/// For `NewMessage`: the message as the product stored it.
+	/// For `NewMessage` and `SendPayment`: the message as the product stored
+	/// it.
 	MessageCreated(ChatMessage),
 	/// The product applied the action.
 	Acknowledged,

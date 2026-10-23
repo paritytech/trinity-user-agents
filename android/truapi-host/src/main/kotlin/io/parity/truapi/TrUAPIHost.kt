@@ -143,7 +143,9 @@ import uniffi.truapi.NativeScannerCallbacks
 import uniffi.truapi.NativeTopUpCallbacks
 import uniffi.truapi.NativePersonChatCallbacks
 import uniffi.truapi.HostChatContact
+import uniffi.truapi.HostChatPaymentReceipt
 import uniffi.truapi.HostHistoryExportChunk
+import uniffi.truapi.HostPersonChatPaymentReceivedRequest
 import uniffi.truapi.HostPairedDevice
 import uniffi.truapi.NativePushCallbacks
 import uniffi.truapi.HostChatPushRoute
@@ -969,8 +971,8 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
 /**
  * The person chat services of the host, following the rules on the core's
  * `PersonChatPlatform`: the `wss://` URLs of the HOP nodes of the network's
- * Bulletin chain, the devices paired with the wallet, and the chat's contacts
- * for the rest of the app.
+ * Bulletin chain, the devices paired with the wallet, the chat's contacts
+ * for the rest of the app, and the claim of the coins contacts pay with.
  */
 interface PersonChatHostBridge {
     @Throws(HostRejection::class)
@@ -994,6 +996,18 @@ interface PersonChatHostBridge {
     /** [productId] imported the staged history: drop it. */
     @Throws(HostRejection::class)
     suspend fun historyImported(productId: String)
+
+    /**
+     * Take the coin keys of a payment a contact sent in a room of [productId], and claim the coins with the app's
+     * coinage flow keyed by the message id of [payment], from which the app also draws the claim state of the room's
+     * payment message. Idempotent by message id. An app without coinage keeps this default, and the chat product
+     * keeps the keys.
+     */
+    @Throws(HostRejection::class)
+    suspend fun paymentReceived(
+        productId: String,
+        payment: HostPersonChatPaymentReceivedRequest,
+    ): HostChatPaymentReceipt = HostChatPaymentReceipt.UNSUPPORTED
 }
 
 private class PersonChatCallbackAdapter(private val bridge: PersonChatHostBridge) : NativePersonChatCallbacks {
@@ -1008,6 +1022,11 @@ private class PersonChatCallbackAdapter(private val bridge: PersonChatHostBridge
         withHostRejection { bridge.historyExport(productId, offset, maxLen) }
 
     override suspend fun historyImported(productId: String) = withHostRejection { bridge.historyImported(productId) }
+
+    override suspend fun paymentReceived(
+        productId: String,
+        payment: HostPersonChatPaymentReceivedRequest,
+    ): HostChatPaymentReceipt = withHostRejection { bridge.paymentReceived(productId, payment) }
 }
 
 /**
@@ -1706,10 +1725,10 @@ object ChatQueryTimeout {
     /** A page of messages, or of the messages that match a search. */
     val MESSAGES: Duration = 10.seconds
 
-    /** A message that the user sent. */
+    /** A message or a payment that the user sent. */
     val SENT_MESSAGE: Duration = 30.seconds
 
-    /** A user action that is not a sent message. */
+    /** A user action that sends nothing. */
     val USER_ACTION: Duration = 10.seconds
 
     /** The edit history of a message. */
@@ -1720,7 +1739,10 @@ object ChatQueryTimeout {
 
     /** The timeout of one user action. */
     fun forUserAction(action: ChatUserAction): Duration =
-        if (action is ChatUserAction.NewMessage) SENT_MESSAGE else USER_ACTION
+        when (action) {
+            is ChatUserAction.NewMessage, is ChatUserAction.SendPayment -> SENT_MESSAGE
+            else -> USER_ACTION
+        }
 }
 
 /** Why a chat query has no answer. */

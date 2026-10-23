@@ -1,11 +1,14 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.domain
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
+import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
@@ -13,6 +16,10 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.NoProductChatRoomException
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatPayments
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinPrivateKey
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.StrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.TransferCoinEntry
@@ -38,6 +45,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -56,6 +64,9 @@ class RealSendEnterAmountInteractorTest {
     )
 
     private val statusUseCase = mockk<CoinagePaymentStatusUseCase>()
+    private var productChat = false
+    private val productPayments = RecordingProductPayments()
+    private val chatMessageSender = chatMessageSender()
 
     @Before
     fun mockDerivation() {
@@ -92,6 +103,46 @@ class RealSendEnterAmountInteractorTest {
         assertTrue(states.single() is SendState.Failed)
     }
 
+    @Test
+    fun `with the chat product the payment goes to the contact's room, committed inside its record`() = runTest {
+        productChat = true
+        val handoff = committingHandoff()
+
+        val states = sendViaChat(handoff)
+
+        assertEquals(listOf(SendState.Complete(unfinalizedCoins = null)), states)
+        val sent = productPayments.sent.single()
+        assertEquals(accountId, sent.recipient)
+        assertEquals(memo.totalValue, sent.totalValue)
+        assertArrayEquals(coinKey.value, sent.coinKeys.single())
+        coVerify(exactly = 1) { handoff.commit() }
+        coVerify(exactly = 0) { chatMessageSender.sendUserMessage(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `with the chat product a refused commit fails the send`() = runTest {
+        productChat = true
+        val refused = mockk<CoinageHandoffCommit> {
+            coEvery { commit() } returns Result.failure(IllegalStateException("handed off meanwhile"))
+        }
+
+        val states = sendViaChat(refused)
+
+        assertTrue(states.single() is SendState.Failed)
+    }
+
+    @Test
+    fun `with the chat product and no established chat with the recipient the send fails without a commit`() = runTest {
+        productChat = true
+        productPayments.noRoom = true
+        val handoff = committingHandoff()
+
+        val states = sendViaChat(handoff)
+
+        assertTrue((states.single() as SendState.Failed).error is NoProductChatRoomException)
+        coVerify(exactly = 0) { handoff.commit() }
+    }
+
     private fun givenStatuses(vararg readings: List<CoinagePaymentStatus>) {
         every { statusUseCase.subscribeStatuses(any()) } returns flow {
             readings.forEach { statuses ->
@@ -118,11 +169,13 @@ class RealSendEnterAmountInteractorTest {
         dispatcher: CoroutineDispatcher,
         handoffCommit: CoinageHandoffCommit,
     ) = RealSendEnterAmountInteractor(
-        chainAssetProvider = mockk(),
+        chainAssetProvider = mockk { coEvery { asset() } returns mockk<Chain.Asset>(relaxed = true) },
         transfersTypeRegistry = mockk(),
-        sendRecipientRepository = mockk(),
+        sendRecipientRepository = mockk { coEvery { addSendRecipient(any()) } returns Result.success(Unit) },
         freeTransactionOrigins = mockk(),
-        chatMessageSender = chatMessageSender(),
+        chatMessageSender = chatMessageSender,
+        personChatMode = mockk<PersonChatMode> { every { isProductChat() } answers { productChat } },
+        productChatPayments = productPayments,
         prepareCoinageTransferUseCase = prepareUseCase(handoffCommit),
         totalBalanceUseCase = mockk(),
         externalPaymentService = mockk(),
@@ -141,6 +194,22 @@ class RealSendEnterAmountInteractorTest {
             arg<suspend () -> Unit>(4).invoke()
             mockk()
         }
+    }
+
+    // Runs onSaved as the record's transaction does, so whatever it throws leaves the send as it would at runtime.
+    private class RecordingProductPayments : ProductChatPayments {
+        class Sent(val recipient: AccountId, val totalValue: Balance, val coinKeys: List<ByteArray>)
+
+        val sent = mutableListOf<Sent>()
+        var noRoom = false
+
+        override suspend fun send(recipient: AccountId, totalValue: Balance, coinKeys: List<ByteArray>, onSaved: suspend () -> Unit) {
+            if (noRoom) throw NoProductChatRoomException()
+            onSaved()
+            sent += Sent(recipient, totalValue, coinKeys)
+        }
+
+        override suspend fun receive(chatId: ChatId, messageId: String, timestamp: Long, totalValue: Balance, coinKeys: List<ByteArray>) = Unit
     }
 
     private fun committingHandoff() = mockk<CoinageHandoffCommit> { coEvery { commit() } returns Result.success(Unit) }

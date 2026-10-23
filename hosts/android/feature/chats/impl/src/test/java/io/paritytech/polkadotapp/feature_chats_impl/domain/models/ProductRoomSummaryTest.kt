@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.models
 
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatContactStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage.Content.CoinagePayment.Status
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
@@ -15,6 +17,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductOutboxEntry
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.payments.ProductChatPayment
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -146,6 +149,65 @@ class ProductRoomSummaryTest {
         val older = summary.withRoomPolicy(contactRoom)
         assertSame(older, older.withPendingMessage(pending.copy(createdAt = 1_000L), contactRoom, preview))
     }
+
+    @Test
+    fun `a payment in the row reads with the status the host keeps for it, as the native row reads its payment message`() {
+        val incoming = message("pay-1", ProductParticipant.CONTACT, "").copy(
+            content = ChatMessage.Content.CoinagePayment(totalValue = 1_500.intoBalance(), coinKeys = emptyList(), status = Status.Detecting),
+        )
+        val contactRoom = productStore.copy(
+            listTimestamp = 2_000L,
+            listPreview = ChatRoomPolicy.ListPreview(lastMessage = incoming, lastReaction = null, unseenReactions = 0),
+            contact = ChatRoomContactModel(ByteArray(32) { 1 }.toDataByteArray(), username = "alice", state = ChatContactStateModel.ESTABLISHED),
+        )
+        val claimed = payment("pay-1", incoming = true, delivery = null, status = Status.Transferred(1_500.intoBalance()))
+
+        val row = summary.withRoomPolicy(contactRoom).withPayments(listOf(claimed), contactRoom)
+
+        val content = (row.preview as ChatPreview.Message).message.content as ChatMessage.Content.CoinagePayment
+        assertEquals(Status.Transferred(1_500.intoBalance()), content.status)
+        assertEquals(2_000L, row.timestamp)
+    }
+
+    @Test
+    fun `a payment that waits for the product is the row when it is newer, as the native list shows a payment it sends`() {
+        val contactRoom = productStore.copy(
+            listTimestamp = 2_000L,
+            contact = ChatRoomContactModel(ByteArray(32) { 1 }.toDataByteArray(), username = "alice", state = ChatContactStateModel.ESTABLISHED),
+        )
+        val sending = payment("pay-2", incoming = false, delivery = ProductChatPayment.Delivery.SENDING, status = Status.Detecting, timestamp = 3_000L)
+
+        val row = summary.withRoomPolicy(contactRoom).withPayments(listOf(sending), contactRoom)
+
+        val message = (row.preview as ChatPreview.Message).message
+        assertSame(ChatMessageOrigin.User, message.origin)
+        assertTrue(message.content is ChatMessage.Content.CoinagePayment)
+        assertEquals(ChatMessage.Status.NEW, message.status)
+        assertEquals(3_000L, row.timestamp)
+
+        val delivered = sending.copy(delivery = ProductChatPayment.Delivery.DELIVERED)
+        val older = summary.withRoomPolicy(contactRoom)
+        assertSame(older, older.withPayments(listOf(delivered), contactRoom))
+    }
+
+    private fun payment(
+        id: String,
+        incoming: Boolean,
+        delivery: ProductChatPayment.Delivery?,
+        status: Status,
+        timestamp: Long = 1_000L,
+    ) = ProductChatPayment(
+        messageId = id,
+        chatId = room,
+        incoming = incoming,
+        timestamp = timestamp,
+        totalValue = 1_500.intoBalance(),
+        coinKeys = listOf(ByteArray(64)),
+        delivery = delivery,
+        refusals = 0,
+        status = status,
+        settled = false,
+    )
 
     private fun message(id: String, participant: String, text: String) = ProductRoomMessage(
         messageId = id,

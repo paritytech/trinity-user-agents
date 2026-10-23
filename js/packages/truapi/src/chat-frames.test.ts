@@ -313,6 +313,28 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
+                "17.user_action.pay",
+                frame(
+                    W.CHAT_USER_ACTION,
+                    MESSAGE_TYPE_START,
+                    T.VersionedProductChatUserActionRequest.enc({
+                        tag: "V1",
+                        value: {
+                            roomId: "room",
+                            action: {
+                                tag: "SendPayment",
+                                value: {
+                                    messageId: "m2",
+                                    timestamp: 1_700_000_000_000n,
+                                    totalValue: 5_000_000n,
+                                    coinKeys: [`0x${"11".repeat(64)}`],
+                                },
+                            },
+                        },
+                    }),
+                ),
+            ],
+            [
                 "27.search_query.start",
                 frame(
                     W.CHAT_SEARCH_QUERY,

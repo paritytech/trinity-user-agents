@@ -33,5 +33,7 @@ truapi_macros::versioned_type! {
 	pub enum HostPersonChatHistoryExportResponse { V1 => v01::HostPersonChatHistoryExportResponse }
 	pub enum HostPersonChatHistoryImportedRequest { V1 => v01::HostPersonChatHistoryImportedRequest }
 	pub enum HostPersonChatHistoryImportedResponse { V1 }
+	pub enum HostPersonChatPaymentReceivedRequest { V1 => v01::HostPersonChatPaymentReceivedRequest }
+	pub enum HostPersonChatPaymentReceivedResponse { V1 }
 	pub enum HostPersonChatError { V1 => v01::HostPersonChatError }
 }

@@ -1,6 +1,7 @@
 //! The person chat's host services: the HOP nodes of the network, the
 //! devices paired with the wallet (none on the CLI), and the chat's contacts
-//! (which nothing else on the CLI shows).
+//! (which nothing else on the CLI shows). The CLI has no coinage, so it
+//! answers the coins of a received payment `Unsupported`.
 
 use async_trait::async_trait;
 use truapi::{

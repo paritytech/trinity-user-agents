@@ -7,23 +7,27 @@ import TrUAPIHost
 /// `externalApi.hop` entries of the Bulletin chain in the chain registry), the devices paired with this wallet,
 /// which the native chat announces to contacts by their statement account and SSO session key, and the contacts of the
 /// chat product, which ``ProductChatContacts`` keeps for the rest of the app, and the native chat history
-/// ``ProductChatMigration`` stages for the chat product.
+/// ``ProductChatMigration`` stages for the chat product, and the coins of the payments that contacts send, which
+/// ``ProductChatPayments`` claims as the native chat claims them.
 final class AppPersonChatHostBridge: PersonChatHostBridge, @unchecked Sendable {
     private let nodes: @Sendable () -> [String]
     private let devices: @Sendable () async throws -> [HostPairedDevice]
     private let contacts: ProductChatContacts
     private let migration: ProductChatMigration
+    private let payments: ProductChatPayments
 
     init(
         nodes: @escaping @Sendable () -> [String],
         devices: @escaping @Sendable () async throws -> [HostPairedDevice],
         contacts: ProductChatContacts = ProductChatContacts(),
-        migration: ProductChatMigration = ProductChatMigration()
+        migration: ProductChatMigration = ProductChatMigration(),
+        payments: ProductChatPayments = .shared
     ) {
         self.nodes = nodes
         self.devices = devices
         self.contacts = contacts
         self.migration = migration
+        self.payments = payments
     }
 
     convenience init(
@@ -69,5 +73,12 @@ final class AppPersonChatHostBridge: PersonChatHostBridge, @unchecked Sendable {
 
     func historyImported(productId _: String) async throws {
         await migration.imported()
+    }
+
+    func paymentReceived(
+        productId: String,
+        payment: HostPersonChatPaymentReceivedRequest
+    ) async throws -> HostChatPaymentReceipt {
+        try await payments.receive(productId: productId, payment: payment)
     }
 }

@@ -5,6 +5,7 @@ import TrUAPIHost
 // MARK: - User actions
 
 extension ProductMessageSource {
+    // swiftlint:disable:next cyclomatic_complexity
     func perform(_ action: ChatUserAction) async -> ChatSourceActionOutcome {
         switch action {
         case let .newMessage(body, replyTo, _, _):
@@ -44,6 +45,9 @@ extension ProductMessageSource {
             return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
+        case .sendPayment:
+            // A payment goes with the handoff of its coins, through ``ProductChatPayments``.
+            return .refused(reason: nil)
         case .seen,
              .acceptRequest,
              .declineRequest,
