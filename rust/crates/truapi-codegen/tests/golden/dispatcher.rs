@@ -84,6 +84,45 @@ where
     register_worker(dispatcher, host);
 }
 
+/// Start the host-initiated `funding_provider_assign` subscription.
+pub fn funding_provider_assign(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingAssignRequest,
+) -> truapi::Subscription<versioned::funding_provider::ProductFundingAssignItem, truapi::CallError<versioned::funding_provider::ProductFundingAssignError>> {
+    subscriptions.start(
+        wire_table::FUNDING_PROVIDER_ASSIGN,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `funding_provider_cancel` subscription.
+pub fn funding_provider_cancel(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingCancelRequest,
+) -> truapi::Subscription<versioned::funding_provider::ProductFundingCancelItem, truapi::CallError<versioned::funding_provider::ProductFundingCancelError>> {
+    subscriptions.start(
+        wire_table::FUNDING_PROVIDER_CANCEL,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `funding_provider_settle_cancel` subscription.
+pub fn funding_provider_settle_cancel(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingSettleCancelRequest,
+) -> truapi::Subscription<versioned::funding_provider::ProductFundingSettleCancelItem, truapi::CallError<versioned::funding_provider::ProductFundingSettleCancelError>> {
+    subscriptions.start(
+        wire_table::FUNDING_PROVIDER_SETTLE_CANCEL,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
 /// Start the host-initiated `renderer_render` subscription.
 pub fn renderer_render(
     subscriptions: &HostInitiatedSubscriptionManager,
@@ -1551,43 +1590,6 @@ fn register_funding_provider<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
 where
     P: FundingProvider + Send + Sync + 'static,
 {
-    {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host.clone();
-        dispatcher.on_subscription(wire_table::FUNDING_PROVIDER_SERVE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
-            let host = host.clone();
-            Box::pin(async move {
-                let request: versioned::funding_provider::HostFundingServeSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
-                let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError> = truapi::CallError::Denied;
-                    return Err(subscription_interrupt(error));
-                }
-                let stream = host.serve_subscribe(&cx, request).await;
-                let stream = futures::StreamExt::map(
-                    stream,
-                    move |item: Result<versioned::funding_provider::HostFundingServeSubscribeItem, truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError>>| {
-                        item.map(|item| {
-                            <versioned::funding_provider::HostFundingServeSubscribeItem as truapi::versioned::FromLatest>::from_latest(
-                                truapi::versioned::IntoLatest::into_latest(item),
-                                target_version,
-                            )
-                        })
-                        .map_err(|error| downgrade_call_error(error, target_version))
-                    },
-                );
-                Ok(subscription_stream(stream))
-            })
-        });
-    }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();

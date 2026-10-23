@@ -103,10 +103,9 @@ export class ScriptedProvider {
   private readonly failures: string[] = [];
 
   constructor(private readonly client: TrUApiClient) {
-    client.fundingProvider.onAssign(({ session }, send, interrupt) => {
+    client.fundingProvider.onAssign(({ session }, send) => {
       this.assigned.push(session);
       send(undefined);
-      interrupt();
       const plan = this.plans.get(planKey(session.direction, session.amount));
       if (plan && !this.started.has(session.intent)) {
         this.started.add(session.intent);
@@ -115,7 +114,7 @@ export class ScriptedProvider {
         );
       }
     });
-    client.fundingProvider.onCancel(({ intent }, send, interrupt) => {
+    client.fundingProvider.onCancel(({ intent }, send) => {
       this.cancels.push(intent);
       send(
         this.cancelAnswers.get(intent) ?? {
@@ -123,23 +122,17 @@ export class ScriptedProvider {
           value: { reason: "the battery set no answer" },
         },
       );
-      interrupt();
     });
-    client.fundingProvider.onSettleCancel(
-      ({ intent, decision }, send, interrupt) => {
-        this.settled.push({ intent, decision });
-        send(undefined);
-        interrupt();
-        if (decision.tag === "Accepted") {
-          report(client, intent, {
-            tag: "Failed",
-            value: { reason: { tag: "Cancelled" } },
-          }).catch((error) =>
-            this.failures.push(`${intent}: ${String(error)}`),
-          );
-        }
-      },
-    );
+    client.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
+      this.settled.push({ intent, decision });
+      send(undefined);
+      if (decision.tag === "Accepted") {
+        report(client, intent, {
+          tag: "Failed",
+          value: { reason: { tag: "Cancelled" } },
+        }).catch((error) => this.failures.push(`${intent}: ${String(error)}`));
+      }
+    });
   }
 
   /** Run `plan` on the session assigned for `direction` and `amount`. */

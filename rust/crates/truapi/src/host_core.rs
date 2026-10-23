@@ -1762,7 +1762,10 @@ impl WorkerFundingLink {
 }
 
 /// The first item of a call answered once. `None` when the worker errs, or
-/// the connection closes first. Dropping the stream after stops the call.
+/// the connection closes first. Dropping the stream then stops the call, so
+/// the worker sends its one item and nothing after it: a frame that ended
+/// the call could overtake the item, as a host may handle a connection's
+/// frames concurrently.
 async fn first_answer<Item, Error>(
 	mut stream: truapi::Subscription<Item, truapi::CallError<Error>>,
 ) -> Option<Item> {
