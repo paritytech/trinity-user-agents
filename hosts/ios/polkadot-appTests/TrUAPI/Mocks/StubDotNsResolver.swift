@@ -12,6 +12,14 @@ final class StubDotNsResolver: DotNsResolverProtocol {
         return contentURL
     }
 
+    func resolveContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await DotNsResolvedContent(contentHash: "00", localURL: resolveToLocalURL(dotNsName: dotNsName))
+    }
+
+    func stageContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await resolveContent(dotNsName: dotNsName)
+    }
+
     func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
 
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {

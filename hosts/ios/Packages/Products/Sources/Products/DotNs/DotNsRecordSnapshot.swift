@@ -7,7 +7,7 @@ public enum DotNsSnapshotRecord: Equatable, Sendable {
 
 public protocol DotNsRecordSnapshotProtocol: Sendable {
     func record(name: String, key: String) -> DotNsSnapshotRecord?
-    func store(_ value: String?, name: String, key: String)
+    func store(_ record: DotNsSnapshotRecord, name: String, key: String)
     func clearAll()
 }
 
@@ -33,8 +33,15 @@ public final class DotNsRecordSnapshot: DotNsRecordSnapshotProtocol, @unchecked 
         return (entry[Constants.valueField] as? String).map(DotNsSnapshotRecord.value) ?? .absent
     }
 
-    public func store(_ value: String?, name: String, key: String) {
-        let entry: [String: String] = value.map { [Constants.valueField: $0] } ?? [:]
+    public func store(_ record: DotNsSnapshotRecord, name: String, key: String) {
+        let entry: [String: String] =
+            switch record {
+            case .absent:
+                [:]
+            case let .value(value):
+                [Constants.valueField: value]
+            }
+
         defaults.set(entry, forKey: storageKey(name: name, key: key))
     }
 

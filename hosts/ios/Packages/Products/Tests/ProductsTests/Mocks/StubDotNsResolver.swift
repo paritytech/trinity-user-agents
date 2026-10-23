@@ -45,6 +45,14 @@ final class StubDotNsResolver: DotNsResolverProtocol, @unchecked Sendable {
         URL(fileURLWithPath: "/dev/null")
     }
 
+    func resolveContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await DotNsResolvedContent(contentHash: "00", localURL: resolveToLocalURL(dotNsName: dotNsName))
+    }
+
+    func stageContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await resolveContent(dotNsName: dotNsName)
+    }
+
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }

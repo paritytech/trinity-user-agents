@@ -27,7 +27,9 @@ final class InMemoryDotNsContentStorage: DotNsContentStorageProtocol, @unchecked
         saved.withLock { _ = $0.remove(contentHash) }
     }
 
-    func loadContent(contentHash _: String, relativePath _: String) -> Data? { nil }
+    func loadContent(contentHash: String, relativePath _: String) -> Data? {
+        contentExists(contentHash: contentHash) ? Data(contentHash.utf8) : nil
+    }
 
     func deleteAll() throws {
         saved.withLock { $0.removeAll() }
