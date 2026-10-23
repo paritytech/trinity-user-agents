@@ -1144,6 +1144,208 @@ describe("contacts", () => {
   );
 });
 
+describe("chat as a product", () => {
+  const PRODUCT = "chatfixture.paseo";
+  const MANIFEST = JSON.stringify({
+    $v: 1,
+    kind: "worker",
+    appVersion: [0, 1, 0],
+    entrypoint: "index.js",
+    includes: { chat: true },
+  });
+  const WALLET_ID = "chat-product-fixture-wallet";
+  const KIM = `0x${"4b".repeat(32)}`;
+  /** A saved Nova chat record with one accepted contact, so the picker has someone. */
+  const RECORD = {
+    contacts: [
+      {
+        account: KIM,
+        chatKey: `0x${"cc".repeat(32)}`,
+        name: "kim.01",
+        state: "active",
+        messages: [],
+        outbound: null,
+        expiry: { request: null, response: null },
+        acknowledged: null,
+      },
+    ],
+    requests: [],
+    declined: [],
+  };
+
+  interface ChatProductWindow {
+    __chatProduct: {
+      seen: {
+        ready: boolean;
+        rooms: string[];
+        owned: Record<string, number>;
+        posted: Record<string, number>;
+        actions: unknown[];
+        errors: string[];
+      };
+      pick(): Promise<{ outcome?: { tag: string; value?: unknown } }>;
+    };
+  }
+
+  test(
+    "runs a chat product's worker through the real loader and core, and finds where TrUAPI stops it",
+    async () => {
+      const worker = publishApp({
+        "index.js": await buildFixture("chat-product-worker.ts"),
+      });
+      const context = await browser.newContext();
+      context.setDefaultTimeout(STEP_MS);
+      // No chain: Nova starts from its saved record and reaches no one.
+      await context.routeWebSocket(/.*/, (socket) => socket.close());
+      await serveNames(context, [
+        {
+          record: `worker.${PRODUCT}`,
+          app: worker,
+          text: { executable: MANIFEST },
+        },
+      ]);
+      try {
+        const page = await openHost(context);
+        await page.evaluate(
+          ({ id, mnemonic, record }) => {
+            localStorage.setItem(
+              "truapi-web-signing-host:wallets:v1",
+              JSON.stringify([{ id, name: "Chat product fixture", mnemonic }]),
+            );
+            localStorage.setItem(
+              `truapi-web-signing-host:network:paseo:chat:${id}:v1`,
+              JSON.stringify(record),
+            );
+          },
+          { id: WALLET_ID, mnemonic: SYNTHETIC_MNEMONIC, record: RECORD },
+        );
+        await page.reload();
+        await page
+          .locator("#core-status")
+          .filter({ hasText: "Core ready" })
+          .waitFor({ state: "attached" });
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        await page.click('#dock [data-destination="chat"]');
+        await page.click('[data-action="manage-workers"]');
+        await page.fill('[data-focus="worker-name"]', PRODUCT);
+        await page.press('[data-focus="worker-name"]', "Enter");
+        await page
+          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
+          .waitFor();
+        await page.click('[aria-label="Back to chats"]');
+
+        const workerFrame = page
+          .frames()
+          .find((frame) => frame.url().includes("__truapi-worker.html"))!;
+        await workerFrame.waitForFunction(
+          () =>
+            (window as unknown as ChatProductWindow).__chatProduct?.seen
+              .ready === true,
+          undefined,
+          { timeout: STEP_MS },
+        );
+        const seen = () =>
+          workerFrame.evaluate(
+            () => (window as unknown as ChatProductWindow).__chatProduct.seen,
+          );
+
+        // Works: the product's conversations are rooms in the host's one list.
+        expect((await seen()).rooms).toEqual(["ada", "design"]);
+        expect((await seen()).errors).toEqual([]);
+        await page
+          .locator(`[data-conversation="product:${PRODUCT}/ada"]`)
+          .waitFor();
+        await page
+          .locator(`[data-conversation="product:${PRODUCT}/design"]`)
+          .waitFor();
+
+        // Limit: history is the host's, not the product's. The product had to
+        // push all 210 messages, and the host keeps the last 200. The host
+        // never asks the product for a page, so the oldest ten are out of reach.
+        expect((await seen()).owned.ada).toBe(210);
+        expect((await seen()).posted.ada).toBe(210);
+        const kept = await page.evaluate(
+          ({ wallet, product }) => {
+            const record = JSON.parse(
+              localStorage.getItem(
+                `truapi-web-signing-host:network:paseo:product-chat:${wallet}:v1`,
+              )!,
+            ) as {
+              messages: {
+                productId: string;
+                roomId: string;
+                content: { text?: string };
+              }[];
+            };
+            return record.messages
+              .filter((m) => m.productId === product && m.roomId === "ada")
+              .map((m) => m.content.text);
+          },
+          { wallet: WALLET_ID, product: PRODUCT },
+        );
+        expect(kept.length).toBe(200);
+        expect(kept[0]).toBe("#11");
+
+        // Limit: every message the product posts is the product's. Its own
+        // model has Ada, Grace and the user on another device; the host can
+        // show only one sender, and none of them as the user.
+        await page.click(`[data-conversation="product:${PRODUCT}/design"]`);
+        await page.locator("[data-message-id]", { hasText: "#6" }).waitFor();
+        const senders = await page
+          .locator(".chat-thread [data-sender]")
+          .evaluateAll((rows) =>
+            rows.map((row) => (row as HTMLElement).dataset.sender),
+          );
+        expect(new Set(senders)).toEqual(new Set([PRODUCT]));
+        expect(await page.locator(".chat-message-out").count()).toBe(0);
+        await page.click('[aria-label="Back to chats"]');
+
+        // Works, with a limit: what the user types reaches the product, but
+        // with no message id, so the product cannot say which bubble it took
+        // or move it on from sent, and its answer is a new message.
+        await page.click(`[data-conversation="product:${PRODUCT}/ada"]`);
+        await page.fill(".chat-composer-input", "hello");
+        await page.press(".chat-composer-input", "Enter");
+        await page
+          .locator(".chat-bubble-text", { hasText: "Got it: hello" })
+          .waitFor();
+        expect((await seen()).actions.at(-1)).toEqual({
+          roomId: "ada",
+          peer: "native",
+          payload: {
+            tag: "MessagePosted",
+            value: { tag: "Text", value: { text: "hello" } },
+          },
+        });
+        expect(
+          await page
+            .locator(".chat-message-out", { hasText: "hello" })
+            .getAttribute("data-status"),
+        ).toBe("sent");
+
+        // Works: a worker can open the host's contact picker, and gets an
+        // opaque handle. Limit: nothing turns the handle into someone the
+        // product can open a conversation with; only a transaction resolves it.
+        const picked = workerFrame.evaluate(() =>
+          (window as unknown as ChatProductWindow).__chatProduct.pick(),
+        );
+        const picker = page.locator("dialog.prompt", {
+          hasText: "Choose a contact",
+        });
+        await picker.waitFor();
+        expect(await picker.innerText()).toContain(PRODUCT);
+        await picker.locator("button", { hasText: "kim.01" }).click();
+        const outcome = (await picked).outcome;
+        expect(outcome?.tag).toBe("Picked");
+        expect(JSON.stringify(outcome?.value)).not.toContain(KIM.slice(2));
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
 describe("Pocket's Humanity card", () => {
   const PRODUCT = "peopl.paseo";
   const WORKER = JSON.stringify({

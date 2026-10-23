@@ -760,6 +760,12 @@ opens, so the light client reaches no chain. It checks that:
   and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is neither the
   account nor the name, the same handle again for the same person and another for the other; Cancel and Escape answer
   `Dismissed`; and a wallet with no contacts gets `NoContacts` with no picker drawn;
+- a chat product's worker, built from `browser/chat-product-worker.ts`, with a synthetic wallet and every socket closed,
+  runs through the same loader and core and records where TrUAPI stops it: its conversations show as rooms in the one
+  list, but it has to push all its history and the host keeps the last 200 of 210 messages and never asks for a page;
+  every message it posts shows as the product's, even those its own model says Ada, Grace or the user sent; what the
+  user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact picker and get a
+  handle, which nothing turns into someone it can chat with;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
   when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the core's
