@@ -848,7 +848,7 @@ pub async fn register_statement_account_pooled(
 	}
 
 	// Only collections we can both prove and have read a table for are usable.
-	let mut free = None;
+	let mut free = Vec::new();
 	let mut full = Vec::new();
 	let mut budget: u32 = 0;
 	let mut usable = 0;
@@ -862,11 +862,7 @@ pub async fn register_statement_account_pooled(
 		// the figure is the device's budget whichever branch reports it.
 		budget = budget.saturating_add(collection.slots_per_period(rpc, metadata).await?);
 		match &scan.selection {
-			SlotSelection::Free(seq) => {
-				if free.is_none() {
-					free = Some((index, *seq));
-				}
-			},
+			SlotSelection::Free(seq) => free.push((index, *seq)),
 			SlotSelection::Full { occupied, .. } => full.push((index, occupied)),
 			// A free slot held back by this call's own in-flight submission.
 			// Replacing a live slot instead would revoke an allowance for
@@ -886,8 +882,8 @@ pub async fn register_statement_account_pooled(
 
 	let exhausted = || SlotError::NoFreeStatementStoreSlot { period: params.period, max: budget };
 
-	let (index, choice) = match free {
-		Some((index, seq)) => (index, Preselected::Free(seq)),
+	let (index, choice) = match free.first() {
+		Some(&(index, seq)) => (index, Preselected::Free(seq)),
 		None if !params.allow_eviction => return Err(exhausted().into()),
 		None => {
 			let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
@@ -919,27 +915,37 @@ pub async fn register_statement_account_pooled(
 		},
 	};
 
-	let membership = &memberships[index];
-	register_statement_account(
-		rpc,
-		metadata,
-		target_chain,
-		signer,
-		RegistrationParams {
-			target: params.target,
-			period: params.period,
-			network_suffix: params.network_suffix,
-			// A duplicate-submit retry rescans within this collection only. It
-			// is a rare race on a slot we just saw free, and staying put keeps
-			// the retry from quietly moving collections mid-call.
-			ring: membership,
-			reuse_existing: params.reuse_existing,
-			preselected: Some(choice),
-			allow_eviction: params.allow_eviction,
-		},
-	)
-	.await
-	.map_err(|err| match err {
+	let register = |index: usize, preselected: Option<Preselected>| {
+		register_statement_account(
+			rpc,
+			metadata,
+			target_chain,
+			signer,
+			RegistrationParams {
+				target: params.target,
+				period: params.period,
+				network_suffix: params.network_suffix,
+				// A duplicate-submit retry rescans within this collection only.
+				ring: &memberships[index],
+				reuse_existing: params.reuse_existing,
+				preselected,
+				allow_eviction: params.allow_eviction,
+			},
+		)
+	};
+	let mut result = register(index, Some(choice)).await;
+	// A collection that filled during the retry falls through to the next one
+	// that had room, rescanned rather than trusting the earlier table.
+	for &(index, _) in free.iter().skip(1) {
+		if !matches!(
+			result,
+			Err(StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }))
+		) {
+			break;
+		}
+		result = register(index, None).await;
+	}
+	result.map_err(|err| match err {
 		// The retry rescans one collection, so its own exhaustion names that
 		// collection's share. Restate it as the device's pooled budget so the
 		// same error never means two different things to a caller.
@@ -1673,6 +1679,7 @@ mod tests {
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
 		scripted.script_subscription_errors(submit_error, 1);
+		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
 		futures::executor::block_on(async {
@@ -1998,6 +2005,10 @@ mod tests {
 		responses.push("null".to_string());
 		responses.extend((0..20).map(|_| occupied([0x99; 32], 9_999_999)));
 		responses.push(chain_clock(10_000_000));
+		// The fallback to LitePeople finds it the same.
+		responses.push("null".to_string());
+		responses.extend((0..10).map(|_| occupied([0x98; 32], 9_999_999)));
+		responses.push(chain_clock(10_000_000));
 
 		let err = scripted_pooled_with_submit_error(responses, target, "Priority is too low", true)
 			.unwrap_err();
@@ -2026,7 +2037,9 @@ mod tests {
 		// past its replacement cooldown.
 		responses.push("null".to_string());
 		responses.extend((0..20).map(|seq| occupied([0x99; 32], 1_000 + seq)));
-		responses.push(chain_clock(10_000_000));
+		// The fallback to LitePeople finds it full too.
+		responses.push("null".to_string());
+		responses.extend((0..10).map(|seq| occupied([0x98; 32], 1_000 + seq)));
 
 		let err =
 			scripted_pooled_with_submit_error(responses, target, "Priority is too low", false)
@@ -2041,6 +2054,38 @@ mod tests {
 				})
 			),
 			"a retry without eviction must report exhaustion: {err:?}"
+		);
+	}
+
+	/// A retry that finds its collection filled moves on to another that had
+	/// room, rather than reporting the pool exhausted.
+	#[test]
+	fn a_retry_falls_through_to_a_collection_with_room() {
+		let target = [0x22; 32];
+		let mut responses =
+			tables((0..20).map(|_| None).collect(), (0..10).map(|_| None).collect());
+		// The People retry finds the table full.
+		responses.push("null".to_string());
+		responses.extend((0..20).map(|seq| occupied([0x99; 32], 1_000 + seq)));
+		// LitePeople is rescanned and still has seq 0 free.
+		responses.push("null".to_string());
+		responses.extend((0..10).map(|_| "null".to_string()));
+		responses.push(occupied(target, 10_000_000));
+
+		let outcome =
+			scripted_pooled_with_submit_error(responses, target, "Priority is too low", false)
+				.expect("LitePeople had room");
+
+		assert!(
+			matches!(
+				outcome,
+				RegistrationOutcome::Registered {
+					seq: 0,
+					collection: PersonhoodCollection::LitePeople,
+					..
+				}
+			),
+			"unexpected outcome: {outcome:?}"
 		);
 	}
 
