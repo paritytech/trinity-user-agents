@@ -3,7 +3,7 @@
 
 use scale_info::PortableRegistry;
 use sp_crypto_hashing::blake2_256;
-use subxt::ext::scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver};
+use subxt::ext::scale_encode::EncodeAsType;
 
 use super::{ExtrinsicBuildError, ExtrinsicVersion, well_known::EncodedExtensionValues};
 
@@ -85,58 +85,6 @@ impl ExtensionError {
 	/// error back; otherwise the error unchanged.
 	pub fn downcast<E: core::error::Error + 'static>(self) -> Result<E, Self> {
 		self.0.downcast::<E>().map(|error| *error).map_err(Self)
-	}
-}
-
-/// An extension whose name and bytes are only known at run time.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RawExtension {
-	name: String,
-	explicit: Vec<u8>,
-	implicit: Vec<u8>,
-}
-
-impl RawExtension {
-	/// The extension `name` with already-encoded explicit and implicit values.
-	pub fn new(name: impl Into<String>, explicit: Vec<u8>, implicit: Vec<u8>) -> Self {
-		Self { name: name.into(), explicit, implicit }
-	}
-}
-
-impl TransactionExtension for RawExtension {
-	type Implicit = PreencodedValue;
-	type Explicit = PreencodedValue;
-
-	fn name(&self) -> &str {
-		&self.name
-	}
-
-	fn implicit(&self) -> PreencodedValue {
-		PreencodedValue(self.implicit.clone())
-	}
-
-	fn explicit(
-		&self,
-		_implication: &InheritedImplication,
-	) -> Result<PreencodedValue, ExtensionError> {
-		Ok(PreencodedValue(self.explicit.clone()))
-	}
-}
-
-/// A value that is already encoded, written as it is whatever the type. The
-/// builder still checks it decodes as that type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PreencodedValue(pub Vec<u8>);
-
-impl EncodeAsType for PreencodedValue {
-	fn encode_as_type_to<R: TypeResolver>(
-		&self,
-		_type_id: R::TypeId,
-		_types: &R,
-		out: &mut Vec<u8>,
-	) -> Result<(), EncodeError> {
-		out.extend_from_slice(&self.0);
-		Ok(())
 	}
 }
 

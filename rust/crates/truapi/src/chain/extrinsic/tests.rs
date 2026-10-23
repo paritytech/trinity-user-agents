@@ -17,14 +17,15 @@ use subxt::{
 	ext::{
 		frame_decode::extrinsics::{ExtrinsicTypeInfo, encode_call_data},
 		scale_decode::DecodeAsType,
+		scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver},
 	},
 	tx::Signer,
 	utils::{AccountId32, H256, MultiSignature},
 };
 
 use super::{
-	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication, PreencodedValue,
-	RawExtension, TransactionExtension,
+	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
+	TransactionExtension,
 	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
 	version::choose_extrinsic_version,
 	well_known::default_value_for_type,
@@ -72,10 +73,60 @@ fn remark_call(metadata_bytes: &[u8]) -> Vec<u8> {
 	encode_call_data("System", "remark", remark.call_data(), &metadata, metadata.types()).unwrap()
 }
 
+/// A value that is already encoded, written as it is whatever the type.
+#[derive(Clone, Debug)]
+struct PreencodedValue(Vec<u8>);
+
+impl EncodeAsType for PreencodedValue {
+	fn encode_as_type_to<R: TypeResolver>(
+		&self,
+		_type_id: R::TypeId,
+		_types: &R,
+		out: &mut Vec<u8>,
+	) -> Result<(), EncodeError> {
+		out.extend_from_slice(&self.0);
+		Ok(())
+	}
+}
+
+/// An extension with fixed, already-encoded values, for byte-level tests
+/// against reference extrinsics.
+struct FixedBytesExtension {
+	name: &'static str,
+	explicit: Vec<u8>,
+	implicit: Vec<u8>,
+}
+
+impl FixedBytesExtension {
+	fn explicit_only(name: &'static str, explicit: Vec<u8>) -> Self {
+		Self { name, explicit, implicit: Vec::new() }
+	}
+}
+
+impl TransactionExtension for FixedBytesExtension {
+	type Implicit = PreencodedValue;
+	type Explicit = PreencodedValue;
+
+	fn name(&self) -> &str {
+		self.name
+	}
+
+	fn implicit(&self) -> PreencodedValue {
+		PreencodedValue(self.implicit.clone())
+	}
+
+	fn explicit(
+		&self,
+		_implication: &InheritedImplication,
+	) -> Result<PreencodedValue, ExtensionError> {
+		Ok(PreencodedValue(self.explicit.clone()))
+	}
+}
+
 /// `CheckMortality` as the allowance assembler writes it: immortal, with the
 /// genesis hash as its implicit.
-fn immortal() -> RawExtension {
-	RawExtension::new("CheckMortality", vec![0x00], GENESIS.to_vec())
+fn immortal() -> FixedBytesExtension {
+	FixedBytesExtension { name: "CheckMortality", explicit: vec![0x00], implicit: GENESIS.to_vec() }
 }
 
 /// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the People
@@ -126,7 +177,7 @@ fn an_authorized_extrinsic_has_the_reference_bytes() {
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
 		.with_call_bytes(call)
-		.with_extension(RawExtension::new("AsResources", extra, Vec::new()))
+		.with_extension(FixedBytesExtension::explicit_only("AsResources", extra))
 		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
 	let built = assemble(builder, None, None).unwrap();
@@ -326,7 +377,7 @@ fn an_extension_the_pipeline_does_not_list_is_refused() {
 	let pgas_v0 = ExtrinsicVersion::V5 { extension_version: 0 };
 	let error = build_error(ASSET_HUB, None, |builder| {
 		builder
-			.with_extension(RawExtension::new("AsPgas", vec![0x00], Vec::new()))
+			.with_extension(FixedBytesExtension::explicit_only("AsPgas", vec![0x00]))
 			.with_extrinsic_version(pgas_v0);
 	});
 
@@ -340,8 +391,8 @@ fn an_extension_supplied_twice_is_refused() {
 	let signer = test_signer();
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
 		builder
-			.with_extension(RawExtension::new("RestrictOrigins", vec![0x01], Vec::new()))
-			.with_extension(RawExtension::new("RestrictOrigins", vec![0x00], Vec::new()));
+			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x01]))
+			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00]));
 	});
 
 	assert!(
@@ -355,7 +406,7 @@ fn an_extension_supplied_twice_is_refused() {
 fn a_value_that_does_not_match_its_type_is_refused() {
 	let signer = test_signer();
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
-		builder.with_extension(RawExtension::new("RestrictOrigins", vec![0x00, 0x00], Vec::new()));
+		builder.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00, 0x00]));
 	});
 
 	assert!(matches!(

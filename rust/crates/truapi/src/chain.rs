@@ -33,8 +33,7 @@ pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
 	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService, ExtrinsicServiceDeps,
-	ExtrinsicVersion, InheritedImplication, PreencodedValue, RawExtension, SubstrateSigner,
-	TransactionExtension,
+	ExtrinsicVersion, InheritedImplication, SubstrateSigner, TransactionExtension,
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
