@@ -31,10 +31,9 @@ const REQUEST_BUFFER: usize = 1024;
 
 /// Largest message the transport sends or accepts.
 ///
-/// JSON-RPC carries a transaction as hex, doubling its size, so a Bulletin
-/// store transaction with a preimage over about 5 MiB exceeds jsonrpsee's
-/// 10 MiB default, both when it is submitted and when a block body that
-/// contains it is fetched.
+/// A Bulletin block holds up to 10 MiB of extrinsics and its body arrives
+/// hex-encoded, so a busy block can pass jsonrpsee's 10 MiB default. Bulletin
+/// submission fetches those bodies to find its transaction.
 const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
 /// Open a WebSocket connection to `url`.

@@ -75,9 +75,9 @@ async fn request_response_round_trip() {
 	assert_eq!(frame["result"], "ping");
 }
 
-/// JSON-RPC carries a transaction as hex, so a Bulletin store transaction with
-/// a preimage over about 5 MiB is a message past jsonrpsee's 10 MiB default,
-/// on the way out and again on the way back.
+/// The body of a busy Bulletin block arrives hex-encoded and can pass
+/// jsonrpsee's 10 MiB default, so a message that large has to get through.
+/// The echo checks both directions.
 #[tokio::test]
 async fn messages_past_ten_mebibytes_round_trip() {
 	let (addr, _server) = spawn_server().await;
