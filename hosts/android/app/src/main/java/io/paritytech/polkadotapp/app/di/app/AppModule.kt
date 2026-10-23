@@ -4,6 +4,8 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import dagger.multibindings.IntoSet
+import io.paritytech.polkadotapp.app.monitoring.DeviceReadingsInitializer
 import io.paritytech.polkadotapp.app.root.RealActivityIntentProvider
 import io.paritytech.polkadotapp.app.root.RealAppLifecycleObserver
 import io.paritytech.polkadotapp.app.root.data.debug.RealIssueReportApi
@@ -11,6 +13,7 @@ import io.paritytech.polkadotapp.app.root.domain.debug.IssueReportApi
 import io.paritytech.polkadotapp.app.root.network.RemoteConfigIdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
+import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import javax.inject.Singleton
 
@@ -30,4 +33,8 @@ interface AppModule {
     @Binds
     @Singleton
     fun bindIdentityBackendUrlProvider(impl: RemoteConfigIdentityBackendUrlProvider): IdentityBackendUrlProvider
+
+    @Binds
+    @IntoSet
+    fun bindDeviceReadingsInitializer(impl: DeviceReadingsInitializer): AppInitializer
 }
