@@ -463,20 +463,30 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_progress`, `funding_sessions`, `funding_history`,
   `set_funding_providers`,
-  `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
-  `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
-  strings.
+  `funding_candidates`, `funding_countries`, `funding_amount_limits`,
+  `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
+  `select_funding_provider`, `cancel_funding`, `confirm_funding_cancel`,
+  `acknowledge_funding_session`
+  and `funding_in_progress`. Amounts cross the FFI as decimal strings.
+  Sessions are stored as a versioned blob, and the core keeps reading every
+  earlier format, so an upgrade keeps the sessions in flight; a blob it
+  cannot read is kept under `FundingSessionsUnreadable` rather than
+  overwritten. `funding_in_progress` reads storage when funding has not
+  resumed yet, so a host can ask at launch.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
   session is handed to the host through `funding_session_changed` each time
   funding resumes until the host calls `acknowledge_funding_session`, so the
-  host's history writes every outcome once. After that the core keeps the
-  newest 64 recorded sessions per product in full and compacts older ones
-  into the session pack (intent, owner, direction, amounts, outcome and
-  times), which it never trims, so a product watching a compacted session
-  still gets its terminal item. It keeps the 200 newest ended sessions the
-  host has not recorded in full too, and compacts older ones the same way.
+  host's history writes every outcome once. A released withdrawal whose
+  provider still owes its payout outcome, or the refund of a failed payout,
+  is kept and served whether or not the host recorded it, and is handed over
+  again when the provider reports. Of the rest it recorded, the core keeps
+  the newest 64 per product in full and compacts older ones into the
+  session pack (intent, owner, direction, amounts, outcome and times), which
+  it never trims, so a product watching a compacted session still gets its
+  terminal item. It keeps the 200 newest ended sessions the host has not
+  recorded in full too, and compacts older ones the same way.
   `funding_history` lists every ended session the host recorded or the core
   compacted, as a summary newest first, so a host that lost its history
   rebuilds it from there. A product opens a session with
@@ -497,7 +507,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out.
+  Funding drops out. A provider whose `origin` is `Bundled` ships inside
+  the host: its shipped manifest is what the core goes by, and dotNS is never
+  read for it.
   `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
   country) with every funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: the core
@@ -512,10 +524,40 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `FundingSupport` and folded into `funding_candidates` for 12 hours, as
   routes the manifest did not declare and as `unsupported` entries the host
   can filter by the user's country, while the provider's current manifest
-  serves Funding. Natively the rows arrive
-  through `funding_quote_changed`.
+  serves Funding. A crypto ask names the `network` it moves on, one a route's
+  `networks` declares, and the networks quotes confirmed join the candidate's
+  routes. A refusal of only the amount is kept as the candidate's `limits`
+  (minimum and maximum per rail, asset, network and country), each for 12
+  hours from its own refusal: a later quote does not renew it, and a quote at
+  an amount it rules out clears it. `funding_amount_limits(intent, rail,
+  asset, network, country)` combines them across every provider into the
+  range the amount screen enforces: the smallest minimum and the largest
+  maximum, with no bound while any provider has not shown one. The host's
+  own product floor applies on top. A quote carries its asset's
+  `asset_decimals`, so the host shows asset amounts without knowing the
+  asset.
+  An ask that names no country takes the one the host's
+  `detected_country` answers (coarse location if already permitted, then
+  SIM or network country, then locale region, without any permission
+  prompt), kept only when it is an ISO 3166-1 alpha-2 code and reused for an
+  hour, or asked again after a minute when it found none; the user's own
+  choice is passed as the ask's country. `funding_countries(intent, rail, asset)` says what the core knows
+  about each country for the host's picker: `Supported` with the lowest
+  minimum a provider showed there, from manifest routes and recent answers,
+  or `Unsupported` when every answer naming it refused it; a country nothing
+  names is left out.
+  Natively the list arrives through `funding_quotes_changed` as a
+  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
+  rows in the host's provider order, `best` (the least to pay inbound, the
+  most to receive outbound, the earliest row on a tie, among providers the
+  session can be handed to), which the host selects until the user picks
+  another, and `refresh_at_ms`. The core asks every provider again each
+  minute, the rows going back to `Pending`, until the session is assigned or
+  ends, the host asks for another ask, or calls `stop_funding_quotes`; from
+  then on no list of that request arrives, mid round too.
   `select_funding_provider` hands a session to the provider the user chose,
-  which must be one of those candidates, on the quote it was chosen by, which
+  which must be one quotes are asked of (its manifest serves Funding,
+  whatever routes it declares), on the quote it was chosen by, which
   must be one core offered for the session, not yet expired and, when the
   session has an amount, pricing that amount in balance units (what it
   credits inbound, what it debits outbound); a session opened without an
@@ -523,9 +565,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
   `funding_progress(intent)` gives the steps the host draws for a session's
-  direction and rail, each with when it was reached: in, `Started`,
-  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
-  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  direction and rail, each with when it was reached: card and crypto in,
+  `Started`, `Payment`, `Approved` (once the payment can no longer be
+  reversed), `Conversion`, `Added`; bank in, `Started`, `Payment`, `Added`;
+  out, `Started`, `Payment`, `Sent`, `Conversion`, `Payout`. A step
   the provider skipped takes the time of the first later one. It also carries
   when the session failed, the latest transaction id and reference the
   provider reported with `Details`, the latest `Deposit` instructions for the
@@ -534,12 +577,37 @@ for raw bytes signed inside the `<Bytes>` watermark.
   with the reference), and what arrived when a `PaymentReceived` reports a
   short or wrong-asset payment. `Deposit` is inbound only and allowed until
   funds move, so a provider can ask for the rest of a short payment.
+  It is `retrying` once the provider names a second top-up after a partial
+  claim. After an outbound session is released the provider reports
+  `Converting` once as it prepares the payout and then
+  `Payout { PaidOut | Failed }` once, and in between `PayoutRetrying` each
+  time a payout attempt fails and it tries again; the outcome shows as the session's
+  `payout`, beside the `Released` outcome, and either before the release is
+  out of order. After a failed payout the provider gives the user's CASH
+  back with a `payment.topUp`, recorded on that session (the provider's one
+  such session whose debit matches the amount, otherwise each of them), and
+  names it once in `Refunding { top_up_id, amount }`; the core follows its
+  claims and keeps what they returned as `refunded`. Nothing expires a
+  session waiting for its refund.
+  The progress carries one `status` for the host to word: in flight by rail
+  (`WaitingForTransfer`, `WaitingForPayment`, `WaitingForDeposit`, then
+  `ConvertingToCash`; out, `TransactionInitiated`, then after release
+  `ConvertingTo { asset }` on crypto or `PreparingPayout`, and `RetryingPayout`
+  while the provider's latest word is that it retries the payout), `Retrying`, and
+  `TakingLonger` once the provider has been silent for longer than the
+  chosen quote's `eta_secs` (`longer_at_ms` says when, so the host reads the
+  progress again then; `None` while a top-up waits on the user's payment,
+  until money moved); ended, `ToppedUp`, `Sent`, `Refunded`,
+  `PayoutFailed { refunded }` or `Failed { reason }`. An inbound payment
+  the provider returned ends as `Failed { Refunded }`, one the user's bank or
+  card issuer refused as `Failed { Declined }`.
   That provider's worker runs it through the `FundingProvider` trait. The
   core calls the worker with host-initiated calls the worker answers with one
   item: `assign` hands it a session, `cancel` asks it to stop one, and
   `settleCancel` passes on the user's answer to its offer. When a worker's
   connection completes its handshake, the core assigns it every session it
-  still serves, with its last step, and repeats any cancel or decision it
+  still serves, a released withdrawal awaiting its payout included, with its
+  last step, and repeats any cancel or decision it
   never answered; the worker keeps its own state in its storage. The worker
   calls the core: `report` stores each update on the session (only from the
   assigned provider, only forward; `Details` may come at any point while the

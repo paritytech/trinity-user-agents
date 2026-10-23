@@ -2845,6 +2845,7 @@ struct RecordingFundingPlatform {
 	presented: Mutex<Vec<(Option<ProductId>, crate::platform::FundingPresentation)>>,
 	announced: Mutex<Vec<String>>,
 	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
+	country: Option<String>,
 }
 
 impl RecordingFundingPlatform {
@@ -2854,6 +2855,15 @@ impl RecordingFundingPlatform {
 			presented: Mutex::new(Vec::new()),
 			announced: Mutex::new(Vec::new()),
 			framed: Mutex::new(Vec::new()),
+			country: None,
+		})
+	}
+
+	fn in_country(country: &str) -> Arc<Self> {
+		Arc::new(Self {
+			country: Some(country.to_string()),
+			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
+				.expect("only reference")
 		})
 	}
 }
@@ -2880,6 +2890,10 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		self.framed.lock().expect("framed mutex poisoned").push(target);
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		self.country.clone()
 	}
 
 	fn funding_session_changed(
@@ -2924,6 +2938,47 @@ impl HeldTasks {
 	fn take(&self) -> Vec<futures::future::BoxFuture<'static, ()>> {
 		core::mem::take(&mut *self.0.lock().expect("tasks mutex poisoned"))
 	}
+}
+
+// A host remembers whether a provider still works on a session so its next
+// launch starts funding at once. It reads that when a session is announced,
+// so a session in flight is announced on resume, once it is loaded.
+#[test]
+fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
+	let storage = stub_platform();
+	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
+		let services = funding_services_over(storage.clone());
+		let platform =
+			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+		assert!(services.funding().install_platform(platform.clone()));
+		services.resume_funding();
+		(services, platform)
+	};
+	let (before, _) = start(&storage);
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	let (after, platform) = start(&storage);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	for _ in 0..200 {
+		if !announced().is_empty() {
+			break;
+		}
+		std::thread::sleep(core::time::Duration::from_millis(5));
+	}
+
+	assert_eq!((announced(), after.funding().in_progress()), (vec![intent], true));
 }
 
 // A host's history writes one row per outcome, so an ended session it has
@@ -8657,6 +8712,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
 			product_id: provider_id.to_string(),
 			worker_manifest: Some(manifest.to_string()),
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 		}])
 		.expect("provider offered");
 }
@@ -8706,9 +8762,11 @@ enum ProviderCallSeen {
 #[derive(Default)]
 struct ScriptedProviderLink {
 	calls: Mutex<Vec<ProviderCallSeen>>,
-	/// What every quote ask is answered with, and how many were asked.
+	/// What every quote ask is answered with, how many were asked, and the
+	/// asks.
 	quote_answer: Mutex<Option<v01::FundingQuoteAnswer>>,
 	quotes: Arc<Mutex<usize>>,
+	asks: Mutex<Vec<v01::FundingQuoteAsk>>,
 	cancel_answers: Mutex<std::collections::VecDeque<v01::FundingCancelAnswer>>,
 }
 
@@ -8737,9 +8795,10 @@ impl ScriptedProviderLink {
 impl crate::runtime::FundingProviderLink for ScriptedProviderLink {
 	fn quote(
 		&self,
-		_ask: v01::FundingQuoteAsk,
+		ask: v01::FundingQuoteAsk,
 	) -> futures::future::BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
 		*self.quotes.lock().expect("quotes mutex poisoned") += 1;
+		self.asks.lock().expect("asks mutex poisoned").push(ask);
 		let answer = self.quote_answer.lock().expect("answer mutex poisoned").clone();
 		Box::pin(async move { answer })
 	}
@@ -8824,6 +8883,40 @@ fn wait_for_stage(
 	None
 }
 
+// A host asks whether funding is in progress at launch, before funding
+// resumes; the answer comes from storage, not from the empty registry.
+#[test]
+fn funding_in_progress_reads_storage_before_funding_resumes() {
+	let storage = stub_platform();
+	let before = funding_services_over(storage.clone());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	let relaunched = funding_services_over(storage.clone());
+
+	assert_eq!(
+		(
+			relaunched.funding().in_progress(),
+			futures::executor::block_on(relaunched.funding_in_progress()),
+		),
+		(false, Ok(true))
+	);
+}
+
 // The provider's worker takes a session from assignment to delivered, and a
 // restart in between loses nothing: the restarted worker is assigned the
 // session again with its last step when it connects, and the host still
@@ -8850,10 +8943,12 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	))
 	.expect("opened")
 	.intent;
+	let unassigned_in_progress = before.funding().in_progress();
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
 			.expect("selected")
 	);
+	let assigned_in_progress = before.funding().in_progress();
 	let worker = provider_worker(&before, "ramp.dot");
 	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
 	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
@@ -8868,6 +8963,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let after = start(&storage);
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
+	let restarted_in_progress = after.funding().in_progress();
 	report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
 	let assignment = |expires_at, last_update| {
@@ -8881,6 +8977,15 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		})))
 	};
 	let delivered = wait_for_stage(&after, &intent);
+	assert_eq!(
+		(
+			unassigned_in_progress,
+			assigned_in_progress,
+			restarted_in_progress,
+			after.funding().in_progress()
+		),
+		(false, true, true, false)
+	);
 	const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 	assert_eq!(
 		(assigned, replayed, delivered),
@@ -9104,6 +9209,7 @@ fn card_quote(quote_id: &str) -> v01::FundingQuote {
 		network_fee: 5,
 		eta_secs: Some(60),
 		expires_at: None,
+		asset_decimals: 2,
 	}
 }
 
@@ -9112,6 +9218,7 @@ fn card_ask(country: Option<&str>) -> v01::FundingQuoteAsk {
 		direction: v01::FundingDirection::In,
 		rail: v01::FundingRail::Card,
 		asset: "EUR".to_string(),
+		network: None,
 		amount: 1_000,
 		country: country.map(str::to_string),
 	}
@@ -9132,6 +9239,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: product_id.to_string(),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 				})
 				.to_vec(),
 		)
@@ -9192,9 +9300,177 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				quote: card_quote("q1"),
 				rail: v01::FundingRail::Card,
 				asset: "EUR".into(),
+				network: None,
 			}),
 			None,
 		)
+	);
+}
+
+// Quotes go by the country the host detected until the user picks one, so
+// the first list already fits where the user is.
+#[test]
+fn an_ask_without_a_country_takes_the_detected_one() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::in_country("pt")));
+	services
+		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+			product_id: "ramp.dot".to_string(),
+			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+		}])
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let link = Arc::new(ScriptedProviderLink::default());
+	*link.quote_answer.lock().expect("answer mutex poisoned") =
+		Some(v01::FundingQuoteAnswer::Quoted { quote: card_quote("q-1") });
+	services.funding().link("ramp.dot", link.clone());
+	services.funding().connected("ramp.dot");
+	let quote = |country: Option<&str>| {
+		futures::executor::block_on(
+			services
+				.get_funding_quote_within(&intent, card_ask(country), Duration::from_secs(5))
+				.collect::<Vec<_>>(),
+		)
+	};
+	quote(None);
+	quote(Some("DE"));
+
+	assert_eq!(
+		(
+			link.asks
+				.lock()
+				.expect("asks mutex poisoned")
+				.iter()
+				.map(|ask| ask.country.clone())
+				.collect::<Vec<_>>(),
+			futures::executor::block_on(services.detected_funding_country()),
+		),
+		(vec![Some("PT".to_string()), Some("DE".to_string())], Some("PT".to_string()))
+	);
+}
+
+// The host's list marks the best quote and is asked for again each round
+// while the user has not chosen; once they have, it stops.
+#[test]
+fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	services
+		.set_funding_providers(
+			["ramp.dot", "cheap.dot"]
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: product_id.to_string(),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answer_quotes(
+		&services,
+		"cheap.dot",
+		v01::FundingQuote { send_amount: 1_010, ..card_quote("q2") },
+	);
+	use crate::platform::FundingQuoteState;
+	let (_, mut lists) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_millis(300),
+	);
+	let mut next = || futures::executor::block_on(lists.next());
+	let resolved = |list: &crate::platform::FundingQuoteList| {
+		list.rows.iter().all(|row| row.state != FundingQuoteState::Pending)
+	};
+	let first_shown = next().expect("first list");
+	let mut first = first_shown.clone();
+	while !resolved(&first) {
+		first = next().expect("first round");
+	}
+	let mut second = next().expect("second round");
+	while !resolved(&second) {
+		second = next().expect("second round");
+	}
+	futures::executor::block_on(services.select_funding_provider(&intent, "cheap.dot", Some("q2")))
+		.expect("chosen");
+	let mut after_choice = 0;
+	while next().is_some() {
+		after_choice += 1;
+	}
+
+	assert_eq!(
+		(
+			first_shown.rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
+			first.best.as_deref(),
+			second.best.as_deref(),
+			second.refresh_at_ms > first.refresh_at_ms,
+			after_choice,
+		),
+		(vec!["ramp.dot", "cheap.dot"], Some("cheap.dot"), Some("cheap.dot"), true, 0)
+	);
+}
+
+// Each request's lists carry its id, and a request the host replaced stops
+// at once, mid round too: a late answer for an amount the user already
+// changed never reaches the host.
+#[test]
+fn a_replaced_quote_request_stops_mid_round() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	let (first_id, mut first) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	let shown = futures::executor::block_on(first.next()).expect("first list");
+
+	let (second_id, mut second) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(60),
+	);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+	assert_eq!(
+		(
+			shown.request_id == first_id,
+			second_id > first_id,
+			futures::executor::block_on(first.next()),
+			futures::executor::block_on(second.next()).map(|list| list.request_id),
+		),
+		(true, true, None, Some(second_id))
 	);
 }
 
@@ -9302,10 +9578,12 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: "ramp.dot".to_string(),
 					worker_manifest: Some(germany_only),
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
 					product_id: "chain.dot".to_string(),
 					worker_manifest: Some(crypto_only),
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
 				},
 			])
 			.expect("providers offered");
@@ -9411,8 +9689,12 @@ fn learning_before_the_stored_records_load_keeps_them() {
 		direction: v01::FundingDirection::In,
 		rail: v01::FundingRail::Card,
 		asset: "EUR".to_string(),
+		network: None,
 		country: None,
+		asked: 1_000,
 		supported: true,
+		min: None,
+		max: None,
 		learned_at_ms: crate::unix_time::current_unix_millis(),
 	};
 	futures::executor::block_on(storage.write_core_storage(

@@ -483,11 +483,17 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
+	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
+	/// the device's coarse location when already permitted, then its SIM or
+	/// network country, then its locale's region. Never asks for a
+	/// permission. `None` when nothing says.
+	async fn detected_country(&self) -> Option<String>;
+
 	/// A session's status changed, for host UI such as the in-flight pill.
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 
-	/// One provider's row of a quote list the host requested with
-	/// `get_funding_quote`: `Pending` first, then its quote or why it is
-	/// unavailable.
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow);
+	/// The quote list the host requested with `get_funding_quote`: again
+	/// whenever a provider answers, and each time the core asks every
+	/// provider again at `refresh_at_ms`.
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList);
 }

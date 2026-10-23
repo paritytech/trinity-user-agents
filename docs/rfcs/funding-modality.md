@@ -140,7 +140,7 @@ struct FundingQuoteAsk {
     asset: String,                           // symbol paid (In) or received (Out)
     network: Option<String>,                 // Crypto only, such as "polkadot"
     amount: u128,                            // balance units, credited (In) or debited (Out)
-    country: Option<String>,                 // ISO 3166-1 alpha-2, when known
+    country: Option<String>,                 // ISO 3166-1 alpha-2: the user's pick, else the host's guess
 }
 
 enum FundingQuoteAnswer {
@@ -157,12 +157,26 @@ struct FundingQuote {
     network_fee: u128,
     eta_secs: Option<u64>,
     expires_at: Option<u64>,
+    asset_decimals: u8,                      // decimals of the ask's asset, so the host shows its amounts
 }
 ```
 
-An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. What answers show about a
-provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
-while that manifest serves Funding. Quotes are asked of, and a session can be handed to, exactly the providers whose
+An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. The host's list marks the
+best quote among providers a session can be handed to, the least to pay inbound or the most to receive outbound, and
+the host selects it until the user picks another. While the user has not chosen, the core asks every provider again
+each minute. Each request for quotes has an id that every list it produces carries. A list stops at once, mid round
+too, when the session is handed to a provider or ends, the host asks again, or the host stops it, so a late answer
+for an amount the user already changed never reaches the host.
+
+Until the user picks a country, an ask carries the one the host detects without asking for a permission: the device's
+coarse location if already permitted, then its SIM or network country, then its locale's region. Only an ISO 3166-1
+alpha-2 code counts; a detection is reused for an hour, and one that found none is tried again after a minute. What
+answers show about a provider, served or refused for a country the ask named, is kept for 12 hours and folded into
+its manifest's routes while that manifest serves Funding. A minimum or maximum a refusal showed is kept by provider,
+rail, asset, network and country, for 12 hours from that refusal: a later quote does not renew it, and a quote at an
+amount the limit rules out clears it. The core combines them into the range a session can take across every
+provider, the smallest minimum and the largest maximum, with no bound while any provider has not shown one, and
+never below $10 CASH. Quotes are asked of, and a session can be handed to, exactly the providers whose
 manifest serves Funding, whatever routes it declares: one still waiting for its manifest, or whose manifest is withdrawn
 or stops serving Funding, is neither asked nor chosen.
 
@@ -184,6 +198,8 @@ enum FundingUpdate {
     Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
     Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
     Payout { outcome: FundingPayout },                // Out: once, after release
+    Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout or an accepted cancel
+    PayoutRetrying,                                   // Out: after release, before Payout, at each retry
 }
 
 enum FundingDeposit {
@@ -197,9 +213,12 @@ enum FundingDeposit {
 - The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and `funding_history` gives the host every recorded session, full or compacted, to rebuild its own history if it was lost. Sessions and the pack are stored as versioned blobs: a corrupt one is set aside under `FundingSessionsUnreadable`, and one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable.
 - The core records every top-up and payment request a provider's worker starts while it serves an open session in
   that direction, with the amount: on the one such session asking for that amount when exactly one does, otherwise
-  on each of them (the report names which). `Crediting` must name a recorded
-  top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
-  anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
+  on each of them (the report names which). A withdrawal whose payout failed takes top-ups too, as its refund,
+  asking for what it debited. `Crediting` and `Refunding` must name a recorded top-up and `Collecting` a recorded
+  payment request, at the recorded amount, once across the provider's sessions; anything else fails with
+  `NotStarted`. Funds started before the session was assigned were never recorded for it.
+- `Converting`, `Payout`, `Refunding` or `PayoutRetrying` on a withdrawal that is not released yet fails with
+  `OutOfOrder`, and so does `PayoutRetrying` once the payout outcome is reported.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
@@ -240,6 +259,11 @@ enum FundingFrameOutcome {
   top-up or payment the host does not know yet leaves the session open, and the core reads the status again with
   backoff. One the host still does not know an hour after the report named it, the time a payment can wait on the
   user's approval, counts as nothing moved.
+- **A failed payout is refunded.** The user's CASH left with the release, so a provider whose payout failed gives it
+  back with a top-up it names in `Refunding`. The core follows its claims and keeps what they returned beside the
+  `Released` outcome. The provider keeps the session until it has reported the payout and any refund, whether or not
+  the host recorded it, and nothing expires it meanwhile. A provider that never reports its payout therefore holds the
+  session, and its worker, for good.
 - **Money moving locks the session.** Money moved once the provider started a top-up or payment request for the
   session, named or not, or reported `PaymentReceived`. From then on only the provider ends the session: it cannot
   fail it once funds started, no cancel ends it and nothing expires it. A worker can stop between starting funds and
@@ -249,8 +273,36 @@ enum FundingFrameOutcome {
   hold it. A bank transfer can take days, so a provider that keeps reporting keeps the session.
 - **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
   working on it, and asks the provider to stop unless money moved.
+- **One status per session.** The host words a typed status: waiting for the transfer, payment or deposit by rail,
+  converting, initiated, converting to the asset or preparing the payout, retrying the top-up or the payout, taking
+  longer once the provider has been silent past the chosen quote's `eta_secs`, the user's cancel while it is open
+  (requested, offered, refused, cancelling), and how it ended, including cancelled with what the refund returned. A
+  top-up waits on the user until the provider holds the payment, so it keeps the waiting status however long that
+  takes; a withdrawal's clock runs from the quote.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
+
+## Resuming after a restart
+
+The host app can be closed or crash at any point; a session carries on from its last checkpoint when it starts again.
+
+- **What the core keeps.** Every session, every report (stored before the report is answered), and the top-ups and
+  payment requests recorded for it, by id. On start the core reloads them, takes the worker of every session a provider
+  still serves, follows each named top-up and payment again, and assigns each session to its worker again once that
+  worker connects.
+- **What the provider does.** It writes its own state for the session to its storage before every external action: a
+  request to its onramp, a faucet, a `payment.topUp` or `payment.request`. It derives the ids of its top-ups, payment
+  requests and onramp orders from the session and the step, so repeating one after a crash finds it (`AlreadyExists`)
+  instead of moving funds twice. On `assign` it resumes from `last_update` and its stored state, not from the start.
+- **What the host does.** It starts funding at launch when it has sessions in flight, rather than waiting for a
+  product to need the core, and it keeps its own top-up and payment records across restarts so a claim in progress
+  carries on. It learns whether sessions are in flight from `funding_in_progress`, which reads storage when funding
+  has not resumed yet, and asks again on each `funding_session_changed`.
+- **Stored sessions are versioned.** Their blob leads with a format number, and the core keeps reading every earlier
+  format, so an upgrade keeps the sessions in flight. A blob it cannot read is kept aside rather than overwritten.
+
+A worker keeps running while the user is elsewhere in the app. Running with the app in the background is out of
+scope for now.
 
 ## Cancel
 
@@ -268,8 +320,12 @@ enum FundingFrameOutcome {
   provider hears `settle_cancel` with `Accepted { fee, refund }` or `Declined`; while an offer is open it is not asked
   again. The answer is `NoOffer` for terms other than the offer's; `TooLate` when the credit started meanwhile, and the
   offer is declined; and `Lapsed` past `expires_at`. A user who declined or was refused may ask again. On `Accepted`
-  the provider returns the user's payment and ends the session with `Failed`. An outbound session is refunded only once
-  refunds of a released withdrawal exist, so until then its provider can only refuse.
+  the provider returns the user's payment: it ends an inbound session with `Failed { Refunded }`, and refunds a released
+  withdrawal with `Refunding`. A withdrawal can be offered only once released and before its payout outcome; until then
+  its provider can only refuse.
+- **A payout that lands after an accepted cancel wins.** The withdrawal ends as paid out, and the session keeps
+  the terms the user accepted as `cancel: Overtaken { fee, refund }`, so its status reads `PaidOutAfterCancel` and
+  the host can say the cancel came too late without remembering it itself.
 - **Inbound after its credit started:** too late. `cancel_funding` answers `TooLate`, the host tells the user, and the
   provider is not asked.
 

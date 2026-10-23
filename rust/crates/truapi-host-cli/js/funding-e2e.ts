@@ -33,7 +33,9 @@ export interface TranscriptLine {
   direction?: string;
   amount?: string | null;
   outcome?: string;
+  answer?: string;
   tag?: string;
+  progress?: string | null;
   route?: string;
   providers?: string[];
   quotes?: { provider: string; state: string }[];

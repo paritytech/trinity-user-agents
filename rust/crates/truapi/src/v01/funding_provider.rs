@@ -50,6 +50,9 @@ pub struct FundingQuoteAsk {
 	/// Symbol the user pays with (In) or receives (Out), as the provider's
 	/// manifest names it.
 	pub asset: String,
+	/// Crypto only: the network the asset moves on, one the provider's route
+	/// declares, such as `polkadot`.
+	pub network: Option<String>,
 	/// Amount in the user's payment balance units: credited for In, debited
 	/// for Out.
 	pub amount: u128,
@@ -77,6 +80,9 @@ pub struct FundingQuote {
 	pub eta_secs: Option<u64>,
 	/// When the provider stops honouring the quote, in Unix milliseconds.
 	pub expires_at: Option<u64>,
+	/// Decimals of the ask's asset, so the host shows its amounts without
+	/// knowing the asset.
+	pub asset_decimals: u8,
 }
 
 /// Why a provider will not price an ask.
@@ -147,7 +153,9 @@ pub enum FundingUpdate {
 		mismatch: Option<FundingReceived>,
 	},
 	/// Inbound: the provider is converting the payment to the user's balance
-	/// asset.
+	/// asset. Outbound: after release, the provider is converting what it
+	/// collected before paying the user out; reported at most once, before
+	/// `Payout`.
 	#[codec(index = 2)]
 	Converting,
 	/// Inbound: the provider started a top-up with `payment.topUp` to credit
@@ -197,6 +205,45 @@ pub enum FundingUpdate {
 		/// A reference the user pays with or quotes, such as a bank
 		/// transfer reference.
 		reference: Option<String>,
+	},
+	/// Outbound: how the provider's payout went after the session was
+	/// released. Allowed once, after `Released`.
+	#[codec(index = 11)]
+	Payout {
+		/// The payout's outcome.
+		outcome: FundingPayout,
+	},
+	/// Outbound: after a failed payout, or a cancel the user accepted, the
+	/// provider started a top-up with `payment.topUp` to give the user back
+	/// what it holds. Allowed once. The session records what the top-up
+	/// claimed as refunded.
+	#[codec(index = 12)]
+	Refunding {
+		/// Id the top-up was started with.
+		top_up_id: [u8; 32],
+		/// Amount the top-up asks to credit.
+		amount: u128,
+	},
+	/// Outbound: a payout attempt failed and the provider is trying again.
+	/// Allowed after `Released` and before `Payout`, as often as it retries.
+	#[codec(index = 13)]
+	PayoutRetrying,
+}
+
+/// How a provider's payout to the user went after an outbound session was
+/// released.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingPayout {
+	/// The funds reached the user's bank, card or wallet.
+	#[codec(index = 0)]
+	PaidOut,
+	/// The payout failed; the provider holds the funds until it refunds
+	/// them, reported with `Refunding`.
+	#[codec(index = 1)]
+	Failed {
+		/// Human-readable reason.
+		reason: String,
 	},
 }
 
@@ -311,7 +358,8 @@ pub struct ProductFundingSettleCancelRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum FundingCancelDecision {
 	/// Accepted on these terms, as the host showed them. The provider returns
-	/// `refund` and reports `Failed`.
+	/// `refund`: it refunds an outbound session with `Refunding`, or ends an
+	/// inbound one with `Failed { Refunded }`.
 	#[codec(index = 0)]
 	Accepted {
 		/// What the provider keeps, in the user's payment balance units.
