@@ -25,6 +25,7 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod live_extrinsic_builder;
 mod live_storage_watch;
 mod watched_storage;
 
