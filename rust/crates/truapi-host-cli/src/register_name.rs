@@ -16,21 +16,17 @@ use anyhow::{Context, Result, bail};
 use subxt::utils::H256;
 use tracing::debug;
 use truapi::{
-	chain::{ExtrinsicVersion, RestrictOrigins},
 	host_logic::{
 		dotns_gateway::{
-			DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN,
-			RegisterNameCallArgs, build_register_proof_message, encode_register_full_name_extra,
+			AsDotnsGatewayExtension, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN,
+			MIN_PERSON_LABEL_LEN, RegisterNameCallArgs, build_register_proof_message,
 			is_dotted_lite_username, is_registrable_full_label,
 		},
-		product_account::{
-			SR25519_SIGNING_CONTEXT, derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-		},
+		product_account::{derive_full_person_ring_vrf_entropy, derive_identity_keypair},
 	},
 	statement_allowance::{
 		self as alloc, CollectionCandidate, FixedPersonhoodSigner, PersonhoodSigner,
-		ProofAuthorizer, collection::PersonhoodCollection, extension::AS_DOTNS_GATEWAY, ring,
-		rpc::RpcClient,
+		collection::PersonhoodCollection, ring, rpc::RpcClient,
 	},
 };
 
@@ -150,13 +146,12 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	.await?;
 	debug!(ring_index, revision, members = members.len(), "full-person ring resolved");
 
-	// Reading Asset Hub metadata, which asserts the RegisterFullName shape, and
-	// the exponent the subscriber verifies proofs against.
+	// Reading Asset Hub metadata and the exponent the subscriber verifies
+	// proofs against.
 	let ah_rpc = RpcClient::connect(config.network.asset_hub_ws)
 		.await
 		.context("connect Asset Hub RPC")?;
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
-	let info_variant = ah_metadata.dotns_register_full_name_variant()?;
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)
 			.await?;
@@ -189,29 +184,18 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	.await
 	.context("wait for Asset Hub to import the People ring root revision")?;
 
-	// The account signs the implication with sr25519, and the signature is
-	// carried in the AsDotnsGateway extension next to the ring proof.
-	let sign_registration = |digest: &[u8; 32]| {
-		let signature =
-			who.secret.sign_simple(SR25519_SIGNING_CONTEXT, digest, &who.public).to_bytes();
-		Ok(encode_register_full_name_extra(
-			info_variant,
-			&ring_proof,
-			ring_index,
-			revision,
-			&signature,
-		))
-	};
+	// The account signs the implication with sr25519; the signature travels
+	// next to the ring proof in the AsDotnsGateway value.
+	let authorizer = AsDotnsGatewayExtension { ring_proof, ring_index, revision, who: &who };
 	let call =
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsics = crate::extrinsic_service(&config.network);
 	let extrinsic = extrinsics
 		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis), |builder| {
-			builder.with_call_args("DotnsGateway", "register_name", call);
 			builder
-				.with_extension(ProofAuthorizer::new(AS_DOTNS_GATEWAY, sign_registration))
-				.with_extension(RestrictOrigins(true))
-				.with_extrinsic_version(ExtrinsicVersion::newest_declaring(AS_DOTNS_GATEWAY));
+				.with_call_args("DotnsGateway", "register_name", call)
+				.with_extension(authorizer)
+				.with_restrict_origins(true);
 		})
 		.await?;
 

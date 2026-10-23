@@ -113,6 +113,18 @@ pub enum ExtrinsicBuildError {
 		/// The decoder's message.
 		reason: String,
 	},
+	/// A supplied extension's value does not encode as its metadata type.
+	#[error("{extension} {slot} value does not encode as metadata type {type_id}: {reason}")]
+	ExtensionEncode {
+		/// The extension name.
+		extension: String,
+		/// `explicit` or `implicit`.
+		slot: &'static str,
+		/// The metadata type it was encoded against.
+		type_id: u32,
+		/// The encoder's message.
+		reason: String,
+	},
 	/// A supplied extension failed to produce its explicit value.
 	#[error("extension {extension} failed: {source}")]
 	Extension {

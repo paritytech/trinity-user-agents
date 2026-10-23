@@ -6,7 +6,7 @@
 //! and submit the resulting unsigned General (v5) extrinsic. Native only
 //! (needs the `verifiable` prover and live chain reads).
 
-mod authorizer;
+mod authorizers;
 pub mod collection;
 pub mod extension;
 pub mod extrinsic;
@@ -29,7 +29,7 @@ pub use test_fixtures::{
 mod view;
 mod view_cache;
 
-pub use authorizer::{ExtrinsicTarget, ProofAuthorizer};
+pub use authorizers::{AsPgasExtension, AsResourcesExtension, ExtrinsicTarget, RingProof};
 pub use signer::{FixedPersonhoodSigner, PersonhoodSigner};
 pub use view::ViewFunctionError;
 
@@ -54,7 +54,7 @@ use collection::PersonhoodCollection;
 use subxt::utils::H256;
 
 use crate::chain::ExtrinsicService;
-use extension::{AS_RESOURCES, Metadata, MetadataError};
+use extension::{Metadata, MetadataError};
 use ring::RingParams;
 use rpc::RpcClient;
 use slot::{SlotError, SlotSelection};
@@ -93,7 +93,7 @@ pub enum StatementAllowanceError {
 	ViewFunction(#[from] view::ViewFunctionError),
 	/// The allowance extrinsic could not be built.
 	#[error(transparent)]
-	Extrinsic(#[from] crate::chain::ExtrinsicBuildError),
+	Extrinsic(crate::chain::ExtrinsicBuildError),
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
@@ -665,31 +665,21 @@ async fn register_statement_account(
 		let context = slot::derive_slot_context(params.network_suffix, params.period, seq);
 		let alias =
 			slot::slot_alias(signer, collection, params.network_suffix, params.period, seq)?;
-		let prove_allowance = |message: &[u8; 32]| {
-			let ring_proof = signer.prove(params.ring, &context, message)?;
-			extrinsic::build_as_resources_extra(
-				metadata,
-				&ring_proof,
-				params.ring.ring_index,
-				revision,
-				collection,
-			)
-		};
+		let proof = RingProof { signer, ring: params.ring, context, revision };
 		let call = extrinsic::SetStatementStoreAccountCallArgs {
 			period: params.period,
 			seq,
 			target_account: *params.target,
 		};
 		let extrinsic = target_chain
-			.build_authorized(
-				RESOURCES_PALLET,
-				"set_statement_store_account",
-				call,
-				ProofAuthorizer::new(AS_RESOURCES, prove_allowance),
-			)
+			.extrinsics
+			.build_mortal_extrinsic(target_chain.genesis, |builder| {
+				builder.with_call_args(RESOURCES_PALLET, "set_statement_store_account", call);
+				builder.with_extension(AsResourcesExtension::statement_store_allowance(proof));
+			})
 			.await?;
 
-		match rpc.submit_and_watch(&extrinsic).await {
+		match rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				if slot::read_slot_account_at(rpc, &alias, params.period, &block_hash).await? !=
 					Some(*params.target)
@@ -1015,24 +1005,14 @@ pub async fn claim_long_term_storage(
 		.await?;
 
 		let context = slot::derive_long_term_storage_context(network_suffix, period, counter);
-		let prove_claim = |message: &[u8; 32]| {
-			let ring_proof = signer.prove(ring, &context, message)?;
-			extrinsic::build_long_term_storage_extra(
-				metadata,
-				&ring_proof,
-				ring.ring_index,
-				revision,
-				ring.collection,
-			)
-		};
+		let proof = RingProof { signer, ring, context, revision };
 		let call = extrinsic::ClaimLongTermStorageCallArgs { period, counter, account_id: *target };
 		let extrinsic = target_chain
-			.build_authorized(
-				RESOURCES_PALLET,
-				"claim_long_term_storage",
-				call,
-				ProofAuthorizer::new(AS_RESOURCES, prove_claim),
-			)
+			.extrinsics
+			.build_mortal_extrinsic(target_chain.genesis, |builder| {
+				builder.with_call_args(RESOURCES_PALLET, "claim_long_term_storage", call);
+				builder.with_extension(AsResourcesExtension::long_term_storage(proof));
+			})
 			.await?;
 		debug!(
 			period,
@@ -1042,7 +1022,7 @@ pub async fn claim_long_term_storage(
 			"submitting Bulletin long-term-storage claim"
 		);
 
-		match rpc.submit_and_watch(&extrinsic).await {
+		match rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				return Ok(LongTermStorageOutcome::Claimed {
 					block_hash,
@@ -1579,8 +1559,8 @@ mod tests {
 		free_slots: usize,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -1659,8 +1639,8 @@ mod tests {
 		allow_eviction: bool,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -1710,8 +1690,8 @@ mod tests {
 		submit_error: &str,
 	) -> Result<RegistrationOutcome, StatementAllowanceError> {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2176,8 +2156,8 @@ mod tests {
 	#[test]
 	fn a_full_table_replaces_the_oldest_replaceable_slot() {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2230,8 +2210,8 @@ mod tests {
 	#[test]
 	fn a_duplicate_submit_retry_does_not_take_over_a_second_slot() {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2285,8 +2265,8 @@ mod tests {
 	#[test]
 	fn a_refused_takeover_is_named() {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -2330,8 +2310,8 @@ mod tests {
 	#[test]
 	fn a_full_table_within_the_cooldown_still_fails() {
 		let metadata = test_fixtures::people();
-		let extrinsics = crate::chain::extrinsic_service_serving(test_fixtures::PEOPLE_METADATA);
-		let target_chain = ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256([0xab; 32]) };
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();

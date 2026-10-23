@@ -66,6 +66,18 @@ pub fn people() -> &'static Metadata {
 	&PEOPLE
 }
 
+/// An extrinsic service over a scripted node serving the People fixture, on a
+/// host that builds People as V5 on pipeline 0.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn people_extrinsics() -> crate::chain::ExtrinsicService {
+	crate::chain::extrinsic_service_serving(PEOPLE_METADATA, 0)
+}
+
+/// Where allowance tests build their People extrinsics.
+pub fn people_target(extrinsics: &crate::chain::ExtrinsicService) -> super::ExtrinsicTarget<'_> {
+	super::ExtrinsicTarget { extrinsics, genesis: subxt::utils::H256([0xab; 32]) }
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

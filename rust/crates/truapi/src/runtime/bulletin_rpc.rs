@@ -925,7 +925,6 @@ mod tests {
 	mod orchestration {
 		use super::*;
 		use crate::{
-			chain::ExtrinsicServiceDeps,
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 			host_internal::extrinsic::tests::{
 				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
@@ -1512,11 +1511,10 @@ mod tests {
 
 		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
 			let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
-			let extrinsics = Arc::new(ExtrinsicService::new(ExtrinsicServiceDeps {
-				storage: Arc::new(chain.clone()),
-				nonces: Arc::new(chain.clone()),
-				versions: Arc::new(crate::chain::V4OnlyHost),
-			}));
+			let extrinsics = Arc::new(ExtrinsicService::over_chain(
+				chain.clone(),
+				Arc::new(crate::chain::V4OnlyHost),
+			));
 			BulletinRpc::new(chain, extrinsics, [0x42; 32])
 				.with_allowance_block_wait_timeout(Duration::from_millis(25))
 		}

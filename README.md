@@ -265,8 +265,11 @@ head. Submitting it stays with the caller.
 The extrinsic version follows the host: `transactionExtensionVersions()` lists the
 chains the host builds as V5 general transactions and the extension pipeline each
 uses, and every other chain is V4. A host that never builds V5 can leave the
-callback at its default, an empty list. Callers authorized by a proof rather than
-a signature pin the newest pipeline that declares their authorizer.
+callback at its default, an empty list, but then the core cannot build the
+allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
+only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
+`AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
+runtime's type by name.
 
 ### Durable transactions
 

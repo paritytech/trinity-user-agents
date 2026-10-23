@@ -29,8 +29,8 @@ use crate::{
 		EncodedExtrinsic, MortalExtrinsic, Mortality,
 		extrinsic::{
 			ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
-			extension::SuppliedExtension,
-			version::{choose_version, declares, pipeline_names},
+			extension::{SlotTypes, SuppliedExtension},
+			version::{choose_version, pipeline_declares, pipeline_names},
 			well_known::{
 				ChainValues, SlotValues, VERIFY_MULTI_SIGNATURE, unset_slot_value,
 				verify_signature_value, well_known_values,
@@ -63,6 +63,7 @@ pub fn assemble(
 		transaction_version: builder.runtime.transaction_version,
 		mortality,
 		nonce: builder.nonce.or(account_nonce).unwrap_or(0),
+		restrict_origins: builder.restrict_origins,
 	};
 	let fold = PipelineFold { version, call: &call, signer, chain, types: metadata.types() };
 	let slots = fold.fill_pipeline(builder.extensions, &metadata)?;
@@ -81,10 +82,10 @@ fn check_version_fits(
 	check_format_supported(version, metadata)?;
 	let extension_version = version.extension_version();
 	let is_v5 = matches!(version, ExtrinsicVersion::V5 { .. });
-	if is_v5 && signed && !declares(metadata, extension_version, VERIFY_MULTI_SIGNATURE)? {
+	if is_v5 && signed && !pipeline_declares(metadata, extension_version, VERIFY_MULTI_SIGNATURE)? {
 		return Err(ExtrinsicBuildError::NoSignatureSlot { extension_version });
 	}
-	check_supplied_declared(supplied, extension_version, metadata)
+	check_supplied_extensions(supplied, extension_version, metadata)
 }
 
 fn check_format_supported(
@@ -104,7 +105,7 @@ fn check_format_supported(
 
 /// Rejects a supplied extension the pipeline does not list, or one supplied
 /// twice, since only one value can fill a slot.
-fn check_supplied_declared(
+fn check_supplied_extensions(
 	supplied: &[SuppliedExtension<'_>],
 	extension_version: u8,
 	metadata: &Metadata,
@@ -185,7 +186,8 @@ impl PipelineFold<'_> {
 		implication: &InheritedImplication,
 	) -> Result<SlotValues, ExtrinsicBuildError> {
 		if let Some(extension) = supplied {
-			return supplied_values(extension, implication);
+			let types = SlotTypes { explicit: declared.id, implicit: declared.implicit_id };
+			return (extension.encode)(implication, types, self.types);
 		}
 		if declared.name == VERIFY_MULTI_SIGNATURE {
 			return self.signature_values(declared.id, implication);
@@ -212,16 +214,6 @@ impl PipelineFold<'_> {
 		let explicit = verify_signature_value(signature, type_id, self.types)?;
 		Ok(SlotValues { explicit, implicit: Vec::new() })
 	}
-}
-
-fn supplied_values(
-	extension: SuppliedExtension<'_>,
-	implication: &InheritedImplication,
-) -> Result<SlotValues, ExtrinsicBuildError> {
-	let explicit = (extension.explicit)(implication).map_err(|source| {
-		ExtrinsicBuildError::Extension { extension: extension.name.clone(), source }
-	})?;
-	Ok(SlotValues { explicit, implicit: extension.implicit })
 }
 
 fn unset_values(

@@ -624,7 +624,6 @@ pub fn build_signed_extrinsic_v5(
 #[cfg(test)]
 pub mod tests {
 	use super::*;
-	use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 	use parity_scale_codec::{Compact, Decode, Encode};
 	use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
 	use subxt::{
@@ -942,6 +941,13 @@ pub mod tests {
 		assert_eq!(tail, vec![0xbb, 0xaa, 0xff]);
 	}
 
+	/// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the `AsResources`
+	/// value for the V14 People fixture, whose variant indices are 3 and 1.
+	fn long_term_storage_claim_value() -> Vec<u8> {
+		[vec![0x01, 0x03], vec![0xEEu8; 785].encode(), 3u32.encode(), 9u32.encode(), vec![0x01]]
+			.concat()
+	}
+
 	/// Fixture extensions in metadata order, at their resting values.
 	fn fixture_extensions(
 		allowance_metadata: &AllowanceMetadata,
@@ -1151,27 +1157,18 @@ pub mod tests {
 		);
 	}
 
-	/// The proof-authorized path must lay the body out exactly like the
-	/// assembler behind chain-accepted allowance extrinsics. The hash pins the
-	/// 858 bytes that assembler produced from the same values: preamble,
-	/// ordering, no spliced signature.
+	/// The proof-authorized path must lay the body out exactly like
+	/// chain-accepted allowance extrinsics. The hash pins the 858-byte
+	/// reference body for these values: preamble, ordering, no spliced
+	/// signature.
 	#[test]
-	fn v5_proof_authorized_bytes_match_the_statement_allowance_assembler() {
-		use crate::runtime::statement_allowance::extrinsic::build_long_term_storage_extra;
-
+	fn v5_proof_authorized_bytes_have_the_reference_layout() {
 		let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let call_data = fixture_call_data();
 
-		let as_resources_extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
+		let as_resources_extra = long_term_storage_claim_value();
 
 		let as_resources_index = allowance_metadata.as_resources_index().unwrap();
 		let mut extensions = fixture_extensions(&allowance_metadata, &state);
@@ -1363,8 +1360,6 @@ pub mod tests {
 	/// ring-VRF claim is the whole point of the caller-authorized path.
 	#[test]
 	fn v5_accepts_a_real_as_resources_proof_value() {
-		use crate::runtime::statement_allowance::extrinsic::build_long_term_storage_extra;
-
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let mut extensions = fixture_signed_extensions(&allowance_metadata, &state);
@@ -1372,14 +1367,7 @@ pub mod tests {
 			.iter_mut()
 			.find(|extension| extension.id == "AsResources")
 			.unwrap()
-			.extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
+			.extra = long_term_storage_claim_value();
 
 		build_signed_extrinsic_v5(
 			&test_signer(),

@@ -33,8 +33,7 @@ pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
 	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService, ExtrinsicServiceDeps,
-	ExtrinsicVersion, InheritedImplication, RawExtension, RestrictOrigins, TransactionExtension,
-	VersionChoice,
+	ExtrinsicVersion, InheritedImplication, PreencodedValue, RawExtension, TransactionExtension,
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
@@ -48,7 +47,9 @@ pub use tx_validator::TxValidator;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub use tests::{Node, V4OnlyHost, extrinsic_service_serving, method_count, serve};
+pub use tests::{
+	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, method_count, serve,
+};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

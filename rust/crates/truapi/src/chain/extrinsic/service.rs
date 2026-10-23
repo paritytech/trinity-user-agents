@@ -6,7 +6,7 @@ use subxt::utils::{AccountId32, H256};
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicBuilder,
-	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
+	builder::{RuntimeAtBirth, account_needing_nonce, assemble, pins_version, start_build},
 	version_map::VersionMapCache,
 };
 use crate::{
@@ -52,6 +52,12 @@ impl ExtrinsicService {
 		versions: Arc<dyn ExtrinsicVersionHost>,
 	) -> Self {
 		let chain = ChainRuntime::new(Arc::new(HostChainProvider::new(provider)), spawner);
+		Self::over_chain(chain, versions)
+	}
+
+	/// A service that reads the chain through `chain`, sharing its pooled
+	/// connections.
+	pub fn over_chain(chain: ChainRuntime, versions: Arc<dyn ExtrinsicVersionHost>) -> Self {
 		Self::new(ExtrinsicServiceDeps {
 			storage: Arc::new(chain.clone()),
 			nonces: Arc::new(chain),
@@ -67,12 +73,27 @@ impl ExtrinsicService {
 		genesis: H256,
 		build: impl FnOnce(&mut ExtrinsicBuilder<'a>),
 	) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-		let mut builder = start_build(self.runtime_at_finalized_head(genesis).await?);
+		let runtime = self.runtime_at_finalized_head(genesis).await?;
+		let mut builder = start_build(runtime);
 		build(&mut builder);
 		let nonce_account = account_needing_nonce(&builder);
 		let account_nonce = self.read_account_nonce(genesis, nonce_account).await?;
-		let host_extension_version = self.versions.extension_version(genesis).await?;
+		let host_extension_version =
+			self.read_host_default(genesis, pins_version(&builder)).await?;
 		assemble(builder, host_extension_version, account_nonce)
+	}
+
+	/// The host's pipeline for `genesis`, read only when the caller did not
+	/// pin a version, so a pinned build never depends on the host's answer.
+	async fn read_host_default(
+		&self,
+		genesis: H256,
+		pinned: bool,
+	) -> Result<Option<u8>, ExtrinsicBuildError> {
+		if pinned {
+			return Ok(None);
+		}
+		self.versions.host_extension_version(genesis).await
 	}
 
 	async fn runtime_at_finalized_head(

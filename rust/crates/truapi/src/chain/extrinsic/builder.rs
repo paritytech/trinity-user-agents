@@ -8,7 +8,7 @@ use subxt::{
 };
 
 use super::{
-	ExtrinsicBuildError, TransactionExtension, VersionChoice, extension::SuppliedExtension,
+	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension, extension::SuppliedExtension,
 };
 use crate::{chain::HashAndNumber, host_internal::extrinsic::Sr25519Signer};
 
@@ -46,7 +46,8 @@ pub struct ExtrinsicBuilder<'a> {
 	signer: Option<&'a Sr25519Signer>,
 	nonce: Option<u64>,
 	period: u64,
-	version: Option<VersionChoice>,
+	version: Option<ExtrinsicVersion>,
+	restrict_origins: bool,
 }
 
 /// A builder for an extrinsic born at `runtime`'s birth block.
@@ -59,7 +60,14 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 		nonce: None,
 		period: DEFAULT_MORTALITY_PERIOD,
 		version: None,
+		restrict_origins: false,
 	}
+}
+
+/// Whether the caller pinned the extrinsic version, so the host's default is
+/// not needed.
+pub fn pins_version(builder: &ExtrinsicBuilder<'_>) -> bool {
+	builder.version.is_some()
 }
 
 /// The account whose next nonce the build has to read: the signer's, unless
@@ -71,7 +79,8 @@ pub fn account_needing_nonce(builder: &ExtrinsicBuilder<'_>) -> Option<AccountId
 impl<'a> ExtrinsicBuilder<'a> {
 	/// Sets the call from a subxt payload. Replaces any earlier call.
 	pub fn with_call(&mut self, call: impl Payload) -> &mut Self {
-		self.call = Some(self.encode_call(call.pallet_name(), call.call_name(), call.call_data()));
+		let encoded = self.encode_call(call.pallet_name(), call.call_name(), call.call_data());
+		self.call = Some(encoded);
 		self
 	}
 
@@ -138,8 +147,14 @@ impl<'a> ExtrinsicBuilder<'a> {
 	}
 
 	/// Pins the extrinsic version instead of taking the host's default.
-	pub fn with_extrinsic_version(&mut self, choice: VersionChoice) -> &mut Self {
-		self.version = Some(choice);
+	pub fn with_extrinsic_version(&mut self, version: ExtrinsicVersion) -> &mut Self {
+		self.version = Some(version);
+		self
+	}
+
+	/// Sets `RestrictOrigins`, which is unrestricted unless set.
+	pub fn with_restrict_origins(&mut self, restrict: bool) -> &mut Self {
+		self.restrict_origins = restrict;
 		self
 	}
 }

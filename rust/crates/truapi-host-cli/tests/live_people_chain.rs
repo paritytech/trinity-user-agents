@@ -144,71 +144,6 @@ async fn scanning_a_live_period_answers_without_erroring() {
 	println!("scanned live period {period}: {selection:?}");
 }
 
-/// The live runtime must still expose the metadata shape the allowance path
-/// decodes. The offline fixture is pinned to one spec version, so this is what
-/// catches a runtime upgrade that moves the `AsResources` extension.
-#[tokio::test]
-#[ignore = "needs network access to a live People chain"]
-async fn live_metadata_still_exposes_the_allowance_extension_shape() {
-	let cache = ChainContextCache::default();
-	let chain = cache
-		.get(&stale_scoped_client().await)
-		.await
-		.expect("read the live chain context");
-
-	let register = chain
-		.metadata
-		.as_resources_variant_indices(
-			"RegisterStatementStoreAllowance",
-			PersonhoodCollection::LitePeople,
-		)
-		.expect("live runtime exposes RegisterStatementStoreAllowance");
-	let claim = chain
-		.metadata
-		.as_resources_variant_indices("ClaimLongTermStorage", PersonhoodCollection::LitePeople)
-		.expect("live runtime exposes ClaimLongTermStorage");
-	let period_duration = alloc::slot::long_term_storage_period_duration(&chain.metadata)
-		.expect("live runtime exposes Resources.LongTermStoragePeriodDuration");
-
-	// Preferring V16 has to actually reach V16: the legacy RPC answers V14, which
-	// declares no pipeline map at all, so a silent fallback would leave the
-	// version unresolvable while looking fine.
-	assert_eq!(
-		chain.metadata.metadata_version(),
-		16,
-		"the runtime API should have served V16; a fallback to the legacy RPC would \
-         resolve pipeline 0 by default and look identical"
-	);
-	println!(
-		"live metadata V{} pipeline version {}",
-		chain.metadata.metadata_version(),
-		chain.metadata.extension_version()
-	);
-
-	// Indices alone are not enough. A runtime upgrade added a `revision` field to
-	// `RegisterStatementStoreAllowance` while its index stayed at 2, so the
-	// encoded payload went one field short and the runtime panicked in
-	// `validate_transaction`. Assert the arity the encoders actually write.
-	for (variant, encoded_fields) in
-		[("RegisterStatementStoreAllowance", 4usize), ("ClaimLongTermStorage", 4usize)]
-	{
-		let declared = chain
-			.metadata
-			.as_resources_info_field_count(variant)
-			.unwrap_or_else(|err| panic!("live runtime declares `{variant}`: {err}"));
-		assert_eq!(
-			declared, encoded_fields,
-			"`{variant}`: the encoder writes {encoded_fields} fields, the live runtime declares {declared}"
-		);
-	}
-
-	assert!(period_duration > 0);
-	println!(
-		"live: RegisterStatementStoreAllowance={register:?} ClaimLongTermStorage={claim:?} \
-         long-term-storage period={period_duration}s",
-	);
-}
-
 /// The renewal docs tell hosts one scheduled pass per period is enough because
 /// an ended period's allowances stay active for `Resources.StmtStoreGraceWindow`.
 /// That number is quoted in four places and read by no code, so this is what
@@ -234,7 +169,7 @@ async fn live_grace_window_still_leaves_a_full_period_of_slack() {
 
 /// Both personhood collections have to be real on the live chain: the identifier
 /// must address an existing `Members.Collections` entry, the slot budget must be
-/// declared, and the extension must name the collection.
+/// declared.
 ///
 /// This is the only part of the full-personhood path a device without full
 /// personhood can prove. Registering into the `People` ring still needs a
@@ -264,14 +199,10 @@ async fn both_personhood_collections_resolve_on_the_live_chain() {
 		let ring_index = alloc::ring::read_current_ring_index(&rpc, collection)
 			.await
 			.unwrap_or_else(|err| panic!("{collection} has no current ring: {err}"));
-		let (_, variant) = chain
-			.metadata
-			.as_resources_variant_indices("RegisterStatementStoreAllowance", collection)
-			.unwrap_or_else(|err| panic!("{collection} has no extension variant: {err}"));
 
 		println!(
 			"live {collection}: slots={slots} ring_exponent={exponent} \
-             current_ring_index={ring_index} extension_variant={variant}"
+             current_ring_index={ring_index}"
 		);
 		assert!(slots > 0, "{collection} declares a zero slot budget");
 	}

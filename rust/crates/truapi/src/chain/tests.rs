@@ -363,17 +363,38 @@ pub struct V4OnlyHost;
 
 impl crate::platform::ExtrinsicVersionHost for V4OnlyHost {}
 
+/// A host that answers a fixed map of V5 chains.
+pub struct FixedExtensionVersions(pub crate::platform::ExtensionVersionMap);
+
+impl FixedExtensionVersions {
+	/// A host that builds `genesis` as V5 on `extension_version`.
+	pub fn one_chain(genesis: H256, extension_version: u8) -> Self {
+		let chain =
+			crate::platform::ChainExtensionVersion { genesis_hash: genesis.0, extension_version };
+		Self(crate::platform::ExtensionVersionMap { chains: vec![chain] })
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ExtrinsicVersionHost for FixedExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
 /// An extrinsic service over a scripted node serving `metadata`, on a host
-/// that builds every chain as V4.
-pub fn extrinsic_service_serving(metadata: &'static [u8]) -> super::ExtrinsicService {
+/// that builds that node's chain as V5 on `extension_version`.
+pub fn extrinsic_service_serving(
+	metadata: &'static [u8],
+	extension_version: u8,
+) -> super::ExtrinsicService {
 	let mut node = Node::new(4, 6);
 	node.metadata = metadata;
 	let (_node, _provider, chain) = serve(node);
-	super::ExtrinsicService::new(super::ExtrinsicServiceDeps {
-		storage: Arc::new(chain.clone()),
-		nonces: Arc::new(chain),
-		versions: Arc::new(V4OnlyHost),
-	})
+	let versions = FixedExtensionVersions::one_chain(GENESIS, extension_version);
+	super::ExtrinsicService::over_chain(chain, Arc::new(versions))
 }
 
 /// How many requests for `method` the node received.

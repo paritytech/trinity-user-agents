@@ -15,7 +15,7 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
-	chain::{ExtrinsicService, ExtrinsicServiceDeps},
+	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::worker::WorkerLedger,
 	platform::{
@@ -170,11 +170,7 @@ impl RuntimeServices {
 			people_chain_genesis_hash,
 			spawner.clone(),
 		);
-		let extrinsics = Arc::new(ExtrinsicService::new(ExtrinsicServiceDeps {
-			storage: Arc::new(chain.clone()),
-			nonces: Arc::new(chain.clone()),
-			versions: platform.clone(),
-		}));
+		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
 		let bulletin =
 			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
 		Arc::new(Self {

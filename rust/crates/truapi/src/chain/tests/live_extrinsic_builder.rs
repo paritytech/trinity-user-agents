@@ -14,23 +14,17 @@ use subxt::{tx::ValidationResult, utils::H256};
 use truapi_provider::{ChainSource, EmbeddedChainProvider};
 
 use crate::{
-	chain::{
-		EncodedExtrinsic, ExtrinsicService, ExtrinsicServiceDeps, ExtrinsicVersion,
-		RestrictOrigins, TxValidator, V4OnlyHost,
-	},
+	chain::{EncodedExtrinsic, ExtrinsicService, FixedExtensionVersions, TxValidator},
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_internal::{bulletin::build_signed_store_transaction, extrinsic::Sr25519Signer},
-	host_logic::dotns_gateway::{Link, RegisterNameCallArgs, encode_register_full_name_extra},
+	host_logic::dotns_gateway::{AsDotnsGatewayExtension, Link, RegisterNameCallArgs},
+	platform::{ChainExtensionVersion, ExtensionVersionMap},
 	runtime::statement_allowance::{
-		ExtrinsicTarget, ProofAuthorizer,
+		AsPgasExtension, AsResourcesExtension, PersonhoodSigner, RingProof,
+		StatementAllowanceError,
 		collection::PersonhoodCollection,
-		extension::{AS_DOTNS_GATEWAY, AS_PGAS, AS_RESOURCES, Metadata},
-		extrinsic::{
-			ClaimPgasCallArgs, SetStatementStoreAccountCallArgs, build_as_pgas_extra,
-			build_as_resources_extra,
-		},
-		fetch_metadata,
-		rpc::RpcClient,
+		extrinsic::{ClaimPgasCallArgs, SetStatementStoreAccountCallArgs},
+		ring::RingParams,
 	},
 	subscription::Spawner,
 };
@@ -72,19 +66,59 @@ impl LiveChain {
 		});
 		ChainRuntime::new(Arc::new(HostChainProvider::new(Arc::new(provider))), spawner)
 	}
+}
 
-	async fn allowance_metadata(&self) -> Metadata {
-		let rpc = RpcClient::connect(self.ws).await.expect("connect");
-		fetch_metadata(&rpc).await.expect("metadata")
+/// A service following the host map the CLI answers: People and Asset Hub on
+/// pipeline 1.
+fn extrinsic_service(chain: &ChainRuntime) -> ExtrinsicService {
+	let chains = [(PEOPLE.genesis(), 1), (ASSET_HUB.genesis(), 1)]
+		.map(|(genesis, extension_version)| ChainExtensionVersion {
+			genesis_hash: genesis.0,
+			extension_version,
+		})
+		.to_vec();
+	let versions = FixedExtensionVersions(ExtensionVersionMap { chains });
+	ExtrinsicService::over_chain(chain.clone(), Arc::new(versions))
+}
+
+/// Answers every proof with [`UNVERIFIABLE_PROOF`], so no personhood keys are
+/// needed; the runtime rejects the proof, which still shows it decoded it.
+struct UnverifiableProofs;
+
+impl PersonhoodSigner for UnverifiableProofs {
+	fn member(
+		&self,
+		_collection: PersonhoodCollection,
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		Ok([0; 32])
+	}
+
+	fn alias(
+		&self,
+		_collection: PersonhoodCollection,
+		_context: &[u8],
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		Ok([0; 32])
+	}
+
+	fn prove(
+		&self,
+		_ring: &RingParams,
+		_context: &[u8],
+		_message: &[u8],
+	) -> Result<Vec<u8>, StatementAllowanceError> {
+		Ok(UNVERIFIABLE_PROOF.to_vec())
 	}
 }
 
-fn extrinsic_service(chain: &ChainRuntime) -> ExtrinsicService {
-	ExtrinsicService::new(ExtrinsicServiceDeps {
-		storage: Arc::new(chain.clone()),
-		nonces: Arc::new(chain.clone()),
-		versions: Arc::new(V4OnlyHost),
-	})
+fn lite_people_ring() -> RingParams {
+	RingParams {
+		collection: PersonhoodCollection::LitePeople,
+		members: Vec::new(),
+		exponent: 9,
+		ring_index: 0,
+		block_hash: String::new(),
+	}
 }
 
 /// Dry-runs `extrinsic` at the best block and returns the runtime's verdict.
@@ -104,29 +138,21 @@ async fn dry_run(chain: &ChainRuntime, genesis: H256, extrinsic: Vec<u8>) -> Val
 async fn a_statement_store_registration_is_judged_by_people() {
 	let chain = PEOPLE.chain_runtime();
 	let extrinsics = extrinsic_service(&chain);
-	let metadata = PEOPLE.allowance_metadata().await;
-	let prove = |_message: &[u8; 32]| {
-		build_as_resources_extra(
-			&metadata,
-			&UNVERIFIABLE_PROOF,
-			0,
-			0,
-			PersonhoodCollection::LitePeople,
-		)
-	};
+	let ring = lite_people_ring();
+	let proof =
+		RingProof { signer: &UnverifiableProofs, ring: &ring, context: [0; 32], revision: 0 };
 	let call = SetStatementStoreAccountCallArgs { period: 1, seq: 0, target_account: [0x22; 32] };
 
-	let extrinsic = ExtrinsicTarget { extrinsics: &extrinsics, genesis: PEOPLE.genesis() }
-		.build_authorized(
-			"Resources",
-			"set_statement_store_account",
-			call,
-			ProofAuthorizer::new(AS_RESOURCES, prove),
-		)
+	let built = extrinsics
+		.build_mortal_extrinsic(PEOPLE.genesis(), |builder| {
+			builder
+				.with_call_args("Resources", "set_statement_store_account", call)
+				.with_extension(AsResourcesExtension::statement_store_allowance(proof));
+		})
 		.await
 		.expect("build");
 
-	dry_run(&chain, PEOPLE.genesis(), extrinsic).await;
+	dry_run(&chain, PEOPLE.genesis(), built.extrinsic.bytes().to_vec()).await;
 }
 
 #[tokio::test]
@@ -134,25 +160,21 @@ async fn a_statement_store_registration_is_judged_by_people() {
 async fn a_pgas_claim_is_judged_by_asset_hub() {
 	let chain = ASSET_HUB.chain_runtime();
 	let extrinsics = extrinsic_service(&chain);
-	let metadata = ASSET_HUB.allowance_metadata().await;
-	let prove = |_message: &[u8; 32]| {
-		build_as_pgas_extra(
-			&metadata,
-			&UNVERIFIABLE_PROOF,
-			0,
-			0,
-			1,
-			PersonhoodCollection::LitePeople,
-		)
-	};
+	let ring = lite_people_ring();
+	let proof =
+		RingProof { signer: &UnverifiableProofs, ring: &ring, context: [0; 32], revision: 0 };
 	let call = ClaimPgasCallArgs { slot_index: 0, target: [0x22; 32] };
 
-	let extrinsic = ExtrinsicTarget { extrinsics: &extrinsics, genesis: ASSET_HUB.genesis() }
-		.build_authorized("Pgas", "claim_pgas", call, ProofAuthorizer::new(AS_PGAS, prove))
+	let built = extrinsics
+		.build_mortal_extrinsic(ASSET_HUB.genesis(), |builder| {
+			builder
+				.with_call_args("Pgas", "claim_pgas", call)
+				.with_extension(AsPgasExtension::new(proof, 1));
+		})
 		.await
 		.expect("build");
 
-	dry_run(&chain, ASSET_HUB.genesis(), extrinsic).await;
+	dry_run(&chain, ASSET_HUB.genesis(), built.extrinsic.bytes().to_vec()).await;
 }
 
 #[tokio::test]
@@ -160,10 +182,14 @@ async fn a_pgas_claim_is_judged_by_asset_hub() {
 async fn a_dotns_registration_is_judged_by_asset_hub() {
 	let chain = ASSET_HUB.chain_runtime();
 	let extrinsics = extrinsic_service(&chain);
-	let metadata = ASSET_HUB.allowance_metadata().await;
-	let info_variant = metadata.dotns_register_full_name_variant().expect("RegisterFullName");
-	let authorize = |_digest: &[u8; 32]| {
-		Ok(encode_register_full_name_extra(info_variant, &UNVERIFIABLE_PROOF, 0, 0, &[0; 64]))
+	let who = schnorrkel::MiniSecretKey::from_bytes(&[0x09; 32])
+		.expect("a mini secret")
+		.expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+	let authorizer = AsDotnsGatewayExtension {
+		ring_proof: UNVERIFIABLE_PROOF.to_vec(),
+		ring_index: 0,
+		revision: 0,
+		who: &who,
 	};
 	let call = RegisterNameCallArgs {
 		who: [0x22; 32],
@@ -173,11 +199,10 @@ async fn a_dotns_registration_is_judged_by_asset_hub() {
 
 	let built = extrinsics
 		.build_mortal_extrinsic(ASSET_HUB.genesis(), |builder| {
-			builder.with_call_args("DotnsGateway", "register_name", call);
 			builder
-				.with_extension(ProofAuthorizer::new(AS_DOTNS_GATEWAY, authorize))
-				.with_extension(RestrictOrigins(true))
-				.with_extrinsic_version(ExtrinsicVersion::newest_declaring(AS_DOTNS_GATEWAY));
+				.with_call_args("DotnsGateway", "register_name", call)
+				.with_extension(authorizer)
+				.with_restrict_origins(true);
 		})
 		.await
 		.expect("build");

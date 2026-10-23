@@ -19,7 +19,8 @@ mod tests;
 
 pub use builder::ExtrinsicBuilder;
 pub use error::ExtrinsicBuildError;
-pub use extension::{ExtensionError, InheritedImplication, RawExtension, TransactionExtension};
+pub use extension::{
+	ExtensionError, InheritedImplication, PreencodedValue, RawExtension, TransactionExtension,
+};
 pub use service::{ExtrinsicService, ExtrinsicServiceDeps};
-pub use version::{ExtrinsicVersion, VersionChoice};
-pub use well_known::RestrictOrigins;
+pub use version::ExtrinsicVersion;

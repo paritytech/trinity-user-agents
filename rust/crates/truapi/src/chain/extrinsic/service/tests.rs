@@ -12,9 +12,9 @@ use subxt::{
 };
 use truapi::latest::GenericError;
 
-use super::{ExtrinsicService, ExtrinsicServiceDeps};
+use super::ExtrinsicService;
 use crate::{
-	chain::{ExtrinsicBuildError, MortalExtrinsic, Node, method_count, serve},
+	chain::{ExtrinsicBuildError, ExtrinsicVersion, MortalExtrinsic, Node, method_count, serve},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 	platform::{ChainExtensionVersion, ExtensionVersionMap, ExtrinsicVersionHost},
 	test_support::ScriptedProvider,
@@ -49,11 +49,7 @@ impl ExtrinsicVersionHost for CountingHost {
 
 fn service_over(node: Node, host: Arc<CountingHost>) -> (ExtrinsicService, Arc<ScriptedProvider>) {
 	let (_node, provider, chain) = serve(node);
-	let service = ExtrinsicService::new(ExtrinsicServiceDeps {
-		storage: Arc::new(chain.clone()),
-		nonces: Arc::new(chain),
-		versions: host,
-	});
+	let service = ExtrinsicService::over_chain(chain.clone(), host);
 	(service, provider)
 }
 
@@ -172,4 +168,39 @@ fn a_signed_build_falls_back_to_v4_where_the_pipeline_cannot_sign() {
 	let built = build_remark(&service, &test_signer(), Some(0)).unwrap();
 
 	assert_eq!(bulletin_nonce(&built), 0);
+}
+
+/// A build that pins its version never needs the host's map, so a host that
+/// cannot answer does not stop it.
+#[test]
+fn a_pinned_build_does_not_read_the_host_map() {
+	let failure = GenericError { reason: "remote config unavailable".to_string() };
+	let host = CountingHost::answering(Err(failure));
+	let (service, _) = service_over(Node::new(FINALIZED, 8), host.clone());
+	let signer = test_signer();
+	let v4 = ExtrinsicVersion::V4;
+
+	let built = block_on(service.build_mortal_extrinsic(GENESIS, |builder| {
+		builder
+			.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
+			.with_signer(&signer)
+			.with_nonce(0)
+			.with_extrinsic_version(v4);
+	}));
+
+	assert!(built.is_ok());
+	assert_eq!(host.reads(), 0);
+}
+
+/// Each build reads the finalized head afresh, so a retry never reuses a
+/// birth block that has aged.
+#[test]
+fn every_build_reads_a_fresh_birth() {
+	let (service, provider) = service_over(Node::new(FINALIZED, 8), no_v5_chains());
+	let signer = test_signer();
+
+	build_remark(&service, &signer, Some(0)).unwrap();
+	build_remark(&service, &signer, Some(0)).unwrap();
+
+	assert_eq!(method_count(&provider, "chain_getFinalizedHead"), 2);
 }

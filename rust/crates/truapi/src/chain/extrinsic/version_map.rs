@@ -24,7 +24,7 @@ impl VersionMapCache {
 
 	/// The pipeline the host builds `genesis` with, or `None` when the host
 	/// builds it as V4.
-	pub async fn extension_version(
+	pub async fn host_extension_version(
 		&self,
 		genesis: H256,
 	) -> Result<Option<u8>, ExtrinsicBuildError> {

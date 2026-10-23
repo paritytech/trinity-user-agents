@@ -16,22 +16,7 @@ pub enum ExtrinsicVersion {
 	},
 }
 
-/// How a caller pins the version instead of taking the host's default.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VersionChoice {
-	/// Exactly this version.
-	Exact(ExtrinsicVersion),
-	/// The newest V5 pipeline that declares the named extension.
-	NewestDeclaring(&'static str),
-}
-
 impl ExtrinsicVersion {
-	/// The newest V5 pipeline that declares `extension`, resolved against
-	/// metadata when the extrinsic is built.
-	pub fn newest_declaring(extension: &'static str) -> VersionChoice {
-		VersionChoice::NewestDeclaring(extension)
-	}
-
 	/// The extension pipeline this version encodes with.
 	pub fn extension_version(self) -> u8 {
 		match self {
@@ -48,14 +33,13 @@ impl ExtrinsicVersion {
 /// pipeline is V5 with that pipeline, unless the build is signed and the
 /// pipeline has no `VerifyMultiSignature`. Every other chain is V4.
 pub fn choose_version(
-	choice: Option<VersionChoice>,
+	pinned: Option<ExtrinsicVersion>,
 	host_extension_version: Option<u8>,
 	signed: bool,
 	metadata: &Metadata,
 ) -> Result<ExtrinsicVersion, ExtrinsicBuildError> {
-	match choice {
-		Some(VersionChoice::Exact(version)) => Ok(version),
-		Some(VersionChoice::NewestDeclaring(extension)) => newest_declaring(extension, metadata),
+	match pinned {
+		Some(version) => Ok(version),
 		None => host_default(host_extension_version, signed, metadata),
 	}
 }
@@ -68,42 +52,14 @@ fn host_default(
 	let Some(extension_version) = host_extension_version else {
 		return Ok(ExtrinsicVersion::V4);
 	};
-	if signed && !declares(metadata, extension_version, VERIFY_MULTI_SIGNATURE)? {
+	if signed && !pipeline_declares(metadata, extension_version, VERIFY_MULTI_SIGNATURE)? {
 		return Ok(ExtrinsicVersion::V4);
 	}
 	Ok(ExtrinsicVersion::V5 { extension_version })
 }
 
-fn newest_declaring(
-	extension: &str,
-	metadata: &Metadata,
-) -> Result<ExtrinsicVersion, ExtrinsicBuildError> {
-	let mut declaring = Vec::new();
-	for extension_version in declared_pipelines(metadata)? {
-		if declares(metadata, extension_version, extension)? {
-			declaring.push(extension_version);
-		}
-	}
-	let newest =
-		declaring
-			.into_iter()
-			.max()
-			.ok_or_else(|| ExtrinsicBuildError::NoPipelineDeclares {
-				extension: extension.to_string(),
-			})?;
-	Ok(ExtrinsicVersion::V5 { extension_version: newest })
-}
-
-/// The extension pipelines the runtime declares.
-pub fn declared_pipelines(metadata: &Metadata) -> Result<Vec<u8>, ExtrinsicBuildError> {
-	metadata
-		.extrinsic_extension_version_info()
-		.map(Iterator::collect)
-		.map_err(|error| ExtrinsicBuildError::Metadata(format!("extension pipelines: {error}")))
-}
-
 /// Whether pipeline `extension_version` lists `extension`.
-pub fn declares(
+pub fn pipeline_declares(
 	metadata: &Metadata,
 	extension_version: u8,
 	extension: &str,

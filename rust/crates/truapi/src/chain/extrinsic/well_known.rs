@@ -11,33 +11,11 @@ use subxt::{
 	utils::{AccountId32, H256, MultiSignature},
 };
 
-use super::{
-	ExtensionError, InheritedImplication, TransactionExtension, error::ExtrinsicBuildError,
-};
+use super::error::ExtrinsicBuildError;
 use crate::chain::Mortality;
 
 /// The V5 signature extension's name in metadata.
 pub const VERIFY_MULTI_SIGNATURE: &str = "VerifyMultiSignature";
-
-/// Origin restriction. The builder sets it to `false` when the caller does
-/// not supply it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RestrictOrigins(pub bool);
-
-impl TransactionExtension for RestrictOrigins {
-	type Implicit = ();
-	type Explicit = bool;
-
-	fn name(&self) -> &str {
-		"RestrictOrigins"
-	}
-
-	fn implicit(&self) {}
-
-	fn explicit(&self, _implication: &InheritedImplication) -> Result<bool, ExtensionError> {
-		Ok(self.0)
-	}
-}
 
 /// What the build knows when it fills well-known extensions.
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +30,8 @@ pub struct ChainValues {
 	pub mortality: Mortality,
 	/// The nonce `CheckNonce` carries.
 	pub nonce: u64,
+	/// Whether `RestrictOrigins` restricts the origin.
+	pub restrict_origins: bool,
 }
 
 /// One extension's encoded values.
@@ -79,7 +59,7 @@ pub fn well_known_values(name: &str, chain: &ChainValues) -> Option<SlotValues> 
 		"ChargeTransactionPayment" => (vec![0x00], Vec::new()),
 		// `Mode::Disabled`, and no metadata hash in the signer payload.
 		"CheckMetadataHash" => (vec![0x00], vec![0x00]),
-		"RestrictOrigins" => (vec![0x00], Vec::new()),
+		"RestrictOrigins" => (vec![u8::from(chain.restrict_origins)], Vec::new()),
 		_ => return None,
 	};
 	Some(SlotValues { explicit, implicit })
@@ -128,12 +108,10 @@ pub fn verify_signature_value(
 		},
 		None => VerifySignatureDetails::<SubstrateConfig>::Disabled,
 	};
-	details
-		.encode_as_type(type_id, types)
-		.map_err(|error| ExtrinsicBuildError::ExtensionShape {
-			extension: VERIFY_MULTI_SIGNATURE.to_string(),
-			slot: "explicit",
-			bytes: String::new(),
-			reason: error.to_string(),
-		})
+	details.encode_as_type(type_id, types).map_err(|error| {
+		ExtrinsicBuildError::Encode(format!(
+			"{VERIFY_MULTI_SIGNATURE} does not encode as metadata type {type_id}, expected a \
+				 Signed or Disabled variant: {error}"
+		))
+	})
 }

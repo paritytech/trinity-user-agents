@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use parity_scale_codec::{Compact, Decode};
+use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::blake2_256;
 
 use subxt::{
@@ -23,20 +23,17 @@ use subxt::{
 };
 
 use super::{
-	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication, RawExtension,
-	RestrictOrigins, TransactionExtension, VersionChoice,
+	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication, PreencodedValue,
+	RawExtension, TransactionExtension,
 	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
 	version::choose_version,
+	well_known::unset_slot_value,
 };
 use crate::{
 	chain::HashAndNumber,
 	host_internal::extrinsic::{
 		Sr25519Signer,
 		tests::{bulletin_chain_state, split_v4},
-	},
-	runtime::statement_allowance::{
-		collection::PersonhoodCollection, extension::Metadata as AllowanceMetadata,
-		extrinsic::build_long_term_storage_extra,
 	},
 };
 
@@ -81,9 +78,11 @@ fn immortal() -> RawExtension {
 	RawExtension::new("CheckMortality", vec![0x00], GENESIS.to_vec())
 }
 
-fn long_term_storage_extra(allowance: &AllowanceMetadata) -> Vec<u8> {
-	build_long_term_storage_extra(allowance, &[0xEE; 785], 3, 9, PersonhoodCollection::LitePeople)
-		.unwrap()
+/// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the People
+/// `AsResources` value, whose variant indices are 3 and 1.
+fn long_term_storage_claim_value() -> Vec<u8> {
+	[vec![0x01, 0x03], vec![0xEEu8; 785].encode(), 3u32.encode(), 9u32.encode(), vec![0x01]]
+		.concat()
 }
 
 /// Records the implication it was given, then answers with fixed bytes.
@@ -95,7 +94,7 @@ struct RecordingExtension {
 
 impl TransactionExtension for RecordingExtension {
 	type Implicit = ();
-	type Explicit = subxt::utils::Encoded;
+	type Explicit = PreencodedValue;
 
 	fn name(&self) -> &str {
 		self.name
@@ -106,41 +105,39 @@ impl TransactionExtension for RecordingExtension {
 	fn explicit(
 		&self,
 		implication: &InheritedImplication,
-	) -> Result<subxt::utils::Encoded, ExtensionError> {
+	) -> Result<PreencodedValue, ExtensionError> {
 		*self.seen.lock().unwrap() = Some(implication.clone());
-		Ok(subxt::utils::Encoded(self.explicit.clone()))
+		Ok(PreencodedValue(self.explicit.clone()))
 	}
 }
 
-/// Blake2-256 of the 822 bytes the removed statement allowance assembler
-/// produced for this call and `AsResources` value with an immortal era.
-const ALLOWANCE_ASSEMBLER_BYTES_HASH: &str =
+/// Blake2-256 of the 822-byte authorized extrinsic the People runtime accepts
+/// for this call and `AsResources` value with an immortal era.
+const AUTHORIZED_EXTRINSIC_HASH: &str =
 	"98c8c0ea429d862856c9de737268cef03340fb77c3a4f0c39fb56e7125e494e2";
 
-/// The proof-authorized bytes are what statement allowance submitted before
-/// it moved onto the builder; with the same era nothing may differ.
+/// The proof-authorized layout the People runtime accepts: preamble,
+/// extension order, the authorizer's value in its slot, then the call.
 #[test]
-fn an_authorized_extrinsic_keeps_the_allowance_assembler_bytes() {
-	let allowance = AllowanceMetadata::decode(PEOPLE).unwrap();
+fn an_authorized_extrinsic_has_the_reference_bytes() {
 	let call = remark_call(PEOPLE);
-	let extra = long_term_storage_extra(&allowance);
+	let extra = long_term_storage_claim_value();
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
 		.with_call_bytes(call)
 		.with_extension(RawExtension::new("AsResources", extra, Vec::new()))
 		.with_extension(immortal())
-		.with_extrinsic_version(ExtrinsicVersion::newest_declaring("AsResources"));
+		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
 	let built = assemble(builder, None, None).unwrap();
 
-	assert_eq!(hex::encode(blake2_256(built.extrinsic.bytes())), ALLOWANCE_ASSEMBLER_BYTES_HASH);
+	assert_eq!(hex::encode(blake2_256(built.extrinsic.bytes())), AUTHORIZED_EXTRINSIC_HASH);
 }
 
 /// A ring proof covers exactly the extensions after its authorizer; one more
 /// or one fewer and the node rejects the proof.
 ///
-/// The hash is what the removed allowance proof-message builder computed for
-/// this call after `AsResources`.
+/// The hash is the reference implication for this call after `AsResources`.
 #[test]
 fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 	let call = remark_call(PEOPLE);
@@ -156,7 +153,7 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 			seen: seen.clone(),
 		})
 		.with_extension(immortal())
-		.with_extrinsic_version(ExtrinsicVersion::newest_declaring("AsResources"));
+		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
 	assemble(builder, None, None).unwrap();
 
 	let implication_hash = seen.lock().unwrap().as_ref().map(InheritedImplication::hash);
@@ -286,35 +283,6 @@ fn the_host_map_decides_the_default_version() {
 	);
 }
 
-/// On Asset Hub 3004000 only pipeline 1 carries the authorizers, which is
-/// why authorized callers pin by name rather than by number.
-#[test]
-fn newest_declaring_picks_the_pipeline_that_lists_the_extension() {
-	let asset_hub = Metadata::decode_from(ASSET_HUB).unwrap();
-	let pgas = Some(ExtrinsicVersion::newest_declaring("AsPgas"));
-	let missing = Some(ExtrinsicVersion::newest_declaring("AsNothing"));
-
-	assert_eq!(
-		choose_version(pgas, None, false, &asset_hub).unwrap(),
-		ExtrinsicVersion::V5 { extension_version: 1 }
-	);
-	// Both pipelines list `CheckNonce`; the newer one wins.
-	assert_eq!(
-		choose_version(
-			Some(ExtrinsicVersion::newest_declaring("CheckNonce")),
-			None,
-			false,
-			&asset_hub
-		)
-		.unwrap(),
-		ExtrinsicVersion::V5 { extension_version: 1 }
-	);
-	assert!(matches!(
-		choose_version(missing, None, false, &asset_hub),
-		Err(ExtrinsicBuildError::NoPipelineDeclares { extension }) if extension == "AsNothing"
-	));
-}
-
 fn build_error(
 	metadata_bytes: &[u8],
 	signer: Option<&Sr25519Signer>,
@@ -340,7 +308,7 @@ fn a_v4_extrinsic_without_a_signer_is_refused() {
 #[test]
 fn a_signer_on_a_pipeline_without_a_signature_slot_is_refused() {
 	let signer = test_signer();
-	let v5_zero = VersionChoice::Exact(ExtrinsicVersion::V5 { extension_version: 0 });
+	let v5_zero = ExtrinsicVersion::V5 { extension_version: 0 };
 	let error = build_error(ASSET_HUB, Some(&signer), |builder| {
 		builder.with_extrinsic_version(v5_zero);
 	});
@@ -350,7 +318,7 @@ fn a_signer_on_a_pipeline_without_a_signature_slot_is_refused() {
 
 #[test]
 fn an_extension_the_pipeline_does_not_list_is_refused() {
-	let pgas_v0 = VersionChoice::Exact(ExtrinsicVersion::V5 { extension_version: 0 });
+	let pgas_v0 = ExtrinsicVersion::V5 { extension_version: 0 };
 	let error = build_error(ASSET_HUB, None, |builder| {
 		builder
 			.with_extension(RawExtension::new("AsPgas", vec![0x00], Vec::new()))
@@ -367,8 +335,8 @@ fn an_extension_supplied_twice_is_refused() {
 	let signer = test_signer();
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
 		builder
-			.with_extension(RestrictOrigins(true))
-			.with_extension(RestrictOrigins(false));
+			.with_extension(RawExtension::new("RestrictOrigins", vec![0x01], Vec::new()))
+			.with_extension(RawExtension::new("RestrictOrigins", vec![0x00], Vec::new()));
 	});
 
 	assert!(
@@ -417,7 +385,7 @@ fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails
 
 /// A V5 signature covers the extensions after `VerifyMultiSignature`, as the
 /// node recomputes them; signing anything else is a `BadProof`. The hash is
-/// what the removed allowance proof-message builder computed for this cut.
+/// the reference implication after `VerifyMultiSignature` for this call.
 #[test]
 fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 	let call = remark_call(PEOPLE);
@@ -444,4 +412,71 @@ fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 	};
 	assert_eq!(account, signer.account_id());
 	assert!(verifies(&signer, &expected, &signature));
+}
+
+/// `CheckGenesis` signs the genesis the build was given, so a node reporting
+/// another chain's genesis cannot make the extrinsic valid there.
+#[test]
+fn the_implication_carries_the_given_genesis() {
+	let configured = H256([0x5c; 32]);
+	let seen = Arc::new(Mutex::new(None));
+	let mut builder = start_build(RuntimeAtBirth { genesis: configured, ..runtime(PEOPLE) });
+	builder
+		.with_call_bytes(remark_call(PEOPLE))
+		.with_extension(RecordingExtension {
+			name: "AsResources",
+			explicit: vec![0x00],
+			seen: seen.clone(),
+		})
+		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
+	assemble(builder, None, None).unwrap();
+
+	let implication = seen.lock().unwrap().clone().unwrap();
+	let carries_configured = implication
+		.encoded()
+		.windows(32)
+		.any(|window| window == configured.0.as_slice());
+	assert!(carries_configured);
+}
+
+fn asset_hub_slot_type(name: &str, implicit: bool) -> u32 {
+	let metadata = Metadata::decode_from(ASSET_HUB).unwrap();
+	let pipeline = metadata.extrinsic_extension_info(Some(1)).unwrap();
+	let declared = pipeline.extension_ids.iter().find(|declared| declared.name == name).unwrap();
+	if implicit { declared.implicit_id } else { declared.id }
+}
+
+/// An unset extension is `None` when its value is an `Option`, nothing when
+/// its type is empty, and otherwise has no default, so the build names it.
+#[test]
+fn only_empty_and_option_extensions_have_an_unset_default() {
+	let metadata = Metadata::decode_from(ASSET_HUB).unwrap();
+	let types = metadata.types();
+	let as_pgas = asset_hub_slot_type("AsPgas", false);
+	let check_weight = asset_hub_slot_type("CheckWeight", false);
+	let restrict_origins = asset_hub_slot_type("RestrictOrigins", false);
+
+	assert_eq!(unset_slot_value(as_pgas, types), Some(vec![0x00]));
+	assert_eq!(unset_slot_value(check_weight, types), Some(Vec::new()));
+	assert_eq!(unset_slot_value(restrict_origins, types), None);
+}
+
+/// Bulletin's runtime accepts only V4, so pinning V5 there fails by name
+/// rather than producing bytes the node rejects.
+#[test]
+fn a_version_the_runtime_does_not_accept_is_refused() {
+	let signer = test_signer();
+	let v5 = ExtrinsicVersion::V5 { extension_version: 0 };
+	let mut builder = start_build(bulletin_runtime());
+	builder
+		.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
+		.with_signer(&signer)
+		.with_nonce(0)
+		.with_extrinsic_version(v5);
+
+	let error = assemble(builder, None, None).unwrap_err();
+
+	assert!(
+		matches!(error, ExtrinsicBuildError::UnsupportedVersion { supported, .. } if supported == [4])
+	);
 }

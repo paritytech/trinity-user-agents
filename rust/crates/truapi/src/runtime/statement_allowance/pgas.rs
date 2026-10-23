@@ -27,7 +27,7 @@ use super::{
 	StatementAllowanceError,
 	collection::PersonhoodCollection,
 	duplicate_submit_error,
-	extension::{AS_PGAS, Metadata, MetadataError},
+	extension::{Metadata, MetadataError},
 	extrinsic,
 	key_hash::{blake2_128_concat, twox_64_concat},
 	ring::{self, RingParams},
@@ -248,28 +248,17 @@ pub async fn claim_pgas(
 		.await?;
 		let context = slot::derive_pgas_context(network_suffix, day, slot_index);
 		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
-		let prove_claim = |message: &[u8; 32]| {
-			let ring_proof = signer.prove(ring, &context, message)?;
-			extrinsic::build_as_pgas_extra(
-				asset_hub_metadata,
-				&ring_proof,
-				ring.ring_index,
-				revision,
-				day,
-				ring.collection,
-			)
-		};
+		let proof = super::RingProof { signer, ring, context, revision };
 		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
 		let claim = asset_hub_target
-			.build_authorized(
-				"Pgas",
-				"claim_pgas",
-				call,
-				super::ProofAuthorizer::new(AS_PGAS, prove_claim),
-			)
+			.extrinsics
+			.build_mortal_extrinsic(asset_hub_target.genesis, |builder| {
+				builder.with_call_args("Pgas", "claim_pgas", call);
+				builder.with_extension(super::AsPgasExtension::new(proof, day));
+			})
 			.await?;
 
-		match asset_hub_rpc.submit_and_watch(&claim).await {
+		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				// Inclusion is not success. `Pgas.claim_pgas` can dispatch-error —
 				// `AlreadyClaimed`, `PgasMintFailed` — and the extrinsic still lands,

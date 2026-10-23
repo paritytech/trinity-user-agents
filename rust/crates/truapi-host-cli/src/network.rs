@@ -1,7 +1,7 @@
 use clap::ValueEnum;
 use truapi::{
 	latest::ChainIdentifier,
-	platform::{HostChainEntry, HostChainSet},
+	platform::{ChainExtensionVersion, ExtensionVersionMap, HostChainEntry, HostChainSet},
 };
 
 /// Supported live network presets for the headless hosts.
@@ -483,6 +483,21 @@ impl NetworkConfig {
 				HostChainEntry {
 					identifier: ChainIdentifier::AssetHub,
 					genesis_hash: self.asset_hub_genesis,
+				},
+			],
+		}
+	}
+
+	/// The chains this network builds as V5 general transactions: People and
+	/// Asset Hub, both on pipeline 1, the one that declares their authorizers.
+	/// The mobile apps read the same from remote config.
+	pub fn extension_versions(&self) -> ExtensionVersionMap {
+		ExtensionVersionMap {
+			chains: vec![
+				ChainExtensionVersion { genesis_hash: self.people_genesis, extension_version: 1 },
+				ChainExtensionVersion {
+					genesis_hash: self.asset_hub_genesis,
+					extension_version: 1,
 				},
 			],
 		}

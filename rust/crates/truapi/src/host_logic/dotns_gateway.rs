@@ -16,12 +16,14 @@
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
-use subxt::ext::scale_encode::EncodeAsType;
+use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	chain::{ExtensionError, InheritedImplication, TransactionExtension},
 	dotns_views::{call_string, network_tld, tld_node},
+	host_logic::product_account::SR25519_SIGNING_CONTEXT,
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
 
@@ -102,28 +104,64 @@ pub struct RegisterNameCallArgs {
 	pub link: Link,
 }
 
-/// Encodes the `AsDotnsGateway` extension extra.
-///
-/// The value is `Some(RegisterFullName { proof, ring_index, revision,
-/// signature })`; `revision` is the People-collection root revision the proof
-/// was built against, which Asset Hub's `members-subscriber` must hold. The
-/// signature is wrapped as `MultiSignature::Sr25519`.
-pub fn encode_register_full_name_extra(
-	info_variant: u8,
-	proof: &[u8],
-	ring_index: u32,
-	revision: u32,
-	signature: &[u8; 64],
-) -> Vec<u8> {
-	// Option::Some ‖ info variant ‖ Vec(proof) ‖ ring_index ‖ revision ‖
-	// Sr25519 ‖ sig.
-	let mut extra = vec![0x01, info_variant];
-	proof.encode_to(&mut extra);
-	ring_index.encode_to(&mut extra);
-	revision.encode_to(&mut extra);
-	extra.push(0x01);
-	extra.extend_from_slice(signature);
-	extra
+/// `AsDotnsGatewayInfo`: what an `AsDotnsGateway` value authorizes.
+#[derive(EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub enum AsDotnsGatewayInfo {
+	/// A full-person username registration.
+	RegisterFullName {
+		/// Ring-VRF proof of full personhood over the registration intent.
+		proof: Vec<u8>,
+		/// The People ring the proof is built in.
+		ring_index: u32,
+		/// The People root revision the proof is built against, which Asset
+		/// Hub's `members-subscriber` must hold.
+		revision: u32,
+		/// The account's signature over the extrinsic's implication.
+		signature: MultiSignature,
+	},
+}
+
+/// The Asset Hub `AsDotnsGateway` authorizer for a full-person username
+/// registration. The ring proof covers only the registration intent, so it is
+/// built beforehand; the account signs the extrinsic's implication here.
+pub struct AsDotnsGatewayExtension<'a> {
+	/// Ring-VRF proof over [`build_register_proof_message`].
+	pub ring_proof: Vec<u8>,
+	/// The People ring the proof is built in.
+	pub ring_index: u32,
+	/// The People root revision the proof is built against.
+	pub revision: u32,
+	/// The account registering the username.
+	pub who: &'a schnorrkel::Keypair,
+}
+
+impl TransactionExtension for AsDotnsGatewayExtension<'_> {
+	type Implicit = ();
+	type Explicit = Option<AsDotnsGatewayInfo>;
+
+	fn name(&self) -> &str {
+		"AsDotnsGateway"
+	}
+
+	fn implicit(&self) {}
+
+	fn explicit(
+		&self,
+		implication: &InheritedImplication,
+	) -> Result<Option<AsDotnsGatewayInfo>, ExtensionError> {
+		let signature = self.who.secret.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&implication.hash(),
+			&self.who.public,
+		);
+		Ok(Some(AsDotnsGatewayInfo::RegisterFullName {
+			proof: self.ring_proof.clone(),
+			ring_index: self.ring_index,
+			revision: self.revision,
+			signature: MultiSignature::Sr25519(signature.to_bytes()),
+		}))
+	}
 }
 
 /// Maps an AccountId32 to the H160 the contracts see.
@@ -945,7 +983,7 @@ mod tests {
 	}
 
 	/// The call arguments encode by name against Asset Hub's metadata into the
-	/// positional layout the gateway has always received.
+	/// gateway's positional layout: account, label, link.
 	#[test]
 	fn register_name_call_args_encode_to_the_reference_layout() {
 		use subxt::{Metadata, ext::frame_decode::extrinsics::encode_call_data};
@@ -969,24 +1007,42 @@ mod tests {
 		assert_eq!(&call[2..], &arguments[..]);
 	}
 
+	/// The registration value encodes by name into the gateway's positional
+	/// layout: `Some ‖ RegisterFullName ‖ proof ‖ ring index ‖ revision ‖
+	/// Sr25519 ‖ signature`.
 	#[test]
-	fn the_extension_extra_has_the_reference_layout() {
-		// Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
-		// revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
-		// RegisterFullName field order.
-		let extra = encode_register_full_name_extra(0, &[0xEE; 785], 3, 5, &[0xAB; 64]);
-		assert_eq!(
-			extra,
-			[
-				vec![0x01, 0x00],
-				vec![0xEEu8; 785].encode(),
-				3u32.to_le_bytes().to_vec(),
-				5u32.to_le_bytes().to_vec(),
-				vec![0x01],
-				vec![0xAB; 64],
-			]
-			.concat()
-		);
+	fn a_full_name_registration_encodes_as_the_gateway_expects() {
+		use subxt::{Metadata, ext::frame_decode::extrinsics::ExtrinsicTypeInfo};
+
+		let metadata = Metadata::decode_from(
+			crate::runtime::statement_allowance::ASSET_HUB_TEST_METADATA_BYTES,
+		)
+		.unwrap();
+		let pipeline = metadata.extrinsic_extension_info(Some(0)).unwrap();
+		let slot = pipeline
+			.extension_ids
+			.iter()
+			.find(|declared| declared.name == "AsDotnsGateway")
+			.unwrap();
+		let info = AsDotnsGatewayInfo::RegisterFullName {
+			proof: vec![0xEE; 4],
+			ring_index: 3,
+			revision: 5,
+			signature: MultiSignature::Sr25519([0xAB; 64]),
+		};
+
+		let encoded = Some(info).encode_as_type(slot.id, metadata.types()).unwrap();
+
+		let expected = [
+			vec![0x01, 0x00],
+			vec![0xEEu8; 4].encode(),
+			3u32.encode(),
+			5u32.encode(),
+			vec![0x01],
+			vec![0xAB; 64],
+		]
+		.concat();
+		assert_eq!(encoded, expected);
 	}
 
 	#[test]

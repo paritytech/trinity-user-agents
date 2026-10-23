@@ -1,21 +1,24 @@
 //! The transaction extension trait callers implement, and the implication its
 //! explicit value may cover.
 
-use parity_scale_codec::Encode;
+use scale_info::PortableRegistry;
 use sp_crypto_hashing::blake2_256;
-use subxt::utils::Encoded;
+use subxt::ext::scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver};
+
+use super::{ExtrinsicBuildError, well_known::SlotValues};
 
 /// A transaction extension that a caller supplies to the builder.
 ///
 /// The builder computes extensions from the last one in the runtime's
 /// pipeline to the first, so `explicit` sees every later extension's bytes
-/// and can prove or sign over them. Builds run on any thread, so an extension
-/// is `Send`.
+/// and can prove or sign over them. Both values encode against the types the
+/// runtime declares for them, matching variants and fields by name. Builds run
+/// on any thread, so an extension is `Send`.
 pub trait TransactionExtension: Send {
 	/// The value only the signer payload carries.
-	type Implicit: Encode;
+	type Implicit: EncodeAsType;
 	/// The value the extrinsic carries.
-	type Explicit: Encode;
+	type Explicit: EncodeAsType;
 
 	/// The extension's name in metadata.
 	fn name(&self) -> &str;
@@ -75,8 +78,6 @@ impl ExtensionError {
 }
 
 /// An extension whose name and bytes are only known at run time.
-///
-/// Its values encode as the bytes given, without a length prefix.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawExtension {
 	name: String,
@@ -92,47 +93,113 @@ impl RawExtension {
 }
 
 impl TransactionExtension for RawExtension {
-	type Implicit = Encoded;
-	type Explicit = Encoded;
+	type Implicit = PreencodedValue;
+	type Explicit = PreencodedValue;
 
 	fn name(&self) -> &str {
 		&self.name
 	}
 
-	fn implicit(&self) -> Encoded {
-		Encoded(self.implicit.clone())
+	fn implicit(&self) -> PreencodedValue {
+		PreencodedValue(self.implicit.clone())
 	}
 
-	fn explicit(&self, _implication: &InheritedImplication) -> Result<Encoded, ExtensionError> {
-		Ok(Encoded(self.explicit.clone()))
+	fn explicit(
+		&self,
+		_implication: &InheritedImplication,
+	) -> Result<PreencodedValue, ExtensionError> {
+		Ok(PreencodedValue(self.explicit.clone()))
 	}
 }
 
-/// A supplied extension with its values encoded, so the builder can hold
-/// extensions of different types in one list. The explicit value waits for
-/// the implication, which exists only once every later extension is known.
+/// A value that is already encoded, written as it is whatever the type. The
+/// builder still checks it decodes as that type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreencodedValue(pub Vec<u8>);
+
+impl EncodeAsType for PreencodedValue {
+	fn encode_as_type_to<R: TypeResolver>(
+		&self,
+		_type_id: R::TypeId,
+		_types: &R,
+		out: &mut Vec<u8>,
+	) -> Result<(), EncodeError> {
+		out.extend_from_slice(&self.0);
+		Ok(())
+	}
+}
+
+/// The metadata types of one pipeline slot.
+#[derive(Clone, Copy, Debug)]
+pub struct SlotTypes {
+	/// The explicit value's type.
+	pub explicit: u32,
+	/// The implicit value's type.
+	pub implicit: u32,
+}
+
+/// A supplied extension with its values not yet encoded, so the builder can
+/// hold extensions of different types in one list. Both values encode once
+/// the slot's types and the implication are known.
 pub struct SuppliedExtension<'a> {
 	/// The extension's name in metadata.
 	pub name: String,
-	/// The encoded implicit value.
-	pub implicit: Vec<u8>,
-	/// Computes the encoded explicit value from the implication.
-	pub explicit: ComputeExplicit<'a>,
+	/// Encodes both values for the slot.
+	pub encode: EncodeSlot<'a>,
 }
 
-/// Computes an extension's encoded explicit value from its implication.
-type ComputeExplicit<'a> =
-	Box<dyn FnOnce(&InheritedImplication) -> Result<Vec<u8>, ExtensionError> + Send + 'a>;
+/// Encodes an extension's values against its slot's types, the explicit one
+/// from the implication.
+type EncodeSlot<'a> = Box<
+	dyn FnOnce(
+			&InheritedImplication,
+			SlotTypes,
+			&PortableRegistry,
+		) -> Result<SlotValues, ExtrinsicBuildError>
+		+ Send
+		+ 'a,
+>;
 
 impl<'a> SuppliedExtension<'a> {
-	/// Encodes `extension`'s name and implicit value now and its explicit
-	/// value when the builder calls for it.
+	/// Holds `extension` until the builder reaches its slot.
 	pub fn new<E: TransactionExtension + 'a>(extension: E) -> Self {
 		let name = extension.name().to_string();
-		let implicit = extension.implicit().encode();
-		let explicit = Box::new(move |implication: &InheritedImplication| {
-			extension.explicit(implication).map(|explicit| explicit.encode())
+		let encode: EncodeSlot<'a> = Box::new(move |implication, types, registry| {
+			encode_slot(&extension, implication, types, registry)
 		});
-		Self { name, implicit, explicit }
+		Self { name, encode }
 	}
+}
+
+fn encode_slot<E: TransactionExtension>(
+	extension: &E,
+	implication: &InheritedImplication,
+	types: SlotTypes,
+	registry: &PortableRegistry,
+) -> Result<SlotValues, ExtrinsicBuildError> {
+	let name = extension.name();
+	let explicit_value = extension
+		.explicit(implication)
+		.map_err(|source| ExtrinsicBuildError::Extension { extension: name.to_string(), source })?;
+	let explicit = encode_value(name, "explicit", &explicit_value, types.explicit, registry)?;
+	let implicit_value = extension.implicit();
+	let implicit = encode_value(name, "implicit", &implicit_value, types.implicit, registry)?;
+	Ok(SlotValues { explicit, implicit })
+}
+
+fn encode_value(
+	extension: &str,
+	slot: &'static str,
+	value: &impl EncodeAsType,
+	type_id: u32,
+	registry: &PortableRegistry,
+) -> Result<Vec<u8>, ExtrinsicBuildError> {
+	value
+		.encode_as_type(type_id, registry)
+		.map_err(|error| ExtrinsicBuildError::ExtensionEncode {
+			extension: extension.to_string(),
+			slot,
+			type_id,
+			reason: error.to_string(),
+		})
 }

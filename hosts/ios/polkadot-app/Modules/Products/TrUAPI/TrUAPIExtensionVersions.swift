@@ -10,6 +10,7 @@ import SubstrateSdk
 enum TrUAPIExtensionVersions {
     enum Error: Swift.Error, Equatable {
         case unresolvedChain(ChainModel.Id)
+        case invalidGenesisHash(ChainModel.Id, String)
     }
 
     static func make(
@@ -30,11 +31,11 @@ private extension TrUAPIExtensionVersions {
         of chainId: ChainModel.Id,
         chainRegistry: ChainRegistryProtocol
     ) throws -> Data {
-        guard
-            let genesisHex = chainRegistry.getChain(for: chainId)?.explicitGenesisHash,
-            let genesis = try? Data(hexString: genesisHex)
-        else {
+        guard let genesisHex = chainRegistry.getChain(for: chainId)?.explicitGenesisHash else {
             throw Error.unresolvedChain(chainId)
+        }
+        guard let genesis = try? Data(hexString: genesisHex) else {
+            throw Error.invalidGenesisHash(chainId, genesisHex)
         }
         return genesis
     }

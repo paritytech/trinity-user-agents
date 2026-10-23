@@ -399,12 +399,8 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let extrinsics =
-			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
-		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
-			extrinsics: &extrinsics,
-			genesis: subxt::utils::H256([0xab; 32]),
-		};
+		let extrinsics = super::super::test_fixtures::people_extrinsics();
+		let target_chain = super::super::test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		// One collection, so this stays a test of cross-target protection rather
 		// than of pooling; pooling has its own tests.
@@ -489,12 +485,8 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let extrinsics =
-			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
-		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
-			extrinsics: &extrinsics,
-			genesis: subxt::utils::H256([0xab; 32]),
-		};
+		let extrinsics = super::super::test_fixtures::people_extrinsics();
+		let target_chain = super::super::test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let memberships = [RingParams {
 			collection: PersonhoodCollection::LitePeople,
@@ -581,12 +573,8 @@ mod tests {
 		}
 
 		let metadata = test_fixtures::people();
-		let extrinsics =
-			crate::chain::extrinsic_service_serving(super::super::test_fixtures::PEOPLE_METADATA);
-		let target_chain = crate::runtime::statement_allowance::ExtrinsicTarget {
-			extrinsics: &extrinsics,
-			genesis: subxt::utils::H256([0xab; 32]),
-		};
+		let extrinsics = super::super::test_fixtures::people_extrinsics();
+		let target_chain = super::super::test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
 		let memberships = [RingParams {
 			collection: PersonhoodCollection::LitePeople,

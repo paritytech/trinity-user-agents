@@ -1,17 +1,11 @@
-//! Signed-extension encoding for the unsigned General (v5) `AsResources`
-//! extrinsic, driven by live chain metadata.
+//! Runtime metadata as allowance code reads it: storage value types,
+//! constants, call indices, view functions, and the transaction extensions
+//! and authorizer variants each pipeline declares, all decoded from
+//! `state_getMetadata` (V14/V15/V16).
 //!
-//! The extension **order** and per-extension type ids come from the runtime
-//! metadata (`state_getMetadata`, V14/V15/V16); the per-extension `extra` /
-//! `additional_signed` bytes come from a name-keyed encoder mirroring
-//! signing-bot `src/core/create-transaction.ts` `encodeSignedExtensions`, with a
-//! generic default for the personhood extensions (all `Option`/void).
-//!
-//! Two concatenations are derived from the same encoded list:
-//! - the ring-VRF proof message (`build_proof_message`) over the extensions strictly *after*
-//!   `AsResources` (host-spec inherited implication), and
-//! - the full extrinsic body's `Σ extra` (see `extrinsic.rs`), over *all* extensions with
-//!   `AsResources` carrying `Some(AsResourcesInfo)`.
+//! Allowance extrinsics themselves are built by the core's
+//! `ExtrinsicService`; this module resolves the variant indices their
+//! authorizer values use.
 
 use std::{collections::HashMap, sync::Mutex};
 
@@ -26,7 +20,6 @@ use thiserror::Error;
 
 use super::{
 	StatementAllowanceError,
-	collection::PersonhoodCollection,
 	view_cache::{MetadataViewCache, ViewFunctionDef},
 };
 
@@ -185,6 +178,7 @@ pub struct ChainState {
 /// `additional_signed` fields, in metadata order.
 struct ExtensionDef {
 	identifier: String,
+	#[cfg(test)]
 	extra_type: u32,
 	#[cfg(test)]
 	additional_signed_type: u32,
@@ -310,6 +304,7 @@ macro_rules! collect_metadata {
 			.iter()
 			.map(|e| ExtensionDef {
 				identifier: e.identifier.clone(),
+				#[cfg(test)]
 				extra_type: e.ty.id,
 				#[cfg(test)]
 				additional_signed_type: e.additional_signed.id,
@@ -337,6 +332,7 @@ macro_rules! collect_metadata_v16 {
 			.filter_map(|index| $m.extrinsic.transaction_extensions.get(index))
 			.map(|e| ExtensionDef {
 				identifier: e.identifier.clone(),
+				#[cfg(test)]
 				extra_type: e.ty.id,
 				#[cfg(test)]
 				additional_signed_type: e.implicit.id,
@@ -454,52 +450,6 @@ impl Metadata {
 		Ok([pallet_index, variant.index])
 	}
 
-	/// Resolve `AsResourcesInfo::<info_variant>` and the `MembershipCollection`
-	/// index naming `collection`, by name, from the `AsResources` extension type.
-	pub fn as_resources_variant_indices(
-		&self,
-		info_variant: &str,
-		collection: PersonhoodCollection,
-	) -> Result<(u8, u8), StatementAllowanceError> {
-		self.extension_info_and_field_variant_indices(
-			AS_RESOURCES,
-			info_variant,
-			collection.metadata_variant(),
-		)
-	}
-
-	/// Resolve `(info variant index, nested field variant index)` for an
-	/// extension shaped as `Wrapper(Option<Info>)` whose named info variant
-	/// carries an enum field.
-	///
-	/// The field enum is located by the variant name it contains rather than by
-	/// its type name, because each extension names its own collection type
-	/// (`MembershipCollection` for `AsResources`, `PgasCollection` for `AsPgas`)
-	/// while the membership tier inside them is named the same.
-	pub fn extension_info_and_field_variant_indices(
-		&self,
-		identifier: &str,
-		info_variant: &str,
-		field_variant: &str,
-	) -> Result<(u8, u8), StatementAllowanceError> {
-		let variant = self.extension_info_variant(identifier, info_variant)?;
-		let nested = variant
-			.fields
-			.iter()
-			.rev()
-			.find_map(|field| {
-				self.resolve_variant(field.ty.id).ok().and_then(|enumeration| {
-					enumeration.variants.iter().find(|candidate| candidate.name == field_variant)
-				})
-			})
-			.ok_or_else(|| MetadataError::MissingExtensionFieldVariant {
-				identifier: identifier.to_string(),
-				variant: info_variant.to_string(),
-				field_variant: field_variant.to_string(),
-			})?;
-		Ok((variant.index, nested.index))
-	}
-
 	/// A pallet constant decoded as `u32`.
 	///
 	/// Runtime constants are SCALE-encoded at their declared width, which for
@@ -534,105 +484,10 @@ impl Metadata {
 		Ok(u128::from_le_bytes(buf))
 	}
 
-	/// Number of fields the runtime declares for one `AsResourcesInfo` variant.
-	///
-	/// The encoded payload has to match it exactly: a short payload is accepted
-	/// locally and then panics the runtime inside `validate_transaction`, so this
-	/// is the offline guard against drifting out of step with the pallet.
-	pub fn as_resources_info_field_count(
-		&self,
-		info_variant: &str,
-	) -> Result<usize, StatementAllowanceError> {
-		self.extension_info_field_count(AS_RESOURCES, info_variant)
-	}
-
-	/// Same, for any authorizing extension.
-	pub fn extension_info_field_count(
-		&self,
-		identifier: &str,
-		info_variant: &str,
-	) -> Result<usize, StatementAllowanceError> {
-		Ok(self.extension_info_variant(identifier, info_variant)?.fields.len())
-	}
-
 	/// Position of a transaction extension in the runtime's implication
 	/// pipeline.
 	pub fn extension_index(&self, identifier: &str) -> Option<usize> {
 		self.extensions.iter().position(|extension| extension.identifier == identifier)
-	}
-
-	/// Enum index of a named authorization carried by an extension shaped as
-	/// `Wrapper(Option<Info>)`.
-	pub fn extension_info_variant_index(
-		&self,
-		identifier: &str,
-		variant: &str,
-	) -> Result<u8, StatementAllowanceError> {
-		Ok(self.extension_info_variant(identifier, variant)?.index)
-	}
-
-	/// Resolve `AsDotnsGatewayInfo::RegisterFullName` to its variant index.
-	///
-	/// Asserts the exact `{proof, ring_index, revision, signature}` field shape
-	/// (the People-collection root revision the proof was built against). A
-	/// runtime that changes the variant then fails loudly instead of
-	/// mis-encoding.
-	pub fn dotns_register_full_name_variant(&self) -> Result<u8, StatementAllowanceError> {
-		let variant = self.extension_info_variant(AS_DOTNS_GATEWAY, "RegisterFullName")?;
-		let fields: Vec<&str> = variant
-			.fields
-			.iter()
-			.map(|field| field.name.as_deref().unwrap_or("<unnamed>"))
-			.collect();
-		if fields != ["proof", "ring_index", "revision", "signature"] {
-			return Err(
-				MetadataError::RegisterFullNameShapeDrift { actual: fields.join(", ") }.into()
-			);
-		}
-		Ok(variant.index)
-	}
-
-	/// Resolve one named authorization variant on an extension shaped as
-	/// `Wrapper(Option<Info>)`, with or without the struct wrapper.
-	fn extension_info_variant(
-		&self,
-		identifier: &str,
-		variant: &str,
-	) -> Result<&scale_info::Variant<PortableForm>, StatementAllowanceError> {
-		let extension = self
-			.extensions
-			.iter()
-			.find(|extension| extension.identifier == identifier)
-			.ok_or_else(|| MetadataError::MissingExtension {
-				identifier: identifier.to_string(),
-			})?;
-		let option_type = match &self.resolve_type(extension.extra_type)?.type_def {
-			TypeDef::Composite(_) => self.single_field_type(extension.extra_type)?,
-			_ => extension.extra_type,
-		};
-		let info_type = self
-			.resolve_variant(option_type)?
-			.variants
-			.iter()
-			.find(|candidate| candidate.name == "Some")
-			.and_then(|some| match some.fields.as_slice() {
-				[field] => Some(field.ty.id),
-				_ => None,
-			})
-			.ok_or_else(|| MetadataError::ExtensionExtraNotOption {
-				identifier: identifier.to_string(),
-			})?;
-		self.resolve_variant(info_type)?
-			.variants
-			.iter()
-			.find(|candidate| candidate.name == variant)
-			.ok_or_else(|| {
-				MetadataError::MissingExtensionVariant {
-					identifier: identifier.to_string(),
-					variant: variant.to_string(),
-				}
-				.into()
-			})
 	}
 
 	/// Resolve a type id in the registry.
@@ -653,19 +508,6 @@ impl Metadata {
 		match &self.resolve_type(type_id)?.type_def {
 			TypeDef::Variant(variant) => Ok(variant),
 			_ => Err(MetadataError::TypeNotEnum { type_id }.into()),
-		}
-	}
-
-	/// The field type of a one-field composite.
-	fn single_field_type(&self, type_id: u32) -> Result<u32, StatementAllowanceError> {
-		let TypeDef::Composite(composite) = &self.resolve_type(type_id)?.type_def else {
-			return Err(MetadataError::TypeNotComposite { type_id }.into());
-		};
-		match composite.fields.as_slice() {
-			[field] => Ok(field.ty.id),
-			fields => {
-				Err(MetadataError::CompositeFieldCount { type_id, actual: fields.len() }.into())
-			},
 		}
 	}
 
@@ -783,21 +625,10 @@ pub fn blake2b256(message: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-	use super::{super::test_fixtures, *};
+	use super::*;
 
 	/// Fixture metadata captured from paseo-next-v2 (raw `RuntimeMetadataPrefixed`).
 	const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata.scale");
-
-	/// The known-answer chain state frozen alongside the fixture.
-	fn fixture_state() -> ChainState {
-		ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		}
-	}
 
 	/// V16 metadata captured from paseo-next-v2 (spec 3000000), the version the
 	/// runtime API serves. Distinct from `FIXTURE`, which is the V14 the legacy
@@ -816,110 +647,6 @@ mod tests {
 		assert_eq!(metadata.extension_version(), 0);
 		// The extension pipeline is populated and carries the one we authorize with.
 		assert!(metadata.extension_index(AS_RESOURCES).is_some());
-		assert_eq!(
-			(
-				metadata
-					.as_resources_variant_indices(
-						"RegisterStatementStoreAllowance",
-						PersonhoodCollection::LitePeople,
-					)
-					.unwrap(),
-				metadata
-					.as_resources_variant_indices(
-						"ClaimLongTermStorage",
-						PersonhoodCollection::LitePeople
-					)
-					.unwrap(),
-			),
-			((0x02, 0x01), (0x03, 0x01)),
-		);
-	}
-
-	/// PGAS authorizes with a different extension from the statement-store
-	/// claims, and only Asset Hub declares it. A re-captured fixture that changed
-	/// the claim arity would otherwise surface as a runtime panic inside
-	/// `validate_transaction` rather than a failing test.
-	#[test]
-	fn the_asset_hub_fixture_declares_the_pgas_claim_shape() {
-		let metadata = test_fixtures::asset_hub();
-
-		assert!(metadata.extension_index(AS_PGAS).is_some());
-		assert_eq!(metadata.extension_info_field_count(AS_PGAS, "Claim").unwrap(), 5,);
-		// `ClaimPgasInfo` encodes positionally, so the order is what the payload
-		// depends on. Arity alone would still hold if the runtime swapped two
-		// fields, and the collection is located by variant name rather than by
-		// position, so nothing else would notice.
-		assert_eq!(
-			metadata
-				.extension_info_variant(AS_PGAS, "Claim")
-				.unwrap()
-				.fields
-				.iter()
-				.map(|field| field.name.as_deref())
-				.collect::<Vec<_>>(),
-			[Some("proof"), Some("ring_index"), Some("revision"), Some("collection"), Some("day"),],
-		);
-	}
-
-	/// The V16 fixture is current, so it declares the four fields the live runtime
-	/// wants. The V14 fixture still declares three, which is what hid the missing
-	/// `revision` until a live submission failed.
-	#[test]
-	fn the_two_fixtures_disagree_about_the_allowance_arity() {
-		let v14 = Metadata::decode(FIXTURE).unwrap();
-		let v16 = Metadata::decode(FIXTURE_V16).unwrap();
-
-		assert_eq!(
-			v16.as_resources_info_field_count("RegisterStatementStoreAllowance").unwrap(),
-			4,
-		);
-		assert_eq!(
-			v14.as_resources_info_field_count("RegisterStatementStoreAllowance").unwrap(),
-			3,
-		);
-	}
-
-	/// The generalized builders must agree with the `AsResources` wrappers they
-	/// now back, or the ring proof stops matching the extrinsic.
-	#[test]
-	fn the_as_resources_wrappers_match_the_general_forms() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-
-		assert_eq!(
-			metadata
-				.as_resources_variant_indices(
-					"RegisterStatementStoreAllowance",
-					PersonhoodCollection::LitePeople,
-				)
-				.unwrap(),
-			metadata
-				.extension_info_and_field_variant_indices(
-					AS_RESOURCES,
-					"RegisterStatementStoreAllowance",
-					"LitePeople",
-				)
-				.unwrap(),
-		);
-	}
-
-	/// An unknown extension, info variant, or nested variant each fail rather
-	/// than resolving to something arbitrary.
-	#[test]
-	fn the_general_resolver_rejects_names_it_cannot_find() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-
-		for (identifier, variant, field) in [
-			("NoSuchExtension", "RegisterStatementStoreAllowance", "LitePeople"),
-			(AS_RESOURCES, "NoSuchVariant", "LitePeople"),
-			(AS_RESOURCES, "RegisterStatementStoreAllowance", "NoSuchTier"),
-		] {
-			assert!(
-				metadata
-					.extension_info_and_field_variant_indices(identifier, variant, field)
-					.is_err(),
-				"{identifier}/{variant}/{field} should not resolve"
-			);
-		}
 	}
 
 	/// Mainnet keeps more than one transaction-extension pipeline, and a
@@ -1024,118 +751,24 @@ mod tests {
 	}
 
 	#[test]
-	fn call_and_variant_indices_resolve_by_name() {
+	fn call_indices_resolve_by_name() {
 		let metadata = Metadata::decode(FIXTURE).unwrap();
 
 		assert_eq!(
-			(
-				metadata.call_indices("Resources", "set_statement_store_account").unwrap(),
-				metadata.call_indices("Resources", "claim_long_term_storage").unwrap(),
-				metadata
-					.as_resources_variant_indices(
-						"RegisterStatementStoreAllowance",
-						PersonhoodCollection::LitePeople,
-					)
-					.unwrap(),
-				metadata
-					.as_resources_variant_indices(
-						"ClaimLongTermStorage",
-						PersonhoodCollection::LitePeople
-					)
-					.unwrap(),
-			),
-			([0x3f, 0x0a], [0x3f, 0x0c], (0x02, 0x01), (0x03, 0x01)),
+			metadata.call_indices("Resources", "set_statement_store_account").unwrap(),
+			[0x3f, 0x0a]
 		);
-	}
-
-	/// The `AsResources` helpers are thin wrappers over the generic extension
-	/// lookups, so the two must not drift apart.
-	#[test]
-	fn the_generic_lookups_agree_with_the_as_resources_wrappers() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-
-		assert_eq!(metadata.extension_index(AS_RESOURCES), metadata.as_resources_index(),);
-		for variant in ["RegisterStatementStoreAllowance", "ClaimLongTermStorage"] {
-			assert_eq!(
-				metadata.extension_info_variant_index(AS_RESOURCES, variant).unwrap(),
-				metadata
-					.as_resources_variant_indices(variant, PersonhoodCollection::LitePeople)
-					.unwrap()
-					.0,
-				"{variant}",
-			);
-		}
-	}
-
-	#[test]
-	fn the_generic_lookups_reject_unknown_extensions_and_variants() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-
-		assert_eq!(metadata.extension_index("NoSuchExtension"), None);
-		assert!(
-			metadata
-				.extension_info_variant_index("NoSuchExtension", "RegisterStatementStoreAllowance")
-				.is_err()
+		assert_eq!(
+			metadata.call_indices("Resources", "claim_long_term_storage").unwrap(),
+			[0x3f, 0x0c]
 		);
-		assert!(metadata.extension_info_variant_index(AS_RESOURCES, "NoSuchVariant").is_err());
 	}
 
 	#[test]
 	fn index_resolution_fails_for_unknown_names() {
 		let metadata = Metadata::decode(FIXTURE).unwrap();
 
-		assert_eq!(
-			(
-				metadata.call_indices("Resources", "no_such_call").is_err(),
-				metadata.call_indices("NoSuchPallet", "transfer").is_err(),
-				metadata
-					.as_resources_variant_indices("NoSuchVariant", PersonhoodCollection::LitePeople)
-					.is_err(),
-			),
-			(true, true, true),
-		);
-	}
-
-	/// Asset Hub fixture metadata (V16, spec 2000036; previewnet serves the
-	/// same runtime). The dotNS gateway flows are validated against it.
-	const AH_FIXTURE: &[u8] =
-		include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-metadata.scale");
-
-	#[test]
-	fn dotns_gateway_pipeline_matches_the_reference_transaction_layout() {
-		let metadata = Metadata::decode(AH_FIXTURE).unwrap();
-		let state = ChainState { restrict_origins: true, ..fixture_state() };
-
-		// RegisterFullName resolves with the asserted field shape.
-		assert_eq!(metadata.dotns_register_full_name_variant().unwrap(), 0);
-		assert!(metadata.call_indices("DotnsGateway", "register_name").is_ok());
-
-		// The extension tail after AsDotnsGateway encodes exactly the bytes the
-		// reference implementation registerTx.ts hand-builds. Extras are
-		// RestrictOrigin(true) ‖ CheckEra(Immortal) ‖ CheckNonce(0) ‖
-		// ChargePGAS(tip 0, asset None) ‖ CheckMetadataHash(Disabled). The
-		// implicit half is specVersion ‖ txVersion ‖ genesis ‖ genesis ‖
-		// metadata-hash None.
-		let all = metadata.encode_signed_extensions(&state);
-		let tail_start = metadata.extension_index(AS_DOTNS_GATEWAY).unwrap() + 1;
-		let tail = &all[tail_start..];
-		let extras: Vec<u8> = tail.iter().flat_map(|e| e.extra.clone()).collect();
-		assert_eq!(
-			hex::encode(extras),
-			"010000000000",
-			"tail extras: RestrictOrigin true, era, nonce, tip, asset, metadata hash"
-		);
-		let implicit: Vec<u8> = tail.iter().flat_map(|e| e.additional_signed.clone()).collect();
-		assert_eq!(
-			implicit,
-			[
-				state.spec_version.to_le_bytes().to_vec(),
-				state.transaction_version.to_le_bytes().to_vec(),
-				state.genesis_hash.to_vec(),
-				state.genesis_hash.to_vec(),
-				vec![0x00],
-			]
-			.concat()
-		);
+		assert!(metadata.call_indices("Resources", "no_such_call").is_err());
+		assert!(metadata.call_indices("NoSuchPallet", "transfer").is_err());
 	}
 }

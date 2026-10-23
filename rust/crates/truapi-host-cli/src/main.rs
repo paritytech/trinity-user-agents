@@ -1097,21 +1097,21 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 	Ok(ApprovalPolicy::AutoAccept)
 }
 
+/// Builds the CLI's own extrinsics over `network`'s chains, with the
+/// network's V5 pipelines as the default extrinsic versions.
+fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
+	let provider =
+		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
+}
+
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
 /// connects and timers have a reactor.
 ///
 /// The core spawns teardown work from `Drop`, which can run after the runtime
 /// has shut down; `tokio::spawn` panics there, so the handle is looked up
 /// rather than assumed.
-/// Builds the CLI's own extrinsics over `network`'s chains. The CLI keeps no
-/// per-chain transaction settings, so every chain defaults to V4 and an
-/// authorized call pins its own version.
-fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
-	let provider =
-		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
-	ExtrinsicService::from_provider(provider, tokio_spawner(), Arc::new(chain::V4OnlyChains))
-}
-
 fn tokio_spawner() -> Spawner {
 	Arc::new(|fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
 		Ok(handle) => {
