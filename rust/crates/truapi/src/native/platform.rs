@@ -557,7 +557,7 @@ async fn lookup_until_found(
 		futures_timer::Delay::new(pause).await;
 		retries += 1;
 		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
-		if let Some(value) = value.filter(|value| preimage_key(value) == digest) {
+		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
 			callbacks.on_core_log(
 				"truapi.native.preimage.found".to_string(),
 				format!("{key_hex} on retry {retries}"),
