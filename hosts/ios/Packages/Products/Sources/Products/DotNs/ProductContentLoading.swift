@@ -16,6 +16,13 @@ public struct ProductContent: Equatable, Sendable {
     public let appContent: DotNsResolvedContent
     public let version: ProductVersion
     public let source: Source
+
+    public init(resolved: ResolvedProduct, appContent: DotNsResolvedContent, version: ProductVersion, source: Source) {
+        self.resolved = resolved
+        self.appContent = appContent
+        self.version = version
+        self.source = source
+    }
 }
 
 public struct ProductUpdate: Equatable, Sendable {
@@ -30,14 +37,6 @@ public protocol ProductContentLoading: Sendable {
     func refresh(_ productId: ProductId) async -> ProductUpdate?
     func apply(_ update: ProductUpdate) async
     func updates() -> AnyAsyncSequence<ProductUpdate>
-}
-
-public protocol ProductLoadBackgroundExecuting: Sendable {
-    func execute<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T
-}
-
-public struct ProductLoadBackgroundExpiredError: Error, Equatable, Sendable {
-    public init() {}
 }
 
 public protocol ProductNetworkPathProviding: Sendable {

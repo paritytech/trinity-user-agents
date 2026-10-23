@@ -1,13 +1,14 @@
 import AsyncExtensions
+import BackgroundExecution
 import Foundation
 import SDKLogger
 
 public actor ProductContentLoader {
     public struct Environment: Sendable {
         let pathProvider: ProductNetworkPathProviding
-        let backgroundExecutor: ProductLoadBackgroundExecuting
+        let backgroundExecutor: BackgroundExecuting
 
-        public init(pathProvider: ProductNetworkPathProviding, backgroundExecutor: ProductLoadBackgroundExecuting) {
+        public init(pathProvider: ProductNetworkPathProviding, backgroundExecutor: BackgroundExecuting) {
             self.pathProvider = pathProvider
             self.backgroundExecutor = backgroundExecutor
         }

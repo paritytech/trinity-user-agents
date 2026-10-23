@@ -4,6 +4,7 @@ import Products
 import ChainRegistry
 import Operation_iOS
 import Revive
+import BackgroundExecution
 
 protocol SPAFlowStateProviding: AnyObject {
     func flowState() -> SPAFlowState
@@ -61,6 +62,13 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             screening: .core
         )
 
+        let contentLoader = makeContentLoader(
+            contractApi: contractApi,
+            carFetcher: carFetcher,
+            storage: DotNsLocalStorage(content: contentStorage, contentHashes: ContentHashCache.shared),
+            hostProvider: hostProvider
+        )
+
         let created = SPAFlowState(
             dotNsResolver: resolver,
             productImages: ProductImageSources(
@@ -69,6 +77,7 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             ),
             hostProvider: hostProvider,
             productResolver: productResolver,
+            contentLoader: contentLoader,
             iconViewModelFactory: ProductIconViewModelFactory(
                 dotNsResolver: resolver,
                 iconLoader: ProductIconLoader(productResolver: productResolver)
@@ -82,5 +91,41 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             state.flowState = created
             return created
         }
+    }
+}
+
+private extension SPAFlowStateProvider {
+    func makeContentLoader(
+        contractApi: DotNsContractApiProtocol,
+        carFetcher: CarFetcherProtocol,
+        storage: DotNsLocalStorage,
+        hostProvider: ProductHostProviding
+    ) -> ProductContentLoading {
+        guard let snapshotDefaults = UserDefaults(suiteName: DotNsRecordSnapshot.suiteName) else {
+            fatalError("Can't create user defaults for the dotNS record snapshot")
+        }
+
+        let backgroundExecutor = ConnectionRetainingExecutor(provider: chainRegistry)
+
+        return ProductContentLoader(
+            fetcher: ProductUpdateFetcher(
+                contractApi: contractApi,
+                carFetcher: carFetcher,
+                storage: storage,
+                hostProvider: hostProvider,
+                logger: Logger.shared
+            ),
+            cache: ProductVersionCache(
+                snapshot: DotNsRecordSnapshot(defaults: snapshotDefaults),
+                storage: storage,
+                tldProvider: DotNsTldProviderFacade.shared,
+                logger: Logger.shared
+            ),
+            environment: ProductContentLoader.Environment(
+                pathProvider: ProductNetworkPath(),
+                backgroundExecutor: backgroundExecutor
+            ),
+            logger: Logger.shared
+        )
     }
 }

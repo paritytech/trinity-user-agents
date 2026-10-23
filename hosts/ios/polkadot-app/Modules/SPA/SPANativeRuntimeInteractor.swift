@@ -9,8 +9,7 @@ final class SPANativeRuntimeInteractor {
 
     private let nativeApi: ProductsNativeApiProtocol
     private let scriptsFactory: SPAScriptsMaking
-    private let dotNsResolver: DotNsResolverProtocol
-    private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
@@ -31,13 +30,11 @@ final class SPANativeRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
-    private var progressTask: Task<Void, Never>?
 
     init(
         nativeApi: ProductsNativeApiProtocol,
         scriptsFactory: SPAScriptsMaking,
-        dotNsResolver: DotNsResolverProtocol,
-        productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
@@ -48,8 +45,7 @@ final class SPANativeRuntimeInteractor {
     ) {
         self.nativeApi = nativeApi
         self.scriptsFactory = scriptsFactory
-        self.dotNsResolver = dotNsResolver
-        self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.configuration = configuration
         self.logger = logger
@@ -62,7 +58,6 @@ final class SPANativeRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
-        progressTask?.cancel()
         workerTask?.cancel()
         workerToken?.unlock()
 
@@ -173,21 +168,6 @@ private extension SPANativeRuntimeInteractor {
         return nil
     }
 
-    func subscribeProgress(domain: String) {
-        progressTask?.cancel()
-        progressTask = Task { [weak self] in
-            guard let stream = self?.dotNsResolver.progressStream(dotNsName: domain) else { return }
-            do {
-                for try await progress in stream {
-                    guard !Task.isCancelled else { return }
-                    self?.presenter?.didUpdateLoadProgress(progress)
-                }
-            } catch {
-                self?.logger.error("Resolve progress error: \(error)")
-            }
-        }
-    }
-
     /// Cancellation guards after every await: teardown cancels `setupTask`
     /// synchronously on the main actor, so a resumed setup must not assign
     /// resources (leaked monitor/bridge) or deliver stale results.
@@ -195,16 +175,12 @@ private extension SPANativeRuntimeInteractor {
         do {
             let domain = configuration.page.host.toDotDomain()
 
-            let resolved = try await productResolver.resolve(domain)
-            resolvedProduct = resolved
-
-            // Bytes come from the app executable's subname; the origin stays the base domain, which
+            // Bytes come from the executable's own subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let contentId = resolved.contentId(for: configuration.executable)
+            let content = try await contentLoader.open(domain, policy: .untilCancelled)
+            resolvedProduct = content.resolved
 
-            subscribeProgress(domain: contentId)
-
-            let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+            let contentURL = content.appContent.localURL
             let schemeHandler = makeSchemeHandler(
                 domain: domain,
                 contentURL: contentURL

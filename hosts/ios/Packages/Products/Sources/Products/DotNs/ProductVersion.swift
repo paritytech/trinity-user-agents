@@ -9,4 +9,10 @@ public struct ProductVersion: Equatable, Sendable {
     public let productId: ProductId
     public let records: [RecordKey: DotNsSnapshotRecord]
     public let contentHashes: [String: String]
+
+    public init(productId: ProductId, records: [RecordKey: DotNsSnapshotRecord], contentHashes: [String: String]) {
+        self.productId = productId
+        self.records = records
+        self.contentHashes = contentHashes
+    }
 }

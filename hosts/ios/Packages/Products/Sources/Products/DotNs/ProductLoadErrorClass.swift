@@ -1,3 +1,4 @@
+import BackgroundExecution
 import Foundation
 import FoundationExt
 import Revive
@@ -11,7 +12,7 @@ public enum ProductLoadErrorClass: Equatable, Sendable {
         switch error {
         case is CancellationError:
             self = .cancelled
-        case is ProductLoadBackgroundExpiredError,
+        case is BackgroundExecutionExpiredError,
              is ProductUpdateFetchError:
             self = .transient
         case let urlError as URLError:

@@ -11,6 +11,7 @@ final class SPARustRuntimeInteractor {
 
     private let runtimeFactory: SPARuntimeFactoryProtocol
     private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
@@ -27,6 +28,7 @@ final class SPARustRuntimeInteractor {
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
         productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
@@ -34,6 +36,7 @@ final class SPARustRuntimeInteractor {
     ) {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.configuration = configuration
         self.logger = logger
         self.productRepository = productRepository
@@ -104,15 +107,12 @@ private extension SPARustRuntimeInteractor {
     /// its own content and the manifest only names it, so a label that holds no records — a local
     /// server opened from debug settings — still opens, unnamed. A development server page is not
     /// published content, so nothing is resolved for it.
-    static func resolveProduct(
-        with productResolver: ProductResolving,
-        for configuration: SPAConfiguration
-    ) async throws -> ResolvedProduct? {
+    func resolveProduct() async throws -> ResolvedProduct? {
         let domain = configuration.page.host.toDotDomain()
 
         switch configuration.contentSource {
         case .dotNs:
-            return try await productResolver.resolve(domain)
+            return try await contentLoader.open(domain, policy: .untilCancelled).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
         #if DEBUG
@@ -129,12 +129,9 @@ private extension SPARustRuntimeInteractor {
             let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
             runtime = newRuntime
 
-            setupTask = Task { [weak self, productResolver, configuration] in
+            setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await Self.resolveProduct(
-                        with: productResolver,
-                        for: configuration
-                    )
+                    self?.resolvedProduct = try await self?.resolveProduct()
 
                     let url = try await newRuntime.start(with: engine)
                     self?.presenter?.didRequestNavigation(to: url)

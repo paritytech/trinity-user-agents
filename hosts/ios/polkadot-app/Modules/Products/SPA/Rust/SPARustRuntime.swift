@@ -17,8 +17,7 @@ import UIKitExt
 actor SPARustRuntime {
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
     private let configuration: SPAConfiguration
-    private let dotNsResolver: DotNsResolverProtocol
-    private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
 
@@ -26,19 +25,18 @@ actor SPARustRuntime {
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
+    private var servedContent: DotNsResolvedContent?
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
         configuration: SPAConfiguration,
-        dotNsResolver: DotNsResolverProtocol,
-        productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
-        self.dotNsResolver = dotNsResolver
-        self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
     }
@@ -128,26 +126,32 @@ private extension SPARustRuntime {
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
-        let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        let content = try await contentLoader.open(domain, policy: .untilCancelled)
 
+        logger.debug("SPA(rust): '\(domain)' content resolved to \(content.appContent.localURL.path)")
+
+        let productURL = try await serve(content.appContent)
+        return configuration.page.applied(to: productURL)
+    }
+
+    func serve(_ content: DotNsResolvedContent) async throws -> URL {
+        let domain = configuration.page.host.toDotDomain()
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
-            productFileProvider: DotNsFileProvider(contentURL: contentURL)
+            productFileProvider: DotNsFileProvider(contentURL: content.localURL)
         )
 
         guard let productURL = schemeHandler.getProductUrl() else {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
 
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
-
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()
         await schemeHandlerProxy.setHandler(schemeHandler)
+        servedContent = content
 
-        return configuration.page.applied(to: productURL)
+        return productURL
     }
 
     func checkNotDisposed() throws {

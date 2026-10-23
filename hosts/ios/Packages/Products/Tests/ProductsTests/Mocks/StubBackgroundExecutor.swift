@@ -1,8 +1,9 @@
+import BackgroundExecution
 import Foundation
 import os
 @testable import Products
 
-final class StubBackgroundExecutor: ProductLoadBackgroundExecuting, @unchecked Sendable {
+final class StubBackgroundExecutor: BackgroundExecuting, @unchecked Sendable {
     private let expiringRuns: OSAllocatedUnfairLock<Int>
 
     init(expiringRuns: Int = 0) {
@@ -17,7 +18,7 @@ final class StubBackgroundExecutor: ProductLoadBackgroundExecuting, @unchecked S
         }
 
         guard !expires else {
-            throw ProductLoadBackgroundExpiredError()
+            throw BackgroundExecutionExpiredError()
         }
 
         return try await operation()

@@ -22,8 +22,7 @@ extension ServiceCoordinator {
         // which lets the facade wire the factory into the manager in `init`.
         let workerFacade = ProductWorkerFacade { workerOperations in
             DefaultProductWorkerFactory(
-                productResolver: spaFlowState.productResolver,
-                dotNsResolver: spaFlowState.dotNsResolver,
+                contentLoader: spaFlowState.contentLoader,
                 productFileProvider: productFileProvider,
                 chainRegistry: ChainRegistryFacade.sharedRegistry,
                 usernameStorage: UsernameStorage(),
@@ -44,8 +43,7 @@ extension ServiceCoordinator {
         let productBotProvider = ProductBotProvider(
             productProvider: productRepositoryFactory.createProvider(),
             botFactory: botFactory,
-            dotNsResolver: spaFlowState.dotNsResolver,
-            productResolver: spaFlowState.productResolver
+            contentLoader: spaFlowState.contentLoader
         )
 
         let registry = MainActor.assumeIsolated {
