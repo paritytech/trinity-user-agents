@@ -29,14 +29,16 @@
 
 use std::{
 	collections::{BTreeMap, HashMap},
+	pin::Pin,
 	sync::{
 		Arc, Mutex,
 		atomic::{AtomicBool, AtomicU32, Ordering},
 	},
+	task::{Context, Poll},
 };
 
 use futures::{
-	StreamExt,
+	Stream, StreamExt,
 	channel::mpsc,
 	stream::{self, BoxStream},
 };
@@ -263,6 +265,40 @@ impl Default for MockConfig {
 /// Delivers a preimage to a lookup that is waiting on its key.
 type PreimageSender = mpsc::UnboundedSender<Option<Vec<u8>>>;
 
+/// Lookups waiting on each preimage key.
+type PreimageSubscribers = Arc<Mutex<HashMap<Vec<u8>, Vec<PreimageSender>>>>;
+
+/// One open preimage lookup. Dropping it removes its subscriber, and the key
+/// once no lookup waits on it, as the JS mock does on unsubscribe.
+struct PreimageLookup {
+	receiver: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+	key: Vec<u8>,
+	subscribers: PreimageSubscribers,
+}
+
+impl Stream for PreimageLookup {
+	type Item = Option<Vec<u8>>;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.receiver.poll_next_unpin(cx)
+	}
+}
+
+impl Drop for PreimageLookup {
+	fn drop(&mut self) {
+		// Closing first marks this lookup's sender closed, so the sweep below
+		// removes it along with any other lookup already dropped.
+		self.receiver.close();
+		let Ok(mut subscribers) = self.subscribers.lock() else { return };
+		if let Some(senders) = subscribers.get_mut(&self.key) {
+			senders.retain(|sender| !sender.is_closed());
+			if senders.is_empty() {
+				subscribers.remove(&self.key);
+			}
+		}
+	}
+}
+
 /// In-memory mock host platform. Cheap to `clone`; clones share recordings and
 /// storage (state is `Arc`ed), so a recording made through one clone is visible
 /// through another.
@@ -303,7 +339,7 @@ pub struct MockPlatform {
 	scan_answer: Arc<Mutex<HostScan>>,
 	storage_subscribers:
 		Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
-	preimage_subscribers: Arc<Mutex<HashMap<Vec<u8>, Vec<PreimageSender>>>>,
+	preimage_subscribers: PreimageSubscribers,
 	chain_status: Arc<Mutex<ChainStatus>>,
 	/// One per live connection; sending ends that connection's response stream.
 	chain_disconnectors: Arc<Mutex<Vec<mpsc::UnboundedSender<()>>>>,
@@ -1161,12 +1197,12 @@ impl PreimageHost for MockPlatform {
 		sender
 			.unbounded_send(self.preimages.lock().expect("preimages poisoned").get(&key).cloned())
 			.expect("a fresh receiver is open");
-		let senders = subscribers.entry(key).or_default();
-		// Lookups the core has dropped go here rather than waiting for an insert
-		// that may never come.
-		senders.retain(|sender| !sender.is_closed());
-		senders.push(sender);
-		Box::pin(receiver.map(Ok))
+		subscribers.entry(key.clone()).or_default().push(sender);
+		drop(subscribers);
+		Box::pin(
+			PreimageLookup { receiver, key, subscribers: self.preimage_subscribers.clone() }
+				.map(Ok),
+		)
 	}
 }
 
@@ -1675,6 +1711,19 @@ mod tests {
 		assert_eq!(waiting.next().now_or_never().unwrap().unwrap().unwrap(), Some(vec![1, 2, 3]));
 		// An insert reaches only the lookups waiting on its own key.
 		assert!(other.next().now_or_never().is_none());
+	}
+
+	#[test]
+	fn a_dropped_preimage_lookup_leaves_no_subscriber_behind() {
+		let p = MockPlatform::new();
+		let first = p.lookup_preimage(vec![9; 32]);
+		let second = p.lookup_preimage(vec![9; 32]);
+
+		drop(first);
+		assert_eq!(p.preimage_subscribers.lock().unwrap()[&vec![9; 32]].len(), 1);
+		drop(second);
+
+		assert!(p.preimage_subscribers.lock().unwrap().is_empty());
 	}
 
 	#[test]
