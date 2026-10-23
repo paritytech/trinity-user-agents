@@ -14,9 +14,12 @@ enum MainTabBarViewFactory {
     ) -> MainTabBarViewProtocol? {
         let spaFlowState = flowStateProvider.flowState()
 
-        guard let serviceCoordinator = ServiceCoordinator.createDefault(spaFlowState: spaFlowState) else {
+        // Taking the lease starts the services; the interactor releases it.
+        guard let servicesLease = DashboardServices.manager.acquireInteractive() else {
             return nil
         }
+
+        let serviceCoordinator = servicesLease.coordinator
 
         let polkadotSignInService = PolkadotSignInService(
             polkadotHandshakeService: serviceCoordinator.polkadotHandshakeService
@@ -41,27 +44,19 @@ enum MainTabBarViewFactory {
             hostProvider: spaFlowState.hostProvider
         )
 
-        let mnemonicBackupHelper = MnemonicBackupHelper()
         let browserCoordinator = createBrowserCoordinator(flowStateProvider: flowStateProvider)
         let interactor = MainTabBarInteractor(
-            serviceCoordinator: serviceCoordinator,
+            servicesLease: servicesLease,
             chainStatusProvider: serviceCoordinator.chainStatusProvider,
             userNotificationService: userNotificationService,
             urlHandlingService: urlHandler,
             deferredLinkHandler: deepLinkHandling,
-            mnemonicBackupHelper: mnemonicBackupHelper,
             browserCoordinator: browserCoordinator,
             productGamePills: RootDependencyLocator.getDependency()
         )
 
         let qrHandler = WalletQRScanResultHandler(
             dsfinvkRouter: W3sDsfinvkRouter.createDefault(coinageService: serviceCoordinator.coinageService)
-        )
-
-        let wireframe = MainTabBarWireframe(
-            serviceCoordinator: serviceCoordinator,
-            scanResultHandler: qrHandler,
-            moduleNavigator: moduleNavigator
         )
 
         let chipViewModelFactory = SPATabChipViewModelFactory(
@@ -73,6 +68,12 @@ enum MainTabBarViewFactory {
             scanResultHandler: qrHandler,
             flowStateProvider: flowStateProvider,
             foregroundVisibilityReporter: foregroundVisibilityReporter
+        )
+
+        let wireframe = MainTabBarWireframe(
+            serviceCoordinator: serviceCoordinator,
+            tabFactory: tabFactory,
+            moduleNavigator: moduleNavigator
         )
 
         let presenter = MainTabBarPresenter(
@@ -130,6 +131,7 @@ enum MainTabBarViewFactory {
             notificationsCleaner: notificationsCleaner,
             coinageService: serviceCoordinator.coinageService,
             networkStatusService: serviceCoordinator.networkStatusService,
+            allowanceCleanupService: serviceCoordinator.allowanceManagerFacade.cleanupService,
             flowState: spaFlowState
         )
     }
@@ -159,22 +161,16 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
         )
-        #if FEATURE_PRODUCTS
-            // The Pocket handler goes first: it owns the reserved `-` target,
-            // which the SPA handler would otherwise open as a product page.
-            let productHandlers: [URLHandlingServiceProtocol] = [
-                PocketOpenService.makeDefault(
-                    flowState: flowState.flowState,
-                    moduleNavigator: moduleNavigator
-                ),
-                ProductSPAOpenService(
-                    moduleNavigator: moduleNavigator,
-                    hostProvider: hostProvider
-                )
-            ]
-        #else
-            let productHandlers: [URLHandlingServiceProtocol] = []
-        #endif
+        let productHandlers: [URLHandlingServiceProtocol] = [
+            PocketOpenService.makeDefault(
+                flowState: flowState.flowState,
+                moduleNavigator: moduleNavigator
+            ),
+            ProductSPAOpenService(
+                moduleNavigator: moduleNavigator,
+                hostProvider: hostProvider
+            )
+        ]
 
         let historyStorage = W3sPaymentHistoryCoreDataStore(storageFacade: UserDataStorageFacade.shared)
 

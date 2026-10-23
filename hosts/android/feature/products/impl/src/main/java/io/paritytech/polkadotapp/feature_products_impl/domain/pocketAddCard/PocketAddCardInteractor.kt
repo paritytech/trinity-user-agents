@@ -9,9 +9,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.CachedPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPreviewLoader
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
 
@@ -27,7 +27,7 @@ class PocketAddCardInteractor @Inject constructor(
     private val publishedCards: PublishedPocketCards,
     private val previewLoader: PocketPreviewLoader,
     private val store: PocketCardStore,
-    private val images: PocketImageResolver,
+    private val images: ProductImageResolver,
 ) {
     suspend fun loadOffer(productId: ProductId, cardId: PocketCardId): Result<PocketAddCardOffer> =
         publishedCards.find(productId, cardId).flatMap { published ->

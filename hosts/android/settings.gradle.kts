@@ -72,6 +72,8 @@ run {
 
 include(":test-shared")
 
+include(":config:detekt:rules")
+
 include(":feature:account:api")
 include(":feature:account:impl")
 include(":feature:balances:api")

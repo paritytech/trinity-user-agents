@@ -3,6 +3,7 @@
     <attr name="bg_surface_main" format="reference|color" />
     <attr name="bg_surface_nested" format="reference|color" />
     <attr name="stroke_primary" format="reference|color" />
+    <attr name="splash_mark" format="reference|color" />
 
     <declare-styleable name="Button">
         <attr name="type" format="enum">

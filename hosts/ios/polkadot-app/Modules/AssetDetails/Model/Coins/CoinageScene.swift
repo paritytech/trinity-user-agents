@@ -42,6 +42,20 @@ enum CoinageScene {
         case silver = 3
         case gold = 4
         case bronze = 5
+        /// Not from the export: a local row for the plain set.
+        case titanium = 6
+    }
+
+    /// Which coins the denominations are drawn as.
+    ///
+    /// `plain` is what ships: every coin round, unmilled and titanium, telling the denominations
+    /// apart by size alone. `varied` is the coinage of four metals, four outlines and milling,
+    /// kept for comparison behind the debug flag. Nothing outside that flag can choose it.
+    enum CoinSet: Equatable {
+        case varied
+        case plain
+
+        static let shipped = CoinSet.plain
     }
 
     /// Our four bands: dull bronze, bright silver, brighter gold, and bimetallic at the top.
@@ -50,7 +64,9 @@ enum CoinageScene {
     /// within its metal wherever it sits. The top band has three denominations and so gets the
     /// first three. The reference's own table never pairs a flower with a core, so that mesh is
     /// exported for us specifically; see `NATIVE_ONLY_GEOMETRIES` in its `export-native.mjs`.
-    static func geometry(forExponent exponent: Int16) -> Geometry {
+    static func geometry(forExponent exponent: Int16, set: CoinSet = .shipped) -> Geometry {
+        guard set == .varied else { return .round }
+
         let clamped = Int(min(max(exponent, 0), CoinageCoinDesign.highestExponent))
         let band = clamped / CoinageCoinDesign.denominationsPerBand
 
@@ -65,12 +81,14 @@ enum CoinageScene {
         return shapes[clamped % CoinageCoinDesign.denominationsPerBand]
     }
 
-    static func metals(forExponent exponent: Int16) -> (outer: Metal, core: Metal?) {
-        switch CoinageCoinDesign.band(forExponent: exponent) {
-        case .bronze: (.bronze, nil)
-        case .silver: (.silver, nil)
-        case .gold: (.gold, nil)
-        case .twin: (.gold, .silver)
+    static func metals(forExponent exponent: Int16, set: CoinSet = .shipped) -> (outer: Metal, core: Metal?) {
+        guard set == .varied else { return (.titanium, nil) }
+
+        return switch CoinageCoinDesign.band(forExponent: exponent) {
+        case .bronze: (Metal.bronze, nil)
+        case .silver: (Metal.silver, nil)
+        case .gold: (Metal.gold, nil)
+        case .twin: (Metal.gold, Metal.silver)
         }
     }
 
@@ -90,9 +108,14 @@ enum CoinageScene {
 
     /// Reads the field's live spring values rather than the layout's targets, so what is drawn is
     /// wherever each coin has actually got to.
+    /// `window` is how far down the field the drawing surface starts: the surface is one screen
+    /// tall and pinned to the visible part of a grid, so a coin is drawn that much higher than it
+    /// is laid out.
     static func batches(
         for field: CoinageCoinField,
-        designs: [CoinageAssetStore.Design]
+        designs: [CoinageAssetStore.Design],
+        window: CGFloat = 0,
+        set: CoinSet = .shipped
     ) -> [CoinageMetalRenderer.Batch] {
         var batches: [String: CoinageMetalRenderer.Batch] = [:]
         var order: [String] = []
@@ -102,7 +125,7 @@ enum CoinageScene {
 
             guard let design = designs[safe: exponent] else { continue }
 
-            let geometry = geometry(forExponent: member.coin.exponent)
+            let geometry = geometry(forExponent: member.coin.exponent, set: set)
             let distance = field.distanceToTarget(member)
             let key = geometry.rawValue
 
@@ -111,10 +134,39 @@ enum CoinageScene {
                 order.append(key)
             }
 
-            batches[key]?.instances.append(instance(member, design: design, distance: distance))
+            batches[key]?.instances.append(
+                instance(member, design: design, distance: distance, window: window, set: set)
+            )
         }
 
         return order.compactMap { batches[$0] }
+    }
+
+    /// Which coin is under a touch, reading where each one has actually got to rather than where
+    /// it is heading. The nearest the viewer wins where two overlap.
+    ///
+    /// A coin turned edge-on covers a point or two, so the touch is taken against a floor wide
+    /// enough to land on: a finger cannot be expected to hit a line.
+    static func coin(at point: CGPoint, in field: CoinageCoinField) -> String? {
+        field.members
+            .filter { contains($0, point) }
+            .max { $0.channels.lift.value < $1.channels.lift.value }?
+            .coin.id
+    }
+
+    /// The least a coin is taken to cover across, so an edge-on one can still be tapped.
+    static let touchFloor: CGFloat = 16
+
+    /// Only the face counts: the edge of a turned coin is a few points at most, under the floor.
+    private static func contains(_ member: CoinageCoinField.Member, _ point: CGPoint) -> Bool {
+        let channels = member.channels
+        let half = channels.height.value / 2
+        let faceWidth = geometry(forExponent: member.coin.exponent).faceWidth
+        let visible = half * faceWidth * abs(cos(channels.turn.value))
+        let reach = max(visible, touchFloor / 2)
+
+        return abs(point.x - channels.centreX.value) <= reach
+            && abs(point.y - channels.centreY.value) <= half
     }
 }
 
@@ -124,9 +176,11 @@ private extension CoinageScene {
     static func instance(
         _ member: CoinageCoinField.Member,
         design: CoinageAssetStore.Design,
-        distance: CGFloat
+        distance: CGFloat,
+        window: CGFloat,
+        set: CoinSet
     ) -> CoinageMetalRenderer.Instance {
-        let palette = metals(forExponent: member.coin.exponent)
+        let palette = metals(forExponent: member.coin.exponent, set: set)
         let channels = member.channels
         // Luster is the six-tap path, so it fades in only as a coin lands.
         let landing = max(0, 1 - distance / 40)
@@ -135,7 +189,7 @@ private extension CoinageScene {
             // World y runs up, so screen y is negated here and never in the shader.
             position: SIMD4(
                 Float(channels.centreX.value),
-                Float(-channels.centreY.value),
+                Float(window - channels.centreY.value),
                 Float(channels.lift.value),
                 Float(channels.height.value)
             ),
@@ -153,9 +207,9 @@ private extension CoinageScene {
                 design.tile
             ),
             effects: SIMD4(
-                reeds(forExponent: member.coin.exponent),
+                reeds(forExponent: member.coin.exponent, set: set),
                 Float(channels.luster.value * landing * landing),
-                0,
+                Float(channels.recede.value),
                 Float(channels.calm.value)
             ),
             // Streaks follow the animated wear, so a coin visibly cleans up as its ring fills.
@@ -171,8 +225,8 @@ private extension CoinageScene {
 
     /// Milling is reserved for the round coins above bronze, as a mint reserves it for the coins
     /// worth protecting. The count is what the rim can actually resolve.
-    static func reeds(forExponent exponent: Int16) -> Float {
-        guard CoinageCoinDesign.design(forExponent: exponent).isReeded else { return 0 }
+    static func reeds(forExponent exponent: Int16, set: CoinSet) -> Float {
+        guard set == .varied, CoinageCoinDesign.design(forExponent: exponent).isReeded else { return 0 }
 
         return Float((60 + 70 * CoinageCoinDesign.design(forExponent: exponent).size).rounded())
     }

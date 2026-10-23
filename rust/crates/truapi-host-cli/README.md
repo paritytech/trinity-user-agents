@@ -26,6 +26,9 @@ One binary, `truapi-host`:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
+| `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `local-network-check` | Validate the `HOST_CLI_LOCAL_NETWORK_CONFIG` file and print the resolved routing as JSON, without contacting a chain. |
+| `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -72,6 +75,7 @@ the version store. A command that finishes first waits for the download, so even
 a one-shot run lands the update; it prints a line while downloading. The running
 process is never replaced underneath itself: the new version takes effect the
 next time you start `truapi-host`, and the CLI says so when one is waiting.
+`stack` skips the check, since it runs inside builds and publish jobs.
 Every archive is checked against its published SHA-256 before it is unpacked.
 
 ```bash
@@ -101,7 +105,8 @@ updates it. Nothing contacts GitHub.
 ### State directory
 
 Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, and `uid.testnet` / `peopl.testnet` on `previewnet`.
+`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
+`uid.dot` / `peopl.dot` on `polkadot`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -747,7 +752,7 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
-  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  scripts/battery.sh --funding-host     # funding phase only
   make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -764,22 +769,25 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
-  The funding phase builds the host with `--features test-host` and installs
-  a scripted funding overlay: each request the product makes is answered with
-  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
-  (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel,provide-cancel-moved,provide-cancel-moved,provide-cancel-moved`). A
-  `deliver`, `release` or `fail` session is settled through the core's test
-  hook with no chain behind it. A `provide` session is handed to the product
-  that asked, which `TRUAPI_FUNDING_PROVIDERS` offers as a provider with a
-  scripted Worker manifest seeded into the core's cache, which runs as a Worker and serves it as the provider: it reports
-  progress, starts top-ups and payment requests, which scripted engines
-  complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
-  the session from them. `provide-cancel` also cancels it, and
-  `provide-cancel-moved` cancels once money moved and accepts the provider's
-  offer, recording each cancel's outcome and answer. The phase runs the
-  host twice on the same storage, so the provider resumes an inbound session
-  after a restart with the state it saved. The scripted device detects the
-  country `TRUAPI_FUNDING_COUNTRY` names, if any. Every overlay request and session change is recorded in
+  The funding phase runs the signing host's funding overlay as a host app
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers, each
+  with a Worker manifest the CLI ships for it, here the phase's own product,
+  which runs as a Worker and is both the product asking for funds and the
+  provider's worker serving them through `onQuote`, `onAssign`, `onCancel`
+  and `onSettleCancel`. The overlay lists the providers serving a session and
+  their quotes; the auto-accepting user picks the first quote and accepts
+  cancel offers. The script acts as the user
+  through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
+  a stdin that is not a terminal takes `/funding cancel <intent>` and
+  `/approval manual|automatic`, so a case cancels a session or has the overlay
+  closed. The provider reports progress and starts top-ups and payment
+  requests, which ledger engines complete in full and record in
+  `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
+  phase runs the host twice on the same storage, so the provider is assigned
+  an inbound session again after a restart and finishes it from the state it
+  kept in its own storage. The device detects the country
+  `TRUAPI_FUNDING_COUNTRY` names, if any. Every overlay request, screen,
+  cancel, answer and session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
@@ -940,6 +948,37 @@ Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
 
+## Trinity stacks
+
+`truapi-host stack` publishes and checks the descriptor that tells hosts and
+tools which chains and services make up a stack. An operator publishing
+previewnet:
+
+```sh
+truapi-host stack keygen --out ~/.previewnet/stack.key   # prints the public key
+truapi-host stack publish previewnet.json --generation 2026-10-19 --out site \
+  --signing-key-file ~/.previewnet/stack.key --state ~/.previewnet/stack-state.json \
+  --url https://previewnet.example/.well-known/trinity-stack.json
+# deploy site/, then share the printed link or:
+truapi-host stack link https://previewnet.example/.well-known/trinity-stack.json --key 0x…
+```
+
+`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`: the
+[JSON Schema](../trinity-stack/schema/trinity-stack.v1.schema.json) and the
+[RFC](../../../docs/rfcs/trinity-stack-descriptor.md) list its fields. Change
+`--generation` whenever the chains restart. Keep the key and the state
+file outside anything a wipe deletes.
+
+To check a published stack, or ship one in a host build:
+
+```sh
+truapi-host stack verify 'polkadotapp://stack?key=0x…&url=…'   # exits non-zero on a broken rule or expiry
+truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.json
+```
+
+`bundle` refuses a lower `sequence` than the copy already at `--out`, and an
+expired stack. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
+
 ## Statement-store allowance
 
 The real statement store enforces per-account allowance. Before pairing, the
@@ -1002,7 +1041,11 @@ HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '
 truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
-Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`.
+Both hosts take `--network`: `paseo-next-v2` (default), `previewnet`, or
+`polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
+`--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
+auto-approves, refuses `--product-config` and `attest`, and has no identity backend unless
+`HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
 The network preset owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
@@ -1010,8 +1053,15 @@ descriptors target previewnet, so its statements, its host chain routes and its
 own chain reads all land on one network. The CLI mints the identity backend's
 bearer token itself (SPEC.md §12.3). Sessions are per preset, so each network
 gets its own signer identity on the same machine.
-`HOST_CLI_IDENTITY_BACKEND_BASE` swaps only
-the identity backend (for a local one); `HOST_CLI_IDENTITY_BACKEND_TOKEN`
+`HOST_CLI_IDENTITY_BACKEND_BASE` swaps
+the identity backend (for a local one), and `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap a chain's URL for a fork
+of the preset's network, which keeps its genesis hashes. Each must be a `ws://` or
+`wss://` URL. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
+pointing at a backend that serves the fork. For a local network that
+is not a fork, `HOST_CLI_LOCAL_NETWORK_CONFIG` names a file with every chain's URL
+and genesis hash and the backend instead (`docs/local-network.md`); it cannot be
+combined with the chain URL overrides. `HOST_CLI_IDENTITY_BACKEND_TOKEN`
 supplies its bearer token instead of the CLI minting one. For username
 registration, an injected token's subject must match the session's `uid.<tld>`
 candidate account. The automatically minted token uses that identity; and
