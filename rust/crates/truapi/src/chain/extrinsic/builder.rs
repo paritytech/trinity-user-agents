@@ -74,7 +74,8 @@ pub fn pins_version(builder: &ExtrinsicBuilder<'_>) -> bool {
 /// The account whose next nonce the build has to read: the signer's, unless
 /// the caller set the nonce or there is no signer.
 pub fn account_needing_nonce(builder: &ExtrinsicBuilder<'_>) -> Option<AccountId32> {
-	builder.nonce.is_none().then_some(builder.signature.as_ref()?.account())
+	let signer = builder.signature.as_ref()?.signer()?;
+	builder.nonce.is_none().then(|| signer.account_id())
 }
 
 impl<'a> ExtrinsicBuilder<'a> {
@@ -130,7 +131,7 @@ impl<'a> ExtrinsicBuilder<'a> {
 	/// Adds `VerifyMultiSignature`, signed by `signer`. A V5 extrinsic carries
 	/// it as an extension; a V4 one carries its signature in the preamble.
 	pub fn with_signer(&mut self, signer: &'a SubstrateSigner) -> &mut Self {
-		self.signature = Some(VerifySignatureExtension::new(signer));
+		self.signature = Some(VerifySignatureExtension::signed(signer));
 		self
 	}
 

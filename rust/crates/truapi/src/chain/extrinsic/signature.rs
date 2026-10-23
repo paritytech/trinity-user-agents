@@ -4,7 +4,6 @@
 use subxt::{
 	config::{substrate::SubstrateConfig, transaction_extensions::VerifySignatureDetails},
 	tx::Signer,
-	utils::{AccountId32, MultiSignature},
 };
 
 use super::{
@@ -15,27 +14,28 @@ use super::{
 /// build holding one can run on any thread.
 pub type SubstrateSigner = dyn Signer<SubstrateConfig> + Sync;
 
-/// `VerifyMultiSignature` carrying the signer's signature over the
-/// extrinsic's implication. A V5 extrinsic carries it as an extension; a V4
-/// one takes it out of the pipeline and puts the signature in its preamble.
+/// `VerifyMultiSignature`: `Signed` with a signer's signature over the
+/// extrinsic's implication, or `Disabled` when another extension authorizes
+/// the extrinsic. A V5 extrinsic carries it as an extension; a V4 one takes
+/// the signer out of the pipeline and puts its signature in the preamble.
 pub struct VerifySignatureExtension<'a> {
-	signer: &'a SubstrateSigner,
+	signer: Option<&'a SubstrateSigner>,
 }
 
 impl<'a> VerifySignatureExtension<'a> {
 	/// Signs with `signer`.
-	pub fn new(signer: &'a SubstrateSigner) -> Self {
-		Self { signer }
+	pub fn signed(signer: &'a SubstrateSigner) -> Self {
+		Self { signer: Some(signer) }
 	}
 
-	/// The signing account.
-	pub fn account(&self) -> AccountId32 {
-		self.signer.account_id()
+	/// Carries no signature.
+	pub fn disabled() -> Self {
+		Self { signer: None }
 	}
 
-	/// The signature over the implication's signer payload.
-	pub fn sign(&self, implication: &InheritedImplication) -> MultiSignature {
-		self.signer.sign(&implication.signer_payload())
+	/// The signer, when this extension signs.
+	pub fn signer(&self) -> Option<&'a SubstrateSigner> {
+		self.signer
 	}
 }
 
@@ -53,9 +53,10 @@ impl TransactionExtension for VerifySignatureExtension<'_> {
 		&self,
 		implication: &InheritedImplication,
 	) -> Result<VerifySignatureDetails<SubstrateConfig>, ExtensionError> {
-		Ok(VerifySignatureDetails::Signed {
-			signature: self.sign(implication),
-			account: self.account(),
-		})
+		let Some(signer) = self.signer else {
+			return Ok(VerifySignatureDetails::Disabled);
+		};
+		let signature = signer.sign(&implication.signer_payload());
+		Ok(VerifySignatureDetails::Signed { signature, account: signer.account_id() })
 	}
 }

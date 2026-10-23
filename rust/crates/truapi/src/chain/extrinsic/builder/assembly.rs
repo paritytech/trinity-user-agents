@@ -27,7 +27,7 @@ use crate::chain::{
 	extrinsic::{
 		ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
 		extension::{ExtensionValueTypes, SuppliedExtension},
-		signature::VerifySignatureExtension,
+		signature::{SubstrateSigner, VerifySignatureExtension},
 		version::{choose_version, pipeline_names},
 		well_known::{ChainValues, EncodedExtensionValues, default_extension, unset_value_default},
 	},
@@ -48,8 +48,7 @@ pub fn assemble(
 	let signed = builder.signature.is_some();
 	let version = choose_version(builder.version, host_extension_version, signed, &metadata)?;
 	check_format_supported(version, &metadata)?;
-	let (extensions, v4_signature) =
-		place_signature(version, builder.extensions, builder.signature)?;
+	let (extensions, v4_signer) = place_signature(version, builder.extensions, builder.signature)?;
 	check_supplied_extensions(&extensions, version.extension_version(), &metadata)?;
 	let mortality = Mortality::new(builder.runtime.birth, builder.period)?;
 	let chain = ChainValues {
@@ -62,30 +61,27 @@ pub fn assemble(
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
 	let encoded = fold.fill_pipeline(extensions, &metadata)?;
 	let parts = EncodedParts::new(&call, &encoded, version, &metadata)?;
-	let bytes = match v4_signature {
-		Some(signature) => {
-			parts.encode_v4(&signature, &fold.implication_after(&encoded), &metadata)
-		},
+	let bytes = match v4_signer {
+		Some(signer) => parts.encode_v4(signer, &fold.implication_after(&encoded), &metadata),
 		None => parts.encode_v5(version.extension_version(), &metadata),
 	}?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
 }
 
-/// Where the signature goes: a V5 extrinsic carries it as its
-/// `VerifyMultiSignature` value like any extension; a V4 one takes it out of the pipeline to
-/// sign the preamble, and cannot be built without one.
+/// Where the signature goes: a V5 extrinsic carries `VerifyMultiSignature` like
+/// any extension; a V4 one takes its signer out of the pipeline to sign the
+/// preamble, and cannot be built without one.
 fn place_signature<'a>(
 	version: ExtrinsicVersion,
 	mut extensions: Vec<SuppliedExtension<'a>>,
 	signature: Option<VerifySignatureExtension<'a>>,
-) -> Result<(Vec<SuppliedExtension<'a>>, Option<VerifySignatureExtension<'a>>), ExtrinsicBuildError>
-{
+) -> Result<(Vec<SuppliedExtension<'a>>, Option<&'a SubstrateSigner>), ExtrinsicBuildError> {
 	if let ExtrinsicVersion::V5 { .. } = version {
 		extensions.extend(signature.map(SuppliedExtension::new));
 		return Ok((extensions, None));
 	}
-	let signature = signature.ok_or(ExtrinsicBuildError::UnsignedV4)?;
-	Ok((extensions, Some(signature)))
+	let signer = signature.and_then(|signature| signature.signer());
+	Ok((extensions, Some(signer.ok_or(ExtrinsicBuildError::UnsignedV4)?)))
 }
 
 fn check_format_supported(
@@ -312,22 +308,22 @@ impl<'p> EncodedParts<'p> {
 		Ok(out)
 	}
 
-	/// A V4 signed extrinsic, the preamble carrying `signature`'s signature
-	/// over the whole pipeline's implication.
+	/// A V4 signed extrinsic, the preamble carrying `signer`'s signature over
+	/// the whole pipeline's implication.
 	fn encode_v4(
 		&self,
-		signature: &VerifySignatureExtension<'_>,
+		signer: &SubstrateSigner,
 		implication: &InheritedImplication,
 		metadata: &Metadata,
 	) -> Result<Vec<u8>, ExtrinsicBuildError> {
-		let address = MultiAddress::<AccountId32, u32>::Id(signature.account());
+		let address = MultiAddress::<AccountId32, u32>::Id(signer.account_id());
 		let signature_info = metadata.extrinsic_signature_info().map_err(encode_error)?;
 		let mut out = Vec::new();
 		encode_v4_signed_with_info_to(
 			&self.args,
 			&self.encoded,
 			&address,
-			&signature.sign(implication),
+			&signer.sign(&implication.signer_payload()),
 			metadata.types(),
 			&self.call_info,
 			&signature_info,

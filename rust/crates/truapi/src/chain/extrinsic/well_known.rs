@@ -12,6 +12,7 @@ use subxt::{
 
 use super::{
 	ExtensionError, InheritedImplication, TransactionExtension, extension::SuppliedExtension,
+	signature::VerifySignatureExtension,
 };
 use crate::chain::Mortality;
 
@@ -145,21 +146,6 @@ pub fn restrict_origins(restrict: bool) -> ConstantExtension<(), bool> {
 	ConstantExtension { name: "RestrictOrigins", implicit: (), explicit: restrict }
 }
 
-/// `VerifyMultiSignature`'s value when nothing is signed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
-#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
-pub enum UnsignedVerification {
-	/// No signature; another extension authorizes the extrinsic.
-	Disabled,
-}
-
-/// `VerifyMultiSignature` disabled, leaving authorization to another
-/// extension.
-pub fn verify_signature_disabled() -> ConstantExtension<(), UnsignedVerification> {
-	let disabled = UnsignedVerification::Disabled;
-	ConstantExtension { name: VERIFY_MULTI_SIGNATURE, implicit: (), explicit: disabled }
-}
-
 /// The extension the builder adds for `name` when the caller leaves it
 /// unset, or `None` when `name` has no well-known default.
 pub fn default_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExtension<'static>> {
@@ -173,7 +159,7 @@ pub fn default_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExte
 		"ChargeTransactionPayment" => SuppliedExtension::new(charge_transaction_payment()),
 		"CheckMetadataHash" => SuppliedExtension::new(check_metadata_hash_disabled()),
 		"RestrictOrigins" => SuppliedExtension::new(restrict_origins(false)),
-		VERIFY_MULTI_SIGNATURE => SuppliedExtension::new(verify_signature_disabled()),
+		VERIFY_MULTI_SIGNATURE => SuppliedExtension::new(VerifySignatureExtension::disabled()),
 		_ => return None,
 	};
 	Some(extension)
