@@ -10,6 +10,8 @@ final class StubDotNsResolver: DotNsResolverProtocol, @unchecked Sendable {
     var readError: Error?
     /// Thrown only for these names, so a test can fail one subname and leave its siblings intact.
     var failingNames: Set<String> = []
+    /// Content hash returned per name; an absent name reads as `0x00`.
+    var contentHashes: [String: String] = [:]
 
     // Executable subnames are read concurrently, so the tally needs its own guard.
     private let lock = NSLock()
@@ -43,6 +45,17 @@ final class StubDotNsResolver: DotNsResolverProtocol, @unchecked Sendable {
 
     func resolveToLocalURL(dotNsName _: String) async throws -> URL {
         URL(fileURLWithPath: "/dev/null")
+    }
+
+    func resolveContentHash(dotNsName: String) async throws -> String {
+        contentHashes[dotNsName] ?? "0x00"
+    }
+
+    func resolveContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await DotNsResolvedContent(
+            contentHash: resolveContentHash(dotNsName: dotNsName),
+            localURL: URL(fileURLWithPath: "/dev/null")
+        )
     }
 
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {

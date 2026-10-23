@@ -1,6 +1,8 @@
 import Foundation
+import FoundationExt
 import Operation_iOS
 import Products
+import StructuredConcurrency
 
 /// Rust-runtime SPA interactor: creates the runtime via the factory, attaches
 /// the presentation view, and forwards the start URL to the presenter. All
@@ -15,6 +17,7 @@ final class SPARustRuntimeInteractor {
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
     private let chatProviderFactory: ChatContactDataProviderMaking
+    private let applicationStateStreams: ApplicationStateStreamFactory
 
     private var runtime: SPARuntimeProtocol?
     private var jsEngine: JSEngineProtocol?
@@ -23,6 +26,10 @@ final class SPARustRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
+    private var newBuildCheckTask: Task<Void, Never>?
+    private let newBuildCheck = CoalescingTask<Bool>()
+    private var foregroundTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
@@ -30,7 +37,8 @@ final class SPARustRuntimeInteractor {
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
-        chatProviderFactory: ChatContactDataProviderMaking
+        chatProviderFactory: ChatContactDataProviderMaking,
+        applicationStateStreams: ApplicationStateStreamFactory
     ) {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
@@ -38,11 +46,15 @@ final class SPARustRuntimeInteractor {
         self.logger = logger
         self.productRepository = productRepository
         self.chatProviderFactory = chatProviderFactory
+        self.applicationStateStreams = applicationStateStreams
     }
 
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
+        newBuildCheckTask?.cancel()
+        foregroundTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
     }
@@ -52,6 +64,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
         jsEngine = engine
 
+        observeForeground()
         startRuntime(engine: engine)
     }
 
@@ -63,6 +76,40 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
         Task { await previousRuntime?.dispose() }
 
         startRuntime(engine: engine)
+    }
+
+    func reloadLatestBuild() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            do {
+                try await self?.runtime?.useLatestBuild()
+            } catch {
+                self?.logger.error("SPA(rust): Failed to load latest build: \(error)")
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.presenter?.didRequestReload()
+        }
+    }
+
+    func checkForNewBuild() {
+        newBuildCheckTask?.cancel()
+
+        newBuildCheckTask = Task { [weak self, newBuildCheck, runtime] in
+            do {
+                let hasNewBuild = try await newBuildCheck.run { try await runtime?.hasNewBuild() ?? false }
+                guard hasNewBuild, let self, !Task.isCancelled else { return }
+
+                presenter?.didFindNewBuild(productName: resolvedProduct?.displayName ?? configuration.page.host.name)
+            } catch is CancellationError {
+                // Superseded by a newer check: the replacement reports.
+            } catch {
+                self?.logger.error("SPA(rust): Failed to check for a new build: \(error)")
+            }
+        }
     }
 
     func hasChatEntry() -> Bool {
@@ -119,6 +166,18 @@ private extension SPARustRuntimeInteractor {
             case .devServer:
                 return nil
         #endif
+        }
+    }
+
+    func observeForeground() {
+        guard foregroundTask == nil else { return }
+
+        let events = applicationStateStreams.stream(for: .willEnterForeground)
+        foregroundTask = Task { [weak self] in
+            for await _ in events {
+                guard let self else { return }
+                checkForNewBuild()
+            }
         }
     }
 

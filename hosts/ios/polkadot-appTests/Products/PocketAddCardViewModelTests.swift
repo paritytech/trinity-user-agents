@@ -103,6 +103,12 @@ private struct StubArchiveRoot: DotNsResolverProtocol {
         root
     }
 
+    func resolveContentHash(dotNsName _: String) async throws -> String { "0x00" }
+
+    func resolveContent(dotNsName: String) async throws -> DotNsResolvedContent {
+        try await DotNsResolvedContent(contentHash: "0x00", localURL: resolveToLocalURL(dotNsName: dotNsName))
+    }
+
     func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()

@@ -8,6 +8,8 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     /// The page's own scroll view, which a screen around it can hang a header
     /// in so the header rides the page rather than pinning above it.
     var pageScrollView: UIScrollView { get }
+    /// Whether the screen's view is in a window, so the user can see it.
+    var isOnScreen: Bool { get }
 
     func navigate(to url: URL)
     func navigate(to page: ProductPage)
@@ -26,18 +28,22 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapMinimize()
     func didTapClose()
     func didTapRetry()
+    func didTapRefresh()
     func didInterceptNavigation(to url: URL)
     func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
     func didTapShare()
+    func didBecomeVisible()
 }
 
 @MainActor
 protocol SPAInteractorInputProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func retry()
+    func reloadLatestBuild()
+    func checkForNewBuild()
     func hasChatEntry() -> Bool
     func openChat()
 }
@@ -46,6 +52,8 @@ protocol SPAInteractorInputProtocol: AnyObject {
 protocol SPAInteractorOutputProtocol: AnyObject {
     func didFail(error: Error)
     func didRequestNavigation(to url: URL)
+    func didRequestReload()
+    func didFindNewBuild(productName: String)
     func didPrepareChat(chatId: Chat.Id)
     func didUpdateLoadProgress(_ progress: DotNsLoadProgress)
 }

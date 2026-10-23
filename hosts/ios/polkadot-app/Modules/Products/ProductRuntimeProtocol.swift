@@ -41,6 +41,11 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
 
 protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     func start(with engine: JSEngineProtocol) async throws -> URL
+    /// Moves the page's served build to the product's latest build. No-op for pages that are not dotNS content.
+    func useLatestBuild() async throws
+    /// Whether the product published a build other than the served one that can be loaded. False for non-dotNS
+    /// pages and before start.
+    func hasNewBuild() async throws -> Bool
 }
 
 /// One scripts protocol per surface (see `ChatScriptsMaking` in the Products
