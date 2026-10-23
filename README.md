@@ -343,6 +343,8 @@ Rust linting treats correctness and complexity diagnostics as errors, and public
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
+
 The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
