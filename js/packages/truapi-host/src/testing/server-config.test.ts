@@ -134,6 +134,18 @@ describe("createTestHostServer host configuration", () => {
     ).rejects.toThrow(/`uri` is not supported/);
   });
 
+  it("refuses page options it would drop without a productUrl", async () => {
+    // A bare base reaches no page, so a mock or accounts passed here would be
+    // lost without a word.
+    await expect(
+      createTestHostServer({
+        unref: true,
+        mock: { featureSupported: false },
+        accounts: ["alice"],
+      }),
+    ).rejects.toThrow(/`mock`, `accounts` needs `productUrl`/);
+  });
+
   it("rejects a pinned product account, and says why", async () => {
     await expect(
       createTestHostServer({
