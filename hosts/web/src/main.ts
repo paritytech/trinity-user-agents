@@ -1,4 +1,3 @@
-import "./style.css";
 import { createWebWorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { AuthState } from "@parity/truapi-host";

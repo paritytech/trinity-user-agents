@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>TrUAPI Web Host</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body
     data-menu="closed"
@@ -17,7 +18,7 @@
     <div class="top">
       <header class="appbar">
         <span class="brand" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
+          <svg viewBox="0 0 24 24" width="22" height="22">
             <circle cx="12" cy="4.5" r="2.6" />
             <circle cx="19" cy="9.5" r="2.6" />
             <circle cx="16.5" cy="18" r="2.6" />
@@ -58,7 +59,7 @@
             title="Open (Enter)"
             disabled
           >
-            <svg viewBox="0 0 20 20" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
               <path d="M4 10h11M10.5 5.5L15 10l-4.5 4.5" />
             </svg>
           </button>
@@ -105,7 +106,7 @@
           aria-controls="inspector"
           aria-expanded="false"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
             <path d="M3 4.5h14v11H3zM3 12h14M7 12v3.5" />
           </svg>
         </button>
@@ -118,7 +119,7 @@
           aria-label="Menu"
           title="Menu"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
             <path d="M3 5.5h14M3 10h14M3 14.5h14" />
           </svg>
         </button>
@@ -143,7 +144,7 @@
           data-close="menu"
           aria-label="Close menu"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
             <path d="M5 5l10 10M15 5L5 15" />
           </svg>
         </button>
@@ -304,7 +305,12 @@
           <nav id="dock" class="dock" aria-label="Host navigation">
             <button type="button" data-destination="chat">
               <span class="dock-badge" data-badge hidden></span>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                aria-hidden="true"
+              >
                 <path
                   d="M4 5.5h16v10H10.5L6 19v-3.5H4z"
                   stroke-linejoin="round"
@@ -313,14 +319,24 @@
               <span>Chat</span>
             </button>
             <button type="button" data-destination="browse">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                aria-hidden="true"
+              >
                 <circle cx="12" cy="12" r="8.5" />
                 <path d="M15.5 8.5l-2 5-5 2 2-5z" stroke-linejoin="round" />
               </svg>
               <span>Browse</span>
             </button>
             <button type="button" data-destination="pocket">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                aria-hidden="true"
+              >
                 <rect x="3.5" y="6" width="17" height="12.5" rx="3" />
                 <path d="M3.5 10.5h17M16 14.5h1.5" />
               </svg>
@@ -397,7 +413,7 @@
           data-close="inspector"
           aria-label="Close inspector"
         >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
             <path d="M5 5l10 10M15 5L5 15" />
           </svg>
         </button>
