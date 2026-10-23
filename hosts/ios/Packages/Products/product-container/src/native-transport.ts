@@ -12,10 +12,16 @@ interface PendingEntry {
   reject?: (error: any) => void;
   onUpdate?: (data: any) => void;
   onError?: (error: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+export interface CallOptions {
+  /** Reject the call with `code: 'timeout'` when native has not answered in time. */
+  timeoutMs?: number;
 }
 
 export interface NativeTransport {
-  callNative(method: string, params: unknown): Promise<any>;
+  callNative(method: string, params: unknown, options?: CallOptions): Promise<any>;
   subscribeNative(
     method: string,
     params: unknown,
@@ -36,6 +42,10 @@ export function createNativeTransport(
     if (!entry) return;
 
     const msg = typeof payload === 'string' ? JSON.parse(payload) : payload;
+
+    if (entry.timer !== undefined && ('value' in msg || 'error' in msg)) {
+      clearTimeout(entry.timer);
+    }
 
     if ('value' in msg) {
       entry.resolve?.(msg.value);
@@ -58,10 +68,19 @@ export function createNativeTransport(
   };
 
   return {
-    callNative(method: string, params: unknown): Promise<any> {
+    callNative(method: string, params: unknown, options?: CallOptions): Promise<any> {
       return new Promise((resolve, reject) => {
         const id = `r${nextId++}`;
-        pending.set(id, { resolve, reject });
+        const entry: PendingEntry = { resolve, reject };
+
+        if (options?.timeoutMs !== undefined) {
+          entry.timer = setTimeout(() => {
+            pending.delete(id);
+            reject(Object.assign(new Error(`Native call '${method}' timed out`), { code: 'timeout' }));
+          }, options.timeoutMs);
+        }
+
+        pending.set(id, entry);
         sendToNative({ type: 'request', id, method, params });
       });
     },

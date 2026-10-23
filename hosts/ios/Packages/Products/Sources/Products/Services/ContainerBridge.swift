@@ -36,10 +36,18 @@ public actor ContainerBridge {
     private var subscriptionHandlers: [String: ContainerSubscriptionHandler] = [:]
     private var activeSubscriptions: [String: Task<Void, Never>] = [:]
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
+    private let pendingRequestWarningDelay: Duration
 
-    public init(engine: JSEngineProtocol, logger: SDKLoggerProtocol) {
+    /// A request still unanswered after `pendingRequestWarningDelay` is logged
+    /// as a warning: the page cannot see which native call it is stuck on.
+    public init(
+        engine: JSEngineProtocol,
+        logger: SDKLoggerProtocol,
+        pendingRequestWarningDelay: Duration = .seconds(5)
+    ) {
         self.engine = engine
         self.logger = logger
+        self.pendingRequestWarningDelay = pendingRequestWarningDelay
     }
 
     // MARK: - Handler Registration
@@ -120,6 +128,8 @@ public actor ContainerBridge {
         }
 
         let params = json["params"] ?? .null
+        let watchdog = watchPendingRequest(id: id, method: method)
+        defer { watchdog.cancel() }
 
         do {
             let result = try await handler(params)
@@ -130,6 +140,18 @@ public actor ContainerBridge {
         } catch {
             await sendError(id: id, error: error)
             logger.error("Error: \(error)")
+        }
+    }
+
+    private func watchPendingRequest(id: String, method: String) -> Task<Void, Never> {
+        Task { [logger, pendingRequestWarningDelay] in
+            do {
+                try await Task.sleep(for: pendingRequestWarningDelay)
+            } catch {
+                return
+            }
+
+            logger.warning("'\(method)' request \(id) still pending after \(pendingRequestWarningDelay)")
         }
     }
 

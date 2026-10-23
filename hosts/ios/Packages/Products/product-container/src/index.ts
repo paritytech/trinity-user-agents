@@ -27,6 +27,7 @@ import {
   toHex,
 } from '@novasamatech/host-api';
 import { createNativeTransport } from './native-transport';
+import { createNetworkGate } from './network-gate';
 import { ConnectionManager } from './connection-manager';
 import { WebRtcManager } from './webrtc-manager';
 import { validateStatementTopics } from './statement-topics';
@@ -137,12 +138,25 @@ const { callNative, subscribeNative } = createNativeTransport((message) => {
 });
 
 // --- Network: permission-gated fetch & XMLHttpRequest (deferred until callNative is available) ---
+const NETWORK_GRANT_TTL_MS = 60_000;
+const NETWORK_CHECK_TIMEOUT_MS = 10_000;
+
+const networkGate = createNetworkGate(
+  (url, timeoutMs) => callNative('allowNetworkAccess', { url }, { timeoutMs }),
+  { ttlMs: NETWORK_GRANT_TTL_MS, timeoutMs: NETWORK_CHECK_TIMEOUT_MS },
+);
+
 freezeValue(window, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
 
-  const response = await callNative('allowNetworkAccess', { url });
+  let allowed: boolean;
+  try {
+    allowed = await networkGate.allow(url);
+  } catch (e: any) {
+    return Promise.reject(new TypeError(`Network access check failed: ${e?.message ?? e}`));
+  }
 
-  if (!response.allowed) {
+  if (!allowed) {
     return Promise.reject(new TypeError('Network access is not allowed'));
   }
 
@@ -156,14 +170,20 @@ freezeValue(window, 'XMLHttpRequest', function XMLHttpRequest(this: XMLHttpReque
   xhr.open = function (method: string, url: string | URL, ...rest: any[]) {
     const resolvedUrl = typeof url === 'string' ? url : url.href;
 
-    callNative('allowNetworkAccess', { url: resolvedUrl }).then((response: any) => {
-      if (!response.allowed) {
+    networkGate.allow(resolvedUrl).then(
+      (allowed) => {
+        if (!allowed) {
+          xhr.dispatchEvent(new Event('error'));
+          xhr.abort();
+          return;
+        }
+        _open(method, url, ...rest);
+      },
+      () => {
         xhr.dispatchEvent(new Event('error'));
         xhr.abort();
-        return;
-      }
-      _open(method, url, ...rest);
-    });
+      },
+    );
   } as typeof xhr.open;
 
   return xhr;
