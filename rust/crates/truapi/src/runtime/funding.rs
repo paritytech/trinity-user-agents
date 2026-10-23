@@ -22,12 +22,14 @@ use core::time::Duration;
 
 use futures::{
 	channel::{mpsc, oneshot},
+	future::BoxFuture,
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
 use truapi::latest::{
-	FundingDirection, FundingFailure, FundingUpdate, GenericError, HostFundingReportError,
-	HostFundingServeSubscribeItem, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
+	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
+	FundingFailure, FundingUpdate, GenericError, HostFundingReportError,
+	HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
 	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
 	HostPaymentTopUpStatusSubscribeItem,
 };
@@ -35,9 +37,9 @@ use truapi::latest::{
 use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
-		CancelConfirmation, CancelOutcome, CancelTerms, FundingSession, FundingSessionError,
-		FundingSessionSummary, Settlement, StartedFunds, load_pack, load_sessions, named_funds,
-		pack_blob, retained, store_pack, store_sessions,
+		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingSession,
+		FundingSessionError, FundingSessionSummary, Settlement, StartedFunds, load_pack,
+		load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
@@ -60,7 +62,36 @@ const FOLLOW_RETRY_LONGEST: Duration = Duration::from_secs(5 * 60);
 const UNKNOWN_FUNDS_GRACE_MS: u64 = 60 * 60 * 1_000;
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
-type Servers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingServeSubscribeItem>>>;
+
+/// A provider worker's connection, through which the core calls it. Each
+/// call takes the worker's one answer; a worker that errs, goes away or never
+/// answers gives none.
+pub trait FundingProviderLink: Send + Sync {
+	/// Hand the worker a session. Returns whether it took it.
+	fn assign(&self, session: FundingAssignment) -> BoxFuture<'static, bool>;
+	/// Ask the worker to stop a session, and take its answer.
+	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<FundingCancelAnswer>>;
+	/// Tell the worker the user's answer to its cancel offer. Returns whether
+	/// it heard it.
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: FundingCancelDecision,
+	) -> BoxFuture<'static, bool>;
+}
+
+/// A provider's worker connection, and whether the worker has been handed
+/// what it serves since it connected.
+struct Link {
+	link: Arc<dyn FundingProviderLink>,
+	caught_up: bool,
+}
+
+/// A call the core puts to a provider's worker about one session.
+enum ProviderCall {
+	Assign(FundingAssignment),
+	Cancel(String, CancelCall),
+}
 
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
@@ -94,8 +125,8 @@ pub struct FundingRegistry {
 	/// days while a new session expires in hours.
 	sweep_alarm: Mutex<Option<(u64, mpsc::UnboundedSender<()>)>>,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
-	/// Each provider's open `serve_subscribe` streams, by product id.
-	servers: Mutex<Servers>,
+	/// Each provider's worker connection, by product id.
+	links: Mutex<HashMap<String, Link>>,
 	/// Sessions holding a reference on their provider's worker, with that
 	/// provider.
 	holding: Mutex<HashMap<String, String>>,
@@ -146,44 +177,77 @@ impl FundingRegistry {
 		let Some(session) = assigned else {
 			return Ok(false);
 		};
-		self.serve_item(provider_id, HostFundingServeSubscribeItem::Assigned { session });
+		self.call(provider_id, vec![ProviderCall::Assign(session)]);
 		Ok(true)
 	}
 
-	/// The sessions assigned to `provider_id` and what the user asked of
-	/// them. Opening the stream replays every session still in flight, oldest
-	/// first, each followed by its pending cancel request or answer; later
-	/// items follow in the order they happen. An item can repeat, as each
-	/// open replays, so a worker treats them as idempotent. The stream never
-	/// errors and never ends on its own; dropping it stops serving.
-	pub fn serve(&self, provider_id: &str) -> BoxStream<'static, HostFundingServeSubscribeItem> {
-		let mut servers = self.lock_servers();
-		let replay: Vec<HostFundingServeSubscribeItem> = {
-			let sessions = self.lock_sessions();
-			let mut assigned: Vec<&FundingSession> = sessions
-				.values()
-				.filter(|session| {
-					!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
-				})
-				.collect();
-			assigned.sort_by_key(|session| session.opened_at_ms);
-			assigned
-				.into_iter()
-				.flat_map(|session| {
-					core::iter::once(HostFundingServeSubscribeItem::Assigned {
-						session: session.assignment(),
-					})
-					.chain(session.pending_cancel_item())
-				})
-				.collect()
+	/// Take `link` as the way to call `provider_id`'s worker, in place of any
+	/// earlier one. Nothing is sent until [`Self::connected`], apart from
+	/// calls made in the meantime.
+	pub fn link(&self, provider_id: &str, link: Arc<dyn FundingProviderLink>) {
+		self.lock_links()
+			.insert(provider_id.to_string(), Link { link, caught_up: false });
+	}
+
+	/// Drop `link`, unless a newer one replaced it.
+	pub fn unlink(&self, provider_id: &str, link: &Arc<dyn FundingProviderLink>) {
+		let mut links = self.lock_links();
+		if links.get(provider_id).is_some_and(|held| Arc::ptr_eq(&held.link, link)) {
+			links.remove(provider_id);
+		}
+	}
+
+	/// The worker on `provider_id`'s link is ready: once persisted sessions
+	/// are loaded, assign it every session it still serves, oldest first, each
+	/// followed by the cancel call it has not answered. Once per link, so a
+	/// worker that checks its connection again is not handed everything
+	/// again. A worker treats every call as idempotent, as one sent before it
+	/// was ready is repeated here.
+	pub fn connected(&self, provider_id: &str) {
+		let caught_up = self
+			.lock_links()
+			.get_mut(provider_id)
+			.map(|link| core::mem::replace(&mut link.caught_up, true));
+		let Some(services) = self.services.upgrade().filter(|_| caught_up == Some(false)) else {
+			return;
 		};
-		let (sender, receiver) = mpsc::unbounded();
-		let senders = servers.entry(provider_id.to_string()).or_default();
-		// A worker that restarts opens a new stream, so the ones it left are
-		// dropped here rather than kept until the next item is sent.
-		senders.retain(|sender| !sender.is_closed());
-		senders.push(sender);
-		stream::iter(replay).chain(receiver).boxed()
+		let provider_id = provider_id.to_string();
+		let spawner = services.spawner.clone();
+		spawner(Box::pin(async move {
+			let registry = services.funding().clone();
+			if let Err(error) = registry.load(&services).await {
+				tracing::warn!(%error, "loading funding sessions for a provider failed");
+				return;
+			}
+			for calls in registry.pending_calls(&provider_id) {
+				registry.call(&provider_id, calls);
+			}
+		}));
+	}
+
+	/// What `provider_id`'s worker has to hear when it connects, one list per
+	/// session it serves, oldest first.
+	fn pending_calls(&self, provider_id: &str) -> Vec<Vec<ProviderCall>> {
+		let sessions = self.lock_sessions();
+		let mut served: Vec<&FundingSession> = sessions
+			.values()
+			.filter(|session| {
+				!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+			})
+			.collect();
+		served.sort_by_key(|session| session.opened_at_ms);
+		served
+			.into_iter()
+			.map(|session| {
+				core::iter::once(ProviderCall::Assign(session.assignment()))
+					.chain(
+						session
+							.pending_cancel_call()
+							.map(|call| ProviderCall::Cancel(session.intent.clone(), call)),
+					)
+					.collect()
+			})
+			.collect()
 	}
 
 	/// Store `update` from `provider` on session `intent`. Funds a
@@ -224,8 +288,10 @@ impl FundingRegistry {
 	/// Record funds `provider_id` started under `host_id`, so a report can
 	/// name them: on the one open session it serves in `direction` whose
 	/// amount is `amount`, when exactly one is, and otherwise on every such
-	/// session, since a top-up does not say which session it is for. Returns
-	/// whether any session recorded them.
+	/// session, since a top-up does not say which session it is for. Funds
+	/// under an id any session of the provider started before, ended ones
+	/// included, are not recorded again. Returns whether any session recorded
+	/// them.
 	pub async fn record_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -236,6 +302,13 @@ impl FundingRegistry {
 		amount: u128,
 	) -> Result<bool, FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
+			let used = sessions.values().any(|session| {
+				session.provider_id.as_deref() == Some(provider_id) &&
+					session.started.iter().any(|record| record.host_id == host_id)
+			});
+			if used {
+				return (false, Vec::new());
+			}
 			let served = |session: &FundingSession| {
 				!session.is_terminal() &&
 					session.direction == direction &&
@@ -391,9 +464,9 @@ impl FundingRegistry {
 			})
 			.await?;
 		if let (CancelOutcome::Requested, Some(provider)) = (outcome, provider) {
-			self.serve_item(
+			self.call(
 				&provider,
-				HostFundingServeSubscribeItem::Cancel { intent: intent.to_string() },
+				vec![ProviderCall::Cancel(intent.to_string(), CancelCall::Cancel)],
 			);
 		}
 		Ok(outcome)
@@ -409,33 +482,21 @@ impl FundingRegistry {
 		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		let target = intent.to_string();
-		let (confirmation, provider) = self
+		let (confirmation, call) = self
 			.commit(storage, now_ms, move |sessions| {
 				let Some(session) = sessions.get_mut(&target) else {
 					return ((CancelConfirmation::NoOffer, None), Vec::new());
 				};
 				let confirmation = session.confirm_cancel(terms, now_ms);
-				let provider = session.provider_id.clone();
-				let changed = match confirmation {
-					CancelConfirmation::NoOffer | CancelConfirmation::Changed => Vec::new(),
-					_ => vec![target],
-				};
-				((confirmation, provider), changed)
+				if confirmation == CancelConfirmation::NoOffer {
+					return ((confirmation, None), Vec::new());
+				}
+				let call = session.provider_id.clone().zip(session.pending_cancel_call());
+				((confirmation, call), vec![target])
 			})
 			.await?;
-		let item = match confirmation {
-			CancelConfirmation::Accepted => {
-				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: intent.to_string() })
-			},
-			CancelConfirmation::Declined |
-			CancelConfirmation::Lapsed |
-			CancelConfirmation::TooLate => {
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: intent.to_string() })
-			},
-			CancelConfirmation::NoOffer | CancelConfirmation::Changed => None,
-		};
-		if let (Some(item), Some(provider)) = (item, provider) {
-			self.serve_item(&provider, item);
+		if let Some((provider, call)) = call {
+			self.call(&provider, vec![ProviderCall::Cancel(intent.to_string(), call)]);
 		}
 		Ok(confirmation)
 	}
@@ -601,9 +662,10 @@ impl FundingRegistry {
 				lapsed.extend(session.provider_id.clone().map(|provider| {
 					(
 						provider,
-						HostFundingServeSubscribeItem::CancelDeclined {
-							intent: session.intent.clone(),
-						},
+						ProviderCall::Cancel(
+							session.intent.clone(),
+							CancelCall::Settle(FundingCancelDecision::Declined),
+						),
 					)
 				}));
 			}
@@ -660,8 +722,8 @@ impl FundingRegistry {
 			}
 		}
 		drop(loaded);
-		for (provider, item) in lapsed {
-			self.serve_item(&provider, item);
+		for (provider, call) in lapsed {
+			self.call(&provider, vec![call]);
 		}
 		self.announce();
 		self.follow_sessions();
@@ -724,10 +786,75 @@ impl FundingRegistry {
 		}
 	}
 
-	/// Send `item` to every open stream of `provider_id`.
-	fn serve_item(&self, provider_id: &str, item: HostFundingServeSubscribeItem) {
-		if let Some(senders) = self.lock_servers().get_mut(provider_id) {
-			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
+	/// Put `calls` to `provider_id`'s worker one after another, on a task of
+	/// their own, and store its answers. Without a link they wait for the
+	/// worker to connect, which repeats whatever is still pending.
+	fn call(&self, provider_id: &str, calls: Vec<ProviderCall>) {
+		let Some(services) = self.services.upgrade() else {
+			return;
+		};
+		let Some(link) = self.lock_links().get(provider_id).map(|held| held.link.clone()) else {
+			return;
+		};
+		let spawner = services.spawner.clone();
+		spawner(Box::pin(async move {
+			for call in calls {
+				services.funding().put(&services, link.as_ref(), call).await;
+			}
+		}));
+	}
+
+	/// Put one call to a provider's worker and store its answer.
+	async fn put(
+		&self,
+		services: &RuntimeServices,
+		link: &dyn FundingProviderLink,
+		call: ProviderCall,
+	) {
+		let (intent, answered) = match call {
+			ProviderCall::Assign(session) => {
+				let intent = session.intent.clone();
+				if !link.assign(session).await {
+					tracing::debug!(%intent, "a provider's worker did not take its session");
+				}
+				return;
+			},
+			ProviderCall::Cancel(intent, CancelCall::Cancel) => {
+				let Some(answer) = link.cancel(intent.clone()).await else {
+					tracing::debug!(%intent, "a provider's worker did not answer a cancel");
+					return;
+				};
+				let target = intent.clone();
+				let answered = self
+					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+						let now_ms = current_unix_millis();
+						let changed = sessions
+							.get_mut(&target)
+							.is_some_and(|session| session.answer_cancel(answer, now_ms));
+						((), if changed { vec![target] } else { Vec::new() })
+					})
+					.await;
+				(intent, answered)
+			},
+			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
+				if !link.settle_cancel(intent.clone(), decision.clone()).await {
+					tracing::debug!(%intent, "a provider's worker did not hear a cancel decision");
+					return;
+				}
+				let target = intent.clone();
+				let answered = self
+					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+						if let Some(session) = sessions.get_mut(&target) {
+							session.cancel_settled(&decision);
+						}
+						((), Vec::new())
+					})
+					.await;
+				(intent, answered)
+			},
+		};
+		if let Err(error) = answered {
+			tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
 		}
 	}
 
@@ -912,8 +1039,8 @@ impl FundingRegistry {
 		self.subscribers.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
-	fn lock_servers(&self) -> MutexGuard<'_, Servers> {
-		self.servers.lock().unwrap_or_else(PoisonError::into_inner)
+	fn lock_links(&self) -> MutexGuard<'_, HashMap<String, Link>> {
+		self.links.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, String>> {
@@ -1025,10 +1152,9 @@ impl RuntimeServices {
 		}));
 	}
 
-	/// End session `intent` with `stage` as though its funds had moved, for
-	/// test hosts that drive the flow with no chain behind it. Returns
-	/// whether it was still in flight.
-	#[cfg(feature = "test-host")]
+	/// End session `intent` with `stage` as though its funds had moved.
+	/// Returns whether it was still in flight.
+	#[cfg(test)]
 	pub async fn settle_funding_for_test(
 		&self,
 		intent: &str,

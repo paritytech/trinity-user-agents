@@ -13,8 +13,8 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::error;
 use truapi::latest::{
-	FundingAssignment, FundingDirection, FundingFailure, FundingFrameTarget, FundingUpdate,
-	GenericError, HostFundingReportError, HostFundingServeSubscribeItem,
+	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
+	FundingFailure, FundingFrameTarget, FundingUpdate, GenericError, HostFundingReportError,
 	HostFundingStatusSubscribeItem,
 };
 use url::Url;
@@ -241,11 +241,9 @@ pub enum CancelConfirmation {
 	Declined,
 	/// The offer had lapsed, so it was declined.
 	Lapsed,
-	/// The session has no offer to answer.
+	/// The session has no offer to answer, or none on the terms the host
+	/// showed.
 	NoOffer,
-	/// The offer changed since the user saw it, so nothing was accepted. The
-	/// host shows the current offer and asks again.
-	Changed,
 	/// Too late: the provider started crediting the user, so the offer is
 	/// declined and the session carries on.
 	TooLate,
@@ -259,6 +257,15 @@ pub struct CancelTerms {
 	pub fee: u128,
 	/// What the user gets back, in payment balance units.
 	pub refund: u128,
+}
+
+/// A call about the user's cancel the provider still has to hear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancelCall {
+	/// Ask the provider to stop.
+	Cancel,
+	/// Tell the provider the user's answer to its offer.
+	Settle(FundingCancelDecision),
 }
 
 /// What the core follows to decide a session's outcome once funds move.
@@ -377,23 +384,13 @@ impl FundingSession {
 			direction: self.direction,
 			amount: self.amount,
 			expires_at: self.expires_at(),
-			last_update: self.last_step().cloned(),
+			last_update: self.last_update().cloned(),
 		}
 	}
 
 	/// The provider's most recent update.
 	pub fn last_update(&self) -> Option<&FundingUpdate> {
 		self.updates.last().map(|record| &record.update)
-	}
-
-	/// The provider's most recent update that moves the session on, which an
-	/// answer to a cancel does not.
-	pub fn last_step(&self) -> Option<&FundingUpdate> {
-		self.updates
-			.iter()
-			.rev()
-			.map(|record| &record.update)
-			.find(|update| update_rank(update).is_some())
 	}
 
 	/// Store `update` from `provider_id`. A `Failed` update ends the session.
@@ -412,20 +409,6 @@ impl FundingSession {
 		if self.is_terminal() || self.provider_id.as_deref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
-		if let Some(answer) = cancel_answer(&update) {
-			if !matches!(
-				self.cancel,
-				Some(FundingCancel::Requested | FundingCancel::Offered { .. })
-			) {
-				return Err(HostFundingReportError::OutOfOrder);
-			}
-			if let FundingCancel::Offered { fee, refund, .. } = answer {
-				self.check_offer(fee, refund)?;
-			}
-			self.cancel = Some(answer);
-			self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
-			return Ok(());
-		}
 		if !self.follows(&update) {
 			return Err(HostFundingReportError::OutOfOrder);
 		}
@@ -443,8 +426,8 @@ impl FundingSession {
 			self.stage = FundingStage::Failed { reason: reason.clone(), settled_at_ms: now_ms };
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
-		// A provider that reports its next step has carried on, so the decline
-		// it was owed reached it and is not repeated.
+		// A provider that reports its next step has carried on, so a decline
+		// it was owed is not repeated.
 		if self.is_terminal() || matches!(self.cancel, Some(FundingCancel::Declined)) {
 			self.cancel = None;
 		}
@@ -455,20 +438,10 @@ impl FundingSession {
 	/// session whose credit started can no longer be cancelled, and an offer
 	/// cannot hand back more than the session moves. An outbound offer waits
 	/// for the refund a released withdrawal settles through.
-	fn check_offer(&self, fee: u128, refund: u128) -> Result<(), HostFundingReportError> {
-		if self.direction == FundingDirection::Out ||
-			(self.direction == FundingDirection::In && self.funds_started())
-		{
-			return Err(HostFundingReportError::OutOfOrder);
-		}
-		match self.amount {
-			Some(amount) if fee.saturating_add(refund) > amount => {
-				Err(HostFundingReportError::Unknown {
-					reason: "the offer exceeds the session amount".to_string(),
-				})
-			},
-			_ => Ok(()),
-		}
+	fn offer_fits(&self, fee: u128, refund: u128) -> bool {
+		self.direction == FundingDirection::In &&
+			!self.funds_started() &&
+			self.amount.is_none_or(|amount| fee.saturating_add(refund) <= amount)
 	}
 
 	/// Whether `update` may come next. Updates only move forward, a session
@@ -480,18 +453,17 @@ impl FundingSession {
 			FundingUpdate::Failed { .. } => true,
 			_ => self.direction == FundingDirection::In,
 		};
-		let last = self.last_step().and_then(update_rank);
+		let last = self.last_update().map(update_rank);
+		let rank = Some(update_rank(update));
 		let top_ups = self.top_up_ids();
 		fits_direction &&
 			match update {
 				FundingUpdate::Failed { .. } => !self.funds_started(),
 				FundingUpdate::Crediting { top_up_id, .. } => {
-					last <= update_rank(update) &&
-						top_ups.len() < TOP_UP_LIMIT &&
-						!top_ups.contains(&top_up_id)
+					last <= rank && top_ups.len() < TOP_UP_LIMIT && !top_ups.contains(&top_up_id)
 				},
-				FundingUpdate::Delivered => last < update_rank(update) && !top_ups.is_empty(),
-				_ => last < update_rank(update),
+				FundingUpdate::Delivered => last < rank && !top_ups.is_empty(),
+				_ => last < rank,
 			}
 	}
 
@@ -559,7 +531,7 @@ impl FundingSession {
 		let mut named = self.started.iter().filter(|record| record.named_at_ms.is_some());
 		// The last step, not the last update: an answer to a cancel or a
 		// detail must not hide the outcome the provider handed over.
-		match self.last_step()? {
+		match self.last_update()? {
 			FundingUpdate::Delivered => Some(Settlement::TopUps(named.cloned().collect())),
 			FundingUpdate::Collecting { .. } => named.next().cloned().map(Settlement::Payment),
 			_ => None,
@@ -648,8 +620,8 @@ impl FundingSession {
 	/// Answer the provider's cancel offer: accept it on `terms`, the terms
 	/// the host showed, so the provider settles the cancel, or decline it with
 	/// `None`, so the session carries on. An offer past its expiry is declined
-	/// whatever the answer, an offer whose terms changed since is not
-	/// accepted, and an inbound session whose credit started is too late.
+	/// whatever the answer, terms other than the offer's accept nothing, and
+	/// an inbound session whose credit started is too late.
 	pub fn confirm_cancel(
 		&mut self,
 		terms: Option<CancelTerms>,
@@ -674,7 +646,7 @@ impl FundingSession {
 			return CancelConfirmation::TooLate;
 		}
 		if terms != (CancelTerms { fee, refund }) {
-			return CancelConfirmation::Changed;
+			return CancelConfirmation::NoOffer;
 		}
 		self.cancel = Some(FundingCancel::Accepted { fee, refund });
 		CancelConfirmation::Accepted
@@ -707,25 +679,65 @@ impl FundingSession {
 		}
 	}
 
+	/// Apply the provider's answer to the user's cancel. An answer is taken
+	/// only while the cancel waits for one: `Stopped` before money moved, an
+	/// offer only on terms it may make. Returns whether it changed the
+	/// session.
+	pub fn answer_cancel(&mut self, answer: FundingCancelAnswer, now_ms: u64) -> bool {
+		if self.is_terminal() || self.cancel != Some(FundingCancel::Requested) {
+			return false;
+		}
+		match answer {
+			FundingCancelAnswer::Stopped if !self.money_moved() => {
+				self.fail(FundingFailure::Cancelled, now_ms)
+			},
+			FundingCancelAnswer::Offer { fee, refund, expires_at }
+				if self.offer_fits(fee, refund) =>
+			{
+				self.cancel = Some(FundingCancel::Offered { fee, refund, expires_at });
+				true
+			},
+			FundingCancelAnswer::Refused { reason } => {
+				self.cancel = Some(FundingCancel::Refused { reason });
+				true
+			},
+			answer => {
+				error!(intent = %self.intent, ?answer, "a provider's cancel answer does not fit");
+				false
+			},
+		}
+	}
+
+	/// Record that the provider heard the user's answer to its offer. A
+	/// decline is then done with; an accepted offer stays until the provider
+	/// ends the session.
+	pub fn cancel_settled(&mut self, decision: &FundingCancelDecision) -> bool {
+		let heard = matches!(decision, FundingCancelDecision::Declined) &&
+			self.cancel == Some(FundingCancel::Declined);
+		if heard {
+			self.cancel = None;
+		}
+		heard
+	}
+
 	/// What the provider still has to hear about the user's cancel when its
-	/// serve stream opens: a request it has not answered, or an answer to its
-	/// offer. A decline is repeated on every open until the provider reports
-	/// its next step, as a worker that stopped before handling it would
-	/// otherwise wait for an answer that never comes.
-	pub fn pending_cancel_item(&self) -> Option<HostFundingServeSubscribeItem> {
-		let intent = self.intent.clone();
+	/// worker connects: a request it has not answered, or the user's answer to
+	/// its offer. An accepted offer is repeated until the provider ends the
+	/// session, as a worker that stopped before handling it would otherwise
+	/// never refund.
+	pub fn pending_cancel_call(&self) -> Option<CancelCall> {
 		match self.cancel.as_ref()? {
-			FundingCancel::Requested => Some(HostFundingServeSubscribeItem::Cancel { intent }),
+			FundingCancel::Requested => Some(CancelCall::Cancel),
+			FundingCancel::Accepted { fee, refund } => {
+				Some(CancelCall::Settle(FundingCancelDecision::Accepted {
+					fee: *fee,
+					refund: *refund,
+				}))
+			},
+			FundingCancel::Declined => Some(CancelCall::Settle(FundingCancelDecision::Declined)),
 			// The provider answered already; asking again would invite a new
 			// offer while the user looks at this one.
-			FundingCancel::Offered { .. } => None,
-			FundingCancel::Accepted { .. } => {
-				Some(HostFundingServeSubscribeItem::CancelAccepted { intent })
-			},
-			FundingCancel::Declined => {
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent })
-			},
-			FundingCancel::Refused { .. } => None,
+			FundingCancel::Offered { .. } | FundingCancel::Refused { .. } => None,
 		}
 	}
 
@@ -788,10 +800,9 @@ pub fn named_funds(update: &FundingUpdate) -> Option<(&[u8; 32], u128)> {
 }
 
 /// Order of an update within a session: a later update ranks higher, and a
-/// top-up and a payment request rank where funds start moving. An answer to
-/// a cancel has no place in the order.
-fn update_rank(update: &FundingUpdate) -> Option<u8> {
-	Some(match update {
+/// top-up and a payment request rank where funds start moving.
+fn update_rank(update: &FundingUpdate) -> u8 {
+	match update {
 		FundingUpdate::AwaitingPayment => 0,
 		FundingUpdate::PaymentReceived { finalized: false } => 1,
 		FundingUpdate::PaymentReceived { finalized: true } => 2,
@@ -799,20 +810,6 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
 		FundingUpdate::Crediting { .. } | FundingUpdate::Collecting { .. } => 4,
 		FundingUpdate::Delivered => 5,
 		FundingUpdate::Failed { .. } => 6,
-		FundingUpdate::CancelRefused { .. } | FundingUpdate::CancelOffer { .. } => return None,
-	})
-}
-
-/// Where the user's cancel stands after `update`, when it answers one.
-fn cancel_answer(update: &FundingUpdate) -> Option<FundingCancel> {
-	match update {
-		FundingUpdate::CancelRefused { reason } => {
-			Some(FundingCancel::Refused { reason: reason.clone() })
-		},
-		FundingUpdate::CancelOffer { fee, refund, expires_at } => {
-			Some(FundingCancel::Offered { fee: *fee, refund: *refund, expires_at: *expires_at })
-		},
-		_ => None,
 	}
 }
 
@@ -1354,8 +1351,16 @@ mod tests {
 		session.cancel(NOW)
 	}
 
-	fn offer(fee: u128, refund: u128, expires_at: Option<u64>) -> FundingUpdate {
-		FundingUpdate::CancelOffer { fee, refund, expires_at }
+	fn offer(fee: u128, refund: u128, expires_at: Option<u64>) -> FundingCancelAnswer {
+		FundingCancelAnswer::Offer { fee, refund, expires_at }
+	}
+
+	fn refused(reason: &str) -> FundingCancelAnswer {
+		FundingCancelAnswer::Refused { reason: reason.into() }
+	}
+
+	fn declined() -> Option<CancelCall> {
+		Some(CancelCall::Settle(FundingCancelDecision::Declined))
 	}
 
 	// Once the user's payment reached the provider, a cancel is a request:
@@ -1368,7 +1373,7 @@ mod tests {
 
 		let asked = cancelled(&mut session);
 		let again = cancelled(&mut session);
-		reported(&mut session, &[FundingUpdate::CancelRefused { reason: "card settled".into() }]);
+		session.answer_cancel(refused("card settled"), NOW);
 		let refused = session.cancel.clone();
 		let asked_anew = cancelled(&mut session);
 
@@ -1385,48 +1390,49 @@ mod tests {
 	}
 
 	// The user sees the provider's terms and declines them: the session runs
-	// on, and the provider hears the answer whenever its stream reopens.
+	// on, and the provider hears the answer, again on each connect until it
+	// confirms it heard it.
 	#[test]
 	fn a_declined_offer_lets_the_session_carry_on() {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None)]);
+		session.answer_cancel(offer(5, 95, None), NOW);
 		let offered = session.cancel.clone();
 
 		let answer = session.confirm_cancel(None, NOW);
+		let pending = session.pending_cancel_call();
+		let heard = session.cancel_settled(&FundingCancelDecision::Declined);
 
 		assert_eq!(
-			(offered, answer, session.is_terminal(), session.pending_cancel_item()),
+			(offered, answer, session.is_terminal(), pending, heard, session.pending_cancel_call()),
 			(
 				Some(FundingCancel::Offered { fee: 5, refund: 95, expires_at: None }),
 				CancelConfirmation::Declined,
 				false,
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+				declined(),
+				true,
+				None,
 			)
 		);
 	}
 
 	// A provider that reports its next step after a decline has carried on,
-	// so the decline is not handed to it again on every reopen.
+	// so the decline is not handed to it again on every connect.
 	#[test]
 	fn a_decline_stops_repeating_once_the_provider_carries_on() {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None)]);
+		session.answer_cancel(offer(5, 95, None), NOW);
 		session.confirm_cancel(None, NOW);
-		let before = session.pending_cancel_item();
+		let before = session.pending_cancel_call();
 
 		reported(&mut session, &[FundingUpdate::Converting]);
 
 		assert_eq!(
-			(before, session.pending_cancel_item(), session.cancel.clone()),
-			(
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
-				None,
-				None,
-			)
+			(before, session.pending_cancel_call(), session.cancel.clone()),
+			(declined(), None, None)
 		);
 	}
 
@@ -1438,18 +1444,20 @@ mod tests {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None)]);
+		session.answer_cancel(offer(5, 95, None), NOW);
 
 		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
-		let replayed = session.pending_cancel_item();
+		let heard = session.cancel_settled(&FundingCancelDecision::Accepted { fee: 5, refund: 95 });
+		let replayed = session.pending_cancel_call();
 		let settled =
 			report(&mut session, FundingUpdate::Failed { reason: FundingFailure::Cancelled });
 
 		assert_eq!(
-			(answer, replayed, settled, session.wire_item(), session.cancel),
+			(answer, heard, replayed, settled, session.wire_item(), session.cancel),
 			(
 				CancelConfirmation::Accepted,
-				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: "fs_1".into() }),
+				false,
+				Some(CancelCall::Settle(FundingCancelDecision::Accepted { fee: 5, refund: 95 })),
 				Ok(()),
 				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 				None,
@@ -1465,7 +1473,7 @@ mod tests {
 		let mut lapsing = served(FundingDirection::In);
 		reported(&mut lapsing, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut lapsing);
-		reported(&mut lapsing, &[offer(5, 95, Some(NOW + 10))]);
+		lapsing.answer_cancel(offer(5, 95, Some(NOW + 10)), NOW);
 		let mut late = lapsing.clone();
 
 		let alarm = lapsing.next_alarm_ms();
@@ -1538,27 +1546,56 @@ mod tests {
 		);
 	}
 
-	// A provider may replace its offer while the user looks at the first
-	// one. Accepting the terms the user saw must not accept the new ones,
-	// and the provider is not asked again while an offer is open.
+	// The provider makes one offer per cancel: a second answer to the same
+	// cancel is not taken, and terms other than the offer's accept nothing.
 	#[test]
-	fn an_offer_that_changed_since_the_user_saw_it_is_not_accepted() {
+	fn an_offer_stands_until_the_user_answers_it() {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None), offer(20, 80, None)]);
+		let first = session.answer_cancel(offer(5, 95, None), NOW);
+		let second = session.answer_cancel(offer(20, 80, None), NOW);
 
-		let stale = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
-		let replayed = session.pending_cancel_item();
-		let current = session.confirm_cancel(Some(CancelTerms { fee: 20, refund: 80 }), NOW);
+		let other = session.confirm_cancel(Some(CancelTerms { fee: 20, refund: 80 }), NOW);
+		let asked = session.pending_cancel_call();
+		let shown = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
 
 		assert_eq!(
-			(stale, replayed, current, session.cancel),
+			(first, second, other, asked, shown, session.cancel),
 			(
-				CancelConfirmation::Changed,
+				true,
+				false,
+				CancelConfirmation::NoOffer,
 				None,
 				CancelConfirmation::Accepted,
-				Some(FundingCancel::Accepted { fee: 20, refund: 80 }),
+				Some(FundingCancel::Accepted { fee: 5, refund: 95 }),
+			)
+		);
+	}
+
+	// Before money moved the provider stops, and the core ends the session as
+	// cancelled; once money moved, stopping is not the provider's answer to
+	// give.
+	#[test]
+	fn a_provider_stops_only_before_money_moved() {
+		let mut fresh = served(FundingDirection::In);
+		cancelled(&mut fresh);
+		let mut paid = served(FundingDirection::In);
+		reported(&mut paid, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		cancelled(&mut paid);
+
+		assert_eq!(
+			(
+				fresh.answer_cancel(FundingCancelAnswer::Stopped, NOW),
+				fresh.wire_item(),
+				paid.answer_cancel(FundingCancelAnswer::Stopped, NOW),
+				paid.cancel,
+			),
+			(
+				true,
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
+				false,
+				Some(FundingCancel::Requested),
 			)
 		);
 	}
@@ -1570,18 +1607,14 @@ mod tests {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None)]);
+		session.answer_cancel(offer(5, 95, None), NOW);
 		session.record_start([1; 32], 100);
 
 		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
 
 		assert_eq!(
-			(answer, session.cancel.clone(), session.pending_cancel_item()),
-			(
-				CancelConfirmation::TooLate,
-				Some(FundingCancel::Declined),
-				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
-			)
+			(answer, session.cancel.clone(), session.pending_cancel_call()),
+			(CancelConfirmation::TooLate, Some(FundingCancel::Declined), declined())
 		);
 	}
 
@@ -1600,29 +1633,23 @@ mod tests {
 
 		assert_eq!(
 			(
-				report(&mut over, offer(5, 100, None)),
-				report(&mut crediting, offer(5, 95, None)),
-				report(&mut outbound, offer(5, 95, None)),
+				over.answer_cancel(offer(5, 100, None), NOW),
+				crediting.answer_cancel(offer(5, 95, None), NOW),
+				outbound.answer_cancel(offer(5, 95, None), NOW),
+				over.cancel,
 			),
-			(
-				Err(HostFundingReportError::Unknown {
-					reason: "the offer exceeds the session amount".into(),
-				}),
-				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::OutOfOrder),
-			)
+			(false, false, false, Some(FundingCancel::Requested))
 		);
 	}
 
-	// A refusal reported after the payment was named is the latest update,
-	// not the latest step: the payment still settles the session, before and
-	// after a restart.
+	// A refusal after the payment was named leaves the payment to settle
+	// the session, before and after a restart.
 	#[test]
 	fn a_cancel_answer_after_collecting_does_not_hide_the_settlement() {
 		let mut session = served(FundingDirection::Out);
 		reported(&mut session, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 40 }]);
 		cancelled(&mut session);
-		reported(&mut session, &[FundingUpdate::CancelRefused { reason: "paid out".into() }]);
+		session.answer_cancel(refused("paid out"), NOW);
 		let restarted =
 			FundingSession::decode(&mut &session.encode()[..]).expect("stored session decodes");
 
@@ -1639,34 +1666,26 @@ mod tests {
 	fn a_cancel_answer_needs_a_pending_cancel() {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
-		let unasked = report(&mut session, offer(5, 95, None));
+		let unasked = session.answer_cancel(offer(5, 95, None), NOW);
 		cancelled(&mut session);
-		reported(&mut session, &[offer(5, 95, None), offer(2, 98, None)]);
+		session.answer_cancel(offer(2, 98, None), NOW);
 		session.confirm_cancel(Some(CancelTerms { fee: 2, refund: 98 }), NOW);
 
 		assert_eq!(
-			(
-				unasked,
-				report(&mut session, FundingUpdate::CancelRefused { reason: "late".into() }),
-				session.cancel,
-			),
-			(
-				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::OutOfOrder),
-				Some(FundingCancel::Accepted { fee: 2, refund: 98 }),
-			)
+			(unasked, session.answer_cancel(refused("late"), NOW), session.cancel),
+			(false, false, Some(FundingCancel::Accepted { fee: 2, refund: 98 }))
 		);
 	}
 
-	// An answer to a cancel is not a step: a restarted worker resumes from
-	// the step before it, and the next step still follows.
+	// An answer to a cancel is not an update: a restarted worker resumes from
+	// its last step, and the next step still follows.
 	#[test]
 	fn cancel_answers_sit_outside_the_order_of_steps() {
 		let mut session = served(FundingDirection::In);
 		let received = FundingUpdate::PaymentReceived { finalized: true };
 		reported(&mut session, std::slice::from_ref(&received));
 		cancelled(&mut session);
-		reported(&mut session, &[FundingUpdate::CancelRefused { reason: "no".into() }]);
+		session.answer_cancel(refused("no"), NOW);
 
 		assert_eq!(
 			(session.assignment().last_update, report(&mut session, FundingUpdate::Converting)),

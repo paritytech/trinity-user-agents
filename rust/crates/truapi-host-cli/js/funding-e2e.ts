@@ -1,10 +1,10 @@
-// End-to-end funding check against a host that serves the funding overlay
-// (`truapi-host signing-host` built with `--features test-host` and
-// TRUAPI_FUNDING_OUTCOMES set).
+// End-to-end funding check against the CLI signing host's funding overlay.
 //
-// The host plays the overlay and the provider: it answers each request with
-// the next scripted outcome, settles a started session as though its funds
-// had moved, and records every request and session change in
+// The host shows the overlay, the auto-accepting user picks the provider
+// `TRUAPI_FUNDING_PROVIDERS` names, and the provider's worker, which is this
+// same script (`ScriptedProvider`), delivers, releases or fails each session
+// through top-ups, payments and reports, so the core settles it as it would
+// any other. The host records every request and session change in
 // TRUAPI_FUNDING_LOG. These cases are the product side, and each also reads
 // the host's transcript, so a pass cannot rest on the product's word alone.
 import { existsSync, readFileSync } from "node:fs";
@@ -14,9 +14,11 @@ import type {
 } from "../../../../js/packages/truapi/src/index.ts";
 import type { HostFundingStatusSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
-
-// The cases make their requests in the order `scripts/battery.sh` scripts the
-// host's outcomes: deliver:900, release:500, fail, dismiss.
+import {
+  type ScriptedProvider,
+  actAsUser,
+  report,
+} from "./funding-provider-e2e.ts";
 
 export const WAIT_MS = 15_000;
 
@@ -130,10 +132,11 @@ export const stringify = (value: unknown) =>
     typeof inner === "bigint" ? inner.toString() : inner,
   );
 
-/** Run the scripted sessions: delivered, released, failed, dismissed, and a
- *  watch of a session that does not exist. */
+/** Run sessions the provider delivers, releases and fails, one the user
+ *  dismisses, and a watch of a session that does not exist. */
 export async function runFundingE2e(
   client: TrUApiClient,
+  provider: ScriptedProvider,
   fundingLogPath: string | undefined,
 ): Promise<DiagnosisRow[]> {
   const rows: DiagnosisRow[] = [];
@@ -238,6 +241,56 @@ export async function runFundingE2e(
     }
   };
 
+  // The provider credits 900 of an inbound 1000, pays out an outbound 500
+  // in full, and fails an inbound 2000.
+  provider.plan("In", 1_000n, async (client, session) => {
+    const topUpId = fundingId();
+    const toppedUp = await client.payment.topUp({
+      amount: 900n,
+      source: {
+        tag: "ProductAccount",
+        value: { derivationIndex: { tag: "Index", value: 0 } },
+      },
+      id: topUpId,
+    });
+    if (toppedUp.isErr()) throw new Error(stringify(toppedUp.error));
+    await report(client, session.intent, {
+      tag: "Crediting",
+      value: { topUpId, amount: 900n },
+    });
+    await report(client, session.intent, { tag: "Delivered" });
+  });
+  provider.plan("Out", 500n, async (client, session) => {
+    const paymentId = fundingId();
+    const paid = await client.payment.request({
+      amount: 500n,
+      destination: `0x${"22".repeat(32)}`,
+      id: paymentId,
+    });
+    if (paid.isErr()) throw new Error(stringify(paid.error));
+    await report(client, session.intent, {
+      tag: "Collecting",
+      value: { paymentId, amount: 500n },
+    });
+  });
+  provider.plan("In", 2_000n, async (client, session) => {
+    // Failing at once would end the session before the product watches it,
+    // and the case checks the product sees it in progress first.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await report(client, session.intent, {
+      tag: "Failed",
+      value: {
+        reason: {
+          tag: "Other",
+          value: {
+            code: "provider_failed",
+            message: "the battery's provider failed the session",
+          },
+        },
+      },
+    });
+  });
+
   await settles(
     "request_in_delivered",
     "In",
@@ -266,9 +319,13 @@ export async function runFundingE2e(
     { tag: "Failed" },
   );
 
-  // A dismissed overlay is a refusal, and leaves no session behind.
+  // A dismissed overlay is a refusal, and leaves no session behind. The user
+  // switches to manual approval, and with no terminal to ask on the overlay
+  // is closed.
   let startedAt = performance.now();
   try {
+    actAsUser("/approval manual");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
     const dismissed = await client.funding.request({
       id: fundingId(),
       direction: "In",
@@ -283,7 +340,7 @@ export async function runFundingE2e(
       fundingLogPath,
       (line) =>
         line.kind === "presented" &&
-        line.outcome === "Dismiss" &&
+        line.outcome === "Dismissed" &&
         line.direction === "In" &&
         line.amount === "3000",
       "the dismissed overlay",
@@ -305,6 +362,10 @@ export async function runFundingE2e(
     );
   } catch (error) {
     rows.push(row("request_dismissed", "fail", String(error), startedAt));
+  } finally {
+    // The provider cases after this one need the user to approve again.
+    actAsUser("/approval automatic");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
   // A session that does not exist, or is not the caller's, is not found.

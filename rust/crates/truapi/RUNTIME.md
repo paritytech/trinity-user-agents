@@ -490,10 +490,15 @@ for raw bytes signed inside the `<Bytes>` watermark.
   while funding answers a host failure. Products see a session in flight as
   `InProgress`.
   `select_funding_provider` hands a session to the provider the user chose.
-  That provider's worker runs it through the `FundingProvider` trait:
-  `serveSubscribe` replays its sessions in flight and then streams new ones
-  and cancel requests, `report` stores each update on the session (only from
-  the assigned provider, only forward), and `presentFrame` asks the host to
+  That provider's worker runs it through the `FundingProvider` trait. The
+  core calls the worker with host-initiated calls the worker answers with one
+  item: `assign` hands it a session, `cancel` asks it to stop one, and
+  `settleCancel` passes on the user's answer to its offer. When a worker's
+  connection completes its handshake, the core assigns it every session it
+  still serves, with its last update, and repeats any cancel or decision it
+  never answered; the worker keeps its own state in its storage. The worker
+  calls the core: `report` stores each update on the session (only from the
+  assigned provider, only forward), and `presentFrame` asks the host to
   show one of its screens through `present_provider_frame`. The core holds the
   provider's worker while a session is assigned and open, and stores an
   assigned session from then on, even while its overlay is up. It records each
@@ -512,12 +517,13 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned one 7 days after its provider last reported. `cancel_funding`
   answers what a cancel did: it ends an unassigned session; before money
   moved it asks the provider and ends the session when asked again; after,
-  it asks the provider, who answers `CancelRefused` or `CancelOffer`, and the
-  host answers the offer with `confirm_funding_cancel(intent, terms)`,
-  passing the fee and refund it showed (`None` declines), which the provider
-  hears as `CancelAccepted` or `CancelDeclined`; terms that no longer match
-  the offer answer `Changed`, and an inbound session whose credit started
-  answers `TooLate`. An overlay closed after the user chose a
+  it asks the provider, who answers `Refused` or `Offer`, one offer per
+  cancel, and the host answers the offer with
+  `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
+  showed (`None` declines), which the provider hears through `settleCancel`;
+  terms other than the offer's answer `NoOffer`, and an inbound session whose
+  credit started answers `TooLate`. A provider asked before money moved
+  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
   provider keeps the session as started and asks the provider to stop unless
   money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the

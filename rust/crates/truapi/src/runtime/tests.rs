@@ -8679,27 +8679,95 @@ fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> Produc
 	host
 }
 
-fn first_served(
-	host: &ProductRuntimeHost,
-) -> Option<
-	Result<
-		v01::HostFundingServeSubscribeItem,
-		CallError<truapi::versioned::funding_provider::HostFundingServeSubscribeError>,
-	>,
-> {
-	futures::executor::block_on(
-		futures::executor::block_on(truapi::api::FundingProvider::serve_subscribe(
-			host,
-			&CallContext::default(),
-			truapi::versioned::funding_provider::HostFundingServeSubscribeRequest::V1,
-		))
-		.next(),
-	)
-	.map(|item| {
-		item.map(|truapi::versioned::funding_provider::HostFundingServeSubscribeItem::V1(item)| {
-			item
-		})
-	})
+/// A call a provider's worker received from the core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProviderCallSeen {
+	Assign(v01::FundingAssignment),
+	Cancel(String),
+	Settle(String, v01::FundingCancelDecision),
+}
+
+/// A provider's worker as the core calls it: it records every call, takes
+/// every session and decision, and answers cancels with the answers queued
+/// for them, in order.
+#[derive(Default)]
+struct ScriptedProviderLink {
+	calls: Mutex<Vec<ProviderCallSeen>>,
+	cancel_answers: Mutex<std::collections::VecDeque<v01::FundingCancelAnswer>>,
+}
+
+impl ScriptedProviderLink {
+	fn answer_cancels(&self, answers: impl IntoIterator<Item = v01::FundingCancelAnswer>) {
+		self.cancel_answers.lock().expect("answers mutex poisoned").extend(answers);
+	}
+
+	fn seen(&self, call: ProviderCallSeen) {
+		self.calls.lock().expect("calls mutex poisoned").push(call);
+	}
+
+	/// The calls received, once there are at least `count`.
+	fn calls(&self, count: usize) -> Vec<ProviderCallSeen> {
+		for _ in 0..200 {
+			let calls = self.calls.lock().expect("calls mutex poisoned").clone();
+			if calls.len() >= count {
+				return calls;
+			}
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		self.calls.lock().expect("calls mutex poisoned").clone()
+	}
+}
+
+impl crate::runtime::FundingProviderLink for ScriptedProviderLink {
+	fn assign(&self, session: v01::FundingAssignment) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Assign(session));
+		Box::pin(async { true })
+	}
+
+	fn cancel(
+		&self,
+		intent: String,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		self.seen(ProviderCallSeen::Cancel(intent));
+		let answer = self.cancel_answers.lock().expect("answers mutex poisoned").pop_front();
+		Box::pin(async move { answer })
+	}
+
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: v01::FundingCancelDecision,
+	) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Settle(intent, decision));
+		Box::pin(async { true })
+	}
+}
+
+/// Connect a scripted worker for `provider_id`, as its handshake does.
+fn connect_provider(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> Arc<ScriptedProviderLink> {
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(provider_id, link.clone());
+	services.funding().connected(provider_id);
+	link
+}
+
+/// Wait until session `intent` satisfies `done`, then return it.
+fn wait_for_session(
+	services: &RuntimeServices,
+	intent: &str,
+	done: impl Fn(&crate::host_logic::funding::FundingSession) -> bool,
+) -> Option<crate::host_logic::funding::FundingSession> {
+	for _ in 0..200 {
+		let session = services.funding().get(intent)?;
+		if done(&session) {
+			return Some(session);
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	services.funding().get(intent)
 }
 
 fn report_funding(
@@ -8732,9 +8800,9 @@ fn wait_for_stage(
 }
 
 // The provider's worker takes a session from assignment to delivered, and a
-// restart in between loses nothing: the restarted worker is handed the
-// session again with its last update, and the host still decides delivery
-// from the claim of the top-up the provider named.
+// restart in between loses nothing: the restarted worker is assigned the
+// session again with its last update when it connects, and the host still
+// decides delivery from the claim of the top-up the provider named.
 #[test]
 fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let storage = stub_platform();
@@ -8761,7 +8829,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 			.expect("selected")
 	);
 	let worker = provider_worker(&before, "ramp.dot");
-	let assigned = first_served(&worker);
+	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
 	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
 	let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
 	report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
@@ -8770,18 +8838,16 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 
 	let after = start(&storage);
 	let restarted = provider_worker(&after, "ramp.dot");
-	let replayed = first_served(&restarted);
+	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
 	report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
 	let assignment = |expires_at, last_update| {
-		Some(Ok(v01::HostFundingServeSubscribeItem::Assigned {
-			session: v01::FundingAssignment {
-				intent: intent.clone(),
-				direction: v01::FundingDirection::In,
-				amount: Some(1_000),
-				expires_at,
-				last_update,
-			},
+		Some(ProviderCallSeen::Assign(v01::FundingAssignment {
+			intent: intent.clone(),
+			direction: v01::FundingDirection::In,
+			amount: Some(1_000),
+			expires_at,
+			last_update,
 		}))
 	};
 	const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
@@ -8818,7 +8884,6 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 			.expect("selected")
 	);
 	let worker = provider_worker(&services, "ramp.dot");
-	first_served(&worker);
 	top_up(&worker, 1_000, product_account_source()).expect("top-up accepted");
 	report_funding(
 		&worker,
@@ -8982,7 +9047,6 @@ fn a_provider_credits_only_what_it_started_for_the_session() {
 	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
 	let earlier = served_session(&services, 600);
 	let worker = provider_worker(&services, "ramp.dot");
-	first_served(&worker);
 	top_up(&worker, 600, product_account_source()).expect("top-up accepted");
 	let inflated = crediting(&worker, &earlier, [7; 32], 1_000);
 	crediting(&worker, &earlier, [7; 32], 600).expect("crediting");
@@ -8996,6 +9060,48 @@ fn a_provider_credits_only_what_it_started_for_the_session() {
 			Err(not_started()),
 			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 600 }),
 			Err(not_started()),
+		)
+	);
+}
+
+// A provider cannot settle a session with a top-up that already settled
+// another: starting it again under the same id is refused by the host, and
+// the core keeps no record of it for the later session, whatever amount it
+// asks, so naming it there is refused and nothing settles.
+#[test]
+fn a_settled_top_up_started_again_settles_nothing() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let earlier = served_session(&services, 1);
+	let worker = provider_worker(&services, "ramp.dot");
+	top_up(&worker, 1, product_account_source()).expect("top-up accepted");
+	crediting(&worker, &earlier, [7; 32], 1).expect("crediting");
+	report_funding(&worker, &earlier, v01::FundingUpdate::Delivered).expect("delivered");
+	let earlier_stage = wait_for_stage(&services, &earlier);
+	let later = served_session(&services, 1_000);
+
+	let restarted = top_up(&worker, 1_000, product_account_source());
+	let named = crediting(&worker, &later, [7; 32], 1_000);
+
+	assert_eq!(
+		(
+			earlier_stage,
+			restarted,
+			named,
+			services.funding().get(&later).map(|session| session.started),
+			services.funding().get(&later).map(|session| session.is_terminal()),
+		),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1 }),
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
+				v01::HostPaymentTopUpError::AlreadyExists
+			))),
+			Err(not_started()),
+			Some(Vec::new()),
+			Some(false),
 		)
 	);
 }
@@ -9106,28 +9212,11 @@ fn a_second_cancel_ends_the_session_and_releases_the_worker() {
 	);
 }
 
-/// The provider's serve stream, kept open across several items.
-fn serve_stream(
-	host: &ProductRuntimeHost,
-) -> futures::stream::BoxStream<'static, v01::HostFundingServeSubscribeItem> {
-	futures::executor::block_on(truapi::api::FundingProvider::serve_subscribe(
-		host,
-		&CallContext::default(),
-		truapi::versioned::funding_provider::HostFundingServeSubscribeRequest::V1,
-	))
-	.filter_map(|item| {
-		futures::future::ready(item.ok().map(
-			|truapi::versioned::funding_provider::HostFundingServeSubscribeItem::V1(item)| item,
-		))
-	})
-	.boxed()
-}
-
 // Once money moved, the user's cancel travels to the provider and back: the
-// provider offers terms, the user accepts them in the host, the provider
-// hears so on its stream, settles and ends the session, and its worker is
-// let go. A second offer that lapses at once is declined on the core's
-// clock, and the provider hears that too.
+// provider answers with terms, the user accepts them in the host, the
+// provider hears so, settles and ends the session, and its worker is let go.
+// A second offer that lapses at once is declined on the core's clock, and the
+// provider hears that too.
 #[test]
 fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 	let services = funding_services();
@@ -9137,38 +9226,30 @@ fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 	let accepted = served_session(&services, 500);
 	let lapsing = served_session(&services, 300);
 	let worker = provider_worker(&services, "ramp.dot");
-	let mut served = serve_stream(&worker);
-	let mut next = || futures::executor::block_on(served.next());
-	let assigned = (next(), next());
+	let link = connect_provider(&services, "ramp.dot");
+	link.answer_cancels([
+		v01::FundingCancelAnswer::Offer { fee: 10, refund: 490, expires_at: None },
+		v01::FundingCancelAnswer::Offer { fee: 0, refund: 300, expires_at: Some(1) },
+	]);
+	let assigned = link.calls(2).len();
 	let cancel = |intent: &str| {
 		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
-	};
-	let confirm = |intent: &str, accept: bool| {
-		let terms = accept
-			.then(|| match services.funding().get(intent).and_then(|session| session.cancel) {
-				Some(crate::host_logic::funding::FundingCancel::Offered {
-					fee, refund, ..
-				}) => Some(crate::host_logic::funding::CancelTerms { fee, refund }),
-				_ => None,
-			})
-			.flatten();
-		futures::executor::block_on(services.confirm_funding_cancel(intent, terms))
-			.expect("confirm")
 	};
 	let received = v01::FundingUpdate::PaymentReceived { finalized: true };
 	report_funding(&worker, &accepted, received.clone()).expect("received");
 	report_funding(&worker, &lapsing, received).expect("received");
 
 	let asked = cancel(&accepted);
-	let cancel_item = next();
-	report_funding(
-		&worker,
+	let offered = wait_for_session(&services, &accepted, |session| {
+		matches!(session.cancel, Some(FundingCancel::Offered { .. }))
+	})
+	.and_then(|session| session.cancel);
+	let answer = futures::executor::block_on(services.confirm_funding_cancel(
 		&accepted,
-		v01::FundingUpdate::CancelOffer { fee: 10, refund: 490, expires_at: None },
-	)
-	.expect("offered");
-	let answer = confirm(&accepted, true);
-	let accepted_item = next();
+		Some(crate::host_logic::funding::CancelTerms { fee: 10, refund: 490 }),
+	))
+	.expect("confirm");
+	link.calls(4);
 	report_funding(
 		&worker,
 		&accepted,
@@ -9177,41 +9258,82 @@ fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 	.expect("settled");
 
 	cancel(&lapsing);
-	next();
-	report_funding(
-		&worker,
-		&lapsing,
-		v01::FundingUpdate::CancelOffer { fee: 0, refund: 300, expires_at: Some(1) },
-	)
-	.expect("offered");
-	let lapsed_item = next();
+	let calls = link.calls(6);
+	let lapsed = wait_for_session(&services, &lapsing, |session| session.cancel.is_none())
+		.map(|session| session.cancel);
 
 	assert_eq!(
 		(
-			matches!(assigned, (Some(_), Some(_))),
+			assigned,
 			asked,
-			cancel_item,
+			offered,
 			answer,
-			accepted_item,
+			calls[2..].to_vec(),
 			services.funding().get(&accepted).map(|session| session.wire_item()),
-			lapsed_item,
-			services.funding().get(&lapsing).and_then(|session| session.cancel),
-			confirm(&lapsing, true),
+			lapsed,
+			futures::executor::block_on(services.confirm_funding_cancel(&lapsing, None))
+				.expect("confirm"),
 			services.worker_ledger.count(&ProductId::for_test("ramp.dot")),
 		),
 		(
-			true,
+			2,
 			CancelOutcome::Requested,
-			Some(v01::HostFundingServeSubscribeItem::Cancel { intent: accepted.clone() }),
+			Some(FundingCancel::Offered { fee: 10, refund: 490, expires_at: None }),
 			CancelConfirmation::Accepted,
-			Some(v01::HostFundingServeSubscribeItem::CancelAccepted { intent: accepted.clone() }),
+			vec![
+				ProviderCallSeen::Cancel(accepted.clone()),
+				ProviderCallSeen::Settle(
+					accepted.clone(),
+					v01::FundingCancelDecision::Accepted { fee: 10, refund: 490 },
+				),
+				ProviderCallSeen::Cancel(lapsing.clone()),
+				ProviderCallSeen::Settle(lapsing.clone(), v01::FundingCancelDecision::Declined),
+			],
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
 				reason: v01::FundingFailure::Cancelled
 			}),
-			Some(v01::HostFundingServeSubscribeItem::CancelDeclined { intent: lapsing.clone() }),
-			Some(FundingCancel::Declined),
+			Some(None),
 			CancelConfirmation::NoOffer,
 			1,
+		)
+	);
+}
+
+// Before money moved the provider stops, and the core ends the session. A
+// cancel asked while no worker was connected reaches the worker when it
+// connects, after the session it is about.
+#[test]
+fn a_cancel_waits_for_the_provider_to_connect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let asked = futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let link = Arc::new(ScriptedProviderLink::default());
+	link.answer_cancels([v01::FundingCancelAnswer::Stopped]);
+	services.funding().link("ramp.dot", link.clone());
+	services.funding().connected("ramp.dot");
+
+	let calls = link.calls(2);
+	let ended = wait_for_session(&services, &intent, |session| session.is_terminal())
+		.map(|session| session.wire_item());
+
+	assert_eq!(
+		(
+			asked,
+			calls
+				.into_iter()
+				.map(|call| matches!(call, ProviderCallSeen::Assign(_)))
+				.collect::<Vec<_>>(),
+			ended
+		),
+		(
+			CancelOutcome::Requested,
+			vec![true, false],
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
 		)
 	);
 }
@@ -9305,10 +9427,11 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		product: &ProductContext,
 		request: truapi::latest::HostPaymentTopUpRequest,
 	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
-		self.started
-			.lock()
-			.expect("started mutex poisoned")
-			.push((product.product_id.to_string(), request));
+		let mut started = self.started.lock().expect("started mutex poisoned");
+		if started.iter().any(|(_, held)| held.id == request.id) {
+			return Err(truapi::latest::HostPaymentTopUpError::AlreadyExists);
+		}
+		started.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 

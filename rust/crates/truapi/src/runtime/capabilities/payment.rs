@@ -387,16 +387,18 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
-		self.record_funding_start(latest::FundingDirection::Out, host_id, amount)
+		let recorded = self
+			.record_funding_start(latest::FundingDirection::Out, host_id, amount)
 			.await?;
 		let requested = platform.request_payment(&self.connection.product, request).await;
-		// A repeat of a payment the host already holds keeps its record; any
-		// other failure means no money moves under this id, even when an
-		// earlier call recorded it.
-		if requested
-			.as_ref()
-			.is_err_and(|error| !matches!(error, latest::HostPaymentError::AlreadyExists))
-		{
+		// A repeat of a payment the host already holds keeps the record an
+		// earlier call made, so a worker that restarted can still name it. A
+		// record this call made goes: the host's payment under that id may ask
+		// another amount or belong to an ended session. Any other failure
+		// means no money moves under this id.
+		if requested.as_ref().is_err_and(|error| {
+			recorded || !matches!(error, latest::HostPaymentError::AlreadyExists)
+		}) {
 			self.forget_funding_start(host_id).await;
 		}
 		match requested {
@@ -428,14 +430,14 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
-		self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
+		let recorded =
+			self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
 		let started = platform.top_up(&self.connection.product, request).await;
-		// As for payments: only a top-up the host already holds keeps its
-		// record.
-		if started
-			.as_ref()
-			.is_err_and(|error| !matches!(error, latest::HostPaymentTopUpError::AlreadyExists))
-		{
+		// As for payments: only a record an earlier call made survives a
+		// top-up the host already holds.
+		if started.as_ref().is_err_and(|error| {
+			recorded || !matches!(error, latest::HostPaymentTopUpError::AlreadyExists)
+		}) {
 			self.forget_funding_start(host_id).await;
 		}
 		started.map_err(CallError::Domain)

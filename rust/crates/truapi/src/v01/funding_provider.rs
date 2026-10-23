@@ -72,19 +72,33 @@ pub enum FundingUpdate {
 		/// Why it ended.
 		reason: FundingFailure,
 	},
-	/// The provider will not cancel a session the user asked to cancel once
-	/// money moved. The session carries on. Outside the order of steps.
-	#[codec(index = 7)]
-	CancelRefused {
-		/// Why, shown to the user.
-		reason: String,
-	},
-	/// The provider can cancel a session the user asked to cancel once money
-	/// moved, on these terms. The user accepts or declines in the host, and
-	/// the provider hears which on its serve stream. Outside the order of
-	/// steps.
-	#[codec(index = 8)]
-	CancelOffer {
+}
+
+/// A session the core hands to the provider the user chose.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingAssignRequest {
+	/// The session, with the provider's last update when it resumes one.
+	pub session: FundingAssignment,
+}
+
+/// A session the user wants to cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingCancelRequest {
+	/// The session to stop.
+	pub intent: String,
+}
+
+/// How a provider answers a cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelAnswer {
+	/// No money had moved and the provider stopped. The core ends the
+	/// session as cancelled.
+	#[codec(index = 0)]
+	Stopped,
+	/// Money has moved, and the provider can return `refund` and keep `fee`.
+	/// The user accepts or declines in the host.
+	#[codec(index = 1)]
+	Offer {
 		/// What the provider keeps, in the user's payment balance units.
 		fee: u128,
 		/// What the user gets back, in the user's payment balance units.
@@ -93,51 +107,38 @@ pub enum FundingUpdate {
 		/// declined.
 		expires_at: Option<u64>,
 	},
-}
-
-/// Item of [`crate::api::FundingProvider::serve_subscribe`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingServeSubscribeItem {
-	/// A session the user chose this provider for, or one still in flight
-	/// when the stream opened.
-	#[codec(index = 0)]
-	Assigned {
-		/// The session.
-		session: FundingAssignment,
-	},
-	/// The user asked to cancel a session. Before money moved the provider
-	/// reports `Failed` with `Cancelled` if it can still stop. After, it
-	/// answers with `CancelOffer` or `CancelRefused`.
-	#[codec(index = 1)]
-	Cancel {
-		/// Session to cancel.
-		intent: String,
-	},
-	/// The user accepted the provider's `CancelOffer`. The provider settles
-	/// the cancel: it refunds the user and ends the session.
+	/// The provider will not stop. The session carries on.
 	#[codec(index = 2)]
-	CancelAccepted {
-		/// The session.
-		intent: String,
-	},
-	/// The user declined the provider's `CancelOffer`, or it lapsed. The
-	/// session carries on.
-	#[codec(index = 3)]
-	CancelDeclined {
-		/// The session.
-		intent: String,
-	},
-}
-
-/// Error from [`crate::api::FundingProvider::serve_subscribe`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostFundingServeSubscribeError {
-	/// Catch-all.
-	#[codec(index = 0)]
-	Unknown {
-		/// Human-readable failure reason.
+	Refused {
+		/// Why, shown to the user.
 		reason: String,
 	},
+}
+
+/// The user's answer to a provider's cancel offer.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingSettleCancelRequest {
+	/// The session the offer was made for.
+	pub intent: String,
+	/// What the user decided.
+	pub decision: FundingCancelDecision,
+}
+
+/// What the user decided about a cancel offer.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelDecision {
+	/// Accepted on these terms, as the host showed them. The provider returns
+	/// `refund` and reports `Failed`.
+	#[codec(index = 0)]
+	Accepted {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+	},
+	/// Declined, or the offer lapsed. The session carries on.
+	#[codec(index = 1)]
+	Declined,
 }
 
 /// Request to report progress on a session.

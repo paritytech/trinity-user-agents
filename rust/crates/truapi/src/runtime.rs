@@ -61,6 +61,7 @@ use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use funding::FundingProviderLink;
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -120,8 +121,7 @@ use truapi::{
 		funding_provider::{
 			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse, HostFundingServeSubscribeError,
-			HostFundingServeSubscribeItem, HostFundingServeSubscribeRequest,
+			HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -1531,28 +1531,6 @@ impl Renderer for ProductRuntimeHost {
 
 #[truapi::async_trait]
 impl FundingProvider for ProductRuntimeHost {
-	#[instrument(skip_all, fields(runtime.method = "funding_provider.serve_subscribe"))]
-	async fn serve_subscribe(
-		&self,
-		_cx: &CallContext,
-		request: HostFundingServeSubscribeRequest,
-	) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>> {
-		version(request)
-			.exec(|()| async move {
-				if let Err(error) = self.connection.funding_provider_access() {
-					return Subscription::interrupted(error);
-				}
-				let registry = self.connection.services.funding();
-				if let Err(error) = registry.load(&self.connection.services).await {
-					return Subscription::interrupted(error.into());
-				}
-				Subscription::new(Box::pin(
-					registry.serve(self.connection.product.product_id.as_str()).map(Ok),
-				))
-			})
-			.await
-	}
-
 	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
 	async fn report(
 		&self,

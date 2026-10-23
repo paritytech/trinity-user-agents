@@ -5,41 +5,86 @@ use crate::{
 	versioned::funding_provider::{
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-		HostFundingReportResponse, HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
-		HostFundingServeSubscribeRequest,
+		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignItem,
+		ProductFundingAssignRequest, ProductFundingCancelError, ProductFundingCancelItem,
+		ProductFundingCancelRequest, ProductFundingSettleCancelError,
+		ProductFundingSettleCancelItem, ProductFundingSettleCancelRequest,
 	},
 	wire, wire_trait,
 };
 
-/// Serve the funding sessions the user chose this provider for.
+/// Serve the funding sessions the user chooses this provider for.
 ///
-/// The provider's worker runs each session it is assigned and reports its
-/// progress. The host stores every report, and decides `Delivered` and
-/// `Released` itself from the top-ups and payments the provider names.
+/// The core calls the provider's worker to hand it sessions and cancels, and
+/// each call takes one answer item. The worker calls the core to report
+/// progress. The core decides `Delivered` and `Released` itself, from the
+/// top-ups and payments the worker names.
+///
+/// When the worker connects, the core assigns it every session it still
+/// serves, then repeats any cancel or cancel settlement it never answered.
+/// The worker keeps its own state per session, such as an onramp order id, in
+/// its storage under the session's `intent`.
 #[wire_trait(id = 24)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {
-	/// Receive the sessions assigned to the calling provider, and requests to
-	/// cancel them.
-	///
-	/// Emits every session still in flight first, so a restarted worker picks
-	/// up where it stopped, then each new assignment and cancel request.
+	/// Take a session the user chose this provider for, or resume one after
+	/// the worker restarted: `last_update` says where it stopped. The worker
+	/// answers with one item once it holds the session.
 	///
 	/// ```ts
-	/// import { firstValueFrom, from } from "rxjs";
-	///
-	/// const item = await firstValueFrom(
-	///   from(truapi.fundingProvider.serveSubscribe()),
-	/// );
-	/// console.log("funding provider item:", item);
+	/// truapi.fundingProvider.onAssign(({ session }, send, interrupt) => {
+	///   console.log("assigned:", session.intent);
+	///   send(undefined);
+	///   interrupt();
+	/// });
 	/// ```
-	#[wire(id = 0)]
-	async fn serve_subscribe(
+	#[wire(host_initiated, id = 1)]
+	fn assign(
 		&self,
 		_cx: &CallContext,
-		_request: HostFundingServeSubscribeRequest,
-	) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>> {
+		_request: ProductFundingAssignRequest,
+	) -> Subscription<ProductFundingAssignItem, CallError<ProductFundingAssignError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Stop a session the user wants to cancel. Before money moved the
+	/// provider answers `Stopped`; after, `Offer` or `Refused`.
+	///
+	/// ```ts
+	/// truapi.fundingProvider.onCancel(({ intent }, send, interrupt) => {
+	///   console.log("cancel:", intent);
+	///   send({ tag: "Stopped", value: undefined });
+	///   interrupt();
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 2)]
+	fn cancel(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingCancelRequest,
+	) -> Subscription<ProductFundingCancelItem, CallError<ProductFundingCancelError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Hear whether the user accepted the provider's cancel offer. On
+	/// `Accepted` the provider returns the refund and reports `Failed`; on
+	/// `Declined` it carries on. The worker answers with one item once it
+	/// has the decision.
+	///
+	/// ```ts
+	/// truapi.fundingProvider.onSettleCancel(({ intent, decision }, send, interrupt) => {
+	///   console.log("cancel decision:", intent, decision.tag);
+	///   send(undefined);
+	///   interrupt();
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 3)]
+	fn settle_cancel(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingSettleCancelRequest,
+	) -> Subscription<ProductFundingSettleCancelItem, CallError<ProductFundingSettleCancelError>> {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
@@ -54,7 +99,7 @@ pub trait FundingProvider: Send + Sync {
 	/// });
 	/// console.log("funding report:", result);
 	/// ```
-	#[wire(id = 1)]
+	#[wire(id = 4)]
 	async fn report(
 		&self,
 		_cx: &CallContext,
@@ -74,7 +119,7 @@ pub trait FundingProvider: Send + Sync {
 	/// });
 	/// console.log("provider frame:", result);
 	/// ```
-	#[wire(id = 2)]
+	#[wire(id = 5)]
 	async fn present_frame(
 		&self,
 		_cx: &CallContext,

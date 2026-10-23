@@ -27,7 +27,7 @@ use crate::platform::{
 };
 use futures::{
 	FutureExt, StreamExt,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, BoxFuture},
 	pin_mut,
 };
 use parity_scale_codec::{Decode, Encode};
@@ -41,9 +41,9 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -662,20 +662,6 @@ impl SigningHostRuntime {
 		self.signing_host
 			.derive_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
-
-	/// End funding session `intent` with `stage` as though its funds had
-	/// moved, so a test host can drive the flow with no chain behind it.
-	/// Returns whether it was still in flight.
-	///
-	/// For test hosts only, with the `test-host` feature enabled.
-	#[cfg(feature = "test-host")]
-	pub async fn settle_funding_for_test(
-		&self,
-		intent: &str,
-		stage: crate::host_logic::funding::FundingStage,
-	) -> Result<bool, v01::GenericError> {
-		Ok(self.services.settle_funding_for_test(intent, stage).await?)
 	}
 
 	/// Answer these resource tags as refused, replacing any earlier set.
@@ -1669,6 +1655,9 @@ pub struct ProductRuntime {
 	admin: HostAdmin,
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
+	/// How the funding registry calls this connection, when it is a worker's,
+	/// with the product it calls.
+	funding_link: Option<(ProductId, Arc<dyn FundingProviderLink>)>,
 	disposed: Arc<AtomicBool>,
 	in_flight: Mutex<HashMap<u64, AbortHandle>>,
 	next_dispatch_id: AtomicU64,
@@ -1756,6 +1745,71 @@ impl ProductRuntimeControl {
 			},
 		);
 		Ok(truapi::Subscription::new(stream))
+	}
+}
+
+/// Calls a funding provider's worker through its product connection. Each
+/// call is a host-initiated subscription the worker answers with one item.
+struct WorkerFundingLink {
+	transport: Arc<SinkTransport>,
+	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
+}
+
+impl WorkerFundingLink {
+	fn transport(&self) -> Arc<dyn Transport> {
+		self.transport.clone()
+	}
+}
+
+/// The first item of a call answered once. `None` when the worker errs, or
+/// the connection closes first. Dropping the stream after stops the call.
+async fn first_answer<Item, Error>(
+	mut stream: truapi::Subscription<Item, truapi::CallError<Error>>,
+) -> Option<Item> {
+	stream.next().await?.ok()
+}
+
+impl FundingProviderLink for WorkerFundingLink {
+	fn assign(&self, session: v01::FundingAssignment) -> BoxFuture<'static, bool> {
+		use truapi::versioned::funding_provider::ProductFundingAssignRequest;
+		let stream = crate::generated::dispatcher::funding_provider_assign(
+			&self.host_subscriptions,
+			self.transport(),
+			ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
+		);
+		Box::pin(async move { first_answer(stream).await.is_some() })
+	}
+
+	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		use truapi::versioned::funding_provider::{
+			ProductFundingCancelItem, ProductFundingCancelRequest,
+		};
+		let stream = crate::generated::dispatcher::funding_provider_cancel(
+			&self.host_subscriptions,
+			self.transport(),
+			ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
+		);
+		Box::pin(async move {
+			let ProductFundingCancelItem::V1(answer) = first_answer(stream).await?;
+			Some(answer)
+		})
+	}
+
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: v01::FundingCancelDecision,
+	) -> BoxFuture<'static, bool> {
+		use truapi::versioned::funding_provider::ProductFundingSettleCancelRequest;
+		let stream = crate::generated::dispatcher::funding_provider_settle_cancel(
+			&self.host_subscriptions,
+			self.transport(),
+			ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
+				intent,
+				decision,
+			}),
+		);
+		Box::pin(async move { first_answer(stream).await.is_some() })
 	}
 }
 
@@ -1869,6 +1923,8 @@ impl ProductRuntime {
 		sink: Arc<dyn FrameSink>,
 	) -> Self {
 		let session_state = host_session.session_state();
+		let worker = (product.execution_kind == ProductExecutionKind::Worker)
+			.then(|| product.product_id.clone());
 		let admin = HostAdmin::new(services.clone(), authority, host_session, product, adapters);
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
@@ -1878,6 +1934,14 @@ impl ProductRuntime {
 			debug: Mutex::new(None),
 		});
 		let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
+		let funding_link = worker.map(|product_id| {
+			let link: Arc<dyn FundingProviderLink> = Arc::new(WorkerFundingLink {
+				transport: transport.clone(),
+				host_subscriptions: host_subscriptions.clone(),
+			});
+			services.funding().link(product_id.as_str(), link.clone());
+			(product_id, link)
+		});
 		Self {
 			core: TrUApiCore::from_product_runtime(
 				admin.product_runtime.clone(),
@@ -1887,6 +1951,7 @@ impl ProductRuntime {
 			admin,
 			transport,
 			host_subscriptions,
+			funding_link,
 			disposed,
 			in_flight: Mutex::new(HashMap::new()),
 			next_dispatch_id: AtomicU64::new(0),
@@ -2043,6 +2108,9 @@ impl ProductRuntime {
 		connection.detach_chat();
 		connection.detach_renderer();
 		connection.release_open_operations();
+		if let Some((product_id, link)) = &self.funding_link {
+			connection.services().funding().unlink(product_id.as_str(), link);
+		}
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
 	}

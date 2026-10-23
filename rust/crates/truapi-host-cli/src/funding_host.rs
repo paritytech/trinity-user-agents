@@ -1,43 +1,41 @@
-//! Scripted funding host for the CLI test host.
+//! The CLI signing host's funding surface: the overlay, provider screens, and
+//! the user's answers, as a host app serves them.
 //!
-//! It stands in for the host's funding overlay and the provider behind it:
-//! each request a product makes is answered with the next outcome from
-//! `TRUAPI_FUNDING_OUTCOMES` (`deliver:<credited>`, `release:<debited>`,
-//! `fail` or `dismiss`, comma-separated), and a session the user started is
-//! then settled through the core's test hook, as though its funds had moved.
-//! There is no chain behind it: this exists so a battery can drive the
-//! product's side of funding headlessly.
+//! A product's funding request shows the overlay: the user picks one of the
+//! providers named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated product
+//! ids) or closes it. Every question goes through the host's approval policy,
+//! as its other confirmations do: a prompt on a terminal, the first provider
+//! and every offer accepted under `--auto-accept`, and a refusal when a
+//! prompt has no terminal to ask on. The user cancels a session with
+//! `/funding cancel <intent>`, and the provider's cancel offer is put to them
+//! the same way.
 //!
-//! `provide` and `provide-cancel` instead hand the session to the product that
-//! asked, so a provider worker can serve its own request; `provide-cancel`
-//! then cancels it, as a user would. `provide-cancel-moved` cancels once money
-//! moved for the session and accepts the offer the provider answers with, so
-//! a battery can drive a negotiated cancel; each cancel's outcome and each
-//! answer to an offer is written to the transcript. Top-ups and payment
-//! requests that worker
-//! starts are accepted and complete in full, recorded in the ledger named by
-//! `TRUAPI_FUNDING_LEDGER` so their statuses outlive a restart.
+//! A provider screen cannot be drawn here: its route or URL is printed, and
+//! the user finishing it closes it, or returns to the page's return URL.
 //!
-//! Every overlay request and every session change the core reports is
-//! appended to the transcript named by `TRUAPI_FUNDING_LOG`, one JSON object
-//! per line, so a battery can assert what the host saw rather than only what
-//! the product was told.
+//! With `TRUAPI_FUNDING_LEDGER` set, the host also serves top-ups and payment
+//! requests from a ledger file: every one completes in full once started, and
+//! the ledger keeps them across a restart. There is no chain behind it.
+//!
+//! Every overlay, screen, cancel, answer and session change is appended to
+//! the transcript named by `TRUAPI_FUNDING_LOG`, one JSON object per line, so
+//! a battery can assert what the host saw rather than only what the product
+//! was told.
 
 use std::{
-	collections::VecDeque,
+	collections::HashSet,
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
 	sync::{Arc, Mutex, Weak},
-	time::Duration,
 };
 
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
-	SigningHostRuntime, current_unix_millis,
-	host_logic::funding::{CancelTerms, FundingCancel, FundingSession, FundingStage},
+	SigningHostRuntime,
+	host_logic::funding::{CancelTerms, FundingCancel},
 	latest::{
-		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, GenericError,
+		FundingDirection, FundingFrameOutcome, FundingFrameTarget, GenericError,
 		HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
 		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
 		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
@@ -45,71 +43,47 @@ use truapi::{
 	},
 	platform::{
 		FundingPlatform, FundingPresentOutcome, FundingPresentation, PaymentPlatform,
-		ProductContext, TopUpPlatform, async_trait,
+		ProductContext, ProductId, TopUpPlatform, async_trait,
 	},
 };
 
-use crate::transcript::Transcript;
+use crate::{platform::CliPlatform, transcript::Transcript};
 
-/// How long a started session stays in flight before it is settled, so a
-/// product sees its first status before the terminal one.
-const SETTLE_AFTER: Duration = Duration::from_millis(500);
-
-/// What the scripted provider does with one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Outcome {
-	/// The user starts and the funds arrive.
-	Deliver(u128),
-	/// The user starts and the funds leave.
-	Release(u128),
-	/// The user starts and the provider fails.
-	Fail,
-	/// The user closes the overlay.
-	Dismiss,
-	/// The user picks the product that asked as the provider.
-	Provide,
-	/// As `Provide`, then the user cancels.
-	ProvideThenCancel,
-	/// As `Provide`, then once money moved the user cancels and accepts the
-	/// provider's offer.
-	ProvideThenCancelOnceMoved,
-}
-
-/// Parse `deliver:900,release:500,fail,dismiss`.
-fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
-	spec.split(',')
-		.map(str::trim)
-		.filter_map(|entry| match entry.split_once(':') {
-			Some(("deliver", amount)) => amount.parse().ok().map(Outcome::Deliver),
-			Some(("release", amount)) => amount.parse().ok().map(Outcome::Release),
-			None if entry == "fail" => Some(Outcome::Fail),
-			None if entry == "dismiss" => Some(Outcome::Dismiss),
-			None if entry == "provide" => Some(Outcome::Provide),
-			None if entry == "provide-cancel" => Some(Outcome::ProvideThenCancel),
-			None if entry == "provide-cancel-moved" => Some(Outcome::ProvideThenCancelOnceMoved),
-			_ => None,
-		})
-		.collect()
-}
-
-/// A funding overlay and provider that follow a script.
+/// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
-	outcomes: Mutex<VecDeque<Outcome>>,
+	/// The providers the overlay offers, in order.
+	providers: Vec<ProductId>,
+	/// Where the user's answers come from.
+	user: Arc<CliPlatform>,
 	transcript: Arc<Transcript>,
 	runtime: Weak<SigningHostRuntime>,
+	/// Sessions whose current cancel offer the user was asked about.
+	asked: Mutex<HashSet<String>>,
 }
 
 impl CliFundingHost {
-	/// Install a scripted funding host on `runtime` when
-	/// `TRUAPI_FUNDING_OUTCOMES` is set, recording to `TRUAPI_FUNDING_LOG`.
-	pub fn install_from_env(runtime: &Arc<SigningHostRuntime>) {
-		let Ok(spec) = std::env::var("TRUAPI_FUNDING_OUTCOMES") else {
-			return;
-		};
+	/// Serve funding on `runtime`, asking `user`, with the providers and
+	/// files the environment names.
+	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
+		let providers = std::env::var("TRUAPI_FUNDING_PROVIDERS")
+			.unwrap_or_default()
+			.split(',')
+			.map(str::trim)
+			.filter(|entry| !entry.is_empty())
+			.filter_map(|entry| match entry.parse() {
+				Ok(provider) => Some(provider),
+				Err(error) => {
+					tracing::warn!(%entry, %error, "skipping a funding provider that is not a product id");
+					None
+				},
+			})
+			.collect();
 		runtime.set_funding_platform(Arc::new(Self {
-			outcomes: Mutex::new(parse_outcomes(&spec)),
+			providers,
+			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
 			runtime: Arc::downgrade(runtime),
+			asked: Mutex::new(HashSet::new()),
 		}));
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
 			let payments = Arc::new(CliPaymentHost { ledger });
@@ -118,152 +92,65 @@ impl CliFundingHost {
 		}
 	}
 
-	/// Hand session `intent` to the product that asked for it, then cancel
-	/// it as `outcome` says.
-	async fn provide(
-		&self,
-		runtime: Weak<SigningHostRuntime>,
-		product: Option<&ProductContext>,
-		intent: String,
-		outcome: Outcome,
-	) -> Result<FundingPresentOutcome, GenericError> {
-		let (Some(runtime), Some(product)) = (runtime.upgrade(), product) else {
-			return Ok(FundingPresentOutcome::Dismissed);
+	/// Put the provider's cancel offer on session `intent` to the user, once
+	/// per offer, and pass on their answer.
+	fn ask_about_offer(&self, intent: String) {
+		let Some(runtime) = self.runtime.upgrade() else {
+			return;
 		};
-		runtime.select_funding_provider(&intent, product.product_id.as_str()).await?;
-		let runtime = Arc::downgrade(&runtime);
+		let offer = match runtime.funding_session(&intent).and_then(|session| session.cancel) {
+			Some(FundingCancel::Offered { fee, refund, .. }) => CancelTerms { fee, refund },
+			_ => {
+				self.lock_asked().remove(&intent);
+				return;
+			},
+		};
+		if !self.lock_asked().insert(intent.clone()) {
+			return;
+		}
+		let user = self.user.clone();
 		let transcript = self.transcript.clone();
-		match outcome {
-			Outcome::ProvideThenCancel => {
-				tokio::spawn(async move {
-					tokio::time::sleep(SETTLE_AFTER).await;
-					cancel(&runtime, &transcript, &intent).await;
-				});
-			},
-			Outcome::ProvideThenCancelOnceMoved => {
-				tokio::spawn(async move {
-					cancel_once_moved(&runtime, &transcript, &intent).await;
-				});
-			},
-			_ => {},
-		}
-		Ok(FundingPresentOutcome::Started)
+		tokio::spawn(async move {
+			let accepted = user
+				.decide(
+					"accept the provider's cancel offer",
+					format!(
+						"{intent}: the provider keeps {} and returns {}",
+						offer.fee, offer.refund
+					),
+				)
+				.await;
+			match runtime.confirm_funding_cancel(&intent, accepted.then_some(offer)).await {
+				Ok(answer) => transcript.record(serde_json::json!({
+					"kind": "cancel-confirm",
+					"intent": intent,
+					"answer": format!("{answer:?}"),
+				})),
+				Err(error) => {
+					tracing::warn!(%intent, reason = %error.reason, "answering a cancel offer failed")
+				},
+			}
+		});
 	}
 
-	fn next_outcome(&self) -> Outcome {
-		self.outcomes
-			.lock()
-			.unwrap_or_else(|poisoned| poisoned.into_inner())
-			.pop_front()
-			.unwrap_or(Outcome::Dismiss)
+	fn lock_asked(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 }
 
-/// How often a scripted cancel looks at its session again.
-const POLL_EVERY: Duration = Duration::from_millis(100);
-/// How long a scripted cancel waits for its session to reach the next point.
-const POLL_FOR: Duration = Duration::from_secs(30);
-
-/// Cancel session `intent` as the user would, recording what that did.
-async fn cancel(runtime: &Weak<SigningHostRuntime>, transcript: &Transcript, intent: &str) {
-	let Some(runtime) = runtime.upgrade() else {
-		return;
-	};
-	match runtime.cancel_funding(intent).await {
-		Ok(outcome) => transcript.record(serde_json::json!({
-			"kind": "cancel",
-			"intent": intent,
-			"outcome": format!("{outcome:?}"),
-		})),
-		Err(error) => {
-			tracing::warn!(%intent, reason = %error.reason, "cancelling a scripted funding session failed")
-		},
-	}
-}
-
-/// Wait until money moved for session `intent`, cancel it, and accept the
-/// offer its provider answers with, recording the cancel and the answer.
-async fn cancel_once_moved(
-	runtime: &Weak<SigningHostRuntime>,
-	transcript: &Transcript,
-	intent: &str,
-) {
-	let moved = |session: &FundingSession| session.money_moved() || session.is_terminal();
-	if !wait_for(runtime, intent, moved).await {
-		return;
-	}
-	cancel(runtime, transcript, intent).await;
-	let offered = |session: &FundingSession| {
-		matches!(session.cancel, Some(FundingCancel::Offered { .. })) || session.is_terminal()
-	};
-	if !wait_for(runtime, intent, offered).await {
-		return;
-	}
-	let Some(runtime) = runtime.upgrade() else {
-		return;
-	};
-	// Accept the terms the session shows, as a host shows them to the user.
-	let terms = match runtime.funding_session(intent).and_then(|session| session.cancel) {
-		Some(FundingCancel::Offered { fee, refund, .. }) => Some(CancelTerms { fee, refund }),
-		_ => None,
-	};
-	if terms.is_none() {
-		return;
-	}
-	match runtime.confirm_funding_cancel(intent, terms).await {
-		Ok(answer) => transcript.record(serde_json::json!({
-			"kind": "cancel-confirm",
-			"intent": intent,
-			"answer": format!("{answer:?}"),
-		})),
-		Err(error) => {
-			tracing::warn!(%intent, reason = %error.reason, "accepting a scripted cancel offer failed")
-		},
-	}
-}
-
-/// Wait until session `intent` meets `reached`, up to [`POLL_FOR`]. Returns
-/// whether it did.
-async fn wait_for(
-	runtime: &Weak<SigningHostRuntime>,
-	intent: &str,
-	reached: impl Fn(&FundingSession) -> bool,
-) -> bool {
-	let deadline = tokio::time::Instant::now() + POLL_FOR;
-	loop {
-		let Some(live) = runtime.upgrade() else {
-			return false;
-		};
-		if live.funding_session(intent).is_some_and(|session| reached(&session)) {
-			return true;
-		}
-		drop(live);
-		if tokio::time::Instant::now() >= deadline {
-			tracing::warn!(%intent, "a scripted cancel gave up waiting on its session");
-			return false;
-		}
-		tokio::time::sleep(POLL_EVERY).await;
-	}
-}
-
-/// The stage `outcome` ends a started session in.
-fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
-	let settled_at_ms = current_unix_millis();
-	match outcome {
-		Outcome::Deliver(credited) => Some(FundingStage::Delivered { credited, settled_at_ms }),
-		Outcome::Release(debited) => Some(FundingStage::Released { debited, settled_at_ms }),
-		Outcome::Fail => Some(FundingStage::Failed {
-			reason: FundingFailure::Other {
-				code: "provider_failed".into(),
-				message: "the scripted provider failed the session".into(),
-			},
-			settled_at_ms,
-		}),
-		Outcome::Dismiss |
-		Outcome::Provide |
-		Outcome::ProvideThenCancel |
-		Outcome::ProvideThenCancelOnceMoved => None,
-	}
+/// Cancel session `intent` at the user's request, and record what that did.
+pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String, String> {
+	let outcome = runtime
+		.cancel_funding(intent)
+		.await
+		.map(|outcome| format!("{outcome:?}"))
+		.map_err(|error| error.reason)?;
+	Transcript::appending_from_env("TRUAPI_FUNDING_LOG", "funding").record(serde_json::json!({
+		"kind": "cancel",
+		"intent": intent,
+		"outcome": outcome,
+	}));
+	Ok(outcome)
 }
 
 #[async_trait]
@@ -273,44 +160,36 @@ impl FundingPlatform for CliFundingHost {
 		product: Option<&ProductContext>,
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError> {
-		let outcome = self.next_outcome();
+		let direction = match session.direction {
+			FundingDirection::In => "In",
+			FundingDirection::Out => "Out",
+		};
+		let amount = session.amount.map(|amount| amount.to_string());
+		let asker = product.map_or("the host", |product| product.product_id.as_str());
+		let mut chosen = None;
+		for provider in &self.providers {
+			let detail = format!(
+				"{asker} asks to move {} {direction} with {provider}",
+				amount.as_deref().unwrap_or("an amount you choose"),
+			);
+			if self.user.decide("fund with a provider", detail).await {
+				chosen = Some(provider.clone());
+				break;
+			}
+		}
 		self.transcript.record(serde_json::json!({
 			"kind": "presented",
 			"intent": session.intent,
-			"direction": match session.direction {
-				FundingDirection::In => "In",
-				FundingDirection::Out => "Out",
-			},
-			"amount": session.amount.map(|amount| amount.to_string()),
+			"direction": direction,
+			"amount": amount,
 			"product": product.map(|product| product.product_id.as_str()),
-			"outcome": format!("{outcome:?}"),
+			"provider": chosen.as_ref().map(ProductId::as_str),
+			"outcome": if chosen.is_some() { "Started" } else { "Dismissed" },
 		}));
-		let runtime = self.runtime.clone();
-		let intent = session.intent;
-		if matches!(
-			outcome,
-			Outcome::Provide | Outcome::ProvideThenCancel | Outcome::ProvideThenCancelOnceMoved
-		) {
-			return self.provide(runtime, product, intent, outcome).await;
-		}
-		let Some(stage) = settled_stage(outcome) else {
+		let (Some(provider), Some(runtime)) = (chosen, self.runtime.upgrade()) else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		tokio::spawn(async move {
-			tokio::time::sleep(SETTLE_AFTER).await;
-			let Some(runtime) = runtime.upgrade() else {
-				return;
-			};
-			match runtime.settle_funding_for_test(&intent, stage).await {
-				Ok(true) => {},
-				Ok(false) => {
-					tracing::warn!(%intent, "the scripted funding session had already ended")
-				},
-				Err(error) => {
-					tracing::warn!(%intent, reason = %error.reason, "settling a scripted funding session failed")
-				},
-			}
-		});
+		runtime.select_funding_provider(&session.intent, provider.as_str()).await?;
 		Ok(FundingPresentOutcome::Started)
 	}
 
@@ -320,23 +199,31 @@ impl FundingPlatform for CliFundingHost {
 		intent: String,
 		target: FundingFrameTarget,
 	) -> Result<FundingFrameOutcome, GenericError> {
-		let (shown, outcome) = match target {
+		let (shown, finished) = match target {
 			FundingFrameTarget::App { route } => (route, FundingFrameOutcome::Closed),
 			FundingFrameTarget::Page { url, return_url } => {
-				let outcome = match return_url {
+				let finished = match return_url {
 					Some(url) => FundingFrameOutcome::Returned { url },
 					None => FundingFrameOutcome::Closed,
 				};
-				(url, outcome)
+				(url, finished)
 			},
 		};
+		let done = self
+			.user
+			.decide(
+				"finish the provider's screen",
+				format!("{} shows {shown} for {intent}", provider.product_id),
+			)
+			.await;
 		self.transcript.record(serde_json::json!({
 			"kind": "frame",
 			"intent": intent,
 			"provider": provider.product_id.as_str(),
 			"route": shown,
+			"finished": done,
 		}));
-		Ok(outcome)
+		Ok(if done { finished } else { FundingFrameOutcome::Dismissed })
 	}
 
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
@@ -352,12 +239,13 @@ impl FundingPlatform for CliFundingHost {
 			"tag": tag,
 			"amount": amount.map(|amount| amount.to_string()),
 		}));
+		self.ask_about_offer(intent);
 	}
 }
 
-/// Scripted top-up and payment engines: every top-up claims in full and every
-/// payment completes, once started. What was started is kept in a ledger file,
-/// one JSON object per line, so a restarted host still answers for it.
+/// Top-up and payment engines over a ledger file: every top-up claims in full
+/// and every payment completes, once started. What was started is kept one
+/// JSON object per line, so a restarted host still answers for it.
 struct CliPaymentHost {
 	ledger: PathBuf,
 }
@@ -502,25 +390,5 @@ mod tests {
 		));
 
 		assert!(matches!(started, Err(HostPaymentTopUpError::Unknown { .. })), "{started:?}");
-	}
-
-	// The battery seeds one outcome per request it makes, in order. An entry
-	// this host cannot read is skipped, and the entries after it keep their
-	// order.
-	#[test]
-	fn outcomes_are_read_in_order_and_unknown_entries_dropped() {
-		assert_eq!(
-			parse_outcomes(
-				"deliver:900, release:500,fail,bogus,dismiss,deliver:x,provide,provide-cancel"
-			),
-			VecDeque::from([
-				Outcome::Deliver(900),
-				Outcome::Release(500),
-				Outcome::Fail,
-				Outcome::Dismiss,
-				Outcome::Provide,
-				Outcome::ProvideThenCancel,
-			])
-		);
 	}
 }

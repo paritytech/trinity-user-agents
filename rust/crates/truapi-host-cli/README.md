@@ -752,7 +752,7 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
-  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  scripts/battery.sh --funding-host     # funding phase only
   make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -769,20 +769,22 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
-  The funding phase builds the host with `--features test-host` and installs
-  a scripted funding overlay: each request the product makes is answered with
-  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
-  (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel,provide-cancel-moved,provide-cancel-moved`). A
-  `deliver`, `release` or `fail` session is settled through the core's test
-  hook with no chain behind it. A `provide` session is handed to the product
-  that asked, which runs as a Worker and serves it as the provider: it reports
-  progress, starts top-ups and payment requests, which scripted engines
-  complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
-  the session from them. `provide-cancel` also cancels it, and
-  `provide-cancel-moved` cancels once money moved and accepts the provider's
-  offer, recording each cancel's outcome and answer. The phase runs the
-  host twice on the same storage, so the provider resumes an inbound session
-  after a restart. Every overlay request and session change is recorded in
+  The funding phase runs the signing host's funding overlay as a host app
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the overlay offers,
+  here the phase's own product, which runs as a Worker and is both the product
+  asking for funds and the provider's worker serving them through
+  `onAssign`, `onCancel` and `onSettleCancel`. The auto-accepting user picks
+  the provider and accepts its cancel offers. The script acts as the user
+  through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
+  a stdin that is not a terminal takes `/funding cancel <intent>` and
+  `/approval manual|automatic`, so a case cancels a session or has the overlay
+  closed. The provider reports progress and starts top-ups and payment
+  requests, which ledger engines complete in full and record in
+  `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
+  phase runs the host twice on the same storage, so the provider is assigned
+  an inbound session again after a restart and finishes it from the state it
+  kept in its own storage. Every overlay request, screen, cancel, answer and
+  session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
