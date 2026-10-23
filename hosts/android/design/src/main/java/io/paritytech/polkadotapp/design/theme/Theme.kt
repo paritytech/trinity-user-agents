@@ -40,14 +40,14 @@ import io.paritytech.polkadotapp.designsystem.spacings.PolkadotSpacings
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.designsystem.typography.LocalPolkadotTypography
 import io.paritytech.polkadotapp.designsystem.typography.PolkadotTypography
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun PolkadotTheme(
     content: @Composable () -> Unit
 ) {
     val selector = rememberAppThemeSelector()
-    val theme by selector.selectedTheme.collectAsStateWithLifecycle(PolkadotAppTheme.DEFAULT)
+    val theme by selector.selectedTheme.collectAsStateWithLifecycle()
 
     val activity = LocalActivity.current
     if (activity != null) {
@@ -152,7 +152,7 @@ private val PolkadotAppTheme.isDark: Boolean
     }
 
 private object DefaultAppThemeSelector : AppThemeSelector {
-    override val selectedTheme = flowOf(PolkadotAppTheme.DEFAULT)
+    override val selectedTheme = MutableStateFlow(PolkadotAppTheme.DEFAULT)
     override fun select(theme: PolkadotAppTheme) = Unit
 }
 

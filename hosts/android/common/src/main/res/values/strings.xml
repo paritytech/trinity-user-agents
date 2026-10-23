@@ -965,8 +965,13 @@
     <string name="pocket_debug_coinage_test_states">All states</string>
     <string name="pocket_debug_coinage_test_fifty">50</string>
     <string name="pocket_debug_coinage_test_five_hundred">500</string>
-    <string name="pocket_coinage_trace_hops">Hops since last clearing: %d</string>
-    <string name="pocket_coinage_trace_quality">Clearing quality: %s</string>
+    <string name="pocket_debug_coinage_coin_set">Coins</string>
+    <string name="pocket_debug_coinage_coin_set_varied">Varied</string>
+    <string name="pocket_debug_coinage_coin_set_plain">Plain</string>
+    <string name="pocket_coinage_trace_prior_owners">Prior owners: %d</string>
+    <string name="pocket_coinage_trace_quality">Coin Quality: %s</string>
+    <string name="pocket_coinage_trace_quality_explanation">The degree to which the coin is indistinguishable from other coins</string>
+    <string name="pocket_coinage_trace_quality_explanation_aside">(also known as fungibility)</string>
     <string name="pocket_coinage_trace_quality_unknown">Unknown</string>
     <string name="pocket_coinage_trace_quality_very_low">Very low</string>
     <string name="pocket_coinage_trace_quality_low">Low</string>
