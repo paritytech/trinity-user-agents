@@ -175,17 +175,15 @@ struct AssetDetailsView: View {
 
     private func actions() -> some View {
         HStack(spacing: DSSpacings.small) {
-            if FundingAvailability.isAvailable {
-                actionCard(
-                    title: String(localized: .Funding.cardGet),
-                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: cash.symbol)),
-                    arrowRotation: .zero,
-                    isLoading: viewModel.isTopUpInProgress
-                ) {
-                    viewModel.onTopUp?()
-                }
-                .accessibilityId(AccessibilityID.Wallet.addFundsButton)
+            actionCard(
+                title: String(localized: .Funding.cardGet),
+                subtitle: String(localized: .Funding.cardGetSubtitle(symbol: cash.symbol)),
+                arrowRotation: .zero,
+                isLoading: viewModel.isTopUpInProgress
+            ) {
+                viewModel.onTopUp?()
             }
+            .accessibilityId(AccessibilityID.Wallet.addFundsButton)
 
             actionCard(
                 title: String(localized: .Funding.cardSend),
