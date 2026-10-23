@@ -1,22 +1,14 @@
 # Instrumented tests, which need a booted emulator and so cannot run on every
 # commit: a cold emulator costs minutes before the first test.
 #
-# Started by a label rather than by every push, and by dispatch so the workflow
-# itself can be exercised without opening a pull request to carry the label.
+# Started by a label rather than by every push: on-label.yml calls it for a
+# pull request labelled android-instrumented-tests. Dispatch exercises the
+# workflow itself without a pull request to carry the label.
 name: Android instrumented tests
 
 on:
-  pull_request:
-    # `labeled` starts it. The rest keep it on the branch's current commit
-    # once the label is applied, rather than pinned to whichever commit was
-    # head when someone asked, and cover a request opened or reopened with
-    # the label already on it.
-    types: [labeled, synchronize, opened, reopened]
+  workflow_call:
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -24,16 +16,10 @@ permissions:
 jobs:
   test:
     name: Instrumented tests
-    # Narrow deliberately. `labeled` fires for every label, so matching only on
-    # the label being present would let any other label, added by a person or
-    # by labeler.yml, start a second run that cancels the one already booting
-    # an emulator.
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.action == 'labeled'
-          && github.event.label.name == 'android-instrumented-tests')
-      || (github.event.action != 'labeled'
-          && contains(github.event.pull_request.labels.*.name, 'android-instrumented-tests'))
+    # A newer commit on the branch supersedes the run booting an emulator.
+    concurrency:
+      group: android-instrumented-tests-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

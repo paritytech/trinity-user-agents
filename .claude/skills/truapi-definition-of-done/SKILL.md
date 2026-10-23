@@ -72,9 +72,10 @@ committed to diff against. The `ios-swift` job generates the package's
 Swift sources and container resource, then compiles the package and its
 test target on macOS, which is what catches a hand-written conformer
 that misses a new protocol requirement. Both compile gates are
-path-filtered from one place: the `changes` job in `ci.yml` publishes
-`sdk_swift` and `sdk_kotlin`, and each gated job reads its output, so a
-job shows as skipped where it does not apply.
+path-filtered from one place: the `changes` job in `ci.yml` evaluates
+`.github/hosts.json` into `package_swift` and `package_kotlin`, and each
+gated job reads its output, so a job shows as skipped where it does not
+apply.
 
 The Kotlin side is covered too: `android-bindings` compiles
 `TrUAPIHost.kt` against freshly generated bindings. Still uncovered:
