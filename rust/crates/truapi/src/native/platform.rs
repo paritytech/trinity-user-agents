@@ -1,3 +1,4 @@
+use core::time::Duration;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -10,13 +11,18 @@ use crate::platform::{
 	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::{
+	FutureExt,
 	channel::mpsc,
+	future,
 	stream::{self, BoxStream, StreamExt},
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
 
-use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTransition};
+use crate::{
+	DevicePairingObserver, PairedSsoPeer, host_internal::bulletin::preimage_key,
+	host_logic::worker::WorkerTransition,
+};
 
 use super::{
 	callbacks::{
@@ -401,7 +407,7 @@ impl Drop for NativeJsonRpcConnection {
 	}
 }
 
-/// Lowercase hex for a genesis hash in a log line.
+/// Lowercase hex for a hash in a log line.
 fn hex_lower(bytes: &[u8]) -> String {
 	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -496,6 +502,19 @@ impl LocaleHost for CallbackPlatform {
 	}
 }
 
+// Pause before each retry of a preimage lookup that missed. It starts at the
+// CLI host's poll interval and doubles after each further miss, so a key that
+// is never stored costs fewer requests over time. It stops doubling at the
+// maximum, so a value stored later is still found within that time.
+#[cfg(not(test))]
+const PREIMAGE_RETRY_PAUSE_MIN: Duration = Duration::from_secs(6);
+#[cfg(not(test))]
+const PREIMAGE_RETRY_PAUSE_MAX: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const PREIMAGE_RETRY_PAUSE_MIN: Duration = Duration::from_millis(1);
+#[cfg(test)]
+const PREIMAGE_RETRY_PAUSE_MAX: Duration = Duration::from_millis(4);
+
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
 		&self,
@@ -505,9 +524,50 @@ impl PreimageHost for CallbackPlatform {
 		// and the subscription is lost, then await the current value lazily.
 		let rx = self.events.subscribe_preimage_changes(key.clone());
 		let callbacks = self.callbacks.clone();
-		let current =
-			async move { callbacks.lookup_preimage(key).await.map_err(v01::GenericError::from) };
-		stream::once(current).chain(rx).boxed()
+		async move {
+			let current =
+				callbacks.lookup_preimage(key.clone()).await.map_err(v01::GenericError::from);
+			// A miss may be a fetch that failed, and a host need not notify the
+			// value once it can fetch it, so keep asking until it returns bytes
+			// that hash to the key. Only a 32-byte key can name a preimage.
+			let retry = <[u8; 32]>::try_from(key.as_slice()).ok().filter(|digest| match &current {
+				Ok(Some(value)) => preimage_key(value) != *digest,
+				Ok(None) => true,
+				Err(_) => false,
+			});
+			let found = stream::iter(retry)
+				.then(move |digest| lookup_until_found(callbacks.clone(), digest))
+				.map(|found| found.map(Some));
+			stream::once(future::ready(current)).chain(stream::select(rx, found))
+		}
+		.flatten_stream()
+		.boxed()
+	}
+}
+
+/// Ask the host for the preimage of `digest` again, backing off from
+/// [`PREIMAGE_RETRY_PAUSE_MIN`] to [`PREIMAGE_RETRY_PAUSE_MAX`], until it
+/// returns bytes that hash to `digest` or rejects the lookup.
+async fn lookup_until_found(
+	callbacks: Arc<dyn HostCallbacks>,
+	digest: [u8; 32],
+) -> Result<Vec<u8>, v01::GenericError> {
+	let key_hex = hex_lower(&digest);
+	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	let mut pause = PREIMAGE_RETRY_PAUSE_MIN;
+	let mut retries = 0u32;
+	loop {
+		futures_timer::Delay::new(pause).await;
+		retries += 1;
+		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
+		if let Some(value) = value.filter(|value| preimage_key(value) == digest) {
+			callbacks.on_core_log(
+				"truapi.native.preimage.found".to_string(),
+				format!("{key_hex} on retry {retries}"),
+			);
+			return Ok(value);
+		}
+		pause = (pause * 2).min(PREIMAGE_RETRY_PAUSE_MAX);
 	}
 }
 

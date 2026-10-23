@@ -15,7 +15,10 @@ use parity_scale_codec::Encode;
 use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
-use crate::{PairedSsoPeer, PairingProposal, host_logic::worker::WorkerTransition};
+use crate::{
+	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	host_logic::worker::WorkerTransition,
+};
 
 use super::{
 	callbacks::{
@@ -166,6 +169,9 @@ pub struct EventCallbacks {
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
+	/// Counts preimage lookups, retries included.
+	pub preimage_lookups: std::sync::atomic::AtomicUsize,
+	pub preimage_rejection: Mutex<Option<String>>,
 	pub auth_states: Mutex<Vec<AuthState>>,
 	pub chain_id: Mutex<Option<u32>>,
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -220,6 +226,8 @@ impl EventCallbacks {
 			}),
 			locale: Mutex::new(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() }),
 			preimages: Mutex::new(Vec::new()),
+			preimage_lookups: std::sync::atomic::AtomicUsize::new(0),
+			preimage_rejection: Mutex::new(None),
 			auth_states: Mutex::new(Vec::new()),
 			chain_id: Mutex::new(None),
 			on_chain_connect: Mutex::new(None),
@@ -366,6 +374,15 @@ impl HostCallbacks for EventCallbacks {
 		Ok(self.permission_confirmation_result)
 	}
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+		self.preimage_lookups.fetch_add(1, Ordering::SeqCst);
+		if let Some(reason) = self
+			.preimage_rejection
+			.lock()
+			.expect("preimage rejection mutex poisoned")
+			.clone()
+		{
+			return Err(HostRejection::Rejected { reason });
+		}
 		Ok(self
 			.preimages
 			.lock()
@@ -1138,6 +1155,123 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 
 	assert_eq!(first.unwrap(), Some(vec![1, 2, 3]));
 	assert_eq!(second.unwrap(), Some(vec![4, 5, 6]));
+}
+
+/// Long enough for the test retry pauses to ask the host several times.
+const PREIMAGE_QUIET_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The stream's next item, or `None` when it yields nothing within `wait`.
+fn next_preimage_within(
+	stream: &mut BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>>,
+	wait: std::time::Duration,
+) -> Option<Result<Option<Vec<u8>>, v01::GenericError>> {
+	futures::executor::block_on(async {
+		match futures::future::select(stream.next(), futures_timer::Delay::new(wait)).await {
+			futures::future::Either::Left((item, _)) => {
+				Some(item.expect("the preimage stream ended"))
+			},
+			futures::future::Either::Right(_) => None,
+		}
+	})
+}
+
+/// Make the host answer lookups of `key` with `value` from now on.
+fn host_preimage(callbacks: &EventCallbacks, key: &[u8], value: Option<Vec<u8>>) {
+	*callbacks.preimages.lock().expect("preimage map mutex poisoned") = vec![(key.to_vec(), value)];
+}
+
+/// A miss can be a fetch that failed, and a host need not notify a value it
+/// can fetch later, so a product waiting on the lookup would otherwise wait
+/// forever. Once the value arrives there is nothing left to ask for.
+#[test]
+fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	let mut stream = platform.lookup_preimage(key.clone());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_found = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_found = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, found, after_found), (Ok(None), Some(Ok(Some(value))), None));
+	assert_eq!(
+		callbacks.preimage_lookups.load(Ordering::SeqCst),
+		lookups_until_found,
+		"the lookup kept asking after it had the value"
+	);
+}
+
+/// The runtime turns bytes that do not hash to the key into a miss, so they
+/// cannot end the wait either.
+#[test]
+fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
+	let mut stream = platform.lookup_preimage(key.clone());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let while_wrong = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+
+	assert_eq!((first, while_wrong, found), (Ok(Some(vec![9, 9, 9])), None, Some(Ok(Some(value)))));
+}
+
+/// A rejection is the host's answer, as it is on the first lookup: the
+/// product sees it, and asking again would repeat a request the host refuses.
+#[test]
+fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_asking() {
+	let (callbacks, _events, platform) = event_platform();
+	let mut stream = platform.lookup_preimage(preimage_key(&[1, 2, 3]).to_vec());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	*callbacks.preimage_rejection.lock().expect("preimage rejection mutex poisoned") =
+		Some("key refused".to_string());
+	let rejected = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_rejected = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_rejection = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!(
+		(first, rejected, after_rejection),
+		(Ok(None), Some(Err(v01::GenericError { reason: "key refused".to_string() })), None)
+	);
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), lookups_until_rejected);
+}
+
+/// Asking again after a hit would add a gateway request every few seconds to
+/// every lookup a product keeps open.
+#[test]
+fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let mut stream = platform.lookup_preimage(key);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, later), (Ok(Some(value)), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
+}
+
+/// Only 32 bytes can be a blake2b-256 digest, so nothing a host returns can
+/// answer any other key.
+#[test]
+fn native_preimage_subscription_does_not_ask_again_for_a_key_no_preimage_hashes_to() {
+	let (callbacks, _events, platform) = event_platform();
+	let mut stream = platform.lookup_preimage(vec![7; 20]);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, later), (Ok(None), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
 }
 
 #[test]

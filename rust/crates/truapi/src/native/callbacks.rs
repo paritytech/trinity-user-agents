@@ -135,7 +135,8 @@ pub trait HostCallbacks: Send + Sync {
 	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Look up one preimage value by key. The native shim emits this as the
-	/// current item in its subscription stream.
+	/// current item in its subscription stream and calls again after a miss.
+	/// Return `None` for a failed fetch: an error ends the lookup.
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
 	/// Current host theme, named variant included. The native shim emits this
