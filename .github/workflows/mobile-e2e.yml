@@ -1,0 +1,271 @@
+# Builds the iOS simulator app and the Android APK from the commit this runs
+# on, then runs the mobile app suite in paritytech/triangle-e2e against those
+# exact builds. Manual only: nothing here runs on a schedule, a push or a pull
+# request.
+#
+# The builds are artifacts of this run and are never published, so a run from
+# a branch leaves no release, no tag and no tester distribution behind. The
+# suite runs in triangle-e2e, whose logs stay there; this run waits for its
+# verdict, reports it, and links to it.
+#
+# Needs a TRIANGLE_E2E_TOKEN secret that may dispatch and read workflow runs
+# in paritytech/triangle-e2e (a GitHub App token or fine-grained PAT with
+# Actions read and write on that repository).
+name: Mobile E2E
+
+on:
+  # workflow_dispatch only reaches a workflow that already exists on the
+  # default branch, so while this lives on its own branch a push to that
+  # branch is what starts it. Remove this trigger before merging.
+  push:
+    branches: [tg/mobile-e2e]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which apps to build and test."
+        type: choice
+        options: [both, ios, android]
+        default: both
+      suite_ref:
+        description: "triangle-e2e ref to run the suite from."
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IOS_BUNDLE_ID: io.parity.polkadotapp
+  FASTLANE_CONFIGURATION: Nightly
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+jobs:
+  build-ios:
+    name: Build the iOS simulator app
+    if: inputs.platforms != 'android'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Build simulator .app
+        working-directory: hosts/ios
+        run: bundle exec fastlane build_app_simulator
+
+      # The same archive shape the simulator release publishes, so the suite
+      # unpacks it the way it unpacks a release.
+      - name: Zip the .app bundle
+        working-directory: hosts/ios/build_simulator
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          candidates=(./*.app)
+          shopt -u nullglob
+          if [ ${#candidates[@]} -ne 1 ]; then
+            echo "::error::Expected one .app under build_simulator/, found ${#candidates[@]}"
+            exit 1
+          fi
+          zip -ry polkadot-app-simulator.app.zip "${candidates[0]}"
+          bundle="$(basename "${candidates[0]}")"
+          listing="$(unzip -Z1 polkadot-app-simulator.app.zip)"
+          for required in "$bundle/Info.plist" "$bundle/$(basename "$bundle" .app)"; do
+            if ! grep -qxF "$required" <<<"$listing"; then
+              echo "::error::The archive does not contain $required"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-ios-simulator-app
+          path: hosts/ios/build_simulator/polkadot-app-simulator.app.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  build-android:
+    name: Build the Android APK
+    if: inputs.platforms != 'ios'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up the Android build
+        id: setup
+        uses: ./.github/actions/setup-android-build
+        with:
+          require_inputs: "true"
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
+          keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+
+      # The build the suite installs from a release: the Google-Play flavour
+      # of the nightly build type, configured as android-nightly.yml does.
+      - name: Build the APK
+        working-directory: hosts/android
+        env:
+          CI_BUILD_ID: ${{ steps.setup.outputs.build_id }}
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+          CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+          TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
+          REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+        run: ./gradlew assembleGpNightly --no-daemon
+
+      - name: Stage the APK
+        working-directory: hosts/android
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          found=(app/build/outputs/apk/gp/nightly/*.apk)
+          shopt -u nullglob
+          if [ ${#found[@]} -ne 1 ]; then
+            echo "::error::Expected one APK, found ${#found[@]}"
+            exit 1
+          fi
+          mv "${found[0]}" app-gp-nightly.apk
+          rm -f develop_key.jks app/google-services.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-android-apk
+          path: hosts/android/app-gp-nightly.apk
+          if-no-files-found: error
+          retention-days: 3
+
+  suite:
+    name: Run the app suite
+    needs: [build-ios, build-android]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    # The suite takes 10 to 40 minutes per platform after its runners start.
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ secrets.TRIANGLE_E2E_TOKEN }}
+      SUITE_REPO: paritytech/triangle-e2e
+      SUITE_WORKFLOW: app-e2e.yml
+      # A push has no inputs, so it runs both platforms against the suite
+      # branch that accepts builds from a run.
+      SUITE_REF: ${{ inputs.suite_ref || 'tg/host-build-artifacts' }}
+      PLATFORMS: ${{ inputs.platforms || 'both' }}
+    steps:
+      - name: Check the dispatch credential
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::error::TRIANGLE_E2E_TOKEN is not set, so the suite cannot be started."
+            exit 1
+          fi
+
+      - name: Start the suite on these builds
+        run: |
+          set -euo pipefail
+          case "$PLATFORMS" in
+            ios) projects=host-playground-ios ;;
+            android) projects=host-playground-android ;;
+            *) projects=host-playground-ios,host-playground-android ;;
+          esac
+          gh workflow run "$SUITE_WORKFLOW" --repo "$SUITE_REPO" --ref "$SUITE_REF" \
+            -f host_build_run_id="$GITHUB_RUN_ID" \
+            -f projects="$projects"
+
+      # Dispatching returns no run id, so the suite names its run after this
+      # one and it is found by that name.
+      - name: Find the suite run
+        id: find
+        run: |
+          set -euo pipefail
+          marker="host-rust-core run ${GITHUB_RUN_ID}"
+          for _ in $(seq 1 30); do
+            id=$(gh run list --repo "$SUITE_REPO" --workflow "$SUITE_WORKFLOW" \
+              --event workflow_dispatch --limit 30 --json databaseId,displayTitle \
+              --jq "[.[] | select(.displayTitle | contains(\"${marker}\")) | .databaseId][0] // empty")
+            if [ -n "$id" ]; then
+              echo "id=$id" >> "$GITHUB_OUTPUT"
+              echo "url=https://github.com/${SUITE_REPO}/actions/runs/${id}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The suite run did not appear within five minutes."
+          exit 1
+
+      - name: Wait for the verdict
+        id: wait
+        env:
+          RUN_ID: ${{ steps.find.outputs.id }}
+        run: |
+          set -euo pipefail
+          while :; do
+            state=$(gh run view "$RUN_ID" --repo "$SUITE_REPO" --json status,conclusion \
+              --jq '"\(.status) \(.conclusion)"')
+            read -r status conclusion <<<"$state"
+            if [ "$status" = completed ]; then
+              echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            sleep 60
+          done
+
+      - name: Report
+        if: always() && steps.find.outputs.id != ''
+        env:
+          RUN_ID: ${{ steps.find.outputs.id }}
+          URL: ${{ steps.find.outputs.url }}
+          CONCLUSION: ${{ steps.wait.outputs.conclusion }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Mobile E2E: ${CONCLUSION:-unfinished}"
+            echo
+            echo "Builds from \`${GITHUB_SHA:0:9}\`, suite from \`${SUITE_REF}\`."
+            echo
+            echo "| shard | result |"
+            echo "| --- | --- |"
+            gh run view "$RUN_ID" --repo "$SUITE_REPO" --json jobs \
+              --jq '.jobs[] | select(.name | startswith("product-tests")) | "| \(.name | sub("product-tests \\((?<p>.*)\\)"; "\(.p)")) | \(.conclusion // .status) |"'
+            echo
+            echo "[Suite run](${URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$CONCLUSION" = success ]
