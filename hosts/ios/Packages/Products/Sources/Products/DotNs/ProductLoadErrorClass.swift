@@ -11,6 +11,8 @@ public enum ProductLoadErrorClass: Equatable, Sendable {
         switch error {
         case is CancellationError:
             self = .cancelled
+        case is ProductLoadBackgroundExpiredError:
+            self = .transient
         case let urlError as URLError:
             self = Self.classify(urlError)
         case let httpError as HTTPResponseError:
@@ -45,6 +47,7 @@ private extension ProductLoadErrorClass {
 
         return transientUrlErrorCodes.contains(urlError.code) ? .transient : .permanent
     }
+
     static func classify(httpStatus: Int) -> ProductLoadErrorClass {
         switch httpStatus {
         case 408,
@@ -56,6 +59,7 @@ private extension ProductLoadErrorClass {
             .permanent
         }
     }
+
     static func classify(_ contractError: DotNsContractError) -> ProductLoadErrorClass {
         guard case let .contractCallFailed(underlying) = contractError else {
             return .permanent

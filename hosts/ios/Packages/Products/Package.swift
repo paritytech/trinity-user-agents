@@ -84,6 +84,8 @@ let package = Package(
             name: "ProductsTests",
             dependencies: [
                 "Products",
+                "FoundationExt",
+                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "KeyDerivation", package: "KeyDerivation"),
                 "Revive",
