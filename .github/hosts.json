@@ -20,13 +20,14 @@
   ],
   "hosts": {
     "ios": {
+      "push_workflow": ".github/workflows/ios-main.yml",
       "tree": [
         "hosts/ios/",
         "ios/",
         "Package.swift"
       ],
       "full": [
-        "js/packages/",
+        "js/packages/truapi/",
         "js/container/",
         "Makefile",
         "nightly-toolchain",
@@ -37,6 +38,7 @@
       ],
       "ci": [
         ".github/workflows/ios-app.yml",
+        ".github/workflows/ios-main.yml",
         ".github/workflows/ios-firebase-debug-distribution.yml",
         ".github/actions/bootstrap-ios-core/",
         ".github/actions/find-main-artifact/",

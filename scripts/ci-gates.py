@@ -17,6 +17,11 @@ file. To route a new path, add it to the list below that describes it:
   Swift package under `ios/`. A package list is complete on its own, since a
   package is often built from less than the whole core.
 
+A host may name a `push_workflow`, a workflow that runs its suite on a push to
+main through `on.push.paths` because it lives outside ci.yml. Those paths must
+be exactly the host's `core`, `tree`, `full` and `ci` entries, each directory
+as `<dir>/**`, and `--check` fails while they differ.
+
 For each host this prints three gates as `name=true|false` lines, the format
 `$GITHUB_OUTPUT` takes:
 
@@ -26,9 +31,6 @@ For each host this prints three gates as `name=true|false` lines, the format
 - `<host>_changed`: a `core` or `tree` path changed, so the host's app is
   different. A workflow triggered by a merge reads this to decide whether
   there is a new build.
-- `<host>_affected`: any of the host's paths or the core changed, whatever
-  `--force` says. A host too costly to run on every push to main reads this
-  there instead of its core and tree gates.
 
 and one gate per package, `package_<package>`, true when one of its inputs
 changed.
@@ -90,10 +92,23 @@ def gates(registry: dict, paths: list[str] | None, force: bool = False) -> dict[
         result[f"{host}_core"] = core or force
         result[f"{host}_tree"] = suite or force
         result[f"{host}_changed"] = core or tree
-        result[f"{host}_affected"] = core or suite
     for package, entries in registry.get("packages", {}).items():
         result[f"package_{package}"] = hit(entries) or force
     return result
+
+
+def push_paths(workflow: str) -> list[str]:
+    """The quoted entries of the first `paths:` list in a workflow."""
+    entries, inside = [], False
+    for line in (ROOT / workflow).read_text().splitlines():
+        stripped = line.strip()
+        if stripped == "paths:":
+            inside = True
+        elif inside and stripped.startswith("- "):
+            entries.append(stripped[2:].strip().strip('"').strip("'"))
+        elif inside and stripped and not stripped.startswith("#"):
+            break
+    return entries
 
 
 def is_gitlink(entry: str) -> bool:
@@ -129,6 +144,18 @@ def check(registry: dict) -> list[str]:
         for entry in spec.get("tree", []):
             if entry in registry["core"]:
                 problems.append(f"hosts.{host}.tree: {entry} is shared core, not the host's own")
+        workflow = spec.get("push_workflow")
+        if workflow:
+            if not (ROOT / workflow).is_file():
+                problems.append(f"hosts.{host}.push_workflow: {workflow} is not a file")
+                continue
+            entries = set(registry["core"]).union(*(spec.get(n, []) for n in HOST_LISTS))
+            want = {e + "**" if e.endswith("/") else e for e in entries}
+            have = set(push_paths(workflow))
+            for path in sorted(want - have):
+                problems.append(f"{workflow}: on.push.paths is missing {path}")
+            for path in sorted(have - want):
+                problems.append(f"{workflow}: on.push.paths has {path}, which hosts.{host} does not")
     return problems
 
 

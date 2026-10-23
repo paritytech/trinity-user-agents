@@ -21,7 +21,7 @@ name: Prune superseded caches
 # executed, and the job only lists and deletes cache entries.
 on: # zizmor: ignore[dangerous-triggers]
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "iOS app on main"]
     types: [completed]
     branches: [main]
   workflow_dispatch:

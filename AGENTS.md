@@ -197,7 +197,9 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   crate its bindings are generated from, since a protocol change leaves no
   `ios/` or `android/` diff to key on. The iOS and Android apps are
   `ios-app.yml` and `android-app.yml`, which `ci.yml` calls on their host's
-  gates; the label builds start from `on-label.yml`. Every job in `ci.yml` is aggregated by
+  gates; `ios-main.yml` runs the iOS suite for a push to main, on path filters
+  `ci-gates.py --check` holds to the registry, and the label builds start from
+  `on-label.yml`. Every job in `ci.yml` is aggregated by
   `ci-status`, which is the check worth requiring: a job skipped by its filter
   counts as a pass, so a gate cannot stall a PR it does not apply to.
   `Changeset guard` reads live PR titles and labels, so re-running failed jobs
@@ -210,8 +212,8 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   main's entries; release and publish jobs restore without saving. A composite
   action that needs a Rust cache calls Swatinem/rust-cache directly with the
   same main-only `save-if`, because a post step two composites deep loses its
-  inputs and never saves. `prune-caches.yml` runs after each CI
-  push to main and deletes Rust entries on main that a newer entry of the same
+  inputs and never saves. `prune-caches.yml` runs after each CI and iOS
+  app push to main and deletes Rust entries on main that a newer entry of the same
   key family supersedes, so a `Cargo.lock` or toolchain change does not leave
   the old set holding cache space until eviction. See `docs/RELEASE_PROCESS.md` for
   label setup and release recovery.
