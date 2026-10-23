@@ -502,16 +502,19 @@ impl LocaleHost for CallbackPlatform {
 	}
 }
 
-// Pauses between retries of a preimage lookup that missed. The first matches
-// the CLI host's poll interval, and each miss doubles it up to the maximum.
+// Pauses between retries of a preimage lookup that missed. The first retries
+// use the CLI host's poll interval and cover the 30 seconds the product SDK's
+// lookup helpers wait. Later retries are slower, to limit requests for lookups
+// a product keeps open.
 #[cfg(not(test))]
-const PREIMAGE_RETRY_PAUSE_MIN: Duration = Duration::from_secs(6);
+const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_secs(6);
 #[cfg(not(test))]
-const PREIMAGE_RETRY_PAUSE_MAX: Duration = Duration::from_secs(30);
+const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 #[cfg(test)]
-const PREIMAGE_RETRY_PAUSE_MIN: Duration = Duration::from_millis(1);
+const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
-const PREIMAGE_RETRY_PAUSE_MAX: Duration = Duration::from_millis(4);
+const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
+const PREIMAGE_FAST_RETRIES: u32 = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -551,9 +554,13 @@ async fn lookup_until_found(
 ) -> Result<Vec<u8>, v01::GenericError> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
-	let mut pause = PREIMAGE_RETRY_PAUSE_MIN;
 	let mut retries = 0u32;
 	loop {
+		let pause = if retries < PREIMAGE_FAST_RETRIES {
+			PREIMAGE_RETRY_PAUSE_FAST
+		} else {
+			PREIMAGE_RETRY_PAUSE_SLOW
+		};
 		futures_timer::Delay::new(pause).await;
 		retries += 1;
 		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
@@ -564,7 +571,6 @@ async fn lookup_until_found(
 			);
 			return Ok(value);
 		}
-		pause = (pause * 2).min(PREIMAGE_RETRY_PAUSE_MAX);
 	}
 }
 
