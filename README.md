@@ -224,8 +224,8 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node are not counted against it. A light-client
-connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
