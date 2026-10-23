@@ -13,8 +13,6 @@ struct LocalStateEraserTests {
         settings.set(value: true, for: SettingsKey.usernameClaimed.rawValue)
         settings.set(value: "session", for: SettingsKey.backendSessionId.rawValue)
         settings.set(value: 7, for: SettingsKey.nextSyncUpdateId.rawValue)
-        settings.set(value: Data([0x01]), for: SettingsKey.fiatOnrampSessionIds.rawValue)
-        settings.set(value: Data([0x02]), for: SettingsKey.fiatOnrampTrackedTransactionIds.rawValue)
         settings.set(value: "dark", for: SettingsKey.themeSelected.rawValue)
         settings.set(value: "USD", for: SettingsKey.selectedCurrencyCode.rawValue)
         settings.set(value: true, for: SettingsKey.playerTooltipShown.rawValue)
@@ -27,5 +25,18 @@ struct LocalStateEraserTests {
         #expect(settings.string(for: SettingsKey.themeSelected.rawValue) == "dark")
         #expect(settings.string(for: SettingsKey.selectedCurrencyCode.rawValue) == "USD")
         #expect(settings.bool(for: SettingsKey.playerTooltipShown.rawValue) == true)
+    }
+
+    @Test("the retired on-ramp ids go too")
+    func erasesRetiredOnrampIds() {
+        for key in LocalStateEraser.retiredWalletKeys {
+            settings.set(value: ["id"], for: key)
+        }
+
+        LocalStateEraser(settingsManager: settings, logger: StubLogger()).eraseUserState()
+
+        for key in LocalStateEraser.retiredWalletKeys {
+            #expect(settings.anyValue(for: key) == nil, "\(key) should be erased")
+        }
     }
 }
