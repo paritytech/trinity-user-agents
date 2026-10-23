@@ -74,8 +74,8 @@ private extension StatementStoreSlotRenewer {
 
     func makeRenewalPlan(period: UInt32) async throws -> RenewalPlan {
         let slots = try await slotInfoProvider.renewalSlots(period: period)
-        let rows = try await accounting.staleRows(currentPeriod: period)
-        let sortedRows = rows.sorted { ($0.priority, $0.allocatedAt) > ($1.priority, $1.allocatedAt) }
+        let staleRows = try await accounting.staleRows(currentPeriod: period)
+        let sortedRows = staleRows.sorted { ($0.priority, $0.allocatedAt) > ($1.priority, $1.allocatedAt) }
         let pairs = sortedRows.prefix(slots.count).enumerated().map { index, row in
             (allowance: row, slot: slots[index])
         }
