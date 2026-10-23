@@ -84,7 +84,7 @@ See [Sharing inbox](#sharing-inbox) for how requests reach a DotNS name.
 5. When Acme opens that route in Market, its host fetches and decrypts the shared data and draws it. Market never sees
    it.
 
-## Detailed Design
+## Design
 
 Builds on
 [RFC 0002, Chat Extension v2](https://github.com/paritytech/trinity-user-agents/blob/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md).
@@ -142,7 +142,9 @@ pub enum HostSharingSendError {
 ### 2. What the host sends to the statement store
 
 Alice's host finds her chat with Bob from the handle and posts the sharing request there, stamped with the calling
-product's id. It travels as an RFC 0002 `Custom` message with a message type reserved for hosts.
+product's id. It travels as an
+[RFC2](https://github.com/paritytech/trinity-user-agents/blob/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md)
+`Custom` message with a message type reserved for hosts.
 
 ```rust
 MessageContent::Custom {
