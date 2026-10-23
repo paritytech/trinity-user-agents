@@ -44,7 +44,10 @@ actor TrUAPIWorkerRuntime {
         try checkNotDisposed()
 
         let bootstrap = try executionModel.startBridge()
-        let scripts = try RustRuntimeScriptsFactory(bootstrapScript: bootstrap).makeScripts()
+        let scripts = try RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrap,
+            logger: logger
+        ).makeScripts()
         let jsEngine = try await bootEngine(scripts: scripts)
         try checkNotDisposed()
 

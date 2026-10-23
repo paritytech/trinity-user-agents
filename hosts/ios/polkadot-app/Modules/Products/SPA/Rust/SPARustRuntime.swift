@@ -21,6 +21,7 @@ actor SPARustRuntime {
     private let productResolver: ProductResolving
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
@@ -74,7 +75,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: .current(hostSessionId: hostSessionId),
+            logger: logger
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
             executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
