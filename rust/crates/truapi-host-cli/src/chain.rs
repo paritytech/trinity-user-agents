@@ -84,7 +84,8 @@ impl ChainProvider for WsChainProvider {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let url = self.url_for(&genesis_hash);
 		debug!(genesis = %hex::encode(genesis_hash), %url, "chain connect");
-		// The URL is left out of the message because it could carry credentials.
+		// The URL is left out because this error can reach the product, and the URL
+		// could carry credentials.
 		let url = url.parse().map_err(|err| ProviderError::Host {
 			reason: format!("chain endpoint is not a valid URL: {err}"),
 		})?;
@@ -104,9 +105,6 @@ mod tests {
 	/// The runtime keeps a chain connection open across calls and replaces it
 	/// only once its response stream ends. A stream that outlived its socket
 	/// would leave every later request on that chain waiting forever.
-	///
-	/// The server speaks first, before `responses()` is called, so this also
-	/// holds that a frame arriving during setup is not lost.
 	#[tokio::test]
 	async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
 		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
