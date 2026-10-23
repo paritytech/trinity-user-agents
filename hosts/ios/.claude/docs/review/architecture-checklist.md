@@ -135,6 +135,7 @@ Walk through each applicable section. For each rule violated, note the severity 
 - [ ] All user-visible strings localized
 - [ ] Build config guards (Sentry not running in tests/previews)
 - [ ] Build phase scripts exclude Debug configuration
+- [ ] Removing a compile flag: the kept branch is correct for Release, which may never have defined it; after rebasing onto main, grep again for the flag.
 - [ ] File size reasonable (<500 lines per file)
 - [ ] Type aliases used for domain concepts (ProductId, not String)
 - [ ] API boundary params parsed into typed models immediately

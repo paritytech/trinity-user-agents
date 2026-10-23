@@ -7,8 +7,8 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductExecutionKind, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductExecutionKind, ProductId, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -190,7 +190,7 @@ pub struct EventCallbacks {
 	pub permission_confirmation_result: PermissionDecision,
 	/// Counts prompts across the execution's separate connections.
 	pub remote_permission_calls: std::sync::atomic::AtomicUsize,
-	pub remote_permission_products: Mutex<Vec<(String, ProductExecutionKind)>>,
+	pub remote_permission_products: Mutex<Vec<(ProductId, ProductExecutionKind)>>,
 	/// Counts device permission prompts.
 	pub device_permission_calls: std::sync::atomic::AtomicUsize,
 }
@@ -247,11 +247,11 @@ impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, _detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push(marker);
 	}
-	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
+	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
 			.lock()
 			.expect("worker demand mutex poisoned")
-			.push((product_id, transition));
+			.push((product_id.into(), transition));
 	}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
@@ -410,12 +410,12 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn begin_operation(
 		&self,
-		_product_id: String,
+		_product_id: ProductId,
 		_label: String,
 	) -> Result<u32, HostRejection> {
 		Ok(1)
 	}
-	async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
 		Ok(())
 	}
 }
@@ -581,7 +581,7 @@ pub fn native_execution_config(
 	product_id: &str,
 	execution_kind: ProductExecutionKind,
 ) -> ProductExecutionConfig {
-	ProductExecutionConfig { product_id: product_id.to_string(), execution_kind }
+	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
 }
 
 pub fn native_product_execution(
@@ -811,6 +811,32 @@ fn process_runtime_counts_worker_references_per_product() {
 	);
 }
 
+/// Two spellings of one product would otherwise be two workers, and an id no
+/// product runs under would start a worker with nothing to serve.
+#[test]
+fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+
+	host.acquire_worker("Shared.DOT".to_string());
+	host.acquire_worker("shared.dot".to_string());
+	host.acquire_worker("not_a.dot".to_string());
+	host.release_worker("shared.dot".to_string());
+	host.release_worker("SHARED.dot".to_string());
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![
+			("shared.dot".to_string(), WorkerTransition::Start),
+			("shared.dot".to_string(), WorkerTransition::Stop),
+		]
+	);
+}
+
 /// A host removes a card through its own storage, which can take a while,
 /// so the core waits for the answer without holding the thread that asked.
 #[test]
@@ -839,7 +865,7 @@ fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
 		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
 		&platform,
 		&product,
@@ -864,7 +890,7 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
 		vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
 	let events = Arc::new(NativeEventBus::default());
 	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let remove = |card_id: &str| {
 		futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
 			&platform,
@@ -923,7 +949,7 @@ impl NativeGameCallbacks for RecordingGameCallbacks {
 fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	let callbacks = Arc::new(RecordingGameCallbacks::default());
 	let platform = GameCallbackPlatform { game: callbacks.clone() };
-	let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("dim2.dot"));
 
 	futures::executor::block_on(async {
 		crate::platform::GamePlatform::schedule_game_reminder(&platform, &product, 42)
@@ -1118,9 +1144,10 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 fn native_chat_room_subscription_emits_current_then_notified_replacement() {
 	let (callbacks, events, _platform) = event_platform();
 	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let mut stream = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 
 	let first = ready_rooms(stream.as_mut(), "initial room list");
@@ -1166,9 +1193,10 @@ fn native_chat_adapter_forwards_every_message_variant() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let reaction =
 		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
 	// Every variant the protocol advertises reaches the host, so a product
@@ -1230,9 +1258,10 @@ fn native_chat_adapter_forwards_the_alt_of_a_message() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
 		message_type: "results".to_string(),
 		payload: vec![1],
@@ -1270,9 +1299,10 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let connection = crate::runtime::ActionChannel::chat();
 
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1334,9 +1364,10 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
 		Some("cannot render a file card".to_string());
 
@@ -1374,9 +1405,10 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
 		Some("keychain locked".to_string());
 
@@ -1411,9 +1443,10 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let events = Arc::new(NativeEventBus::default());
 	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatRegisterBotRequest {
 		bot_id: "flipper".to_string(),
 		name: "Flipper".to_string(),
@@ -1471,9 +1504,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatCreateRoomRequest {
 		room_id: "support".to_string(),
 		name: "Support".to_string(),
@@ -1539,9 +1573,10 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
@@ -1732,18 +1767,18 @@ fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
 	);
 }
 
+/// The app passes a product id as a string, and UniFFI parses it while
+/// converting the call's arguments, so an execution can only open under a
+/// valid id.
 #[test]
-fn product_execution_config_rejects_empty_product_id() {
-	let err = ProductContext::try_from(ProductExecutionConfig {
-		product_id: " ".to_string(),
-		..native_execution_config("app.dot", ProductExecutionKind::App)
-	})
-	.unwrap_err();
+fn a_product_id_from_the_app_is_parsed_when_the_call_is_converted() {
+	let lift = |product_id: &str| {
+		let mut wire = Vec::new();
+		<String as uniffi::Lower<crate::UniFfiTag>>::write(product_id.to_string(), &mut wire);
+		<ProductId as uniffi::Lift<crate::UniFfiTag>>::try_read(&mut wire.as_slice()).ok()
+	};
 
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid { reason: "product_id must not be empty".to_string() }
-	);
+	assert_eq!((lift("App.DOT"), lift(" ")), (Some(ProductId::for_test("app.dot")), None));
 }
 
 #[test]
@@ -1796,7 +1831,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
@@ -1908,12 +1943,16 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -1955,7 +1994,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
@@ -2069,12 +2108,16 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -2516,7 +2559,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.dot"), ProductExecutionKind::Worker)]),
 		);
 	}
 }
@@ -2538,7 +2581,9 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 				storage_events: Arc::default(),
 			};
 			let review = UserConfirmationReview::IdentityDisclosure(
-				crate::platform::IdentityDisclosureReview { product_id: "product.dot".to_string() },
+				crate::platform::IdentityDisclosureReview {
+					product_id: crate::platform::ProductId::for_test("product.dot"),
+				},
 			);
 			assert_eq!(
 				(

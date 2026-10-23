@@ -56,7 +56,7 @@ enum AppConfig {
             #endif
         }
 
-        static var usernameChain: ChainModel.Id {
+        static var peopleChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewNetPeople
             #elseif NIGHTLY || SAFETYNET

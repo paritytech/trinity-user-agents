@@ -58,6 +58,10 @@ describe("generated-example battery", () => {
         "Game",
         "Game serves only the game product; the truapi runtime tests cover it",
       ],
+      [
+        "Nft Purse",
+        "NFT purses serve two methods so far, and only on a signing host; the truapi runtime tests cover them",
+      ],
     ]);
 
     for (const service of services) {

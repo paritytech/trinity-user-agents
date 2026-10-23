@@ -6,8 +6,7 @@ import UIKit
 import UIKitExt
 import WebKit
 
-/// Builds without the browse tab still reach the SPA through debug settings and deeplinks, so this
-/// controller ships without the browser chrome: no top pills, no collapse, no minimize.
+/// A product shown as a one-shot sheet, without the browser chrome: no top pills, no collapse, no minimize.
 final class SPASimplifiedViewController: UIViewController, ViewHolder {
     typealias RootViewType = SPASimplifiedViewLayout
 
@@ -135,6 +134,10 @@ private extension SPASimplifiedViewController {
             self?.presenter.didInterceptNavigation(to: url)
         }
 
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
+        }
+
         presenter.setup(engine: engine)
     }
 
@@ -143,7 +146,7 @@ private extension SPASimplifiedViewController {
             setTitle(String(localized: .tabBrowse))
         }
 
-        if configuration.showMoreButton, !configuration.isBrowserTab {
+        if configuration.showMoreButton, configuration.presentation == .pushed {
             setupMoreButton()
         }
     }
@@ -175,7 +178,7 @@ private extension SPASimplifiedViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isBrowserTab {
+        if configuration.presentation != .pushed {
             rootView.setupBrowserTabLayout()
         } else if configuration.isRootScreen {
             rootView.setupRootLayout()
