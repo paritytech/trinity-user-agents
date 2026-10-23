@@ -103,7 +103,8 @@ CORE   --- settle_cancel(decision) ---------> WORKER   user answered the offer
 ```
 
 The worker registers one handler per call, as `truapi.renderer.onRender` does: `onQuote`, `onAssign`, `onCancel` and
-`onSettleCancel`.
+`onSettleCancel`. A handler sends its one answer item and nothing after; the core ends the call once it has it, since a
+frame ending the call could overtake the item on a host that handles a connection's frames concurrently.
 
 ### `assign`
 
