@@ -248,6 +248,34 @@ struct SPARustRuntimeTests {
         #expect(telemetry == nil)
     }
 
+    @Test func nativeHostTelemetryUsesCanonicalRuntimeMetadata() throws {
+        let telemetry = try #require(
+            NativeHostTelemetry.current(
+                hostSessionId: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
+                enabled: true
+            )
+        )
+        let operatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+
+        #expect(telemetry.osVersion == NativeHostTelemetry.plainOSVersion(operatingSystemVersion))
+        #expect(!telemetry.osVersion.hasPrefix("Version "))
+        #expect(!telemetry.osVersion.contains("Build"))
+        #expect(telemetry.truapiHostVersion == truapiHostVersion())
+    }
+
+    @Test func plainOSVersionOmitsOnlyAnEmptyPatchComponent() {
+        #expect(
+            NativeHostTelemetry.plainOSVersion(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 0)
+            ) == "26.5"
+        )
+        #expect(
+            NativeHostTelemetry.plainOSVersion(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 1)
+            ) == "26.5.1"
+        )
+    }
+
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {
         let handler = try DirectURLNavigationDecisionHandler(
             baseURL: #require(URL(string: "http://localhost:3000"))
