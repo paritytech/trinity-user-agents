@@ -203,9 +203,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
+        // The contacts are those the chat product syncs (`publishContacts`): it runs the person chats.
         let contactsBridge = AppContactsHostBridge(
-            repositoryFactory: ChatContactRepositoryFactory(),
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
+            source: ProductChatContacts.shared,
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
@@ -220,25 +220,22 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         runtime.setCallMedia(callMedia)
         // The call buttons of a product room open the outgoing call screen through it.
         RootDependencyLocator.setDependency(callMedia as ProductOutgoingCalling)
-        if PersonChatMode.isProductChat {
-            let voipCalls = ProductVoIPCalls.shared
-            voipCalls.watchAnswers(of: VoIPCallKitManager.shared, publisher: roomEvents)
-            voipCalls.watchRoomCalls(of: ChatRoomCallStore.shared, callKit: VoIPCallKitManager.shared)
-            voipCalls.wakeWorker { [weak self] call in
-                await self?.attachedWorkerManager?.wake(call.productId, reason: .notification(roomId: call.roomId))
-            }
+        let voipCalls = ProductVoIPCalls.shared
+        voipCalls.watchAnswers(of: VoIPCallKitManager.shared, publisher: roomEvents)
+        voipCalls.watchRoomCalls(of: ChatRoomCallStore.shared, callKit: VoIPCallKitManager.shared)
+        voipCalls.wakeWorker { [weak self] call in
+            await self?.attachedWorkerManager?.wake(call.productId, reason: .notification(roomId: call.roomId))
         }
         let migration = ProductChatMigration()
         runtime.setPersonChat(AppPersonChatHostBridge(chainRegistry: chainRegistry, migration: migration))
         Task { [weak runtime] in
-            await migration.start(productChat: PersonChatMode.isProductChat) { secret in
+            await migration.start { secret in
                 guard let runtime else { return false }
                 return try await runtime.importChatDeviceKey(secret)
             }
         }
         contactsChangeNotifier = ContactsChangeNotifier(
-            dataProviderFactory: ChatContactDataProviderFactory(),
-            logger: logger,
+            source: ProductChatContacts.shared,
             onSnapshot: { [weak contactsBridge] contacts in
                 contactsBridge?.update(contacts: contacts)
             },

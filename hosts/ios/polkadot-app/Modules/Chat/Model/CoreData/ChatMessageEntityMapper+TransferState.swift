@@ -9,7 +9,8 @@ enum TransferStateRowError: Error {
     case invalidActualValue(String)
 }
 
-/// Row layout shared by the message mapper (read) and `TransferStateCoreDataStore` (write).
+/// Row layout of the transfer states the native chat wrote. Read only, by the message mapper, for the migration to the
+/// chat product (``NativeChatPaymentReader``).
 enum TransferStateRows {
     static func state(of entity: CDChatMessage) throws -> Chat.LocalMessage.Content.Transfer.State? {
         guard let status = Chat.LocalMessage.Status(rawValue: entity.status) else {
@@ -35,24 +36,6 @@ enum TransferStateRows {
             throw TransferStateRowError.unknownStatus(row.status)
         }
         return try OutgoingTransferState(status: status, actualValue: balance(from: row.actualValue))
-    }
-
-    static func apply(_ state: IncomingTransferState, to row: CDIncomingTransferState) {
-        row.status = state.status.rawValue
-        row.actualValue = state.actualValue.map { String($0) }
-    }
-
-    static func apply(_ state: OutgoingTransferState, to row: CDOutgoingTransferState) {
-        row.status = state.status.rawValue
-        row.actualValue = state.actualValue.map { String($0) }
-    }
-
-    static func isUnchanged(_ row: CDIncomingTransferState, comparedTo state: IncomingTransferState) -> Bool {
-        row.status == state.status.rawValue && row.actualValue == state.actualValue.map { String($0) }
-    }
-
-    static func isUnchanged(_ row: CDOutgoingTransferState, comparedTo state: OutgoingTransferState) -> Bool {
-        row.status == state.status.rawValue && row.actualValue == state.actualValue.map { String($0) }
     }
 }
 

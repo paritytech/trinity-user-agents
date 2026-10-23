@@ -2,47 +2,16 @@ import Foundation
 import SubstrateSdk
 import AsyncExtensions
 
+/// The contacts of the chat product that the chat list shows, without the requests that wait for the user (HX2).
 final class RecentChatsProvider {
     private let chatProvider: ChatContactDataProviderMaking
-    /// The chat product runs the person chats: its contacts are the recent chats (HX2).
-    private let productChat: Bool
 
-    init(
-        chatProvider: ChatContactDataProviderMaking,
-        productChat: Bool = false
-    ) {
+    init(chatProvider: ChatContactDataProviderMaking) {
         self.chatProvider = chatProvider
-        self.productChat = productChat
     }
 
     func subscribe() -> AnyAsyncSequence<[SearchRow<ContactSearchPayload>]> {
-        guard !productChat else {
-            return subscribeProductContacts()
-        }
-
-        return chatProvider.subscribeChatsWithPredicate(NSPredicate.chatWithNonBlockedContact())
-            .map { chats in
-                chats.compactMap { chat -> SearchRow<ContactSearchPayload>? in
-                    guard case let .person(contact) = chat.peer, !contact.hasIncomingChatRequest else {
-                        return nil
-                    }
-
-                    return SearchRow(
-                        accountId: contact.accountId,
-                        username: Username(value: contact.username),
-                        matchTerms: [contact.username],
-                        payload: .local(contact)
-                    )
-                }
-            }
-            .eraseToAnyAsyncSequence()
-    }
-}
-
-private extension RecentChatsProvider {
-    /// The contacts of the chat product that the chat list shows, without the requests that wait for the user.
-    func subscribeProductContacts() -> AnyAsyncSequence<[SearchRow<ContactSearchPayload>]> {
-        chatProvider.subscribeChatsWithPredicate(.listedChats(productChat: true))
+        chatProvider.subscribeChatsWithPredicate(.listedChats())
             .map { chats in
                 chats.compactMap { chat -> SearchRow<ContactSearchPayload>? in
                     guard

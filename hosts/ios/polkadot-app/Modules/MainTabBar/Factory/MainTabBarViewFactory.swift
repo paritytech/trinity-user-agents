@@ -25,7 +25,6 @@ enum MainTabBarViewFactory {
         let storageFacade = UserDataStorageFacade.shared
         let flowState = createFlowState(
             serviceCoordinator: serviceCoordinator,
-            storageFacade: storageFacade,
             userNotificationService: userNotificationService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
             spaFlowState: spaFlowState
@@ -99,30 +98,14 @@ enum MainTabBarViewFactory {
 
     private static func createFlowState(
         serviceCoordinator: ServiceCoordinatorProtocol,
-        storageFacade: StorageFacadeProtocol,
         userNotificationService: UserNotificationServicing,
         foregroundVisibilityReporter: PushForegroundVisibilityReporting?,
         spaFlowState: SPAFlowState
     ) -> ChatFlowState {
-        let contactsRepository = storageFacade.createRepository(
-            filter: nil,
-            sortDescriptors: [],
-            mapper: AnyCoreDataMapper(ChatContactMapper())
-        )
-
-        let messageDecoder = ChatPushMessageCoder(encryptionManager: ChatEncryptionManager())
-        let notificationsCleaner = PushNotificationsCleaner(
-            notificationService: userNotificationService,
-            contactRepository: AnyDataProviderRepository(contactsRepository),
-            messageDecoder: messageDecoder
-        )
+        let notificationsCleaner = PushNotificationsCleaner(notificationService: userNotificationService)
 
         let flowState = ChatFlowState(
             extensionsRegistry: serviceCoordinator.chatExtensionsRegistry,
-            callCoordinator: serviceCoordinator.callCoordinator,
-            outboxService: serviceCoordinator.chatCoordinator.outboxService,
-            attachmentUploadStateProvider: serviceCoordinator.attachmentUploadService,
-            attachmentDownloadStateProvider: serviceCoordinator.attachmentDownloadService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
             audioSessionManager: serviceCoordinator.audioSessionManager,
             notificationsCleaner: notificationsCleaner,
@@ -149,8 +132,7 @@ enum MainTabBarViewFactory {
     ) -> URLHandlingService {
         let chatService = ChatOpenService(
             storageFacade: storageFacade,
-            moduleNavigator: moduleNavigator,
-            remoteContactResolver: RemoteContactOperationFactory()
+            moduleNavigator: moduleNavigator
         )
         #if FEATURE_SIGN_IN
             let signInHandler: [URLHandlingServiceProtocol] = [polkadotSignInService]

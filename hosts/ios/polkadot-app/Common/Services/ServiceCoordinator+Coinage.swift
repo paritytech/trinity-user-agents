@@ -57,9 +57,7 @@ extension ServiceCoordinator {
             claimCoinsService: coinageService.claimCoinsService,
             transferStatusService: coinageService.transferStatusService,
             denominationContext: { try await coinageService.denominationContext() },
-            transferStateStore: TransferStateCoreDataStore(storageFacade: UserDataStorageFacade.shared),
-            productPayments: ProductChatPayments.shared,
-            storageFacade: UserDataStorageFacade.shared
+            productPayments: ProductChatPayments.shared
         )
 
         let backupSyncService = CoinageBackupSyncService(

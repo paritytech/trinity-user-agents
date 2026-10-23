@@ -42,7 +42,7 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
         chatMetadata: ChatMetadata
     ) {
         guard
-            let accountId = chatMetadata.chatId.accountId ?? chatMetadata.roomPolicy?.contact?.account,
+            let accountId = chatMetadata.roomPolicy?.contact?.account,
             let destination = TransferAmountViewFactory.createChatTransfer(
                 for: chainAsset,
                 recipient: .init(accountId: accountId, username: chatMetadata.peerMetadata.name),
@@ -71,24 +71,6 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
         )
 
         present(viewModel: viewModel, style: .alert, from: view)
-    }
-
-    func showCall(
-        from _: ControllerBackedProtocol?,
-        chatMetadata: ChatMetadata,
-        callType: ChatCallType
-    ) {
-        guard case let .person(accountId) = chatMetadata.chatId else {
-            return
-        }
-
-        flowState.callCoordinator.initiateCall(
-            with: CallPeer(
-                name: chatMetadata.peerMetadata.name,
-                accountId: accountId
-            ),
-            callType: callType
-        )
     }
 
     func makeContactActionsMenu(
@@ -257,7 +239,7 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard chatMetadata.chatId.isPerson || chatMetadata.roomPolicy?.contact != nil else {
+        guard chatMetadata.roomPolicy?.contact != nil else {
             return
         }
 
@@ -277,7 +259,7 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard chatMetadata.chatId.isPerson || chatMetadata.roomPolicy?.contact != nil else {
+        guard chatMetadata.roomPolicy?.contact != nil else {
             return
         }
 

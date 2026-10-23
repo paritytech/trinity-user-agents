@@ -75,6 +75,11 @@ final class ProductContactChatOpener {
     }
 }
 
+protocol BlockUserServicing {
+    func blockUser(accountId: AccountId) async throws
+    func unblockUser(accountId: AccountId) async throws
+}
+
 /// Blocks and unblocks a contact of the chat product from the screens outside its room, as the blocked users of the
 /// settings do in the native chat. The room of the contact gets the action of the user (`Block`, `Unblock`).
 final class ProductContactBlocking: BlockUserServicing, @unchecked Sendable {

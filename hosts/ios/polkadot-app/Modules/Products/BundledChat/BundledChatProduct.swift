@@ -7,16 +7,6 @@ import Products
 /// verbosity repository). It is installed where a hand-installed worker lives, so the
 /// resolver serves it for `chat.<tld>` until a verified dotNS release replaces it.
 enum BundledChatProduct {
-    /// Whether this build runs workers on the core runtime, which the chat product needs for `PersonChat`. The chat
-    /// product runs there whatever the runtime setting of other products says; a build without it places no chat.
-    static var coreRuntimeAvailable: Bool {
-        #if FEATURE_PRODUCTS
-            true
-        #else
-            false
-        #endif
-    }
-
     enum InstallError: Error {
         case missingResource(String)
         case digestMismatch(expected: String, actual: String)

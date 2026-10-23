@@ -22,50 +22,6 @@ protocol TransferSubmitting {
     ) async throws
 }
 
-final class ContactChatSubmitter: TransferSubmitting {
-    private let chatContactsProvider: ContactsLocalStorageServicing
-    private let createMessageFactory: LocalMessageCreatingOperationMaking
-    private let messageStore: ChatMessageTransactionalStoring
-    private let logger: SDKLoggerProtocol?
-
-    init(
-        chatContactsProvider: ContactsLocalStorageServicing,
-        createMessageFactory: LocalMessageCreatingOperationMaking,
-        messageStore: ChatMessageTransactionalStoring,
-        logger: SDKLoggerProtocol? = nil
-    ) {
-        self.chatContactsProvider = chatContactsProvider
-        self.createMessageFactory = createMessageFactory
-        self.messageStore = messageStore
-        self.logger = logger
-    }
-
-    func sendTransfer(
-        _ memo: TransferMemo,
-        to recipient: AccountId,
-        messageId: Chat.MessageId,
-        onSaved: @escaping (any DurableTxRegistrationScope) throws -> Void
-    ) async throws {
-        let optContact = try await chatContactsProvider.getContact(by: recipient).asyncExecute()
-
-        guard let contact = optContact.flatMap({ $0 }) else {
-            logger?.error("No chat contact for \(recipient.toHex()) — the memo has nowhere to go")
-
-            throw TransferSubmitterError.noChatContact
-        }
-
-        let message = createMessageFactory.transferMessage(
-            to: Chat.Id.person(contact.accountId),
-            memo: memo,
-            messageId: messageId
-        )
-
-        // The message row is what carries the keys, so its transaction is where the handoff becomes
-        // final and the payment's transactions are registered.
-        try await messageStore.save(message, onSaved: onSaved)
-    }
-}
-
 enum TransferSubmitterError: Error {
     /// The recipient has no chat contact, so no message can carry the memo.
     case noChatContact

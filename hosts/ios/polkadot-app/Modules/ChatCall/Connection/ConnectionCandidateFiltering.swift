@@ -8,13 +8,3 @@ import Foundation
 protocol ConnectionCandidateFiltering {
     func shouldAccept(_ candidate: PeerConnectionCandidate) -> Bool
 }
-
-/// Drops candidates with TCP transport and `typ host`. They almost never succeed across
-/// NAT (both peers would need to accept inbound TCP), yet on devices with many network
-/// interfaces they make up ~50% of generated candidates and inflate ICE pair counts
-/// quadratically.
-struct TcpHostCandidateFilter: ConnectionCandidateFiltering {
-    func shouldAccept(_ candidate: PeerConnectionCandidate) -> Bool {
-        !candidate.isTCPHost
-    }
-}

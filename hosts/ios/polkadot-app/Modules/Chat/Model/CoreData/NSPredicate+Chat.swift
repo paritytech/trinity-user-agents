@@ -14,18 +14,11 @@ extension NSPredicate {
         )
     }
 
-    /// The chats the chat list shows. While the chat product runs the chats, the native chat's person chats are not
-    /// listed (HX2).
-    static func listedChats(productChat: Bool) -> NSPredicate {
-        guard productChat else { return chatWithNonBlockedContact() }
+    /// The chats the chat list shows. The chat product runs the person chats, so the person chats the native chat
+    /// left behind (kept only for the migration to the product) are not listed (HX2).
+    static func listedChats() -> NSPredicate {
         let notPerson = NSPredicate(format: "%K != %d", #keyPath(CDChat.chatType), Chat.Id.ChatType.person.rawValue)
         return NSCompoundPredicate(andPredicateWithSubpredicates: [chatWithNonBlockedContact(), notPerson])
-    }
-
-    static func chatWithContact(for accountId: AccountId) -> NSPredicate {
-        let chatContactId = Chat.Id.person(accountId)
-
-        return NSPredicate(format: "%K == %@", #keyPath(CDChat.identifier), chatContactId.rawRepresentation)
     }
 
     static func roomChatsForExtension(_ extensionId: ChatExtension.Id) -> NSPredicate {
@@ -47,20 +40,5 @@ extension NSPredicate {
         )
 
         return NSCompoundPredicate(andPredicateWithSubpredicates: [extensionType, extensionMatch, hasRoom])
-    }
-
-    static func chatWithActiveIncomingRequests() -> NSPredicate {
-        let attachedRequestPredicate = NSPredicate(format: "%K != nil", #keyPath(CDChat.contact.chatRequest))
-
-        let personTypePredicate = NSPredicate(
-            format: "%K == %d",
-            #keyPath(CDChat.chatType),
-            Chat.Id.ChatType.person.rawValue
-        )
-
-        return NSCompoundPredicate(andPredicateWithSubpredicates: [
-            personTypePredicate,
-            attachedRequestPredicate
-        ])
     }
 }

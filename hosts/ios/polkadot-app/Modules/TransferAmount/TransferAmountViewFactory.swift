@@ -198,24 +198,13 @@ enum TransferAmountViewFactory {
     }
 
     private static func makeContactChatSubmitter(productRoom: ProductPaymentRoom? = nil) -> TransferSubmitting {
-        if PersonChatMode.isProductChat {
-            let contacts = ProductContactSearch()
-            return ProductChatSubmitter(
-                room: productRoom,
-                contactRoom: { account in
-                    try await contacts.contacts().first { $0.accountId == account }?.chatId.productPaymentRoom
-                },
-                payments: .shared,
-                logger: Logger.shared
-            )
-        }
-
-        return ContactChatSubmitter(
-            chatContactsProvider: ContactsLocalStorageService(),
-            createMessageFactory: LocalMessageCreatingOperationFactory(
-                messagesStorageService: MessagesLocalStorageService()
-            ),
-            messageStore: ChatMessageTransactionalStore(storageFacade: UserDataStorageFacade.shared),
+        let contacts = ProductContactSearch()
+        return ProductChatSubmitter(
+            room: productRoom,
+            contactRoom: { account in
+                try await contacts.contacts().first { $0.accountId == account }?.chatId.productPaymentRoom
+            },
+            payments: .shared,
             logger: Logger.shared
         )
     }

@@ -65,9 +65,7 @@ private extension ContactsListInteractor {
 
     func subscribeForChanges() {
         task = Task { [weak self, chatContactDataProviderFactory, chatExtensionsRegistry, logger] in
-            let chatsStream = chatContactDataProviderFactory.subscribeChatsWithPredicate(
-                .listedChats(productChat: PersonChatMode.isProductChat)
-            )
+            let chatsStream = chatContactDataProviderFactory.subscribeChatsWithPredicate(.listedChats())
             let extensionChanges = chatExtensionsRegistry.onChangeStream
 
             var latestChats: [Chat.LocalModel] = []
@@ -102,16 +100,9 @@ private extension ContactsListInteractor {
 
         chats.forEach { chat in
             switch chat.peer {
-            case let .person(contact) where contact.hasIncomingChatRequest:
-                pendingIncomingRequestCount += 1
-
-                if
-                    contact.hasNewIncomingChatRequest {
-                    newIncomingRequestCount += 1
-                }
-
             case .person:
-                nonIncomingRequestChats.append(chat.chatWithPeerMetadata(using: chatExtensionsRegistry))
+                // The list holds no person chat of the native chat: the chat product runs them (HX2).
+                break
 
             case let .chatExtension(extId, _):
                 guard chatExtensionsRegistry.hasChatExtension(for: extId) else {

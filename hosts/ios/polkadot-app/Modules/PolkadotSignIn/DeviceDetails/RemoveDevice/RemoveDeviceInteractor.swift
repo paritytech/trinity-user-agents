@@ -8,18 +8,15 @@ final class RemoveDeviceInteractor {
 
     private let localDeviceRepository: AnyDataProviderRepository<Chat.LocalDevice>
     private let serviceCoordinator: ServiceCoordinatorProtocol
-    private let deviceMessageBroadcaster: DeviceMessageBroadcasting
     private let logger: LoggerProtocol
 
     init(
         localDeviceRepository: AnyDataProviderRepository<Chat.LocalDevice>,
         serviceCoordinator: ServiceCoordinatorProtocol,
-        deviceMessageBroadcaster: DeviceMessageBroadcasting,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.localDeviceRepository = localDeviceRepository
         self.serviceCoordinator = serviceCoordinator
-        self.deviceMessageBroadcaster = deviceMessageBroadcaster
         self.logger = logger
     }
 }
@@ -31,9 +28,6 @@ extension RemoveDeviceInteractor: RemoveDeviceInteractorInputProtocol {
                 guard let self else { return }
 
                 let statementAccountId = try Data(hexString: identifier)
-                try await deviceMessageBroadcaster.broadcastDeviceRemoved(
-                    statementAccountId: statementAccountId
-                )
 
                 logger.debug("Disconnecting host for device \(identifier)...")
                 try await serviceCoordinator.signInHostCoordinator.disconnectHost(

@@ -3,13 +3,12 @@ import BigInt
 import CoreData
 import Foundation
 import FoundationExt
-import Operation_iOS
 import SubstrateSdk
 
 @testable import polkadot_app
 
-/// A person chat on an in-memory user store with a transfer state store and a message snapshot,
-/// so store and monitor tests exercise the real mapper, predicates and touch path.
+/// The payments of a room of the chat product on an in-memory user store, so monitor tests exercise the real payment
+/// store and the state events the rooms read.
 final class TransferStateTestWorld {
     enum Direction {
         case incoming
@@ -17,78 +16,71 @@ final class TransferStateTestWorld {
     }
 
     let facade = UserDataStorageTestFacade()
-    let chatManager: TestChatManager
-    let store: TransferStateCoreDataStore
-    let messageProviderFactory: ChatMessageDataProviderFactory
-    private let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
+    let store: ProductChatPaymentStore
+    let payments: ProductChatPayments
 
     init(dateProvider: any DateProviding = NowDateProvider()) {
-        chatManager = TestChatManager(peer: MockChatPeer.person(), facade: facade)
-        store = TransferStateCoreDataStore(storageFacade: facade, dateProvider: dateProvider)
-        messageRepository = ChatMessageRepositoryFactory(storageFacade: facade).createRepository(forFilter: nil)
-        messageProviderFactory = ChatMessageDataProviderFactory(
-            repositoryFactory: ChatMessageRepositoryFactory(storageFacade: facade),
-            operationQueue: OperationQueue(),
-            logger: Logger.shared
+        store = ProductChatPaymentStore(storageFacade: facade, dateProvider: dateProvider)
+        payments = ProductChatPayments(
+            store: store,
+            delivery: ProductQueryingDelivery(querying: ScriptedProductChatQuerying()),
+            worker: NoProductHopUploads(),
+            logger: StubLogger()
         )
     }
 
-    func setup() async throws {
-        try await chatManager.setup()
-    }
-
+    /// A payment the product has, with no state yet, as a payment of a contact waits for its first claim.
     @discardableResult
     func saveTransfer(
         _ direction: Direction,
         totalValue: Balance = 10,
         coinKeys: [Data] = [Data(repeating: 0x07, count: 32)]
-    ) async throws -> Chat.LocalMessage {
-        let content = Chat.LocalMessage.Content.Transfer(totalValue: totalValue, coinKeys: coinKeys)
-        let status: Chat.LocalMessage.Status =
-            switch direction {
-            case .incoming: .incoming(.new)
-            case .outgoing: .outgoing(.sent)
+    ) async throws -> ProductChatPayment {
+        let payment = ProductChatPayment(
+            messageId: UUID().uuidString,
+            productId: "chat.dot",
+            roomId: "dm-01",
+            incoming: direction == .incoming,
+            timestamp: 1,
+            totalValue: totalValue,
+            coinKeys: coinKeys,
+            delivery: .delivered,
+            state: nil
+        )
+        try await payments.adopt([AdoptedChatPayment(payment: payment, firstAttemptAt: nil)])
+        return payment
+    }
+
+    func transfer(_ messageId: Chat.MessageId) async throws -> ProductChatPayment? {
+        try await store.payments().first { $0.messageId == messageId }
+    }
+
+    /// The state of `messageId` now and after each change the rooms see, a repeated state once.
+    func stateStream(of messageId: Chat.MessageId) async -> AsyncStream<Chat.LocalMessage.Content.Transfer.State?> {
+        let events = await payments.events()
+        let current = try? await transfer(messageId)?.state
+
+        return AsyncStream { continuation in
+            let task = Task {
+                var last = current
+                continuation.yield(current)
+                for await event in events {
+                    guard case let .state(id, state) = event, id == messageId, state != last else { continue }
+                    last = state
+                    continuation.yield(state)
+                }
+                continuation.finish()
             }
-        return try await chatManager.sendMessage(.coinageSend(content), status: status)
-    }
-
-    func transfer(_ messageId: Chat.MessageId) async throws -> Chat.LocalMessage.Content.Transfer? {
-        let message = try await messageRepository
-            .fetchOperation(by: { messageId }, options: RepositoryFetchOptions())
-            .asyncExecute()
-        guard case let .coinageSend(transfer)? = message?.content else { return nil }
-        return transfer
-    }
-
-    func deleteMessage(_ messageId: Chat.MessageId) async throws {
-        try await messageRepository.saveOperation({ [] }, { [messageId] }).asyncExecute()
-    }
-
-    /// The transfer state of `messageId` on every chat snapshot, in order.
-    func stateStream(of messageId: Chat.MessageId) -> AnyAsyncSequence<Chat.LocalMessage.Content.Transfer.State?> {
-        messageProviderFactory
-            .subscribeChatMessages(chatManager.chatId)
-            .compactMap { messages -> Chat.LocalMessage.Content.Transfer.State?? in
-                guard let message = messages.first(where: { $0.messageId == messageId }),
-                      case let .coinageSend(transfer) = message.content
-                else { return nil }
-                return .some(transfer.state)
-            }
-            .eraseToAnyAsyncSequence()
-    }
-
-    func incomingRowCount() async throws -> Int {
-        try await facade.databaseService.performRead { context in
-            try context.count(for: NSFetchRequest<CDIncomingTransferState>(entityName: "CDIncomingTransferState"))
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }
 
-extension AnyAsyncSequence where Element: Equatable {
+extension AsyncStream where Element: Equatable {
     /// Elements up to and including the first one satisfying `predicate`.
-    func collect(until predicate: @escaping (Element) -> Bool) async throws -> [Element] {
+    func collect(until predicate: @escaping (Element) -> Bool) async -> [Element] {
         var collected: [Element] = []
-        for try await element in self {
+        for await element in self {
             collected.append(element)
             if predicate(element) { break }
         }

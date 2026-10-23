@@ -159,8 +159,7 @@ private extension ChatPushPreview {
     }
 }
 
-/// The title and the text of the notification of each kind of message, with the strings of the native chat
-/// (`NewMessageHandler`).
+/// The title and the text of the notification of each kind of message, with the strings the native chat used.
 struct ProductPushWording {
     let username: String
 

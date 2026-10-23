@@ -14,7 +14,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
     private let historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>
     private let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     private let messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>
-    private let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
     private let logger: LoggerProtocol
 
     init(
@@ -24,7 +23,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
         historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>,
         messageRepository: AnyDataProviderRepository<Chat.LocalMessage>,
         messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>,
-        attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>,
         logger: LoggerProtocol
     ) {
         self.chatId = chatId
@@ -33,7 +31,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
         self.historyRepository = historyRepository
         self.messageRepository = messageRepository
         self.messageStatusUpdateRepository = messageStatusUpdateRepository
-        self.attachmentsUpdateRepository = attachmentsUpdateRepository
         self.logger = logger
     }
 
@@ -48,7 +45,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
             chatId: chatId,
             initialHistory: chatProcessingHistory,
             messageRepository: messageRepository,
-            attachmentsUpdateRepository: attachmentsUpdateRepository,
             processingHistoryRepository: historyRepository,
             logger: logger
         )

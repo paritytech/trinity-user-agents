@@ -4,7 +4,6 @@ import SubstrateSdk
 
 enum PushForegroundVisibleScreen: Equatable {
     case chatList
-    case chat(accountId: AccountId)
     /// A room of a chat extension or of a product. `roomId` is nil for the single room of a chat extension.
     case chatExtension(extensionId: ChatExtension.Id, roomId: String?)
     case other
@@ -30,8 +29,6 @@ extension PushForegroundPresentationController: PushForegroundVisibilityReportin
 
     func isChatVisible(for id: Chat.Id) -> Bool {
         switch (id, visibleScreen) {
-        case let (.person(accountId), .chat(activeChatAccountId)):
-            accountId == activeChatAccountId
         case let (.chatExtension(extensionId, roomId), .chatExtension(activeExtensionId, activeRoomId)):
             // A chat extension notification names no room: any room of the extension on screen shows it.
             extensionId == activeExtensionId && (roomId == nil || roomId == activeRoomId)
@@ -78,12 +75,6 @@ private extension PushForegroundPresentationController {
             return true
         case .chatList:
             return false
-        case let .chat(activeAccountId):
-            guard let accountId = userInfo[PushNotificationKeys.accountId] as? Data else {
-                return true
-            }
-
-            return accountId != activeAccountId
         case let .chatExtension(activeExtensionId, _):
             guard let extensionId = userInfo[PushNotificationKeys.chatExtensionId] as? ChatExtension.Id else {
                 return true
@@ -101,8 +92,7 @@ private extension PushForegroundPresentationController {
             false
         case let .chatExtension(extensionId, visibleRoomId):
             extensionId != productId || visibleRoomId != roomId
-        case .chat,
-             .other:
+        case .other:
             true
         }
     }

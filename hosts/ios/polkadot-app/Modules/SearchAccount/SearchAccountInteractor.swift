@@ -16,7 +16,6 @@ final class SearchAccountInteractor {
         RecentContactModelWithUsername,
         ContactSearchPayload
     >
-    private let chatOpenResolver: ChatOpenModelResolving
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
@@ -32,13 +31,11 @@ final class SearchAccountInteractor {
             RecentContactModelWithUsername,
             ContactSearchPayload
         >,
-        chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
         logger: LoggerProtocol,
         fundingDomainProvider: FundingDomainProviding
     ) {
         self.accountSearching = accountSearching
-        self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
         self.fundingDomainProvider = fundingDomainProvider
@@ -89,13 +86,9 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
 
         guard let contact else { return }
 
-        Task { [weak self, chatOpenResolver] in
-            do {
-                let model = try await chatOpenResolver.resolveOpenModel(for: contact)
-                await self?.presenter?.didResolveChat(model)
-            } catch {
-                await self?.presenter?.didReceiveSearchError(message: error.localizedDescription)
-            }
+        // The chat product opens the chat with the account, a contact or not (HX2).
+        Task { [weak self] in
+            await self?.presenter?.didResolveChat(.existingChat(.person(contact.accountId)))
         }
     }
 

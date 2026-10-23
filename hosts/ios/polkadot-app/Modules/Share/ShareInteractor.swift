@@ -5,7 +5,6 @@ final class ShareInteractor {
     weak var presenter: ShareInteractorOutputProtocol?
 
     private let chatContactDataProviderFactory: ChatContactDataProviderMaking
-    private let messageSender: LocalMessageCreatingOperationMaking
     private let composer: ShareContentComposing
     private let productRooms: ShareProductRoomsProviding?
     private let logger: LoggerProtocol
@@ -15,13 +14,11 @@ final class ShareInteractor {
 
     init(
         chatContactDataProviderFactory: ChatContactDataProviderMaking,
-        messageSender: LocalMessageCreatingOperationMaking,
         composer: ShareContentComposing,
         productRooms: ShareProductRoomsProviding? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
-        self.messageSender = messageSender
         self.composer = composer
         self.productRooms = productRooms
         self.logger = logger
@@ -37,19 +34,10 @@ extension ShareInteractor: ShareInteractorInputProtocol {
     func setup() {
         subscriptionTask = Task { [weak self, chatContactDataProviderFactory, productRooms, logger] in
             do {
-                let stream = chatContactDataProviderFactory.subscribeChatsWithPredicate(
-                    .listedChats(productChat: PersonChatMode.isProductChat)
-                )
+                let stream = chatContactDataProviderFactory.subscribeChatsWithPredicate(.listedChats())
                 for try await chats in stream {
-                    let targets = chats.compactMap { chat -> ChatWithPeerMetadata? in
-                        switch chat.peer {
-                        case let .person(contact):
-                            guard contact.isReadyForMessaging else { return nil }
-                            return ChatWithPeerMetadata(chat: chat, peerMetadata: contact.toPeerMetadata().list)
-                        case .chatExtension:
-                            return productRooms?.target(for: chat)
-                        }
-                    }
+                    // The rooms of the chat product are the person chats (HX2).
+                    let targets = chats.compactMap { productRooms?.target(for: $0) }
                     await self?.presenter?.didReceive(chats: targets)
                 }
             } catch {
@@ -63,7 +51,7 @@ extension ShareInteractor: ShareInteractorInputProtocol {
         guard !chatIds.isEmpty else { return }
 
         sendTask?.cancel()
-        sendTask = Task { [weak self, messageSender, composer, productRooms, logger] in
+        sendTask = Task { [weak self, composer, productRooms, logger] in
             await self?.presenter?.didReceive(isLoading: true)
 
             let content = composer.compose(items: items, userMessage: userMessage)
@@ -71,11 +59,12 @@ extension ShareInteractor: ShareInteractorInputProtocol {
                 try await withThrowingTaskGroup(of: Void.self) { group in
                     for chatId in chatIds {
                         group.addTask {
-                            if case .chatExtension = chatId, let productRooms, case let .text(text) = content {
-                                try await productRooms.send(text: text, to: chatId)
-                            } else {
-                                try await messageSender.send(content: content, to: chatId)
+                            // A product room takes a shared text only; anything else is refused, not sent
+                            // another way.
+                            guard let productRooms, case let .text(text) = content else {
+                                throw ShareProductRoomError.unsupportedContent
                             }
+                            try await productRooms.send(text: text, to: chatId)
                         }
                     }
                     try await group.waitForAll()

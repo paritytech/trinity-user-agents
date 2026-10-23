@@ -10,9 +10,11 @@ protocol ShareProductRoomsProviding: AnyObject, Sendable {
     func send(text: String, to chatId: Chat.Id) async throws
 }
 
-/// The chat is no room of the chat product.
 enum ShareProductRoomError: Error, Equatable {
+    /// The chat is no room of the chat product.
     case noRoom
+    /// A product room takes a shared text, and nothing else.
+    case unsupportedContent
 }
 
 /// A room is a target when it is the conversation with a contact of the chat product that both sides accepted, as

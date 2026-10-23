@@ -133,7 +133,6 @@ dependencies {
     implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
-    implementation(project(":feature:device-sync:impl"))
     implementation(project(":feature:people:impl"))
     implementation(project(":feature:members:impl"))
     implementation(project(":feature:wallet:impl"))

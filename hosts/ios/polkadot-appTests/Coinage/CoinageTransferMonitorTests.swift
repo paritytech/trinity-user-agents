@@ -4,29 +4,28 @@ import SubstrateSdk
 import Testing
 @testable import polkadot_app
 
-/// The monitor, the store and the chat snapshot together: a scripted claim must reach the message as
-/// one emission per distinct state, a terminal row must keep the monitor away for good, and a runtime
-/// failure must leave the row exactly as the durability layer last reported it.
+/// The monitor, the payment store and the state events together: a scripted claim must reach the room
+/// once per distinct state, a terminal state must keep the monitor away for good, and a runtime
+/// failure must leave the state exactly as the durability layer last reported it.
 @Suite("Coinage transfer monitor", .serialized)
 struct CoinageTransferMonitorTests {
     private let context = DenominationBreakdownContext(unit: 1_000, precision: 3, maxExponent: 10, minExponent: 0)
 
-    @Test("an incoming claim reaches the message once per distinct state")
+    @Test("an incoming claim reaches the room once per distinct state")
     func incomingClaimReachesMessage() async throws {
         let world = TransferStateTestWorld()
-        try await world.setup()
         let message = try await world.saveTransfer(.incoming, totalValue: 10)
         let claims = MockClaimCoinsService(detections: [
             .detecting, .detecting, .claiming, .claimingRest(claimed: 4),
             .claimed(amount: 10, finalized: false), .claimed(amount: 10, finalized: true)
         ])
-        let states = world.stateStream(of: message.messageId)
+        let states = await world.stateStream(of: message.messageId)
 
         let monitor = makeMonitor(world: world, claims: claims)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
-        let seen = try await states.collect { $0 == .incoming(.init(status: .claimed, actualValue: 10)) }
+        let seen = await states.collect { $0 == .incoming(.init(status: .claimed, actualValue: 10)) }
         let distinct = seen.enumerated().filter { $0.offset == 0 || seen[$0.offset - 1] != $0.element }.map(\.element)
 
         #expect(distinct == [
@@ -40,10 +39,9 @@ struct CoinageTransferMonitorTests {
         #expect(claims.calls.first?.groupId == message.messageId)
     }
 
-    @Test("a terminal row keeps the message out of the monitor on the next launch")
+    @Test("a terminal state keeps the payment out of the monitor on the next launch")
     func terminalRowIsNeverReprocessed() async throws {
         let world = TransferStateTestWorld()
-        try await world.setup()
         let message = try await world.saveTransfer(.incoming)
         try await world.store.updateIncoming(
             messageId: message.messageId,
@@ -55,9 +53,8 @@ struct CoinageTransferMonitorTests {
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
-        let candidates = world.messageProviderFactory.subscribeMessages(with: .incomingCoinageSendMessages())
-        for try await messages in candidates {
-            #expect(messages.isEmpty)
+        for await payments in await world.payments.unsettledPayments() {
+            #expect(payments.isEmpty)
             break
         }
         #expect(claims.calls.isEmpty)
@@ -68,7 +65,6 @@ struct CoinageTransferMonitorTests {
     @Test("a runtime failure leaves the last durability-reported state in place")
     func runtimeFailureDoesNotWriteStatus() async throws {
         let world = TransferStateTestWorld()
-        try await world.setup()
         let message = try await world.saveTransfer(.incoming)
         let claims = MockClaimCoinsService(detections: [.claiming], failure: MonitorTestError.chainUnavailable)
         let logger = MockLogger()
@@ -86,7 +82,6 @@ struct CoinageTransferMonitorTests {
     @Test("an outgoing transfer follows the peer's claims to the claimed amount")
     func outgoingFollowsPeerClaims() async throws {
         let world = TransferStateTestWorld()
-        try await world.setup()
         let message = try await world.saveTransfer(.outgoing, totalValue: 10)
         let coin = try makeCoin(exponent: 2)
         let statuses = MockCoinageTransferStatusService(snapshots: [
@@ -95,14 +90,14 @@ struct CoinageTransferMonitorTests {
             [coin.publicKey: CoinageTransferState(coin: coin, status: .awaitingClaim)],
             [coin.publicKey: CoinageTransferState(coin: coin, status: .claimed(finalized: true))]
         ])
-        let states = world.stateStream(of: message.messageId)
+        let states = await world.stateStream(of: message.messageId)
 
         let monitor = makeMonitor(world: world, statuses: statuses)
         await monitor.setup()
         defer { Task { await monitor.throttle() } }
 
         let claimedValue = context.valueInPlanks(for: 2)
-        let seen = try await states.collect { $0 == .outgoing(.init(status: .claimed, actualValue: claimedValue)) }
+        let seen = await states.collect { $0 == .outgoing(.init(status: .claimed, actualValue: claimedValue)) }
         let distinct = seen.enumerated().filter { $0.offset == 0 || seen[$0.offset - 1] != $0.element }.map(\.element)
 
         #expect(distinct == [
@@ -127,9 +122,7 @@ private extension CoinageTransferMonitorTests {
             claimCoinsService: claims,
             transferStatusService: statuses,
             denominationContext: { [context] in context },
-            transferStateStore: world.store,
-            storageFacade: world.facade,
-            operationQueue: OperationQueue(),
+            productPayments: world.payments,
             logger: logger
         )
     }

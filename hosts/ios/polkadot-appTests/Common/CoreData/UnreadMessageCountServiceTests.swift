@@ -7,60 +7,9 @@ import Testing
 @Suite("UnreadMessageCountService")
 struct UnreadMessageCountServiceTests {
     private let facade = UserDataStorageTestFacade()
-    private let alice = Chat.Contact(
-        accountId: Data(repeating: 0x01, count: 32),
-        username: "Alice",
-        publicKey: Data(repeating: 0x02, count: 32),
-        pin: nil,
-        pushId: nil,
-        pushToken: nil,
-        voipPushToken: nil,
-        peerPlatform: nil,
-        lastOwnToken: nil,
-        voipLastOwnToken: nil,
-        chatRequest: nil,
-        ownKeyId: .init(signKeyId: "sign-key", encryptionKeyId: "encryption-key"),
-        imageData: nil,
-        isBlocked: false,
-        devices: [],
-        pendingDevicesFanOut: false
-    )
-    private let bob = Chat.Contact(
-        accountId: Data(repeating: 0x03, count: 32),
-        username: "Bob",
-        publicKey: Data(repeating: 0x04, count: 32),
-        pin: nil,
-        pushId: nil,
-        pushToken: nil,
-        voipPushToken: nil,
-        peerPlatform: nil,
-        lastOwnToken: nil,
-        voipLastOwnToken: nil,
-        chatRequest: nil,
-        ownKeyId: .init(signKeyId: "bob-sign-key", encryptionKeyId: "bob-encryption-key"),
-        imageData: nil,
-        isBlocked: false,
-        devices: [],
-        pendingDevicesFanOut: false
-    )
-    private let charlie = Chat.Contact(
-        accountId: Data(repeating: 0x05, count: 32),
-        username: "Charlie",
-        publicKey: Data(repeating: 0x06, count: 32),
-        pin: nil,
-        pushId: nil,
-        pushToken: nil,
-        voipPushToken: nil,
-        peerPlatform: nil,
-        lastOwnToken: nil,
-        voipLastOwnToken: nil,
-        chatRequest: nil,
-        ownKeyId: .init(signKeyId: "charlie-sign-key", encryptionKeyId: "charlie-encryption-key"),
-        imageData: nil,
-        isBlocked: false,
-        devices: [],
-        pendingDevicesFanOut: false
-    )
+    private let alice: ChatExtension.Id = "alice.dot"
+    private let bob: ChatExtension.Id = "bob.dot"
+    private let charlie: ChatExtension.Id = "charlie.dot"
 
     @Test("counts unread badge messages across chats and excludes reactions and system messages")
     func countsUnreadBadgeMessagesAcrossChatsExcludingReactionsAndSystemMessages() async throws {
@@ -72,6 +21,42 @@ struct UnreadMessageCountServiceTests {
         let count = try await service.totalUnreadBadgeMessageCount()
 
         #expect(count == 3)
+    }
+
+    /// The person chats the native chat left behind belong to the migration: the chat product's rooms carry them.
+    @Test("does not count the person chats of the native chat")
+    func doesNotCountNativePersonChats() async throws {
+        try await seedChats()
+        try await seedMessages()
+        let native = Chat.Contact(
+            accountId: Data(repeating: 0x09, count: 32),
+            username: "Native",
+            publicKey: Data(repeating: 0x0A, count: 32),
+            ownKeyId: .init(signKeyId: "native-sign-key", encryptionKeyId: "native-encryption-key"),
+            isBlocked: false,
+            devices: [],
+            pendingDevicesFanOut: false
+        )
+        try await facade.makeRepo(mapper: ChatContactMapper()).saveOperation({ [native] }, { [] }).asyncExecute()
+        try await chatRepository.saveOperation({ [.newChatWithContact(native)] }, { [] }).asyncExecute()
+        try await messageRepository.saveOperation({
+            [Chat.LocalMessage(
+                messageId: "native-message",
+                chatId: .person(native.accountId),
+                origin: .contact(native.accountId),
+                creationSource: .localDevice,
+                status: .incoming(.new),
+                timestamp: 0,
+                content: .text("native"),
+                reactions: [],
+                compactionId: nil,
+                relatedMessages: []
+            )]
+        }, { [] }).asyncExecute()
+
+        let service = UnreadMessageCountService(databaseService: facade.databaseService)
+
+        #expect(try await service.totalUnreadBadgeMessageCount() == 3)
     }
 
     @Test("counts a notified but unsaved message once")
@@ -100,10 +85,6 @@ struct UnreadMessageCountServiceTests {
 }
 
 private extension UnreadMessageCountServiceTests {
-    var contactRepository: AnyDataProviderRepository<Chat.Contact> {
-        facade.makeRepo(mapper: ChatContactMapper())
-    }
-
     var chatRepository: AnyDataProviderRepository<Chat.LocalModel> {
         facade.makeRepo(mapper: ChatModelMapper())
     }
@@ -113,13 +94,12 @@ private extension UnreadMessageCountServiceTests {
     }
 
     func seedChats() async throws {
-        try await contactRepository.saveOperation({ [alice, bob, charlie] }, { [] }).asyncExecute()
         try await chatRepository
             .saveOperation({
                 [
-                    .newChatWithContact(alice),
-                    .newChatWithContact(bob),
-                    .newChatWithContact(charlie)
+                    .newChatWithExtension(alice),
+                    .newChatWithExtension(bob),
+                    .newChatWithExtension(charlie)
                 ]
             }, { [] })
             .asyncExecute()
@@ -130,43 +110,43 @@ private extension UnreadMessageCountServiceTests {
             [
                 makeMessage(
                     messageId: "text-message",
-                    contact: alice,
+                    chat: alice,
                     status: .incoming(.new),
                     content: .text("first")
                 ),
                 makeMessage(
                     messageId: "second-text-message",
-                    contact: alice,
+                    chat: alice,
                     status: .incoming(.new),
                     content: .text("second")
                 ),
                 makeMessage(
                     messageId: "reaction-message",
-                    contact: alice,
+                    chat: alice,
                     status: .incoming(.new),
                     content: .reacted(.init(messageId: "text-message", emoji: "ok"))
                 ),
                 makeMessage(
                     messageId: "system-token-message",
-                    contact: alice,
+                    chat: alice,
                     status: .incoming(.new),
                     content: .token(.init(token: Data(repeating: 0x07, count: 8), pushType: .ios))
                 ),
                 makeMessage(
                     messageId: "seen-message",
-                    contact: alice,
+                    chat: alice,
                     status: .incoming(.seen),
                     content: .text("seen")
                 ),
                 makeMessage(
                     messageId: "other-chat-text-message",
-                    contact: bob,
+                    chat: bob,
                     status: .incoming(.new),
                     content: .text("other chat")
                 ),
                 makeMessage(
                     messageId: "chat-without-unread-message",
-                    contact: charlie,
+                    chat: charlie,
                     status: .incoming(.seen),
                     content: .text("already seen")
                 )
@@ -178,14 +158,14 @@ private extension UnreadMessageCountServiceTests {
 
     func makeMessage(
         messageId: String,
-        contact: Chat.Contact,
+        chat: ChatExtension.Id,
         status: Chat.LocalMessage.Status,
         content: Chat.LocalMessage.Content
     ) -> Chat.LocalMessage {
         Chat.LocalMessage(
             messageId: messageId,
-            chatId: .person(contact.accountId),
-            origin: .contact(contact.accountId),
+            chatId: .chatExtension(chat, roomId: nil),
+            origin: .chatExtension(chat),
             creationSource: .localDevice,
             status: status,
             timestamp: 0,

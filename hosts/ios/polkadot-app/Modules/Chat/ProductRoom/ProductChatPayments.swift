@@ -165,6 +165,23 @@ actor ProductChatPayments {
         return .accepted
     }
 
+    /// Takes over the payments of the native chat (HX3): the monitor claims the coins of those that wait for a claim
+    /// and follows those still on their way, under the same message ids, and the rooms draw their states. Gives how
+    /// many it took; the payments it kept before are left as they are.
+    @discardableResult
+    func adopt(_ payments: [AdoptedChatPayment]) async throws -> Int {
+        let adopted = try await store.adopt(payments)
+        guard !adopted.isEmpty else { return 0 }
+
+        for payment in adopted {
+            if let state = payment.state {
+                emit(.state(messageId: payment.messageId, state))
+            }
+        }
+        await notifyMonitors()
+        return adopted.count
+    }
+
     /// Sends the payments that wait from before, as the native chat sends its waiting messages when it starts.
     func resume() {
         kick()

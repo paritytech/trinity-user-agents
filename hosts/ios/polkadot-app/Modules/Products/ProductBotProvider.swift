@@ -149,19 +149,15 @@ private extension ProductBotProvider {
         guard settingsManager.isHostPlacementEnabled,
               let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
-        // The chat product is placed only on an install whose chats it runs (HX2).
-        let chatProduct = PersonChatMode.isProductChat
-        if chatProduct {
-            // Before the bot is built: its worker source is read from these files.
-            do {
-                try BundledChatProduct.install(tld: tld)
-            } catch {
-                logger.error("Bundled chat product not installed: \(error)")
-            }
+        // The chat product runs the person chats (HX2). Before the bot is built: its worker source is read from
+        // these files. A failed install leaves the chats without the product, and the log says why.
+        do {
+            try BundledChatProduct.install(tld: tld)
+        } catch {
+            logger.error("Bundled chat product not installed: \(error)")
         }
 
         return HostPlacedProducts.all
-            .filter { chatProduct || !$0.requiresCoreRuntime }
             .map { Product(id: $0.productId(tld), name: $0.fallbackName) }
     }
 

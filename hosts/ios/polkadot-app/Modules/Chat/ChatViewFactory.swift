@@ -2,7 +2,6 @@ import Foundation
 import SubstrateSdk
 import Keystore_iOS
 import Operation_iOS
-import MessageExchangeKit
 import UIKitExt
 import ChainRegistry
 
@@ -14,38 +13,13 @@ enum ChatViewFactory {
     ) -> ChatViewProtocol? {
         switch openModel {
         case let .existingChat(chatId):
-            createExistingChatView(chatId: chatId, flowState: flowState)
-        case let .newRequest(request):
-            createPendingContactView(remoteRequest: request, flowState: flowState)
+            createView(chatId: chatId, flowState: flowState)
         }
-    }
-
-    private static func createExistingChatView(
-        chatId: Chat.Id,
-        flowState: ChatFlowState
-    ) -> ChatViewProtocol? {
-        createView(
-            chatId: chatId,
-            flowState: flowState,
-            pendingRequest: nil
-        )
-    }
-
-    private static func createPendingContactView(
-        remoteRequest: ChatOpenModel.NewRequest,
-        flowState: ChatFlowState
-    ) -> ChatViewProtocol? {
-        createView(
-            chatId: .person(remoteRequest.remoteContact.accountId),
-            flowState: flowState,
-            pendingRequest: remoteRequest
-        )
     }
 
     private static func createView(
         chatId: Chat.Id,
-        flowState: ChatFlowState,
-        pendingRequest: ChatOpenModel.NewRequest?
+        flowState: ChatFlowState
     ) -> ChatViewProtocol? {
         // at this time we should already have chains and assets
         let chainRegistry = ChainRegistryFacade.sharedRegistry
@@ -57,7 +31,6 @@ enum ChatViewFactory {
             let interactor = createInteractor(
                 chatId: chatId,
                 flowState: flowState,
-                pendingRequest: pendingRequest,
                 uploadsAttachmentStore: uploadAttachmentStore
             )
         else {
@@ -88,13 +61,9 @@ enum ChatViewFactory {
             customDecoders: messageDecoders,
             attachmentViewModelFactory: ChatAttachmentViewModelFactory(
                 uploadAttachmentStore: uploadAttachmentStore,
-                attachmentUploadStateProvider: chatId.roomId != nil
-                    ? ProductOutbox.shared.progress
-                    : flowState.attachmentUploadStateProvider,
+                attachmentUploadStateProvider: ProductOutbox.shared.progress,
                 downloadAttachmentStore: downloadAttachmentStore,
-                attachmentDownloadStateProvider: chatId.roomId != nil
-                    ? ProductMediaDownloads.shared.progress
-                    : flowState.attachmentDownloadStateProvider
+                attachmentDownloadStateProvider: ProductMediaDownloads.shared.progress
             ),
             productRepository: ProductRepositoryFactory().createRepository(),
             productNameCache: ProductNameCache(),
@@ -134,7 +103,6 @@ enum ChatViewFactory {
     private static func createInteractor(
         chatId: Chat.Id,
         flowState: ChatFlowState,
-        pendingRequest: ChatOpenModel.NewRequest?,
         uploadsAttachmentStore _: AttachmentStoring
     ) -> ChatInteractor? {
         let storageFacade = UserDataStorageFacade.shared
@@ -151,11 +119,7 @@ enum ChatViewFactory {
         let engineFactory: ChatEngineFactoryProtocol = ChatEngineFactory(flowState: flowState)
         let chatEngine: any ChatEngineProtocol
         do {
-            if let pendingRequest {
-                chatEngine = try engineFactory.createChatEngine(for: pendingRequest)
-            } else {
-                chatEngine = try engineFactory.createChatEngine(for: chatId)
-            }
+            chatEngine = try engineFactory.createChatEngine(for: chatId)
         } catch {
             return nil
         }

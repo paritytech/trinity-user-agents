@@ -14,8 +14,6 @@ final class PushRouteBuilder: PushRouteBuilding {
     func route(from userInfo: [AnyHashable: Any]) -> PushNavigationRoute? {
         if let room = userInfo.productRoom {
             .productRoom(productId: room.productId, roomId: room.roomId)
-        } else if userInfo[PushNotificationKeys.pushId] != nil {
-            .contactChat(userInfo: userInfo)
         } else if let chatExtensionId = userInfo[PushNotificationKeys.chatExtensionId] as? ChatExtension.Id {
             .chatExtension(extensionId: chatExtensionId, userInfo: userInfo)
         } else if let url = productDeeplinkURL(from: userInfo) {

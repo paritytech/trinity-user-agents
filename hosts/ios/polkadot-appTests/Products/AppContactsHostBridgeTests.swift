@@ -1,5 +1,7 @@
 import Testing
 import Foundation
+import Operation_iOS
+import os
 import Products
 import SubstrateSdk
 import TrUAPIHost
@@ -60,12 +62,73 @@ struct AppContactsHostBridgeTests {
         #expect(matches.accounts == [nil, alice])
     }
 
-    private func makeBridge() -> AppContactsHostBridge {
-        AppContactsHostBridge(
-            repositoryFactory: MockChatContactRepositoryFactory(),
-            operationQueue: OperationQueue(),
-            routerFacade: UnusedRouters()
+    @Test("Before a snapshot, a lookup reads the contacts the chat product synced")
+    func readsTheProductContactsBeforeASnapshot() throws {
+        let contacts = ProductChatContacts(file: emptyFile())
+        try contacts.replace(productId: "chat.dot", contacts: [
+            HostChatContact(accountId: alice, username: "alice", roomId: "dm-a1", blocked: false),
+            HostChatContact(accountId: bob, username: nil, roomId: "dm-b0", blocked: true)
+        ])
+        let bridge = AppContactsHostBridge(source: contacts, routerFacade: UnusedRouters())
+
+        let matches = try bridge.contacts(
+            lookup: HostContactLookup(handleKey: key, handles: [handle(alice, key), handle(bob, key)])
         )
+
+        #expect(matches.accounts == [alice, nil])
+    }
+
+    @Test("Each sync of the chat product reaches the notifier, so a removal clears the core's cache")
+    func aSyncThatDropsAContactIsARemoval() throws {
+        let contacts = ProductChatContacts(file: emptyFile())
+        try contacts.replace(productId: "chat.dot", contacts: [
+            HostChatContact(accountId: alice, username: "alice", roomId: "dm-a1", blocked: false)
+        ])
+        let removals = OSAllocatedUnfairLock(initialState: 0)
+        let snapshots = OSAllocatedUnfairLock<[[Data]]>(initialState: [])
+        let notifier = ContactsChangeNotifier(
+            source: contacts,
+            onSnapshot: { contacts in snapshots.withLock { $0.append(contacts.map(\.accountId)) } },
+            onRemoval: { removals.withLock { $0 += 1 } }
+        )
+
+        try contacts.replace(productId: "chat.dot", contacts: [
+            HostChatContact(accountId: alice, username: "alice", roomId: "dm-a1", blocked: true)
+        ])
+
+        #expect(removals.withLock { $0 } == 1)
+        #expect(snapshots.withLock { $0 } == [[alice], [alice]])
+        _ = notifier
+    }
+
+    @Test("The picker offers the unblocked contacts the chat product synced")
+    func thePickerOffersTheSyncedContacts() async throws {
+        let contacts = ProductChatContacts(file: emptyFile())
+        try contacts.replace(productId: "chat.dot", contacts: [
+            HostChatContact(accountId: alice, username: "alice", roomId: "dm-a1", blocked: false),
+            HostChatContact(accountId: bob, username: "bob", roomId: "dm-b0", blocked: true)
+        ])
+        let search = ProductSyncedContactSearch(source: contacts)
+
+        // Held in locals, as the picker holds them while it reads.
+        let allRepository = search.allContacts()
+        let blockedRepository = search.blockedContacts()
+        let matchingRepository = search.searchContacts(usernamePrefix: "AL")
+        let all = try await allRepository.fetchAllOperation(with: RepositoryFetchOptions()).asyncExecute()
+        let blocked = try await blockedRepository.fetchAllOperation(with: RepositoryFetchOptions()).asyncExecute()
+        let matching = try await matchingRepository.fetchAllOperation(with: RepositoryFetchOptions()).asyncExecute()
+
+        #expect(all.map(\.accountId) == [alice])
+        #expect(blocked.map(\.accountId) == [bob])
+        #expect(matching.map(\.username) == ["alice"])
+    }
+
+    private func makeBridge() -> AppContactsHostBridge {
+        AppContactsHostBridge(source: ProductChatContacts(file: emptyFile()), routerFacade: UnusedRouters())
+    }
+
+    private func emptyFile() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
 
     private func handle(_ account: Data, _ key: Data) -> Data {

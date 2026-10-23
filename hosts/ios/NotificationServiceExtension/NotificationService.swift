@@ -1,20 +1,17 @@
+import SDKLogger
 import UserNotifications
-import MessageExchangeKit
 
 class NotificationService: UNNotificationServiceExtension {
     typealias ContentHandler = (UNNotificationContent) -> Void
 
     var contentHandler: ContentHandler?
     var bestAttemptContent: UNNotificationContent?
-    var handler: PushNotificationHandling?
     var productHandler: ProductPushHandler?
 
     override func didReceive(
         _ request: UNNotificationRequest,
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
-        let messageDecoder = ChatPushMessageCoder(encryptionManager: ChatEncryptionManager())
-
         bestAttemptContent = NotificationContentResult
             .createBestAttemptResult()
             .toFallbackUserNotificationContent(with: request.content)
@@ -47,24 +44,12 @@ class NotificationService: UNNotificationServiceExtension {
             return
         }
 
-        do {
-            let message = try NotificationMessage(userInfo: request.content.userInfo)
-
-            handler = PushNotificationHandlerFactory(
-                messageDecoder: messageDecoder,
-                storage: UserDataStorageFacade.shared
-            )
-            .createHandler(message: message)
-
-            handler?.handle { content in
-                let notificationContent = content.toUserNotificationContent(with: request.content)
-                contentHandler(notificationContent)
-            }
-        } catch {
-            let unsupported = NotificationContentResult.createUnsupportedResult()
-            let notificationContent = unsupported.toUserNotificationContent(with: request.content)
-            contentHandler(notificationContent)
-        }
+        // Only the products notify, the chat product among them (HX2). A push no product claims has no route to
+        // decode it by: it shows as unsupported, since an extension without the filtering entitlement cannot drop it.
+        Logger.shared.warning("A push that no product claims shows as unsupported")
+        let unsupported = NotificationContentResult.createUnsupportedResult()
+        let notificationContent = unsupported.toUserNotificationContent(with: request.content)
+        contentHandler(notificationContent)
     }
 
     override func serviceExtensionTimeWillExpire() {

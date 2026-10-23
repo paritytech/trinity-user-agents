@@ -5,15 +5,6 @@ import CoreData
 import SubstrateSdk
 
 protocol ChatContactDataProviderMaking {
-    func createAllContactsProvider() -> StreamableProvider<Chat.Contact>
-
-    func subscribeContactsSnapshot(
-        for predicate: NSPredicate?,
-        deliverOn queue: DispatchQueue,
-        update: @escaping ([Chat.Contact]) -> Void,
-        failure: @escaping (Error) -> Void
-    ) -> AnyObject
-
     func subscribeChatsSnapshot(
         for predicate: NSPredicate?,
         deliverOn queue: DispatchQueue,
@@ -39,62 +30,6 @@ final class ChatContactDataProviderFactory {
 }
 
 extension ChatContactDataProviderFactory: ChatContactDataProviderMaking {
-    func createAllContactsProvider() -> StreamableProvider<Chat.Contact> {
-        let repository = repositoryFactory.createRepository(forFilter: nil)
-        let source = EmptyStreamableSource<Chat.Contact>()
-        let mapper = ChatContactMapper()
-
-        let observable = CoreDataContextObservable(
-            service: repositoryFactory.databaseService,
-            mapper: AnyCoreDataMapper(mapper),
-            predicate: { _ in true }
-        )
-
-        observable.start { [weak self] error in
-            if let error {
-                self?.logger.error("observable error: \(error)")
-            }
-        }
-
-        return StreamableProvider(
-            source: AnyStreamableSource(source),
-            repository: repository,
-            observable: AnyDataProviderRepositoryObservable(observable),
-            operationManager: OperationManager(operationQueue: operationQueue)
-        )
-    }
-
-    func subscribeContactsSnapshot(
-        for predicate: NSPredicate?,
-        deliverOn queue: DispatchQueue,
-        update: @escaping ([Chat.Contact]) -> Void,
-        failure: @escaping (Error) -> Void
-    ) -> AnyObject {
-        let request: NSFetchRequest<CDChatContact> = CDChatContact.fetchRequest()
-        request.predicate = predicate
-        request.sortDescriptors = [
-            NSSortDescriptor(
-                key: #keyPath(CDChatContact.username),
-                ascending: true
-            )
-        ]
-
-        let mapper = ChatContactMapper()
-        let subscriber = CoreDataSnapshotSubscriber<Chat.Contact, CDChatContact>(
-            service: repositoryFactory.databaseService,
-            mapper: AnyCoreDataMapper(mapper),
-            fetchRequest: request,
-            callbackQueue: queue,
-            logger: logger,
-            transform: { $0 },
-            onUpdate: update,
-            onError: failure
-        )
-
-        subscriber.start()
-        return subscriber
-    }
-
     func subscribeChatsSnapshot(
         for predicate: NSPredicate?,
         deliverOn queue: DispatchQueue,

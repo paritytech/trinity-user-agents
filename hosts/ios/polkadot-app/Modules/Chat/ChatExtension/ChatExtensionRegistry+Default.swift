@@ -1,6 +1,5 @@
 import Foundation
 import Keystore_iOS
-import Operation_iOS
 
 @MainActor
 extension ChatExtensionsRegistry {
@@ -9,19 +8,8 @@ extension ChatExtensionsRegistry {
     ) -> ChatExtensionsRegistering {
         let storageFacade = UserDataStorageFacade.shared
 
-        let reactionRepository = ChatReactionRepository(
-            repository: AnyDataProviderRepository(
-                storageFacade.createRepository(
-                    filter: nil,
-                    sortDescriptors: [],
-                    mapper: AnyCoreDataMapper(ChatMessageReactionMapper())
-                )
-            )
-        )
-
-        let commonExtensions: [ChatExtending] = [
-            ChatReactionExtension(reactionRepository: reactionRepository)
-        ]
+        // The reactions of the chat product's rooms come with its messages; the host adds no extension of its own.
+        let commonExtensions: [ChatExtending] = []
 
         let extensionStore = ChatExtensionStore(
             staticExtensions: commonExtensions,

@@ -24,9 +24,7 @@ extension ChatRequestListInteractor: ChatRequestListInteractorInputProtocol {
     func setup() {
         task = Task { [weak self, chatsProvider, logger] in
             // The requests of the chat product are its rooms with an incoming contact (HX2).
-            let chatsStream = PersonChatMode.isProductChat
-                ? chatsProvider.subscribeChatsWithPredicate(.listedChats(productChat: true))
-                : chatsProvider.subscribeActiveIcomingChatRequests()
+            let chatsStream = chatsProvider.subscribeChatsWithPredicate(.listedChats())
 
             do {
                 for try await chats in chatsStream {

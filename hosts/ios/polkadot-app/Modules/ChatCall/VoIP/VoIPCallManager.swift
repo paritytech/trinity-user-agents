@@ -41,8 +41,6 @@ final class VoIPCallKitManager: NSObject {
     private let callController: CXCallController
     private let queue: DispatchQueue
     private let audioSessionManager: CallAudioSessionManaging
-    private let contactsService: ContactsLocalStorageServicing
-    private let messageCoder: ChatPushMessageCoding
     private let productCalls: ProductVoIPCallResolving
     private let logger: LoggerProtocol
 
@@ -58,20 +56,12 @@ final class VoIPCallKitManager: NSObject {
 
     init(
         audioSessionManager: CallAudioSessionManaging = CallAudioSessionManager.shared,
-        contactsService: ContactsLocalStorageServicing = ContactsLocalStorageService(),
-        messageCoder: ChatPushMessageCoding = ChatPushMessageCoder(
-            encryptionManager: ChatEncryptionManager(
-                entropyManager: RootEntropyManager.shared
-            )
-        ),
         productCalls: ProductVoIPCallResolving = ProductVoIPCalls.shared,
         queue: DispatchQueue = PushKitQueueProvider.queue,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productCalls = productCalls
         self.audioSessionManager = audioSessionManager
-        self.contactsService = contactsService
-        self.messageCoder = messageCoder
         callController = CXCallController(queue: queue)
 
         let config = CXProviderConfiguration()
@@ -360,9 +350,7 @@ extension VoIPCallKitManager: CXProviderDelegate {
 private extension VoIPCallKitManager {
     enum InputError: Error {
         case invalidMessageData
-        case noContact
         case unsupportedMessage
-        case blockedContact
     }
 
     var activeCallData: VoIPCallKitData? {
@@ -429,29 +417,12 @@ private extension VoIPCallKitManager {
             throw InputError.invalidMessageData
         }
 
-        // The chat product's offers open with its routes; the native chat does not run beside it (HX2).
-        if PersonChatMode.isProductChat, let input = try await productCalls.input(pushId: pushId, message: messageHex) {
-            return input
-        }
-
-        let contact = try await contactsService.getContact(byPushId: pushId)
-            .asyncExecute()
-            .mapOrThrow(InputError.noContact)
-
-        guard !contact.isBlocked else {
-            throw InputError.blockedContact
-        }
-
-        let payload = try messageCoder.decodeMessage(messageHex, for: contact)
-
-        guard let offer = payload.dataChannelOffer else {
+        // The chat product's offers open with its routes; it is the only chat that places calls (HX2).
+        guard let input = try await productCalls.input(pushId: pushId, message: messageHex) else {
             throw InputError.unsupportedMessage
         }
 
-        return VoIPCallKitInput(
-            name: contact.username,
-            callType: .init(remoteType: offer.purpose)
-        )
+        return input
     }
 
     func reportCallEnd(with reason: CXCallEndedReason) {

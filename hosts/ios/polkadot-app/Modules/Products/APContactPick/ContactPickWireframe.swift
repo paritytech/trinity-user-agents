@@ -19,8 +19,7 @@ final class ContactPickWireframe: SearchContactWireframeProtocol {
         let picked: AccountId? =
             switch model {
             case let .existingChat(.person(accountId)): accountId
-            case .existingChat(.chatExtension),
-                 .newRequest: nil
+            case .existingChat(.chatExtension): nil
             }
 
         view?.controller.dismiss(animated: true) { [context] in

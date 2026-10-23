@@ -18,15 +18,9 @@ import io.paritytech.polkadotapp.feature_calls_impl.models.CallParams
 import io.paritytech.polkadotapp.feature_calls_impl.notification.CallNotificationManager
 import io.paritytech.polkadotapp.feature_calls_impl.state.CallStateHolder
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
-import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.ContactChatSessionRefCounter
-import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.ContactChatSessionReference
-import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.requestSessionEnabled
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
@@ -112,9 +106,6 @@ class CallService : Service(), CoroutineScope {
     lateinit var callSessionManager: CallSessionManager
 
     @Inject
-    lateinit var contactChatSessionRefCounter: ContactChatSessionRefCounter
-
-    @Inject
     lateinit var callWakeLockManager: CallWakeLockManager
 
     @Inject
@@ -122,9 +113,6 @@ class CallService : Service(), CoroutineScope {
 
     @Inject
     lateinit var callAudioRouteController: CallAudioRouteController
-
-    private var sessionRef: ContactChatSessionReference? = null
-    private var acquireSessionRefJob: Job? = null
 
     private var incomingCallCanceledJob: Job? = null
 
@@ -163,8 +151,6 @@ class CallService : Service(), CoroutineScope {
 
                 Timber.i("INIT_INCOMING_CALL: offerId=${callParams.offerId}, chatId=${callParams.chatId}")
 
-                if (!ensureContactSessionHeld(callParams, startId)) return START_NOT_STICKY
-
                 ServiceCompat.startForeground(
                     this,
                     CALL_NOTIFICATION_ID,
@@ -200,8 +186,6 @@ class CallService : Service(), CoroutineScope {
 
                 Timber.i("START_CALL: direction=${callParams.direction}, offerId=${callParams.offerId}")
 
-                if (!ensureContactSessionHeld(callParams, startId)) return START_NOT_STICKY
-
                 when (callParams.direction) {
                     CallDirection.Outgoing -> startOutgoingCall(callParams)
                     CallDirection.Incoming -> acceptIncomingCall(callParams)
@@ -226,37 +210,8 @@ class CallService : Service(), CoroutineScope {
         return START_NOT_STICKY
     }
 
-    private fun ensureContactSessionHeld(callParams: CallParams, startId: Int): Boolean {
-        if (callParams.computeChatId().isExtensionChat()) return true
-
-        val accountId = callParams.computeChatId().contactOrNull()?.contactAccountId ?: run {
-            Timber.w("CallService: chatId is not a contact chat; aborting call setup")
-            stopSelf(startId)
-            return false
-        }
-
-        if (acquireSessionRefJob == null) {
-            acquireSessionRefJob = launch {
-                sessionRef = contactChatSessionRefCounter.requestSessionEnabled(
-                    accountId,
-                    "ActiveCall:${callParams.offerId}"
-                )
-            }
-        }
-
-        return true
-    }
-
     override fun onDestroy() {
         Timber.i("onDestroy: releasing resources, activeCall=${callStateHolder.getActiveCall()}")
-
-        val acquireJob = acquireSessionRefJob
-        acquireSessionRefJob = null
-        CoroutineScope(Dispatchers.IO + NonCancellable).launch {
-            acquireJob?.join()
-            sessionRef?.release()
-            sessionRef = null
-        }
 
         cancel()
 

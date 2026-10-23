@@ -2,11 +2,6 @@ import Foundation
 import SubstrateSdk
 
 enum ChatOpenModel {
-    struct NewRequest {
-        let remoteContact: Chat.RemoteContact
-        let ownKeyId: Chat.Contact.Own
-    }
-
+    /// A chat by its id. A person chat id opens the chat with that account in the chat product.
     case existingChat(Chat.Id)
-    case newRequest(NewRequest)
 }

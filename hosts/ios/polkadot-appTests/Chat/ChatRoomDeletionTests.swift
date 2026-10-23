@@ -78,7 +78,7 @@ struct ChatInteractorRoomRemovalTests {
         #expect(await firstEvents(2, of: output) == [.metadata(chatId), .removedChat])
     }
 
-    /// A person chat has its own leave and block paths, so a missing chat does not close it here.
+    /// Only a room of a product closes when its chat goes; a chat without a room is not closed here.
     @Test func aPersonChatDoesNotCloseWhenItsChatIsMissing() async {
         let chatId = Chat.Id.person(Data(repeating: 1, count: 32))
         let output = RecordingChatInteractorOutput()

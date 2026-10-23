@@ -108,20 +108,6 @@ final class DebugSettingsViewLayout: UIView {
         stack.distribution = .equalSpacing
     }
 
-    let productChatSwitch = UISwitch()
-
-    private let productChatLabel: Label = .create { (view: Label) in
-        view.typography = .bodyMedium
-        view.textColor = .fgPrimary
-        view.text = "Chats in the chat product"
-    }
-
-    private let productChatRow: UIStackView = .create { stack in
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.distribution = .equalSpacing
-    }
-
     let hostPlacedSwitch = UISwitch()
 
     private let hostPlacedLabel: Label = .create { (view: Label) in
@@ -183,7 +169,6 @@ final class DebugSettingsViewLayout: UIView {
         strategyDebugRow.addArrangedSubviews([strategyDebugLabel, strategyDebugSwitch])
         truApiRuntimeRow.addArrangedSubviews([truApiRuntimeLabel, truApiRuntimeSwitch])
         hostPlacedRow.addArrangedSubviews([hostPlacedLabel, hostPlacedSwitch])
-        productChatRow.addArrangedSubviews([productChatLabel, productChatSwitch])
 
         var rows: [UIView] = [
             chainLabel,
@@ -208,7 +193,7 @@ final class DebugSettingsViewLayout: UIView {
             ])
         #endif
 
-        rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow, productChatRow])
+        rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])
 
         stackView.addArrangedSubviews(rows)
 

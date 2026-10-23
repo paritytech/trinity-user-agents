@@ -54,9 +54,9 @@ extension ModuleNavigator: ModuleNavigating {
     }
 
     func openChat(_ model: ChatOpenModel) {
-        // The chat product runs the person chats on this install (HX2): it opens the chat with the account, and
-        // makes the room of an account that is no contact yet.
-        if PersonChatMode.isProductChat, let account = model.personAccount {
+        // The chat product runs the person chats (HX2): it opens the chat with the account, and makes the room of an
+        // account that is no contact yet.
+        if let account = model.personAccount {
             ProductContactChatOpener.shared.open(account: account, navigator: self)
             return
         }
@@ -138,11 +138,10 @@ private extension ModuleNavigator {
 }
 
 private extension ChatOpenModel {
-    /// The account of a person chat, which the chat product runs on this install.
+    /// The account of a person chat, which the chat product runs.
     var personAccount: AccountId? {
         switch self {
         case let .existingChat(.person(accountId)): accountId
-        case let .newRequest(request): request.remoteContact.accountId
         case .existingChat: nil
         }
     }

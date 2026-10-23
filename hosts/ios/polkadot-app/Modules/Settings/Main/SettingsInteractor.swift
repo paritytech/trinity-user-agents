@@ -106,7 +106,8 @@ private extension SettingsInteractor {
 
     func subscribeToBlockedContacts() {
         blockedContactsTask = Task { [weak self, chatContactDataProviderFactory, logger] in
-            let stream = chatContactDataProviderFactory.subscribeBlockedContacts()
+            // The contacts the user blocked in the chat product, as the Blocked users screen lists them (HX2).
+            let stream = chatContactDataProviderFactory.subscribeProductBlockedContacts()
 
             do {
                 for try await contacts in stream {

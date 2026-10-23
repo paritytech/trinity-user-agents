@@ -1,5 +1,4 @@
 import Foundation
-import Operation_iOS
 import Products
 import SubstrateSdk
 import TrUAPIHost
@@ -8,13 +7,12 @@ import TrUAPIHost
 /// the picker. The list never leaves the host: the core asks about handles, and
 /// a product gets 32 bytes for the one person the user picked.
 ///
-/// Answers from the latest contact snapshot ``ContactsChangeNotifier`` hands
-/// it, plus a handle index kept per handle key, so a lookup is a dictionary read
-/// rather than a store fetch. Only before the first snapshot arrives does it
-/// fetch, and the picker does that without blocking.
+/// The contacts are those the chat product syncs to the host (``ProductContactsSource``), the only chat the app
+/// runs. Answers from the latest contact snapshot ``ContactsChangeNotifier`` hands it, plus a handle index kept per
+/// handle key, so a lookup is a dictionary read. Before the first snapshot arrives it reads the source, which keeps
+/// the contacts in memory.
 final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
-    private let repositoryFactory: ChatContactRepositoryMaking
-    private let operationQueue: OperationQueue
+    private let source: ProductContactsSource
     private let routerFacade: ProductRoutersFacadeProtocol
 
     private let lock = NSLock()
@@ -24,13 +22,8 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// contacts change; the key changes with the session.
     private var index: (handleKey: Data, accountsByHandle: [Data: Data])?
 
-    init(
-        repositoryFactory: ChatContactRepositoryMaking,
-        operationQueue: OperationQueue,
-        routerFacade: ProductRoutersFacadeProtocol
-    ) {
-        self.repositoryFactory = repositoryFactory
-        self.operationQueue = operationQueue
+    init(source: ProductContactsSource, routerFacade: ProductRoutersFacadeProtocol) {
+        self.source = source
         self.routerFacade = routerFacade
     }
 
@@ -60,10 +53,10 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// from "this host has no picker".
     ///
     /// The list is read here only to answer an empty one without a sheet. The
-    /// picker is the chat contact search, which reads the same store, so who is
+    /// picker is the chat contact search over the same source, so who is
     /// offered is decided in one place.
     func pickContact(productId: String) async throws -> HostContactPick {
-        if try await currentAccounts().isEmpty { return .noContacts }
+        if currentAccounts().isEmpty { return .noContacts }
 
         let picked = await withCheckedContinuation { continuation in
             Task { @MainActor [routerFacade] in
@@ -86,8 +79,8 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         let snapshot = accounts
         lock.unlock()
 
-        // Inline callback with no snapshot yet: the one case that fetches.
-        let current = try snapshot ?? fetchUnblockedContactsBlocking().map(\.accountId)
+        // No snapshot yet: the source answers from memory.
+        let current = snapshot ?? Self.unblocked(source.currentContacts()).map(\.accountId)
         var accountsByHandle: [Data: Data] = [:]
         for account in current {
             try accountsByHandle[account.blake2b32WithKey(handleKey)] = account
@@ -102,39 +95,14 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         return accountsByHandle
     }
 
-    private func currentAccounts() async throws -> [Data] {
+    private func currentAccounts() -> [Data] {
         let snapshot = lock.withLock { accounts }
         if let snapshot { return snapshot }
-        return try await fetchUnblockedContacts().map(\.accountId)
+        return Self.unblocked(source.currentContacts()).map(\.accountId)
     }
 
-    private func fetchUnblockedContactsBlocking() throws -> [Chat.Contact] {
-        let operation = makeFetchOperation()
-        operationQueue.addOperations([operation], waitUntilFinished: true)
-        return try Self.unblocked(operation.extractNoCancellableResultData())
-    }
-
-    private func fetchUnblockedContacts() async throws -> [Chat.Contact] {
-        let operation = makeFetchOperation()
-        return try await withCheckedThrowingContinuation { continuation in
-            operation.completionBlock = {
-                continuation.resume(with: Result {
-                    try Self.unblocked(operation.extractNoCancellableResultData())
-                })
-            }
-            operationQueue.addOperation(operation)
-        }
-    }
-
-    private func makeFetchOperation() -> BaseOperation<[Chat.Contact]> {
-        repositoryFactory
-            .createRepository(forFilter: NSPredicate.isContact())
-            .fetchAllOperation(with: RepositoryFetchOptions())
-    }
-
-    /// Blocked contacts are dropped here rather than in the predicate, so one
-    /// rule decides it and a predicate change cannot quietly offer somebody the
-    /// user refused.
+    /// Blocked contacts are dropped here, so one rule decides it and a source
+    /// change cannot quietly offer somebody the user refused.
     private static func unblocked(_ contacts: [Chat.Contact]) -> [Chat.Contact] {
         contacts.filter { !$0.isBlocked }
     }
@@ -146,39 +114,38 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
 /// Every snapshot also goes to `onSnapshot`, which keeps the bridge's lookup
 /// index current. Only a shrinking set is reported as a removal: a cached handle names someone who was a
 /// contact when it was cached, so a contact added since cannot make it wrong.
-final class ContactsChangeNotifier {
-    private let queue = DispatchQueue(label: "io.parity.truapi.contacts-change")
+final class ContactsChangeNotifier: @unchecked Sendable {
+    private let lock = NSLock()
     private let onSnapshot: ([Chat.Contact]) -> Void
     private let onRemoval: () -> Void
     private var knownAccounts: Set<AccountId>?
-    private var subscription: AnyObject?
+    private var observation: AnyObject?
 
     init(
-        dataProviderFactory: ChatContactDataProviderMaking,
-        logger: LoggerProtocol,
+        source: ProductContactsSource,
         onSnapshot: @escaping ([Chat.Contact]) -> Void = { _ in },
         onRemoval: @escaping () -> Void
     ) {
         self.onSnapshot = onSnapshot
         self.onRemoval = onRemoval
-        subscription = dataProviderFactory.subscribeContactsSnapshot(
-            for: NSPredicate.isContact(),
-            deliverOn: queue,
-            update: { [weak self] contacts in
-                self?.receive(contacts)
-            },
-            failure: { error in
-                logger.error("contacts change subscription failed: \(error)")
-            }
-        )
+        // The contacts now are the baseline a later removal is measured from.
+        receive(source.currentContacts())
+        observation = source.observe { [weak self] contacts in
+            self?.receive(contacts)
+        }
     }
 
     private func receive(_ contacts: [Chat.Contact]) {
         onSnapshot(contacts)
         let current = Set(contacts.filter { !$0.isBlocked }.map(\.accountId))
-        defer { knownAccounts = current }
+        let removed = lock.withLock {
+            defer { knownAccounts = current }
+            guard let knownAccounts else { return false }
+            return !knownAccounts.isSubset(of: current)
+        }
 
-        guard let knownAccounts, !knownAccounts.isSubset(of: current) else { return }
-        onRemoval()
+        if removed {
+            onRemoval()
+        }
     }
 }

@@ -6,7 +6,8 @@ import SubstrateStorageQuery
 import Individuality
 import ChainRegistry
 
-protocol RemoteContactOperationMaking: RemoteContactResolving {
+protocol RemoteContactOperationMaking {
+    func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact?
     func search(by query: String) async throws -> [Chat.RemoteContact]
 }
 

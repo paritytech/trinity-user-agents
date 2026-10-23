@@ -35,7 +35,6 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
             provideStrategyDebugState()
             provideTruApiRuntimeState()
             provideHostPlacementState()
-            provideProductChatState()
         }
     }
 
@@ -90,12 +89,6 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
         provideTruApiRuntimeState()
     }
 
-    func toggleProductChat() {
-        let current = SettingsManager.shared.isProductChatEnabled
-        SettingsManager.shared.set(value: !current, for: .productChatEnabled)
-        provideProductChatState()
-    }
-
     func toggleHostPlacement() {
         let current = SettingsManager.shared.isHostPlacementEnabled
         SettingsManager.shared.set(value: !current, for: .hostPlacementEnabled)
@@ -145,13 +138,6 @@ private extension DebugSettingsInteractor {
         let enabled = SettingsManager.shared.bool(for: SettingsKey.showTransferStrategyDebug.rawValue) ?? true
         Task { @MainActor [weak presenter] in
             presenter?.didReceive(strategyDebugEnabled: enabled)
-        }
-    }
-
-    func provideProductChatState() {
-        let enabled = SettingsManager.shared.isProductChatEnabled
-        Task { @MainActor [weak presenter] in
-            presenter?.didReceive(productChatEnabled: enabled)
         }
     }
 

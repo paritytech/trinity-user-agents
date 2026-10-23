@@ -125,11 +125,6 @@ private extension ChatRoomSourceContextTests {
                 sortDescriptors: [],
                 mapper: AnyCoreDataMapper(ChatMessageStatusUpdateMapper())
             )),
-            attachmentsUpdateRepository: AnyDataProviderRepository(facade.createRepository(
-                filter: nil,
-                sortDescriptors: [],
-                mapper: AnyCoreDataMapper(AttachmentUploadingMapper())
-            )),
             logger: StubLogger()
         )
 

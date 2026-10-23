@@ -11,13 +11,8 @@ enum ShareViewFactory {
         let composer = ShareContentComposer()
         let wireframe = ShareWireframe(host: host, composer: composer)
 
-        let messageFactory = LocalMessageCreatingOperationFactory(
-            messagesStorageService: MessagesLocalStorageService()
-        )
-
         let interactor = ShareInteractor(
             chatContactDataProviderFactory: ChatContactDataProviderFactory(),
-            messageSender: messageFactory,
             composer: composer,
             productRooms: RootDependencyLocator.getDependency() as ShareProductRooms?
         )

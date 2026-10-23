@@ -63,44 +63,30 @@ private final class RemovalCounter {
     var isEmpty: Bool { count == 0 }
 }
 
-private func makeNotifier() -> (FakeContactDataProviderFactory, RemovalCounter, ContactsChangeNotifier) {
-    let factory = FakeContactDataProviderFactory()
+private func makeNotifier() -> (FakeContactsSource, RemovalCounter, ContactsChangeNotifier) {
+    let source = FakeContactsSource()
     let removals = RemovalCounter()
-    let notifier = ContactsChangeNotifier(dataProviderFactory: factory, logger: Logger.shared) {
+    let notifier = ContactsChangeNotifier(source: source) {
         removals.count += 1
     }
-    return (factory, removals, notifier)
+    return (source, removals, notifier)
 }
 
-/// Hands each snapshot straight to the subscriber, so a test drives the store.
-private final class FakeContactDataProviderFactory: ChatContactDataProviderMaking {
-    private var update: (([Chat.Contact]) -> Void)?
+/// Hands each snapshot straight to the observer, so a test drives the contacts of the chat product.
+private final class FakeContactsSource: ProductContactsSource, @unchecked Sendable {
+    private var update: (@Sendable ([Chat.Contact]) -> Void)?
 
     func deliver(_ contacts: [Chat.Contact]) {
         update?(contacts)
     }
 
-    func createAllContactsProvider() -> StreamableProvider<Chat.Contact> {
-        fatalError("not used by the notifier")
+    func currentContacts() -> [Chat.Contact] {
+        []
     }
 
-    func subscribeContactsSnapshot(
-        for _: NSPredicate?,
-        deliverOn _: DispatchQueue,
-        update: @escaping ([Chat.Contact]) -> Void,
-        failure _: @escaping (Error) -> Void
-    ) -> AnyObject {
+    func observe(_ update: @escaping @Sendable ([Chat.Contact]) -> Void) -> AnyObject {
         self.update = update
         return NSObject()
-    }
-
-    func subscribeChatsSnapshot(
-        for _: NSPredicate?,
-        deliverOn _: DispatchQueue,
-        update _: @escaping ([Chat.LocalModel]) -> Void,
-        failure _: @escaping (Error) -> Void
-    ) -> AnyObject {
-        NSObject()
     }
 }
 

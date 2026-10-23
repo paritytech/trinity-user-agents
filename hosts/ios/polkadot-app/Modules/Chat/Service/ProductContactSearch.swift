@@ -99,6 +99,41 @@ private extension ProductContactSearch {
     }
 }
 
+/// The contacts the chat product syncs to the host (``ProductContactsSource``), for the contact picker that the
+/// TrUAPI `contacts` capability shows other products: the picker offers the same contacts the capability resolves.
+final class ProductSyncedContactSearch: LocalContactSearching, @unchecked Sendable {
+    private let source: ProductContactsSource
+
+    init(source: ProductContactsSource = ProductChatContacts.shared) {
+        self.source = source
+    }
+
+    func searchContacts(usernamePrefix: String) -> AnyDataProviderRepository<Chat.Contact> {
+        let prefix = usernamePrefix.lowercased()
+        return repository { !$0.isBlocked && $0.username.lowercased().hasPrefix(prefix) }
+    }
+
+    func contact(accountId: AccountId) -> AnyDataProviderRepository<Chat.Contact> {
+        repository { !$0.isBlocked && $0.accountId == accountId }
+    }
+
+    func allContacts() -> AnyDataProviderRepository<Chat.Contact> {
+        repository { !$0.isBlocked }
+    }
+
+    func blockedContacts() -> AnyDataProviderRepository<Chat.Contact> {
+        repository(\.isBlocked)
+    }
+
+    private func repository(
+        _ isIncluded: @escaping @Sendable (Chat.Contact) -> Bool
+    ) -> AnyDataProviderRepository<Chat.Contact> {
+        AnyDataProviderRepository(ProductContactRepository { [source] in
+            source.currentContacts().filter(isIncluded)
+        })
+    }
+}
+
 /// Reads the contacts of the chat product. It writes nothing.
 private final class ProductContactRepository: DataProviderRepositoryProtocol {
     typealias Model = Chat.Contact

@@ -12,11 +12,6 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let flowStateProvider = SPAFlowStateProvider()
         let foregroundPresentationController = PushForegroundPresentationController()
 
-        let chatRouteHandler = PeerChatPushRouteHandler(
-            moduleNavigator: ModuleNavigator(),
-            visibilityReporter: foregroundPresentationController
-        )
-
         let chatExtensionRouters: [ChatExtensionPushRouting] = []
 
         let chatExtensionRouteHandler = ChatExtensionPushRouteHandler(
@@ -35,7 +30,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
 
         let pushHandler = PushHandler(
             routeBuilder: PushRouteBuilder(),
-            handlers: [chatRouteHandler, chatExtensionRouteHandler, productRoomRouteHandler, deeplinkRouteHandler]
+            handlers: [chatExtensionRouteHandler, productRoomRouteHandler, deeplinkRouteHandler]
         )
 
         let userNotificationService = UserNotificationService.shared

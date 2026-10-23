@@ -74,10 +74,6 @@ extension ChatEngineProtocol {
     }
 }
 
-enum ChatEngineError: Error {
-    case missingChat
-}
-
 final class ChatEngine {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let sourceContext: ChatRoomSourceContext
@@ -86,30 +82,21 @@ final class ChatEngine {
     let chatExtensionRegistry: ChatExtensionsRegistering
     let settings: SettingsManagerProtocol & ChatExtensionBotSettings
     let chatId: Chat.Id
-    let chatRequestContext: ChatRequestEngineContext
-    let leaveChatService: LeaveChatServicing
-    let blockUserService: BlockUserServicing
     let logger: LoggerProtocol
 
     init(
         chatId: Chat.Id,
-        chatRequestContext: ChatRequestEngineContext,
         chatExtensionRegistry: ChatExtensionsRegistering,
         messageProviderFactory: ChatMessageDataProviderMaking,
         chatProvider: ChatContactDataProviderMaking,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
-        leaveChatService: LeaveChatServicing,
-        blockUserService: BlockUserServicing,
         productRoomServices: ProductRoomServices? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
-        self.chatRequestContext = chatRequestContext
         self.chatExtensionRegistry = chatExtensionRegistry
         self.settings = settings
-        self.leaveChatService = leaveChatService
-        self.blockUserService = blockUserService
         self.chatProvider = chatProvider
         self.logger = logger
 
@@ -126,14 +113,6 @@ final class ChatEngine {
                 filter: .localMessages(from: chatId),
                 sortDescriptors: [],
                 mapper: AnyCoreDataMapper(ChatMessageEntityMapper())
-            )
-        )
-
-        let attachmentsUpdateRepository = AnyDataProviderRepository(
-            storageFacade.createRepository(
-                filter: nil,
-                sortDescriptors: [],
-                mapper: AnyCoreDataMapper(AttachmentUploadingMapper())
             )
         )
 
@@ -160,7 +139,6 @@ final class ChatEngine {
             historyRepository: historyRepository,
             messageRepository: messageRepository,
             messageStatusUpdateRepository: messageStatusUpdateRepository,
-            attachmentsUpdateRepository: attachmentsUpdateRepository,
             logger: logger
         )
 
@@ -223,11 +201,7 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
-        if await chatRequestContext.hasPendingRequest() {
-            try await chatRequestContext.submitPendingOutgoingRequest(with: content)
-        } else {
-            try await sendUserMessageToExistingChat(with: content)
-        }
+        try await performRefusable(.send(content))
     }
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
@@ -237,14 +211,8 @@ extension ChatEngine: ChatEngineProtocol {
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
         chatProvider
             .subscribeChat(by: chatId)
-            .map { [weak self, chatExtensionRegistry] optChat in
-                if let chat = optChat {
-                    await self?.chatRequestContext.resetPendingOutgoingRequest()
-
-                    return chat.chatMetadata(using: chatExtensionRegistry)
-                } else {
-                    return await self?.chatRequestContext.chatMetadataForPendingRequest()
-                }
+            .map { [chatExtensionRegistry] optChat in
+                optChat?.chatMetadata(using: chatExtensionRegistry)
             }
             .removeDuplicates()
             .eraseToAnyAsyncSequence()
@@ -263,60 +231,26 @@ extension ChatEngine: ChatEngineProtocol {
         }
     }
 
+    // Contact actions belong to the contact rooms of the chat product; any other room refuses them.
+
     func leaveChat() async throws {
-        if chatId.roomId != nil {
-            return try await performRefusable(.contactAction(.leave))
-        }
-
-        let chat = try await chatRepository
-            .fetchOperation(
-                by: { [chatId] in chatId.rawRepresentation },
-                options: RepositoryFetchOptions()
-            )
-            .asyncExecute()
-            .mapOrThrow(ChatEngineError.missingChat)
-
-        try await leaveChatService.leaveChat(chat)
+        try await performRefusable(.contactAction(.leave))
     }
 
     func blockUser() async throws {
-        if chatId.roomId != nil {
-            return try await performRefusable(.contactAction(.block))
-        }
-
-        guard case let .person(accountId) = chatId else {
-            throw ChatEngineError.missingChat
-        }
-
-        try await blockUserService.blockUser(accountId: accountId)
+        try await performRefusable(.contactAction(.block))
     }
 
     func unblockUser() async throws {
-        if chatId.roomId != nil {
-            return try await performRefusable(.contactAction(.unblock))
-        }
-
-        guard case let .person(accountId) = chatId else {
-            throw ChatEngineError.missingChat
-        }
-
-        try await blockUserService.unblockUser(accountId: accountId)
+        try await performRefusable(.contactAction(.unblock))
     }
 
     func acceptChatRequest() async throws {
-        if chatId.roomId != nil {
-            return try await performRefusable(.contactAction(.acceptRequest))
-        }
-
-        try await chatRequestContext.acceptIncomingRequest(for: chatId)
+        try await performRefusable(.contactAction(.acceptRequest))
     }
 
     func declineChatRequest() async throws {
-        if chatId.roomId != nil {
-            return try await performRefusable(.contactAction(.declineRequest))
-        }
-
-        try await chatRequestContext.declineIncomingRequest(for: chatId)
+        try await performRefusable(.contactAction(.declineRequest))
     }
 
     func processAction(_ action: Chat.Action) async {
@@ -331,10 +265,6 @@ extension ChatEngine: ChatEngineProtocol {
 }
 
 private extension ChatEngine {
-    func sendUserMessageToExistingChat(with content: Chat.LocalMessage.Content) async throws {
-        try await performRefusable(.send(content))
-    }
-
     /// Throws ``ChatUserActionRefusal`` when the product refuses the action.
     func performRefusable(_ action: ChatSourceAction) async throws {
         if case let .refused(reason) = try await sourceContext.source().perform(action) {

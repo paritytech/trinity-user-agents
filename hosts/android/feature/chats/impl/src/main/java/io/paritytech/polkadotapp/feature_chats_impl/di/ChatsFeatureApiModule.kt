@@ -130,55 +130,16 @@ internal interface ChatsFeatureApiModule {
     fun bindContactsRepository(impl: RealContactsRepository): ContactsRepository
 
     @Binds
-    fun bindBlockedContactsRepository(impl: RealContactsRepository): BlockedContactsRepository
-
-    @Binds
-    fun bindContactDirectory(impl: RealContactDirectory): ContactDirectory
-
-    @Binds
-    fun bindRemovedChatsRepository(impl: RealRemovedChatsRepository): RemovedChatsRepository
-
-    @Binds
-    fun bindRemoveContactUseCase(impl: RealRemoveContactUseCase): RemoveContactUseCase
-
-    @Binds
-    fun bindApplyRemoteChatMessageUseCase(impl: RealApplyRemoteChatMessageUseCase): ApplyRemoteChatMessageUseCase
-
-    @Binds
     fun bindContactDevicesRepository(impl: RealContactDevicesRepository): ContactDevicesRepository
-
-    @Binds
-    fun bindOurDevicesProvider(impl: RealOurDevicesProvider): OurDevicesProvider
-
-    @Binds
-    fun bindBroadcastDeviceLifecycleUseCase(impl: RealBroadcastDeviceLifecycleUseCase): BroadcastDeviceLifecycleUseCase
-
-    @Binds
-    @IntoSet
-    fun bindNativePersonChatServices(impl: NativePersonChatServices): AppInitializer
 
     @Binds
     fun bindPersonChatNotifications(impl: RealPersonChatNotifications): PersonChatNotifications
 
     @Binds
-    fun bindChatBroadcastUseCase(impl: RealChatBroadcastUseCase): ChatBroadcastUseCase
-
-    @Binds
     fun bindChatMessageRepository(impl: RealChatMessageRepository): ChatMessageRepository
 
     @Binds
-    fun bindCompactionExpansionRepository(impl: RealCompactionExpansionRepository): CompactionExpansionRepository
-
-    @Binds
-    fun bindChatSessionManager(impl: RealContactChatSessionManager): ContactChatSessionManager
-
-    @Binds
     fun bindChatMessageTimeFormatter(impl: RealChatMessageTimeFormatter): ChatMessageTimeFormatter
-
-    @Binds
-    @Singleton
-    @IntoSet
-    fun bindChatPushNotificationHandler(impl: ChatPushNotificationHandler): PushNotificationHandler
 
     @Binds
     fun bindChatActiveTracker(impl: RealChatActiveTracker): ChatActiveTracker
@@ -197,10 +158,6 @@ internal interface ChatsFeatureApiModule {
     fun bindChatMessageProcessingRepository(impl: RealChatMessageProcessingRepository): ChatMessageProcessingRepository
 
     @Binds
-    @Singleton
-    fun bindProcessedChatMessageRepository(impl: RealProcessedChatMessageRepository): ProcessedChatMessageRepository
-
-    @Binds
     fun bindMessageSender(chatEngine: ChatEngine): ChatMessageSender
 
     @Binds
@@ -210,16 +167,7 @@ internal interface ChatsFeatureApiModule {
     fun bindFallbackUsernameGenerator(impl: RealFallbackUsernameGenerator): FallbackUsernameGenerator
 
     @Binds
-    fun bindAddExternalContactUseCase(impl: RealAddContactUseCase): AddContactUseCase
-
-    @Binds
     fun bindChatDeeplinkMapper(impl: RealChatDeeplinkMapper): ChatDeeplinkMapper
-
-    @Binds
-    fun bindChatMessageNotificationSentRepository(impl: RealChatMessageNotificationSentRepository): ChatMessageNotificationSentRepository
-
-    @Binds
-    fun bindChatPushNotificationsHelper(impl: RealChatPushNotificationsSender): ChatPushNotificationsSender
 
     @Binds
     fun bindExternalExtensionProvider(impl: CompoundExternalExtensionProvider): ExternalExtensionProvider
@@ -240,61 +188,13 @@ internal interface ChatsFeatureApiModule {
     fun bindChatRequestRepository(impl: RealChatRequestRepository): ChatRequestRepository
 
     @Binds
-    fun bindChatRequestCrypto(impl: RealChatRequestCrypto): ChatRequestCrypto
-
-    @Binds
-    fun bindChatRequestProver(impl: RealChatRequestProver): ChatRequestProver
-
-    @Binds
-    fun bindChatRequestTransport(impl: RealChatRequestTransport): ChatRequestTransport
-
-    @Binds
-    fun bindOutgoingChatRequestService(impl: RealOutgoingChatRequestService): OutgoingChatRequestService
-
-    @Binds
-    fun bindIncomingChatRequestService(impl: RealIncomingChatRequestService): IncomingChatRequestService
-
-    @Binds
-    fun bindIncomingChatRequestProcessor(impl: RealIncomingChatRequestProcessor): IncomingChatRequestProcessor
-
-    @Binds
-    fun bindIncomingChatRequestVerifier(impl: RealIncomingChatRequestVerifier): IncomingChatRequestVerifier
-
-    @Binds
-    fun bindChatRequestDiscoveryService(impl: RealChatRequestDiscoveryService): ChatRequestDiscoveryService
-
-    @Binds
-    fun bindChatRequestServiceCoordinator(impl: RealChatRequestServiceCoordinator): ChatRequestServiceCoordinator
-
-    @Binds
-    @IntoSet
-    fun bindChatRequestAcceptProcessor(impl: ChatRequestAcceptProcessor): ChatMessageSaveProcessor
-
-    @Binds
-    @IntoSet
-    fun bindDeviceLifecycleMessageProcessor(impl: DeviceLifecycleMessageProcessor): ChatMessageSaveProcessor
-
-    @Binds
-    fun bindContactDeviceProvider(impl: RealContactDeviceProvider): ContactDeviceProvider
-
-    @Binds
     fun bindChatRequestsListInteractor(impl: RealChatRequestsListInteractor): ChatRequestsListInteractor
-
-    @Binds
-    fun bindExternalCallSignaling(impl: RealExternalCallSignaling): ExternalCallSignaling
-
-    @Binds
-    fun bindIncomingCallGate(impl: RealIncomingCallGate): IncomingCallGate
 
     @Binds
     fun bindRealGetContactsUseCase(impl: RealGetContactsUseCase): GetContactsUseCase
 
     @Binds
     fun bindContactsAddressConverterFactory(impl: RealContactsAddressConverterFactory): ContactsAddressConverterFactory
-
-    @Binds
-    @IntoSet
-    fun bindCompressImagesPreProcessor(impl: CompressImages): FileUploadPreProcessor
 
     @Binds
     @IntoSet
@@ -312,17 +212,6 @@ internal interface ChatsFeatureApiModule {
     fun bindDeleteRoomUseCase(impl: RealDeleteRoomUseCase): DeleteRoomUseCase
 
     @Binds
-    @Singleton
-    fun bindContactChatSessionRefCounter(impl: RealContactChatSessionRefCounter): ContactChatSessionRefCounter
-
-    @Binds
-    @Singleton
-    fun bindIncomingChatPushDecoder(impl: RealIncomingChatPushDecoder): IncomingChatPushDecoder
-
-    @Binds
     fun bindTextMessageDrawer(impl: RealTextMessageDrawer): TextMessageDrawer
 
-    @Binds
-    @Singleton
-    fun bindMultimediaMessageController(impl: MultimediaMessageStateHolder): MultimediaMessageController
 }

@@ -9,10 +9,6 @@ extension ChatMessageDataProviderMaking {
         subscribeMessages(with: .localMessages(from: chat))
     }
 
-    func subscribeNewOutgoingChatRequests() -> AnyAsyncSequence<[Chat.LocalMessage]> {
-        subscribeMessages(with: .newOutgoingChatRequestMessages())
-    }
-
     func subscribeMessages(with predicate: NSPredicate?) -> AnyAsyncSequence<[Chat.LocalMessage]> {
         let syncQueue = DispatchQueue(label: "io.chat.messages.provider.async.updates")
 

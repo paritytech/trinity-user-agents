@@ -14,19 +14,17 @@ struct HostPlacedProductsTests {
 
         #expect(hostPlaced.fallbackName == "Jollity")
         #expect(hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
-        #expect(!hostPlaced.requiresCoreRuntime)
     }
 
-    /// The chat product needs the core's `PersonChat`; on the native runtime it could only show
-    /// that chat is unavailable, so it is placed on the core runtime alone. Its room id is the home
-    /// room the product registers.
-    @Test("The bundled chat product is host-placed on the core runtime")
-    func chatIsHostPlacedOnTheCoreRuntime() throws {
+    /// The chat product runs the person chats in every build, on the core's `PersonChat`. Its room id
+    /// is the home room the product registers, and it places no room of its own.
+    @Test("The bundled chat product is host-placed in every build")
+    func chatIsHostPlacedInEveryBuild() throws {
         let chat = try #require(HostPlacedProducts.all.first { $0.productId("paseo") == "chat.paseo" })
 
         #expect(HostPlacedProducts.all.count == 2)
         #expect(chat.roomId == "chats")
-        #expect(chat.requiresCoreRuntime)
+        #expect(!chat.placesRoom)
         #expect(HostPlacedProducts.contains(productId: "chat.dot"))
         #expect(!HostPlacedProducts.contains(productId: "app.chat.dot"))
     }

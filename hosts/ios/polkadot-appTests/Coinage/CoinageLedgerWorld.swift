@@ -7,8 +7,8 @@ import Operation_iOS
 import Testing
 @testable import polkadot_app
 
-/// The real CoreData stack with both stores over it — the same store the app writes through, since the
-/// thing under test is the transaction, not a model of it.
+/// The real CoreData stack with both stores over it: the coinage ledger and the record of a chat payment, the same
+/// stores the app writes through, since the thing under test is the transaction, not a model of it.
 ///
 /// Shared rather than per-suite: the handoff guard and the send-atomicity guard are two views of one
 /// write path, and a second copy of this stack would be free to drift from the one the other suite
@@ -16,22 +16,15 @@ import Testing
 struct CoinageLedgerWorld {
     let facade: UserDataStorageTestFacade
     let ledger: CoinageCoreDataLedger
-    let messages: ChatMessageTransactionalStore
+    /// The record of the payment, which carries the keys, as the room of the chat product keeps it.
+    let messages: ProductChatPaymentStore
     let messageId = "msg-atomic-1"
     let contact = Data(repeating: 0xC0, count: 32)
 
     init() async throws {
         facade = UserDataStorageTestFacade()
         ledger = CoinageCoreDataLedger(storageFacade: facade)
-        messages = ChatMessageTransactionalStore(storageFacade: facade)
-
-        // The mapper resolves the message's chat and refuses one that does not exist, so the chat
-        // is seeded first — a payment is always sent into an existing conversation.
-        let chatId = Chat.Id.person(contact).rawRepresentation
-        try await facade.databaseService.performWrite { context in
-            let chat = try context.insertNew(CDChat.self)
-            chat.identifier = chatId
-        }
+        messages = ProductChatPaymentStore(storageFacade: facade)
 
         // The asset ledger joins each input and output to a persisted coin row.
         let repository = facade.makeRepo(mapper: CoinMapper())
@@ -59,18 +52,17 @@ struct CoinageLedgerWorld {
         .coin(Self.keyIndex(item), Self.coinKey(item))
     }
 
-    func message() -> Chat.LocalMessage {
-        Chat.LocalMessage(
+    func message() -> ProductChatPayment {
+        ProductChatPayment(
             messageId: messageId,
-            chatId: .person(contact),
-            origin: .user,
-            creationSource: .localDevice,
-            status: .outgoing(.new),
+            productId: "chat.dot",
+            roomId: "dm-" + contact.toHex(),
+            incoming: false,
             timestamp: 0,
-            content: .text("payment"),
-            reactions: [],
-            compactionId: nil,
-            relatedMessages: []
+            totalValue: 1,
+            coinKeys: [Self.coinKey(1)],
+            delivery: .sending,
+            state: nil
         )
     }
 
@@ -109,14 +101,24 @@ struct CoinageLedgerWorld {
         let id = messageId
 
         return try await facade.databaseService.performRead { context in
-            let request = NSFetchRequest<CDChatMessage>(entityName: "CDChatMessage")
+            let request = NSFetchRequest<CDProductChatPayment>(entityName: "CDProductChatPayment")
             request.predicate = NSPredicate(
                 format: "%K == %@",
-                #keyPath(CDChatMessage.messageId),
+                #keyPath(CDProductChatPayment.messageId),
                 id
             )
 
             return try context.count(for: request) > 0
         }
+    }
+}
+
+extension ProductChatPaymentStore {
+    /// Keeps a payment of the user, running `onSaved` inside its transaction, as the app sends one.
+    func save(
+        _ payment: ProductChatPayment,
+        onSaved: @escaping (any DurableTxRegistrationScope) throws -> Void
+    ) async throws {
+        try await saveOutgoing(payment, onSaved: onSaved)
     }
 }

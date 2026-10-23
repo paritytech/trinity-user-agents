@@ -58,39 +58,7 @@ extension ChatRequestListPresenter {
 private extension ChatRequestListPresenter {
     func makeItems(from chats: [Chat.LocalModel]) -> [ChatRequestListItem] {
         chats.compactMap { chat in
-            if let contact = chat.roomContact {
-                return makeItem(from: chat, contact: contact)
-            }
-
-            guard case let .person(contact) = chat.peer, let chatRequest = contact.chatRequest,
-                  chatRequest.isIncoming,
-                  case let .incoming(incomingStatus) = chatRequest.message?.status else {
-                return nil
-            }
-
-            let contactName = contact.username
-            let date = Date.fromChatTimestamp(chatRequest.timestamp)
-
-            let messageText: String = chatRequest.requestListMessage()
-
-            let avatarViewModel: AvatarViewModel =
-                if let image = contact.imageData.flatMap({ UIImage(data: $0) }) {
-                    .image(image)
-                } else {
-                    .colored(
-                        text: String(contactName.prefix(1)),
-                        colorSeed: chat.chatId.colorSeed
-                    )
-                }
-
-            return ChatRequestListItem(
-                id: chat.identifier,
-                contactName: contactName,
-                avatarViewModel: avatarViewModel,
-                messageText: messageText,
-                date: date,
-                isSeen: incomingStatus == .seen
-            )
+            chat.roomContact.flatMap { makeItem(from: chat, contact: $0) }
         }
     }
 }

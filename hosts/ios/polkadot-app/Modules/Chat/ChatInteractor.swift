@@ -418,8 +418,9 @@ extension ChatInteractor {
         }
 
         switch chatId {
-        case let .person(accountId):
-            foregroundVisibilityReporter.updateVisibleScreen(.chat(accountId: accountId))
+        case .person:
+            // The chat product draws the person chats in its rooms; no screen shows a person chat id.
+            foregroundVisibilityReporter.updateVisibleScreen(.other)
         case let .chatExtension(chatExtensionId, roomId):
             foregroundVisibilityReporter.updateVisibleScreen(.chatExtension(
                 extensionId: chatExtensionId,

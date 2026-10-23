@@ -31,10 +31,8 @@ enum SearchAccountViewFactory {
             operationQueue: operationQueue,
             logger: logger
         )
-        // The chat product runs the person chats on this install: its contacts are the contacts to pay (HX2).
-        let localContactSearch: LocalContactSearching = PersonChatMode.isProductChat
-            ? ProductContactSearch()
-            : LocalContactSearchService(repositoryFactory: ChatContactRepositoryFactory())
+        // The chat product runs the person chats: its contacts are the contacts to pay (HX2).
+        let localContactSearch: LocalContactSearching = ProductContactSearch()
         let recentRecipientsProvider = RecentRecipientsProvider(
             service: recentContactsService,
             chainFormat: chainAsset.chain.chainFormat,
@@ -56,7 +54,6 @@ enum SearchAccountViewFactory {
         let recipientViewModelFactory = RecipientViewModelFactory()
         let interactor = SearchAccountInteractor(
             accountSearching: accountSearching,
-            chatOpenResolver: ChatOpenModelResolver(),
             chainAsset: chainAsset,
             logger: logger,
             fundingDomainProvider: fundingDomainProvider

@@ -11,9 +11,9 @@ enum DataConnectionContextTests {
             logger: MockLogger()
         )
         let candidates = [
-            SdpCoderTests.makeIPv4Candidate(foundation: "1", ip: "192.168.1.1", port: 1_001),
-            SdpCoderTests.makeIPv4Candidate(foundation: "2", ip: "192.168.1.2", port: 1_002),
-            SdpCoderTests.makeIPv4Candidate(foundation: "3", ip: "192.168.1.3", port: 1_003)
+            PeerConnectionTestSignals.makeIPv4Candidate(foundation: "1", ip: "192.168.1.1", port: 1_001),
+            PeerConnectionTestSignals.makeIPv4Candidate(foundation: "2", ip: "192.168.1.2", port: 1_002),
+            PeerConnectionTestSignals.makeIPv4Candidate(foundation: "3", ip: "192.168.1.3", port: 1_003)
         ]
 
         for candidate in candidates {
@@ -35,12 +35,12 @@ enum DataConnectionContextTests {
             signaler: signaler,
             logger: MockLogger()
         )
-        let firstCandidate = SdpCoderTests.makeIPv4Candidate(
+        let firstCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "1",
             ip: "192.168.1.1",
             port: 1_001
         )
-        let secondCandidate = SdpCoderTests.makeIPv4Candidate(
+        let secondCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "2",
             ip: "192.168.1.2",
             port: 1_002
@@ -66,17 +66,17 @@ enum DataConnectionContextTests {
             signaler: signaler,
             logger: MockLogger()
         )
-        let firstCandidate = SdpCoderTests.makeIPv4Candidate(
+        let firstCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "1",
             ip: "192.168.1.1",
             port: 1_001
         )
-        let secondCandidate = SdpCoderTests.makeIPv4Candidate(
+        let secondCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "2",
             ip: "192.168.1.2",
             port: 1_002
         )
-        let answer = PeerConnectionSignal.answer(SdpCoderTests.validAnswerSdp)
+        let answer = PeerConnectionSignal.answer(PeerConnectionTestSignals.validAnswerSdp)
 
         await sut.append(.candidates([firstCandidate]))
         await sut.append(answer)
@@ -106,12 +106,12 @@ enum DataConnectionContextTests {
                 try await sleeper.sleep(for: delay)
             }
         )
-        let firstCandidate = SdpCoderTests.makeIPv4Candidate(
+        let firstCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "1",
             ip: "192.168.1.1",
             port: 1_001
         )
-        let secondCandidate = SdpCoderTests.makeIPv4Candidate(
+        let secondCandidate = PeerConnectionTestSignals.makeIPv4Candidate(
             foundation: "2",
             ip: "192.168.1.2",
             port: 1_002

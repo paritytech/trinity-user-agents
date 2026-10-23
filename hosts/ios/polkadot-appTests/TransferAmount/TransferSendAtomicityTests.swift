@@ -8,19 +8,20 @@ import Testing
 
 @testable import polkadot_app
 
-/// The guard on the transaction-inversion design: a payment's chat message, its handoff commit and its
-/// scheduled transactions all become durable in **one** CoreData transaction, or none of them do.
+/// The guard on the transaction-inversion design: the record of a chat payment (which carries its keys), its
+/// handoff commit and its scheduled transactions all become durable in **one** CoreData transaction, or none of
+/// them do.
 ///
-/// The ordering matters and nothing else enforces it. A message that persists without its handoff commit
-/// would let the coins it just gave away be selected again; a handoff committed without the message
+/// The ordering matters and nothing else enforces it. A record that persists without its handoff commit
+/// would let the coins it just gave away be selected again; a handoff committed without the record
 /// would freeze coins for a payment that never left. `performWrite` cannot nest, which is why the
-/// message store opens the transaction and hands a scope to the caller rather than the other way round.
+/// payment store opens the transaction and hands a scope to the caller rather than the other way round.
 @Suite("Transfer send atomicity")
 struct TransferSendAtomicityTests {
     private let messageId = "msg-atomic-1"
     private let contact = Data(repeating: 0xC0, count: 32)
 
-    @Test("message, handoff commit and scheduled transaction all land together")
+    @Test("payment record, handoff commit and scheduled transaction all land together")
     func everythingCommitsTogether() async throws {
         let world = try await CoinageLedgerWorld()
         let handedOff = world.coin(1)
@@ -57,7 +58,7 @@ struct TransferSendAtomicityTests {
 
     // MARK: - Rollback
 
-    @Test("a throw after scheduling rolls the message back with it")
+    @Test("a throw after scheduling rolls the payment record back with it")
     func throwAfterSchedulingRollsEverythingBack() async throws {
         let world = try await CoinageLedgerWorld()
 
@@ -96,7 +97,7 @@ struct TransferSendAtomicityTests {
         #expect(try await !world.ledger.ledger.getHandoffKeys().contains(handedOff.publicKey))
     }
 
-    @Test("a hook that throws before writing anything still rolls the message back")
+    @Test("a hook that throws before writing anything still rolls the payment record back")
     func throwBeforeWritingRollsMessageBack() async throws {
         let world = try await CoinageLedgerWorld()
 

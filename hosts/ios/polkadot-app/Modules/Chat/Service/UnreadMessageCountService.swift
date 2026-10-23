@@ -89,10 +89,13 @@ extension UnreadMessageCountService {
         return groups.count + productCount
     }
 
+    /// The rows of the person chats of the native chat do not count: the chat product carries those chats in its
+    /// rooms, which count their own messages, and the native rows stay only for the migration to it (HX2).
     static func badgeCountPredicate() -> NSPredicate {
         NSCompoundPredicate(andPredicateWithSubpredicates: [
             .byStatus(.incoming(.new)),
             NSPredicate(format: "%K != nil", #keyPath(CDChatMessage.chat)),
+            NSPredicate(format: "%K != %d", #keyPath(CDChatMessage.chat.chatType), Chat.Id.ChatType.person.rawValue),
             NSPredicate(format: "NOT (%K IN %@)", #keyPath(CDChatMessage.contentType), badgeExcludedContentTypes)
         ])
     }

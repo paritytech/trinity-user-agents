@@ -6,16 +6,11 @@ final class SearchContactInteractor {
     weak var presenter: SearchContactInteractorOutputProtocol?
 
     private let accountSearching: any AccountSearching<ContactSearchPayload, ContactSearchPayload>
-    private let chatOpenResolver: ChatOpenModelResolving
     private let searchRunner = SearchRunner()
     private let stateLock: OSAllocatedUnfairLock<State>
 
-    init(
-        accountSearching: any AccountSearching<ContactSearchPayload, ContactSearchPayload>,
-        chatOpenResolver: ChatOpenModelResolving = ChatOpenModelResolver()
-    ) {
+    init(accountSearching: any AccountSearching<ContactSearchPayload, ContactSearchPayload>) {
         self.accountSearching = accountSearching
-        self.chatOpenResolver = chatOpenResolver
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
@@ -55,21 +50,16 @@ extension SearchContactInteractor: SearchContactInteractorInputProtocol {
         replaceSearchTask(with: task)
     }
 
+    /// The chat product opens the chat with the account, a contact or not (HX2).
     func decide(on payload: ContactSearchPayload) {
-        switch payload {
-        case let .local(contact):
-            Task { [weak self] in
-                await self?.presenter?.didReceive(resolution: .existingChat(.person(contact.accountId)))
+        let accountId =
+            switch payload {
+            case let .local(contact): contact.accountId
+            case let .remote(contact): contact.accountId
             }
-        case let .remote(contact):
-            Task { [weak self, chatOpenResolver] in
-                do {
-                    let openModel = try await chatOpenResolver.resolveOpenModel(for: contact)
-                    await self?.presenter?.didReceive(resolution: openModel)
-                } catch {
-                    await self?.presenter?.didReceive(error: error)
-                }
-            }
+
+        Task { [weak self] in
+            await self?.presenter?.didReceive(resolution: .existingChat(.person(accountId)))
         }
     }
 }

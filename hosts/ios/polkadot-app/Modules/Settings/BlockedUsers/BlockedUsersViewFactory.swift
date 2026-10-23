@@ -4,12 +4,10 @@ import Operation_iOS
 @MainActor
 enum BlockedUsersViewFactory {
     static func createView() -> BlockedUsersViewProtocol? {
-        // The chat product runs the person chats on this install: it keeps the blocked contacts (HX2).
-        let productChat = PersonChatMode.isProductChat
+        // The chat product runs the person chats: it keeps the blocked contacts (HX2).
         let interactor = BlockedUsersInteractor(
             chatContactDataProviderFactory: ChatContactDataProviderFactory(),
-            blockUserService: productChat ? ProductContactBlocking() : BlockUserService(),
-            productChat: productChat
+            blockUserService: ProductContactBlocking()
         )
 
         let wireframe = BlockedUsersWireframe()

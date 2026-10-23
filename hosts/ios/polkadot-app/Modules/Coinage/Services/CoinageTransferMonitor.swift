@@ -6,9 +6,9 @@ import Foundation
 import Operation_iOS
 import SubstrateSdk
 
-/// Persists each chat transfer's lifecycle as its state row (``TransferStateStoring``). The status
+/// Persists each chat payment's lifecycle as its state (``TransferStateStoring``). The status
 /// comes only from the durability-derived streams: a thrown runtime error is never written, and a
-/// message whose row is terminal never enters the subscriptions.
+/// payment whose state is terminal never enters the subscription.
 protocol CoinageTransferMonitoring: AsyncApplicationServicing {}
 
 final class CoinageTransferMonitor {
@@ -17,15 +17,11 @@ final class CoinageTransferMonitor {
     private let claimCoinsService: any ClaimCoinsServicing
     private let transferStatusService: any CoinageTransferStatusServicing
     private let denominationContext: DenominationContextProvider
-    private let transferStateStore: any TransferStateStoring
-    /// The payments of the rooms of the chat product, followed and claimed as the messages of the native chat.
-    private let productPayments: (any ProductChatPaymentsMonitoring)?
-    private let messageProviderFactory: ChatMessageDataProviderMaking
+    /// The payments of the rooms of the chat product, the only chat that carries payments.
+    private let productPayments: any ProductChatPaymentsMonitoring
     private let logger: LoggerProtocol
 
-    /// Top-level tasks that listen to the CoreData message streams.
-    private var incomingTransfersSubscription: Task<Void, Never>?
-    private var outgoingTransfersSubscription: Task<Void, Never>?
+    /// The top-level task that listens to the unsettled payments.
     private var productPaymentsSubscription: Task<Void, Never>?
 
     /// Per-message tasks keyed by messageId. Each resolves independently, avoiding head-of-line
@@ -36,38 +32,23 @@ final class CoinageTransferMonitor {
         claimCoinsService: any ClaimCoinsServicing,
         transferStatusService: any CoinageTransferStatusServicing,
         denominationContext: @escaping DenominationContextProvider,
-        transferStateStore: any TransferStateStoring,
-        productPayments: (any ProductChatPaymentsMonitoring)? = nil,
-        storageFacade: StorageFacadeProtocol,
-        operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
+        productPayments: any ProductChatPaymentsMonitoring,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.claimCoinsService = claimCoinsService
         self.transferStatusService = transferStatusService
         self.denominationContext = denominationContext
-        self.transferStateStore = transferStateStore
         self.productPayments = productPayments
         self.logger = logger
-
-        let repositoryFactory = ChatMessageRepositoryFactory(storageFacade: storageFacade)
-        messageProviderFactory = ChatMessageDataProviderFactory(
-            repositoryFactory: repositoryFactory,
-            operationQueue: operationQueue,
-            logger: logger
-        )
     }
 }
 
 extension CoinageTransferMonitor: CoinageTransferMonitoring {
     func setup() async {
-        subscribeIncomingMessages()
-        subscribeOutgoingMessages()
         subscribeProductPayments()
     }
 
     func throttle() async {
-        incomingTransfersSubscription?.cancel()
-        outgoingTransfersSubscription?.cancel()
         productPaymentsSubscription?.cancel()
         await taskRegistry.cancelAll()
     }
@@ -76,34 +57,6 @@ extension CoinageTransferMonitor: CoinageTransferMonitoring {
 // MARK: - Incoming (claim)
 
 private extension CoinageTransferMonitor {
-    func subscribeIncomingMessages() {
-        logger.debug("Going to subscribe to incoming messages")
-
-        incomingTransfersSubscription = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let stream = messageProviderFactory.subscribeMessages(with: .incomingCoinageSendMessages())
-                for try await messages in stream {
-                    try Task.checkCancellation()
-
-                    logger.debug("Found \(messages.count) incoming coinage messages")
-
-                    for message in messages {
-                        await startIncoming(for: message)
-                    }
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                logger.error("Coinage claim subscription failed: \(error)")
-            }
-        }
-    }
-
-    func startIncoming(for message: Chat.LocalMessage) async {
-        guard case let .coinageSend(content) = message.content else { return }
-        await startIncoming(messageId: message.messageId, memo: content.transferMemo, stateStore: transferStateStore)
-    }
-
     func startIncoming(
         messageId: Chat.MessageId,
         memo: TransferMemo,
@@ -147,31 +100,6 @@ private extension CoinageTransferMonitor {
 // MARK: - Outgoing (payment status)
 
 private extension CoinageTransferMonitor {
-    func subscribeOutgoingMessages() {
-        logger.debug("Going to subscribe to outgoing messages")
-
-        outgoingTransfersSubscription = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let stream = messageProviderFactory.subscribeMessages(with: .outgoingLocalDeviceCoinageSendMessages())
-                for try await messages in stream {
-                    try Task.checkCancellation()
-                    for message in messages {
-                        await startOutgoing(for: message)
-                    }
-                }
-            } catch {
-                guard !Task.isCancelled else { return }
-                logger.error("Coinage send subscription failed: \(error)")
-            }
-        }
-    }
-
-    func startOutgoing(for message: Chat.LocalMessage) async {
-        guard case let .coinageSend(content) = message.content else { return }
-        await startOutgoing(messageId: message.messageId, memo: content.transferMemo, stateStore: transferStateStore)
-    }
-
     func startOutgoing(
         messageId: Chat.MessageId,
         memo: TransferMemo,
@@ -208,14 +136,12 @@ private extension CoinageTransferMonitor {
 // MARK: - Payments of the chat product
 
 private extension CoinageTransferMonitor {
-    /// The payments of the rooms of the chat product take the same claim and the same status as the payments of the
-    /// native chat, keyed by their message id. Only their store differs.
+    /// Each payment is claimed or followed under its message id, which is also the group of its coins.
     func subscribeProductPayments() {
-        guard let productPayments else { return }
-
         logger.debug("Going to subscribe to chat product payments")
 
         productPaymentsSubscription = Task { [weak self] in
+            guard let productPayments = self?.productPayments else { return }
             for await payments in await productPayments.unsettledPayments() {
                 guard let self, !Task.isCancelled else { return }
 
@@ -236,12 +162,6 @@ private extension CoinageTransferMonitor {
                 }
             }
         }
-    }
-}
-
-private extension Chat.LocalMessage.Content.Transfer {
-    var transferMemo: TransferMemo {
-        TransferMemo(entries: coinKeys, totalValue: totalValue)
     }
 }
 

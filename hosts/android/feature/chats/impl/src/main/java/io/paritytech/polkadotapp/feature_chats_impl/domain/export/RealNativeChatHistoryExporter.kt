@@ -2,14 +2,18 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.export
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.paritytech.polkadotapp.common.data.os.OperatingSystem
+import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.NativeChatHistoryExporter
-import io.paritytech.polkadotapp.feature_chats_api.domain.interactors.ApplyRemoteChatMessageUseCase
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactDevicesRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
+import io.paritytech.polkadotapp.feature_chats_impl.data.migration.NativeChatReader
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.toEncodedMessage
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.AlwaysFailCustomContentDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.IncomingStatusScale
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.LocalStatusScale
 import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.OutgoingStatusScale
@@ -17,22 +21,51 @@ import javax.inject.Inject
 import kotlin.time.Instant
 
 class RealNativeChatHistoryExporter @Inject constructor(
-    private val contactsRepository: ContactsRepository,
-    private val contactDevicesRepository: ContactDevicesRepository,
-    private val chatRequestRepository: ChatRequestRepository,
-    private val messages: ApplyRemoteChatMessageUseCase,
+    private val reader: NativeChatReader,
+    private val chatMessageRepository: ChatMessageRepository,
 ) : NativeChatHistoryExporter {
     override suspend fun export(): ByteArray? {
-        val contacts = contactsRepository.getContacts().takeIf { it.isNotEmpty() } ?: return null
+        val contacts = reader.contacts().takeIf { it.isNotEmpty() } ?: return null
         val export = HistoryExportScale.V1(
             contacts = contacts.map { it.toScale() },
             requests = contacts.mapNotNull { contact ->
-                contact.pendingChatRequestId?.let { chatRequestRepository.getById(it) }?.toScale(contact)
+                contact.pendingChatRequestId?.let { reader.request(it) }?.toScale(contact)
             },
-            messages = messages.getMessagesUpdatedAfter(Instant.DISTANT_PAST).map { it.toScale() },
+            messages = contactMessages().map { it.toScale() },
         )
         return BinaryScale.encodeToByteArray(HistoryExportScale.serializer(), export)
     }
+
+    /** The stored messages of the contact chats, in the wire form that native device sync sent them in. */
+    private suspend fun contactMessages(): List<NativeMessage> =
+        chatMessageRepository.getMessagesUpdatedAfter(Instant.DISTANT_PAST, AlwaysFailCustomContentDecoder()).mapNotNull { message ->
+            val contact = message.chatId.contactOrNull() ?: return@mapNotNull null
+            // A request is kept as its welcome message.
+            val wire = when (val content = message.content) {
+                is ChatMessage.Content.ChatRequest -> content.welcome?.let { message.copy(content = it) } ?: return@mapNotNull null
+                else -> message
+            }
+            wire.toEncodedMessage()
+                .logFailure("The native message ${message.id} could not be exported")
+                .map { encoded ->
+                    NativeMessage(
+                        encoded = encoded,
+                        peerAccountId = contact.contactAccountId,
+                        isOutgoing = wire.origin is ChatMessageOrigin.User,
+                        status = wire.status,
+                        timestamp = wire.timestamp,
+                    )
+                }
+                .getOrNull()
+        }
+
+    private class NativeMessage(
+        val encoded: ByteArray,
+        val peerAccountId: AccountId,
+        val isOutgoing: Boolean,
+        val status: ChatMessage.Status,
+        val timestamp: Long,
+    )
 
     private suspend fun Contact.toScale() = HistoryContactScale(
         accountId = accountId.value,
@@ -49,7 +82,7 @@ class RealNativeChatHistoryExporter @Inject constructor(
         peerLeft = isPeerLeft,
         addedAt = addedAt.toEpochMilliseconds().toULong(),
         establishedAt = establishedAt?.toEpochMilliseconds()?.toULong(),
-        devices = contactDevicesRepository.getDevices(accountId).map {
+        devices = reader.devices(accountId).map {
             HistoryDeviceScale(it.statementAccountId.value, it.encryptionPublicKey.bytes.value)
         },
     )
@@ -68,7 +101,7 @@ class RealNativeChatHistoryExporter @Inject constructor(
         welcome = null,
     )
 
-    private fun ApplyRemoteChatMessageUseCase.MessageForSync.toScale() = HistoryMessageScale(
+    private fun NativeMessage.toScale() = HistoryMessageScale(
         peerId = peerAccountId.value,
         message = encoded,
         status = if (isOutgoing) LocalStatusScale.Outgoing(status.toOutgoing()) else LocalStatusScale.Incoming(status.toIncoming()),

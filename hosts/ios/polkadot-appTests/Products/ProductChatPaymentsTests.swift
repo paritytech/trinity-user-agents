@@ -364,10 +364,7 @@ private final class PaymentWorld {
             claimCoinsService: claims,
             transferStatusService: statuses,
             denominationContext: { context },
-            transferStateStore: TransferStateCoreDataStore(storageFacade: facade),
             productPayments: payments,
-            storageFacade: facade,
-            operationQueue: OperationQueue(),
             logger: MockLogger()
         )
     }

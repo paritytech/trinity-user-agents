@@ -111,12 +111,6 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
         delegate: ChatMoreActionsDelegate
     ) -> UIMenu
 
-    func showCall(
-        from view: ControllerBackedProtocol?,
-        chatMetadata: ChatMetadata,
-        callType: ChatCallType
-    )
-
     func presentMicrophoneAccessDenied(from view: ControllerBackedProtocol?)
 
     func showEditHistory(

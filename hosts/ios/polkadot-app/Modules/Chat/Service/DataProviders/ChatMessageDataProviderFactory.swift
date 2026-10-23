@@ -5,8 +5,6 @@ import CoreData
 import SubstrateSdk
 
 protocol ChatMessageDataProviderMaking {
-    func createNewRemoteMessagesLifecycleProvider() -> StreamableProvider<Chat.LocalMessage>
-
     func subscribeMessagesSnapshot(
         with predicate: NSPredicate?,
         deliverOn queue: DispatchQueue,
@@ -31,34 +29,6 @@ final class ChatMessageDataProviderFactory {
 }
 
 extension ChatMessageDataProviderFactory: ChatMessageDataProviderMaking {
-    func createNewRemoteMessagesLifecycleProvider() -> StreamableProvider<Chat.LocalMessage> {
-        let filter = NSPredicate.newOutgoingRemoteMessages()
-        let repository = repositoryFactory.createRepository(forFilter: filter)
-        let source = EmptyStreamableSource<Chat.LocalMessage>()
-        let mapper = ChatMessageEntityMapper()
-
-        let observable = CoreDataContextObservable(
-            service: repositoryFactory.databaseService,
-            mapper: AnyCoreDataMapper(mapper),
-            predicate: { entity in
-                entity.chat?.chatType == Int16(Chat.Id.ChatType.person.rawValue)
-            } // do not filter (to pass update when status changed from target .new to other)
-        )
-
-        observable.start { [weak self] error in
-            if let error {
-                self?.logger.error("Did receive error: \(error)")
-            }
-        }
-
-        return StreamableProvider(
-            source: AnyStreamableSource(source),
-            repository: repository,
-            observable: AnyDataProviderRepositoryObservable(observable),
-            operationManager: OperationManager(operationQueue: operationQueue)
-        )
-    }
-
     func subscribeMessagesSnapshot(
         with predicate: NSPredicate?,
         deliverOn queue: DispatchQueue,

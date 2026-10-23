@@ -7,15 +7,8 @@ enum PolkadotSignInViewFactory {
         url: URL,
         onResult: ((PolkadotSignInResult) -> Void)? = nil
     ) -> PolkadotSignInViewProtocol? {
-        guard let tld = try? DotNsTldProviderFacade.shared.currentTldOrError() else {
-            return nil
-        }
-
         let interactor = PolkadotSignInInteractor(
             serviceCoordinator: serviceCoordinator,
-            deviceMessageBroadcaster: MultideviceComponentFactory.makeDeviceMessageBroadcaster(
-                messageExchangeModeProvider: ChatMessageExchangeModeProvider(tld: tld)
-            ),
             localNetworkPermissionService: LocalNetworkPermissionService.shared,
             url: url
         )

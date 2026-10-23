@@ -17,7 +17,6 @@ actor ChatExtensionProcessingContext {
 
     let chatId: Chat.Id
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
-    let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
     let processingHistoryRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>
     let logger: LoggerProtocol
 
@@ -25,14 +24,12 @@ actor ChatExtensionProcessingContext {
         chatId: Chat.Id,
         initialHistory: [ChatExtension.ProcessingHistory],
         messageRepository: AnyDataProviderRepository<Chat.LocalMessage>,
-        attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>,
         processingHistoryRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>,
         logger: LoggerProtocol
     ) {
         self.chatId = chatId
         processedHistory = Set(initialHistory.map { HistoryItem(messageId: $0.messageId, extensionId: $0.extensionId) })
         self.messageRepository = messageRepository
-        self.attachmentsUpdateRepository = attachmentsUpdateRepository
         self.processingHistoryRepository = processingHistoryRepository
         self.logger = logger
     }

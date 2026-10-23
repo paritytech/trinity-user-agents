@@ -19,7 +19,7 @@ final class AppPersonChatHostBridge: PersonChatHostBridge, @unchecked Sendable {
     init(
         nodes: @escaping @Sendable () -> [String],
         devices: @escaping @Sendable () async throws -> [HostPairedDevice],
-        contacts: ProductChatContacts = ProductChatContacts(),
+        contacts: ProductChatContacts = .shared,
         migration: ProductChatMigration = ProductChatMigration(),
         payments: ProductChatPayments = .shared
     ) {

@@ -466,20 +466,15 @@ private extension ChatPresenter {
     }
 
     func handleStartCall(callType: ChatCallType) {
-        guard let metadata else { return }
+        guard metadata != nil else { return }
         MainActor.assumeIsolated {
             if interactor.isMicrophoneDenied() {
                 wireframe.presentMicrophoneAccessDenied(from: view)
                 return
             }
 
-            guard !routesCallToProduct(callType) else { return }
-
-            wireframe.showCall(
-                from: view,
-                chatMetadata: metadata.chatMetadata,
-                callType: callType
-            )
+            // Only the rooms of the chat product place calls; any other room has no call to start.
+            _ = routesCallToProduct(callType)
         }
     }
 

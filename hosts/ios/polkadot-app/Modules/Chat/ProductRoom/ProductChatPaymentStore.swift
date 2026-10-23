@@ -51,6 +51,14 @@ struct ProductChatPayment: Equatable, Sendable {
     }
 }
 
+/// A payment of the native chat that the host takes over when it moves the chat to the product (HX3): the coins, the
+/// state of the transfer and, for a payment of a contact, when this device first tried to claim it, which bounds the
+/// claim window.
+struct AdoptedChatPayment: Equatable, Sendable {
+    let payment: ProductChatPayment
+    let firstAttemptAt: Date?
+}
+
 enum ProductChatPaymentStoreError: Error, Equatable {
     case paymentNotFound(Chat.MessageId)
     /// The host has a payment with this id already.
@@ -75,6 +83,11 @@ protocol ProductChatPaymentStoring: TransferStateStoring {
     func payments() async throws -> [ProductChatPayment]
 
     func setDelivery(_ delivery: ProductChatPayment.Delivery, messageId: Chat.MessageId) async throws
+
+    /// Keeps each payment of the native chat that the host does not keep yet, with its state, in one transaction.
+    /// A payment kept before is left as it is, so taking the same payments over again changes nothing. Gives the
+    /// payments it kept.
+    func adopt(_ payments: [AdoptedChatPayment]) async throws -> [ProductChatPayment]
 }
 
 /// The payments in the user database (`CDProductChatPayment`), next to the coins whose handoff they carry.
@@ -130,6 +143,30 @@ final class ProductChatPaymentStore: ProductChatPaymentStoring, @unchecked Senda
             let row = try Self.existingRow(messageId, in: context)
             guard row.delivery != delivery.rawValue else { return }
             row.delivery = delivery.rawValue
+        }
+    }
+
+    func adopt(_ payments: [AdoptedChatPayment]) async throws -> [ProductChatPayment] {
+        let rows = try payments.map { try ($0, Self.encode($0.payment.coinKeys)) }
+        let now = await dateProvider.read()
+
+        return try await databaseService.performWrite { context in
+            var adopted: [ProductChatPayment] = []
+            for (adoption, keys) in rows {
+                let payment = adoption.payment
+                guard try Self.row(payment.messageId, in: context) == nil else { continue }
+
+                let row = try Self.insert(payment, keys: keys, in: context)
+                if let columns = payment.state?.columns {
+                    Self.apply(status: columns.status, actualValue: columns.actualValue, to: row)
+                }
+                // A claim that started has a first attempt: the window of the claim is measured from it.
+                if payment.incoming, payment.state != nil {
+                    row.firstAttemptAt = adoption.firstAttemptAt ?? now
+                }
+                adopted.append(payment)
+            }
+            return adopted
         }
     }
 
@@ -191,7 +228,12 @@ private extension ProductChatPaymentStore {
         return row
     }
 
-    static func insert(_ payment: ProductChatPayment, keys: Data, in context: NSManagedObjectContext) throws {
+    @discardableResult
+    static func insert(
+        _ payment: ProductChatPayment,
+        keys: Data,
+        in context: NSManagedObjectContext
+    ) throws -> CDProductChatPayment {
         let row = try context.insertNew(CDProductChatPayment.self)
         row.messageId = payment.messageId
         row.productId = payment.productId
@@ -201,6 +243,7 @@ private extension ProductChatPaymentStore {
         row.totalValue = String(payment.totalValue)
         row.coinKeys = keys
         row.delivery = payment.delivery.rawValue
+        return row
     }
 
     /// Writes nothing when the row holds the state already, so that a repeated state does not wake the rooms.
@@ -277,5 +320,15 @@ private extension [Data] {
         let encoder = ScaleEncoder()
         try encode(scaleEncoder: encoder)
         return encoder.encode()
+    }
+}
+
+private extension Chat.LocalMessage.Content.Transfer.State {
+    /// The raw status and the value of the state, as the state columns keep them.
+    var columns: (status: Int16, actualValue: Balance?) {
+        switch self {
+        case let .incoming(state): (state.status.rawValue, state.actualValue)
+        case let .outgoing(state): (state.status.rawValue, state.actualValue)
+        }
     }
 }

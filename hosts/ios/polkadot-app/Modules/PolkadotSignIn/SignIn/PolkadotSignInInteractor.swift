@@ -4,20 +4,17 @@ final class PolkadotSignInInteractor {
     weak var presenter: PolkadotSignInInteractorOutputProtocol?
 
     private let serviceCoordinator: ServiceCoordinatorProtocol
-    private let deviceMessageBroadcaster: DeviceMessageBroadcasting
     private let localNetworkPermissionService: LocalNetworkPermissionServicing
     private let url: URL
     private let logger: LoggerProtocol
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
-        deviceMessageBroadcaster: DeviceMessageBroadcasting,
         localNetworkPermissionService: LocalNetworkPermissionServicing,
         url: URL,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.serviceCoordinator = serviceCoordinator
-        self.deviceMessageBroadcaster = deviceMessageBroadcaster
         self.localNetworkPermissionService = localNetworkPermissionService
         self.url = url
         self.logger = logger
@@ -39,11 +36,6 @@ extension PolkadotSignInInteractor: PolkadotSignInInteractorInputProtocol {
                     .polkadotHandshakeService
                     .sendHandshake(with: input)
                 logger.debug("Handshake sent for \(input.metadata.name)")
-
-                try await deviceMessageBroadcaster.broadcastDeviceAdded(
-                    statementAccountId: device.statementAccountId,
-                    encryptionPublicKey: device.encryptionPublicKey
-                )
 
                 await reportSendHandshakeFinish(device: device)
             } catch {

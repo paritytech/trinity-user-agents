@@ -6,12 +6,10 @@ final class ChatOpenService {
 
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     private let moduleNavigator: ModuleNavigating
-    private let remoteContactResolver: RemoteContactResolving
 
     init(
         storageFacade: StorageFacadeProtocol,
-        moduleNavigator: ModuleNavigating,
-        remoteContactResolver: RemoteContactResolving
+        moduleNavigator: ModuleNavigating
     ) {
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -19,7 +17,6 @@ final class ChatOpenService {
             )
         )
         self.moduleNavigator = moduleNavigator
-        self.remoteContactResolver = remoteContactResolver
     }
 }
 
@@ -37,7 +34,7 @@ extension ChatOpenService: URLHandlingServiceProtocol {
 
         Task { @MainActor in
             // The chat product opens the chat with an account itself, and knows the account without the network.
-            guard !shouldForce, !(PersonChatMode.isProductChat && chatId.isPerson) else {
+            guard !shouldForce, !chatId.isPerson else {
                 moduleNavigator.openChat(chatId)
                 return
             }
@@ -48,24 +45,7 @@ extension ChatOpenService: URLHandlingServiceProtocol {
 
             if let chat {
                 moduleNavigator.openChat(chat.chatId)
-                return
             }
-
-            guard case let .person(accountId) = chatId else {
-                return
-            }
-
-            let remoteContact = try await remoteContactResolver.fetch(by: accountId)
-
-            guard let remoteContact else {
-                return
-            }
-
-            let newRequest = try ChatOpenModel.NewRequest(
-                remoteContact: remoteContact,
-                ownKeyId: Chat.Contact.Own.main()
-            )
-            moduleNavigator.openChat(.newRequest(newRequest))
         }
 
         return true

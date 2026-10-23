@@ -1,8 +1,8 @@
 import Foundation
 
 /// Assembles the chat contact search for a product's pick: the same screen,
-/// with the stored contacts as its only source and the product's answer as its
-/// ending.
+/// with the contacts of the chat product as its only source and the product's
+/// answer as its ending.
 @MainActor
 enum ContactPickViewFactory {
     static func createView(context: ContactPickContext) -> SearchContactViewProtocol? {
@@ -13,9 +13,7 @@ enum ContactPickViewFactory {
 
         let interactor = SearchContactInteractor(
             accountSearching: ContactPickSearchProvider(
-                localContactSearch: LocalContactSearchService(
-                    repositoryFactory: ChatContactRepositoryFactory()
-                ),
+                localContactSearch: ProductSyncedContactSearch(),
                 ownAccountId: ownAccountId
             )
         )

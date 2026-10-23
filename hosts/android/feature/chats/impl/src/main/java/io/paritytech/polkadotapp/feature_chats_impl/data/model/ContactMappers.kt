@@ -5,14 +5,10 @@ import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.requireX25519PublicKey
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.database.model.ContactLocal
-import io.paritytech.polkadotapp.database.model.ContactWithChatRequestLocal
-import io.paritytech.polkadotapp.database.model.ContactWithRequestTimestampLocal
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import kotlin.time.Instant
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithRequestTimestamp as DomainContactWithRequestTimestamp
 
 fun ContactLocal.toDomain(): Contact {
     return Contact(
@@ -72,18 +68,4 @@ fun ContactLocal.OperatingSystem?.toDomain() = when (this) {
     ContactLocal.OperatingSystem.ANDROID -> OperatingSystem.ANDROID
     ContactLocal.OperatingSystem.IOS -> OperatingSystem.IOS
     null -> OperatingSystem.UNKNOWN
-}
-
-fun ContactWithRequestTimestampLocal.toDomain(): DomainContactWithRequestTimestamp {
-    return DomainContactWithRequestTimestamp(
-        contact = contact.toDomain(),
-        requestTimestamp = requestTimestamp
-    )
-}
-
-fun ContactWithChatRequestLocal.toDomain(): ContactWithChatRequest {
-    return ContactWithChatRequest(
-        contact = contact.toDomain(),
-        pendingChatRequest = chatRequest?.toDomain()
-    )
 }

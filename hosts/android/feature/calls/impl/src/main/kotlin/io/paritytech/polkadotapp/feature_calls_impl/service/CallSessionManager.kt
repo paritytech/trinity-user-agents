@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomEventPublisher
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerChannel
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerChannelFactory
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerConnectionLogger
@@ -39,7 +38,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class CallSessionManager @Inject constructor(
-    private val externalCallSignaling: ExternalCallSignaling,
     private val callStateHolder: CallStateHolder,
     private val callAudioRouteController: CallAudioRouteController,
     private val peerChannelFactory: PeerChannelFactory,
@@ -64,18 +62,14 @@ class CallSessionManager @Inject constructor(
         with(sessionScope) { callAudioRouteController.start(defaultToSpeaker = withVideo) }
 
         sessionScope.launch {
-            // An answered call of a product room starts once its product starts the media of the call.
-            val callSignaling = if (chatId.isExtensionChat()) {
-                awaitProductSession(chatId, offerId, callDirection) ?: run {
-                    Timber.w("startSession: product call $offerId did not start")
-                    // As every native call that ends, the screen shows the end before it closes.
-                    callStateHolder.updateStatus(CallStatus.Failed)
-                    endProductCallWithoutMedia(chatId, offerId, incoming = callDirection == CallDirection.Incoming)
-                    onTerminated()
-                    return@launch
-                }
-            } else {
-                externalCallSignaling
+            // An answered call starts once the product of its room starts the media of the call.
+            val callSignaling = awaitProductSession(chatId, offerId, callDirection) ?: run {
+                Timber.w("startSession: product call $offerId did not start")
+                // As every native call that ends, the screen shows the end before it closes.
+                callStateHolder.updateStatus(CallStatus.Failed)
+                endProductCallWithoutMedia(chatId, offerId, incoming = callDirection == CallDirection.Incoming)
+                onTerminated()
+                return@launch
             }
             sessionSignaling = callSignaling
             val signaling = callSignaling.asPeerChannelSignaling(chatId, offerId, withVideo)
@@ -151,9 +145,8 @@ class CallSessionManager @Inject constructor(
         }
     }
 
-    // A product room's call goes through the product, which may have ended it already.
-    private fun signalingOf(chatId: ChatId, offerId: OfferId): ExternalCallSignaling? =
-        if (chatId.isExtensionChat()) productCallMedia.session(chatId, offerId) else externalCallSignaling
+    // A call goes through the product of its room, which may have ended it already.
+    private fun signalingOf(chatId: ChatId, offerId: OfferId): ExternalCallSignaling? = productCallMedia.session(chatId, offerId)
 
     /**
      * Ends a call of a product room whose media does not run: a ringing call, or an answered one whose media did not
@@ -161,7 +154,6 @@ class CallSessionManager @Inject constructor(
      * before it has the offer; the end reaches a call it made active. A media start that comes after it is refused.
      */
     private suspend fun endProductCallWithoutMedia(chatId: ChatId, offerId: OfferId, incoming: Boolean) {
-        if (!chatId.isExtensionChat()) return
         productCallMedia.abandon(chatId, offerId)
         if (incoming) roomEvents.publish(chatId, ChatRoomEventModel.CallAnswered(offerId, accept = false))
         roomEvents.publish(chatId, ChatRoomEventModel.CallEnded(offerId))
@@ -185,14 +177,10 @@ class CallSessionManager @Inject constructor(
     context(scope: CoroutineScope)
     fun observeIncomingCallCanceled(chatId: ChatId, offerId: OfferId, onCanceled: () -> Unit) = scope.launch {
         Timber.i("observeIncomingCallClose: waiting for close signal, offerId=$offerId")
-        // A product room rings until its product clears the call or gives the room another call, as a native call rings
+        // A room rings until its product clears the call or gives the room another call, as a native call rings
         // until its caller ends it. A call that rings from its push stops when the product, once woken, does not take it up.
-        if (chatId.isExtensionChat()) {
-            val taken = withTimeoutOrNull(PRODUCT_PICKUP_TIMEOUT) { roomCalls.observe(chatId).first { it?.callId == offerId } }
-            if (taken != null) roomCalls.observe(chatId).first { it?.callId != offerId }
-        } else {
-            externalCallSignaling.subscribeIncomingCloseSignal(offerId, chatId).first()
-        }
+        val taken = withTimeoutOrNull(PRODUCT_PICKUP_TIMEOUT) { roomCalls.observe(chatId).first { it?.callId == offerId } }
+        if (taken != null) roomCalls.observe(chatId).first { it?.callId != offerId }
         Timber.i("observeIncomingCallClose: received close signal")
         callStateHolder.updateStatus(CallStatus.Ended)
         onCanceled()
