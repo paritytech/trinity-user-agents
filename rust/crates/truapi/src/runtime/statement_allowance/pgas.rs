@@ -253,8 +253,9 @@ pub async fn claim_pgas(
 		let claim = asset_hub_target
 			.extrinsics
 			.build_mortal_extrinsic(asset_hub_target.genesis, |builder| {
-				builder.with_call_args("Pgas", "claim_pgas", call);
-				builder.with_extension(super::AsPgasExtension::new(proof, day));
+				builder
+					.with_call_args("Pgas", "claim_pgas", call)
+					.with_extension(super::AsPgasExtension::new(proof, day));
 			})
 			.await?;
 
