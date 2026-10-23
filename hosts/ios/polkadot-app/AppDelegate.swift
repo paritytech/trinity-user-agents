@@ -2,6 +2,7 @@ import UIKit
 import TipKit
 import IssueMonitoring
 import Keystore_iOS
+import TrUAPIHost
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -79,7 +80,7 @@ private extension AppDelegate {
                     appVariant: issueMonitoringAppVariant,
                     platform: "ios",
                     osVersion: UIDevice.current.systemVersion,
-                    truapiHostVersion: nil
+                    truapiHostVersion: TrUAPIHost.version
                 )
             )
         #endif
