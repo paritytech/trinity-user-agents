@@ -1,6 +1,7 @@
 import Foundation
 import Products
 import TrUAPIHost
+import UIKit
 
 private func currentTrUAPIHostVersion() -> String {
     truapiHostVersion()
@@ -33,7 +34,7 @@ struct NativeHostTelemetry: Encodable {
             appBuild: Bundle.main.appBuild,
             appVariant: currentAppVariant,
             platform: "ios",
-            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            osVersion: UIDevice.current.systemVersion,
             truapiHostVersion: currentTrUAPIHostVersion(),
             schemaVersion: "1"
         )
