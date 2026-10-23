@@ -73,7 +73,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
-	let mut reader = AssetHubReader::connect(config.network.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::for_network(&config.network).await?;
 	// Registered names (any flow) fail only at submission otherwise; a pending
 	// reservation of `label` is not a mint and stays claimable.
 	if !reader.label_available(label).await? {

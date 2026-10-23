@@ -6,7 +6,6 @@
   "lusterMinPx": 100,
   "studioRadius": 4,
   "studioScale": 0.7,
-  "basin": 0.02,
   "rollGloss": 0.07,
   "rollReliefHaze": 0.35,
   "envSharpen": 0.8,

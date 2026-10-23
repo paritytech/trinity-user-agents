@@ -21,8 +21,14 @@ struct PocketCollectionCardView: View {
         PocketProductCardView(
             title: card.title,
             face: streamed ?? card.face,
-            resolveImage: pocket?.images(of: card.key.productId).map { images in
-                WidgetImageResolver.cached { await images.resolve($0) }
+            resolveImage: pocket?.images(of: card.key.productId).map { [privileged = card.privileged] images in
+                WidgetImageResolver.cached { source in
+                    if privileged, case let .archive(path) = source,
+                       let shipped = AssetPinnedPocketCards.image(at: path) {
+                        return shipped
+                    }
+                    return await images.resolve(source)
+                }
             },
             onAction: { action, value in send(action, value) }
         )

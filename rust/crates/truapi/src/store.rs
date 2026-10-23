@@ -58,6 +58,16 @@ pub fn core_db_config(directory: &Path) -> DbConfig {
 	}
 }
 
+/// A core database in a fresh temporary directory, so reads go through the
+/// reader pool as they do in production. Dropping the directory deletes it.
+#[cfg(test)]
+pub fn open_temporary_core_db() -> (tempfile::TempDir, Db) {
+	let dir = tempfile::tempdir().expect("temporary directory is created");
+	let db = futures::executor::block_on(Db::open(core_db_config(dir.path())))
+		.expect("core database opens");
+	(dir, db)
+}
+
 /// Why a store operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {

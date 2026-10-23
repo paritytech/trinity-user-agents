@@ -146,6 +146,8 @@ scripts/refresh-host-import.sh
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
+scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
+                           ci.yml change gates
 ```
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
@@ -269,6 +271,17 @@ policy too.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+Calls that need items on chain answer unavailable for now. A host without a
+core database, such as the browser core, answers `Unsupported` to the two
+served calls.
 
 ### Trinity stack descriptors
 

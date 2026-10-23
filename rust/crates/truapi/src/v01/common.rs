@@ -9,3 +9,11 @@ pub struct GenericError {
 	/// Human-readable failure reason.
 	pub reason: String,
 }
+
+/// X25519 public key for key agreement (RFC 0022).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct X25519PublicKey(pub [u8; 32]);
+
+/// Topic a statement-store statement is published under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct StatementTopic(pub [u8; 32]);

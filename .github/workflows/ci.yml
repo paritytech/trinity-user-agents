@@ -49,7 +49,7 @@ jobs:
       - uses: ./.github/actions/rust-cache
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -108,7 +108,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -200,7 +200,7 @@ jobs:
 
       - uses: ./.github/actions/rust-cache
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -223,7 +223,7 @@ jobs:
         run: node scripts/check-host-script-types.mjs
 
       - name: Upload codegen output
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codegen-output
           if-no-files-found: error
@@ -258,7 +258,7 @@ jobs:
       # The runtime feature enables generated modules, so the cdylib bindgen builds
       # need the codegen output.
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -283,10 +283,22 @@ jobs:
       sdk_kotlin: ${{ steps.filter.outputs.sdk_kotlin }}
       sdk_provider_kotlin: ${{ steps.filter.outputs.sdk_provider_kotlin }}
       host_android: ${{ steps.filter.outputs.host_android }}
+      host_android_tree: ${{ steps.filter.outputs.host_android_tree }}
       cli_package: ${{ steps.filter.outputs.cli_package }}
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
       adds_changeset: ${{ steps.filter.outputs.adds_changeset }}
+      # From .github/hosts.json, one set per host: whether a core input
+      # changed, whether one of the host's own inputs did, and either.
+      ios_core: ${{ steps.hosts.outputs.ios_core }}
+      ios_tree: ${{ steps.hosts.outputs.ios_tree }}
+      ios_changed: ${{ steps.hosts.outputs.ios_changed }}
+      android_core: ${{ steps.hosts.outputs.android_core }}
+      android_tree: ${{ steps.hosts.outputs.android_tree }}
+      android_changed: ${{ steps.hosts.outputs.android_changed }}
+      # False for a pull request from a fork, whose code must not reach the
+      # self-hosted runners, which are persistent and shared.
+      trusted: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -299,6 +311,10 @@ jobs:
       # main commit the group was built on, so the diff covers every pull request
       # queued ahead in the same group. A push or a dispatch runs every gate, so
       # each commit that lands on main is still checked in full.
+      #
+      # These lists and .github/hosts.json describe the same inputs while the
+      # jobs below move onto the registry's gates; a path added here is added
+      # there too.
       #
       # Neither binding set is committed, so a UniFFI surface change leaves no
       # ios/ or android/ diff to key on. Each list therefore names every input
@@ -334,6 +350,7 @@ jobs:
               echo "sdk_kotlin=true"
               echo "sdk_provider_kotlin=true"
               echo "host_android=true"
+              echo "host_android_tree=true"
               echo "cli_package=true"
               echo "workflows=true"
             } >> "$GITHUB_OUTPUT"
@@ -349,8 +366,8 @@ jobs:
             fi
           }
 
-          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
-          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
+          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|rust/crates/truapi-verifiable/|js/packages/truapi/|\.github/workflows/ci\.yml$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
           gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
 
           # The provider AAR is generated from its own cdylib and compiles
@@ -362,6 +379,10 @@ jobs:
           # generated from. Nothing gated on this tree before, so a core change
           # that broke it reached a release with no gate in between.
           gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
+          # The app tree itself, as opposed to the core it consumes. Only a
+          # change here can break the app's own unit tests, so a core-only change
+          # runs the bindings check without them.
+          gate host_android_tree '^(hosts/android/|android/truapi-host/|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -380,6 +401,37 @@ jobs:
           changed="$(git diff --name-only --find-renames --diff-filter=A "$base" HEAD -- .changeset/)"
           changed="$(sed '\|^\.changeset/README\.md$|d' <<<"$changed")"
           gate adds_changeset '^\.changeset/[^/]+\.md$'
+
+      # The host registry, evaluated on the same base as the gates above. A
+      # host is gated on its own inputs and the shared core, so an edit to this
+      # workflow alone runs no host. The step above has fetched the merge
+      # group's base. A push to main runs every suite, and diffs from the
+      # previous tip of main only so that each host's changed gate is real.
+      # The registry is checked here, on every run, so a change that removes a
+      # path it names fails before it can merge.
+      - name: Evaluate the host registry
+        id: hosts
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci-gates.py --check
+          case "$EVENT_NAME" in
+            pull_request) args=(--base HEAD^1) ;;
+            merge_group) args=(--base "$MERGE_BASE") ;;
+            push)
+              if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+                && git fetch --no-tags --depth=1 origin "$BEFORE"; then
+                args=(--base "$BEFORE" --force)
+              else
+                args=(--all)
+              fi
+              ;;
+            *) args=(--all) ;;
+          esac
+          python3 scripts/ci-gates.py "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 
   ios-swift:
     name: iOS package (Swift + WebKit)
@@ -400,13 +452,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: ./.github/actions/mac-preflight
+
       # The Xcode the app builds with, so the package is checked with the same
       # compiler on any machine; hosts/ios/.github/actions/install pins it.
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: "26.4.1"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -420,7 +474,7 @@ jobs:
           shared-key: ios-swift-gate
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -525,7 +579,7 @@ jobs:
 
       - name: Upload native test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-network-test-results
           path: |
@@ -556,14 +610,14 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           shared-key: android-bindings-gate
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           gradle-version: "8.9"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       # The runtime feature enables generated modules that are gitignored, so
@@ -583,16 +637,15 @@ jobs:
   # Kotlin bindings, and compiles the app code that pattern matches over the
   # generated types, which is where a removed or renamed variant surfaces.
   #
-  # Scoped to :feature:products:impl and what it depends on. That is where every
-  # consumer of the generated types lives, and it configures from environment
-  # placeholders, where the app module would need values this repository does
-  # not hold.
+  # A change to the app tree also runs every unit test in it, the app module's
+  # and each library module's, since nothing else here does: the workflows
+  # under hosts/android/.github are never read.
   host-android-bindings:
     name: Android host app (compile and unit tests)
     needs: changes
     if: needs.changes.outputs.host_android == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -608,28 +661,56 @@ jobs:
         with:
           save_cache: "true"
 
+      # The app module applies the Google Services plugin, which needs a
+      # configuration naming the debug package before it configures. The unit
+      # tests never reach Firebase, so a placeholder with no real project is
+      # enough, and it keeps the gate independent of the real configuration.
+      - name: Write a placeholder Google configuration
+        working-directory: hosts/android
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {"project_number": "0", "project_id": "ci", "storage_bucket": "ci.appspot.com"},
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:0:android:0000000000000000",
+                "android_client_info": {"package_name": "io.parity.polkadotapp.debug"}
+              },
+              "oauth_client": [],
+              "api_key": [{"current_key": "ci"}],
+              "services": {"appinvite_service": {"other_platform_oauth_client": []}}
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
       # No truapi.dir: the core resolves two levels up, which is one of the
       # properties this job keeps true.
       #
-      # The target is the module that consumes the bindings, not the module that
-      # produces them. Generated bindings cannot disagree with the library they
-      # were generated from, so compiling them proves nothing; the signal is in
-      # the app code that pattern matches over core types. Compiling this module
-      # builds :bindings:truapi-host on the way, so both are covered.
+      # Compiling the modules that consume the bindings is the bindings check.
+      # Generated bindings cannot disagree with the library they were generated
+      # from, so compiling them alone proves nothing; the signal is in the app
+      # code that pattern matches over core types, and these test tasks compile
+      # all of it, building :bindings:truapi-host on the way.
+      #
+      # The products module's release tests and the instrumentation compile run
+      # for every change. A change to the app tree adds testGpDebugUnitTest, the
+      # app module and the only one with flavours, and testDebugUnitTest, every
+      # library module. Without those the build configures only what it runs.
       #
       # These values are configuration rather than credentials, and the app tree
       # reads each of them from the environment when it is absent from
-      # local.properties. Placeholders are enough to configure the module, and
+      # local.properties. Placeholders are enough to configure every module, and
       # keep the gate independent of secrets this repository does not hold.
-      - name: Compile Android consumers and instrumentation, run product unit tests
+      - name: Compile the Android consumers and instrumentation, run unit tests
         working-directory: hosts/android
         env:
           # The real id, because it is the one the Google configuration is
-          # built for. Inert in this job, which compiles a library module and
-          # never applies the Google Services plugin.
+          # built for.
           APPLICATION_ID: io.parity.polkadotapp
           IOS_BUNDLE_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
+          CONTACT_EMAIL: ci@example.invalid
           CURRENCY_SYMBOL: DOT
           FIAT_SYMBOL: "$"
           FIRESTORE_DATABASE_ID: ci
@@ -642,10 +723,16 @@ jobs:
           SENTRY_ORG: ci
           SENTRY_PROJECT: ci
           TERMS_OF_USE_URL: https://example.invalid/terms
-        run: >-
-          ./gradlew --configure-on-demand
-          :feature:products:impl:testReleaseUnitTest
-          :bindings:truapi-host:compileDebugAndroidTestKotlin
+          ALL_UNIT_TESTS: ${{ needs.changes.outputs.host_android_tree }}
+        run: |
+          set -euo pipefail
+          tasks=(:feature:products:impl:testReleaseUnitTest :bindings:truapi-host:compileDebugAndroidTestKotlin)
+          if [ "$ALL_UNIT_TESTS" = true ]; then
+            tasks+=(testGpDebugUnitTest testDebugUnitTest)
+          else
+            tasks+=(--configure-on-demand)
+          fi
+          ./gradlew --continue "${tasks[@]}"
 
   host-android-detekt:
     name: Android host (detekt)
@@ -711,11 +798,11 @@ jobs:
       - uses: ./.github/actions/rust-cache
         with:
           shared-key: provider-android-bindings-gate
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
         with:
           gradle-version: "8.9"
       - name: Generate the bindings and compile them
@@ -744,7 +831,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -757,7 +844,7 @@ jobs:
         run: npm run test:scripts
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -787,7 +874,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -796,7 +883,7 @@ jobs:
           bun-version: latest
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -829,7 +916,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -848,7 +935,7 @@ jobs:
         run: cargo install wasm-pack --locked
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -878,7 +965,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -887,7 +974,7 @@ jobs:
           bun-version: latest
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -915,7 +1002,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -966,7 +1053,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -987,7 +1074,7 @@ jobs:
         run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -1027,7 +1114,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -1036,7 +1123,7 @@ jobs:
           bun-version: latest
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -1090,12 +1177,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -1131,7 +1218,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -1140,7 +1227,7 @@ jobs:
           bun-version: latest
 
       - name: Download codegen output
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codegen-output
 
@@ -1167,7 +1254,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: playground/playwright-report
@@ -1266,6 +1353,7 @@ jobs:
       # the same set so neither quietly stops describing an area.
       - name: Check labelling and ownership describe the same paths
         run: python3 scripts/check-path-routing.py
+
   release-guard:
     name: Release guard
     timeout-minutes: 10
