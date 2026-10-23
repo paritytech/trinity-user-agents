@@ -85,6 +85,10 @@ class Walk {
     return this.at(path).compact();
   }
 
+  u32(path: string): number {
+    return this.at(path).u32();
+  }
+
   u64(path: string): string {
     return this.at(path).u64().toString();
   }
@@ -435,16 +439,62 @@ function token(walk: Walk, out: Fields, path: string): void {
   walk.note(`${path}.platform`, { name });
 }
 
-/** `RichTextContent`. An attachment list is counted, not read. */
+const TICKET_ZEROED =
+  "the ticket opens the file: this host replaces it with zeros before keeping the plaintext";
+
+/** `FileVariant::P2PMixnet`: the root entry, the ticket, the node, and `FileMeta`. */
+function attachment(walk: Walk, out: Fields, path: string): void {
+  const variant = walk.index(out, path, { 0: "P2PMixnet" });
+  if (variant !== 0)
+    throw notRead(`file variant ${variant} is not read by this host`);
+  walk.vec(out, "identifier", `${path}.identifier`);
+  walk.vec(out, "claimTicket", `${path}.claimTicket`);
+  walk.note(`${path}.claimTicket`, { sensitive: TICKET_ZEROED });
+  const node: Fields = {};
+  out.nodeEndpoint = node;
+  const endpoint = walk.index(node, `${path}.nodeEndpoint`, { 0: "WssUrl" });
+  if (endpoint !== 0)
+    throw notRead(`node endpoint ${endpoint} is not read by this host`);
+  walk.string(node, "url", `${path}.nodeEndpoint.url`);
+  const meta: Fields = {};
+  out.meta = meta;
+  const kind = walk.index(meta, `${path}.meta`, {
+    0: "General",
+    1: "Image",
+    2: "Video",
+  });
+  if (kind > 2) throw notRead(`file meta ${kind} is not read by this host`);
+  walk.string(meta, "mimeType", `${path}.meta.mimeType`);
+  meta.fileSize = walk.u32(`${path}.meta.fileSize`);
+  if (kind === 1) {
+    meta.width = walk.u32(`${path}.meta.width`);
+    meta.height = walk.u32(`${path}.meta.height`);
+  }
+  if (kind === 2) meta.duration = walk.u32(`${path}.meta.duration`);
+  if (kind !== 0)
+    walk.option(
+      meta,
+      "thumbnail",
+      `${path}.meta.thumbnail`,
+      (value, valuePath) => walk.vec(value, "bytes", valuePath),
+    );
+}
+
+/** `RichTextContent`: optional text, then optional attachments. */
 function richText(walk: Walk, out: Fields, path: string): void {
   walk.option(out, "text", `${path}.text`, (value, valuePath) =>
     walk.stringInto(value, valuePath),
   );
   walk.option(out, "attachments", `${path}.attachments`, (value, valuePath) => {
-    value.count = walk.compact(`${valuePath}.count`);
-    if ((value.count as number) > 0)
-      throw notRead("the attachment layout is not read by this host");
-    value.items = [];
+    const count = walk.compact(`${valuePath}.count`);
+    value.count = count;
+    const items: Fields[] = [];
+    value.items = items;
+    for (let index = 0; index < count; index += 1) {
+      const item: Fields = {};
+      items.push(item);
+      attachment(walk, item, `${valuePath}.items[${index}]`);
+    }
   });
 }
 
@@ -470,6 +520,13 @@ function content(walk: Walk, out: Fields, path: string): void {
       out.ownContent = {};
       richText(walk, out.ownContent as Fields, `${path}.ownContent`);
       return;
+    case 8: {
+      walk.vec(out, "sdp", `${path}.sdp`);
+      const purpose: Fields = {};
+      out.purpose = purpose;
+      walk.index(purpose, `${path}.purpose`, { 0: "Audio", 1: "Video" });
+      return;
+    }
     case 9:
     case 10:
       walk.string(out, "offerMessageId", `${path}.offerMessageId`);

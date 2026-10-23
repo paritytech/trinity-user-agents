@@ -1076,7 +1076,9 @@ body[data-surface="chat"] .stage-empty {
   display: none;
 }
 
-.chat-screen {
+/* The call layer sits outside the chat screen, over every screen, with its colors. */
+.chat-screen,
+.chat-call {
   --chat-bg: #0b0c0f;
   --chat-surface: #17181c;
   --chat-surface-raised: #22232a;
@@ -1090,6 +1092,9 @@ body[data-surface="chat"] .stage-empty {
   --chat-success: #4ade80;
   --chat-title-font: "Manrope", system-ui, -apple-system, sans-serif;
   --chat-body-font: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+.chat-screen {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -1679,10 +1684,169 @@ a.chat-file:hover .chat-file-name {
 
 .chat-reaction {
   padding: 1px 8px;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--chat-surface);
+  color: inherit;
+  font: inherit;
   font-size: 13px;
   line-height: 20px;
+}
+
+button.chat-reaction {
+  cursor: pointer;
+}
+
+.chat-reaction[data-self="true"] {
+  border-color: var(--chat-primary);
+}
+
+.chat-reaction-add {
+  opacity: 0.55;
+}
+
+.chat-reaction-add:hover,
+.chat-reaction-add:focus-visible {
+  opacity: 1;
+}
+
+.chat-reaction-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-message-out .chat-reactions {
+  justify-content: flex-end;
+}
+
+.chat-blocked > .chat-row {
+  padding: 10px 16px;
+}
+
+.chat-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chat-attachment {
+  justify-items: start;
+}
+
+.chat-file-fetch,
+.chat-file-save {
+  margin-top: 4px;
+  min-height: 28px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.chat-attach {
+  align-self: center;
+}
+
+.chat-attach:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-call-button {
+  font-size: 20px;
+}
+
+.chat-call-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-call {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 16px;
+  padding: 32px 20px 28px;
+  background: var(--chat-bg);
+  color: var(--chat-primary);
+  font: 400 15px/20px var(--chat-body-font);
+}
+
+.chat-call[hidden] {
+  display: none;
+}
+
+.chat-call-head {
+  text-align: center;
+}
+
+.chat-call-head p {
+  margin: 0;
+}
+
+.chat-call-title {
+  font: 700 24px/32px var(--chat-title-font);
+}
+
+.chat-call-state {
+  color: var(--chat-secondary);
+}
+
+.chat-call-problem {
+  margin-top: 8px !important;
+  color: var(--chat-warning);
+}
+
+.chat-call-relay {
+  margin-top: 8px !important;
+  color: var(--chat-secondary);
+  font-size: 13px;
+}
+
+.chat-call-stage {
+  position: relative;
+  min-height: 0;
+}
+
+.chat-call-remote {
+  width: 100%;
+  height: 100%;
+  border-radius: 20px;
+  background: var(--chat-surface);
+  object-fit: cover;
+}
+
+.chat-call-local {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 28%;
+  max-width: 160px;
+  border-radius: 14px;
+  background: var(--chat-surface-raised);
+  object-fit: cover;
+}
+
+.chat-call-remote[hidden],
+.chat-call-local[hidden] {
+  display: none;
+}
+
+.chat-call-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.chat-call-end {
+  background: #e5484d;
+  border-color: #e5484d;
+  color: #fff;
+}
+
+.chat-more {
+  font-size: 22px;
 }
 
 /* Product chats: the cards a product's worker draws. */

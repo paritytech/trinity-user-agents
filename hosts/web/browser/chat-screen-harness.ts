@@ -13,7 +13,9 @@
 import type { HexString } from "@parity/truapi/scale";
 import type { RendererNode } from "@parity/truapi";
 import type { ProductContext } from "@parity/truapi-host";
-import type { ChatSnapshot } from "../src/chat/engine.js";
+import type { ChatSnapshot, IncomingCallSignal } from "../src/chat/engine.js";
+import { CallManager } from "../src/chat/call.js";
+import { decodeMessage, encodeMessage } from "../src/chat/protocol.js";
 import type { ChatInboxView, InboxChange } from "../src/chat-inbox.js";
 import type { ChatProvider } from "../src/chat-provider.js";
 import { ChatScreen } from "../src/chat-screen.js";
@@ -28,11 +30,91 @@ import {
   type RoomChannel,
 } from "../src/product-room-provider.js";
 import { MemoryStorage } from "../src/test-support.js";
+import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
+import * as sr25519 from "@scure/sr25519";
+import { cryptoRandom } from "../src/chat/crypto.js";
+import { MemoryHopNode } from "../src/chat/hop-memory.js";
+import { hopDownload, hopUpload } from "../src/chat/hop.js";
+
+/** The HOP node files go through in this page: in memory, with real sealing and checks. */
+const hopNode = new MemoryHopNode();
+const HOP_URL = "wss://hop.invalid";
+const hopSecret = sr25519.secretFromSeed(new Uint8Array(32).fill(5));
 
 const QUIZ = "quiz.test";
 const KIM = `0x${"4b".repeat(32)}` as HexString;
 const SAM = `0x${"5a".repeat(32)}` as HexString;
 const quizWorker: ProductContext = { productId: QUIZ, executionKind: "Worker" };
+
+/** What the stand-ins were asked to do, for the test to read. */
+export const asked: string[] = [];
+
+const YOU = `0x${"11".repeat(32)}` as HexString;
+/**
+ * Generated media in place of a camera and microphone: a tone from WebAudio
+ * and a canvas whose color changes. No device is opened.
+ */
+async function media(video: boolean): Promise<MediaStream> {
+  const audio = new AudioContext();
+  const tone = audio.createOscillator();
+  const out = audio.createMediaStreamDestination();
+  tone.connect(out);
+  tone.start();
+  const tracks: MediaStreamTrack[] = out.stream.getAudioTracks();
+  if (video) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 160;
+    canvas.height = 120;
+    const paint = canvas.getContext("2d")!;
+    let hue = 0;
+    setInterval(() => {
+      paint.fillStyle = `hsl(${(hue += 7) % 360} 70% 50%)`;
+      paint.fillRect(0, 0, 160, 120);
+    }, 60);
+    tracks.push(...canvas.captureStream(15).getVideoTracks());
+  }
+  return new MediaStream(tracks);
+}
+
+/** A call signal as it would arrive: encoded and decoded through the chat wire. */
+function overWire(
+  account: HexString,
+  id: string,
+  signal: Parameters<CallManager["receive"]>[0]["content"],
+): IncomingCallSignal {
+  const at = Date.now();
+  const content = decodeMessage(
+    encodeMessage({ id, timestampMs: BigInt(at), content: signal }),
+  ).content as IncomingCallSignal["content"];
+  return { account, id, at, content };
+}
+
+/**
+ * Kim's side of calls: a real call manager in this page, with
+ * generated media. It answers every call it gets.
+ */
+const callListeners = new Set<(signal: IncomingCallSignal) => void>();
+let nextCall = 1;
+export const kim = new CallManager({
+  send: async (_account, signal) => {
+    const id = `kim-call-${nextCall++}`;
+    asked.push(`kim ${signal.kind}`);
+    const delivered = overWire(KIM, id, signal);
+    queueMicrotask(() => {
+      for (const listener of callListeners) listener(delivered);
+    });
+    return id;
+  },
+  media,
+  rtc: { iceServers: [] },
+  now: Date.now,
+});
+let kimAnswers = true;
+kim.subscribe(() => {
+  const held = kim.current();
+  if (kimAnswers && held?.session.state === "incoming")
+    void held.session.accept();
+});
 
 function novaEngine(): NovaEngine {
   const start = Date.UTC(2026, 9, 20, 9, 0, 0);
@@ -86,9 +168,16 @@ function novaEngine(): NovaEngine {
     ],
     skipped: [],
   };
+  const listeners = new Set<() => void>();
+  const change = () => {
+    for (const listener of listeners) listener();
+  };
   return {
     snapshot: () => snapshot,
-    onChange: () => () => {},
+    onChange: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     start: async () => {},
     stop: () => {},
     accept: async () => {},
@@ -98,6 +187,123 @@ function novaEngine(): NovaEngine {
     },
     send: async () => {},
     retry: async () => {},
+    react: async (account, messageId, emoji) => {
+      asked.push(`nova react ${messageId} ${emoji}`);
+      const target = snapshot.contacts
+        .find((contact) => contact.account === account)
+        ?.messages.find((message) => message.id === messageId);
+      if (target === undefined) return;
+      const mine = target.reactions?.find((entry) => entry.from === "self");
+      target.reactions = [
+        ...(target.reactions ?? []).filter((entry) => entry.from !== "self"),
+        ...(emoji === null || emoji === mine?.emoji
+          ? []
+          : [{ emoji, from: "self" as const }]),
+      ];
+      change();
+    },
+    block: async (account) => {
+      asked.push(`nova block`);
+      const contact = snapshot.contacts.find((c) => c.account === account);
+      if (contact) contact.blocked = true;
+      change();
+    },
+    unblock: async (account) => {
+      asked.push(`nova unblock`);
+      const contact = snapshot.contacts.find((c) => c.account === account);
+      if (contact) delete contact.blocked;
+      change();
+    },
+    fileProblem: () => null,
+    fetchProblem: (attachment) =>
+      attachment.identifier === undefined ? "Not uploaded." : null,
+    sendFile: async (account, file, caption) => {
+      asked.push(`nova file ${file.name} ${file.bytes.length}`);
+      const contact = snapshot.contacts.find((c) => c.account === account)!;
+      const message = {
+        id: `file-${contact.messages.length}`,
+        direction: "out" as const,
+        kind: "text" as const,
+        text: caption,
+        at: Date.now(),
+        status: "pending" as const,
+        attachments: [
+          {
+            node: HOP_URL,
+            kind:
+              file.image === undefined ? ("file" as const) : ("image" as const),
+            mimeType: file.mimeType,
+            size: file.bytes.length,
+            ...file.image,
+            name: file.name,
+          },
+        ],
+      };
+      contact.messages.push(message);
+      change();
+      const sent = await hopUpload(
+        hopNode.connect(),
+        file.bytes,
+        {
+          publicKey: sr25519.getPublicKey(hopSecret),
+          sign: (payload) => sr25519.sign(hopSecret, payload),
+        },
+        { random: cryptoRandom, now: Date.now },
+      );
+      Object.assign(message.attachments[0], {
+        identifier: bytesToHex(sent.identifier),
+        ticket: bytesToHex(sent.ticket),
+      });
+      Object.assign(message, { status: "acknowledged" });
+      change();
+    },
+    cancel: () => {},
+    fetchFile: async (account, messageId, index) => {
+      asked.push(`nova fetch ${messageId}`);
+      const attachment = snapshot.contacts
+        .find((c) => c.account === account)!
+        .messages.find((m) => m.id === messageId)!.attachments![index];
+      return hopDownload(
+        hopNode.connect(),
+        {
+          identifier: hexToBytes(attachment.identifier!),
+          ticket: hexToBytes(attachment.ticket!),
+        },
+        1024 * 1024,
+      );
+    },
+    sendCall: async (account, signal) => {
+      const id = `you-call-${nextCall++}`;
+      asked.push(`nova ${signal.kind}`);
+      if (signal.kind === "call-offer") {
+        snapshot.contacts
+          .find((contact) => contact.account === account)
+          ?.messages.push({
+            id,
+            direction: "out",
+            kind: "call",
+            text: "",
+            at: Date.now(),
+            status: "acknowledged",
+            call: { video: signal.video },
+          });
+        change();
+      }
+      const delivered = overWire(YOU, id, signal);
+      queueMicrotask(() => kim.receive(delivered));
+      return id;
+    },
+    onCall: (listener) => {
+      callListeners.add(listener);
+      return () => callListeners.delete(listener);
+    },
+    leave: async (account) => {
+      asked.push(`nova leave`);
+      snapshot.contacts = snapshot.contacts.filter(
+        (contact) => contact.account !== account,
+      );
+      change();
+    },
   };
 }
 
@@ -153,6 +359,16 @@ function quizChannel(chat: ProductChat): RoomChannel {
             value: { text: `picked: ${payload.value.actionId}` },
           },
         });
+        return;
+      }
+      if (
+        payload.tag === "MessagePosted" &&
+        (payload.value.tag === "Reaction" ||
+          payload.value.tag === "ReactionRemoved")
+      ) {
+        asked.push(
+          `quiz ${payload.value.tag} ${payload.value.value.messageId} ${payload.value.value.emoji}`,
+        );
         return;
       }
       if (payload.tag !== "MessagePosted" || payload.value.tag !== "Text")
@@ -255,7 +471,11 @@ class TestInbox implements ChatInboxView {
       cacheKey: "draft-cache",
     });
     this.list = [
-      new NovaChatProvider(novaEngine()),
+      new NovaChatProvider(novaEngine(), undefined, {
+        media,
+        rtc: { iceServers: [] },
+        now: Date.now,
+      }),
       new ProductRoomProvider(QUIZ, {
         chat,
         channel: () => channel,
@@ -290,6 +510,14 @@ export interface ChatHarness {
   show(visible: boolean): void;
   restartDraft(): void;
   newSession(): Promise<void>;
+  /** What the stand-in engine and worker were asked, in order. */
+  asked(): string[];
+  /** Kim's side of the call, as it stands. */
+  kimCall(): { state: string; tracks: string[] } | null;
+  /** Kim calls the user, and does not answer calls until the next session. */
+  kimCalls(video: boolean): Promise<void>;
+  /** Kim hangs up. */
+  kimHangsUp(): void;
 }
 
 export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
@@ -320,5 +548,23 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
     show: (visible) => screen.show(visible),
     restartDraft: () => inbox.draft?.restart(),
     newSession: () => inbox.session(),
+    asked: () => [...asked],
+    kimCall: () => {
+      const held = kim.current();
+      if (held === null) return null;
+      return {
+        state: held.session.state,
+        tracks: [
+          ...(held.session.local?.getTracks() ?? []),
+          ...(held.session.remote?.getTracks() ?? []),
+        ].map((track) => `${track.kind}:${track.readyState}`),
+      };
+    },
+    kimCalls: async (video) => {
+      kimAnswers = false;
+      kim.clear();
+      await kim.start(YOU, video);
+    },
+    kimHangsUp: () => kim.current()?.session.hangUp(),
   };
 }

@@ -4,6 +4,7 @@ import type {
   ChatRequest,
   ConversationSummary,
 } from "./chat-provider.js";
+import { CallOverlay } from "./call-view.js";
 import { ConversationView, avatar, time } from "./conversation-view.js";
 import { NOVA_PROVIDER_ID } from "./nova-chat-provider.js";
 import type { WorkerState } from "./product-workers.js";
@@ -25,7 +26,8 @@ type View =
   | { kind: "list" }
   | { kind: "new"; providerId: string }
   | { kind: "conversation"; providerId: string; conversationId: string }
-  | { kind: "workers" };
+  | { kind: "workers" }
+  | { kind: "blocked" };
 
 /** The worker list the Workers page manages. */
 export interface WorkersPanel {
@@ -86,6 +88,8 @@ export class ChatScreen {
   private busy = false;
   private visible = false;
   private renderQueued = false;
+  /** The call layer, over every screen, so an incoming call shows wherever the user is. */
+  private readonly call = new CallOverlay();
 
   constructor(
     private readonly root: HTMLElement,
@@ -95,6 +99,7 @@ export class ChatScreen {
     private readonly onActivity: (pendingRequests: number) => void,
   ) {
     root.dataset.chatEngine = "off";
+    document.body.append(this.call.root);
     inbox.onChange((change) => this.follow(change));
     workers.onChange(() => this.queueRender());
   }
@@ -112,6 +117,11 @@ export class ChatScreen {
     )
       this.conversation.onEvent(change.event);
     const providers = this.inbox.providers();
+    this.call.follow(
+      providers.flatMap((provider) =>
+        provider.calls === undefined ? [] : [provider.calls],
+      ),
+    );
     this.root.dataset.chatEngine =
       providers.find((provider) => provider.id === NOVA_PROVIDER_ID)?.status()
         .state ?? "off";
@@ -268,6 +278,7 @@ export class ChatScreen {
         ),
       ];
     if (this.view.kind === "workers") return this.drawWorkers();
+    if (this.view.kind === "blocked") return this.drawBlocked();
     if (this.view.kind === "new") {
       const provider = this.provider(this.view.providerId);
       if (provider?.start !== undefined) return this.drawNewChat(provider);
@@ -349,6 +360,19 @@ export class ChatScreen {
     });
     manage.dataset.action = "manage-workers";
     links.append(manage);
+    const blocked = providers.reduce(
+      (sum, provider) => sum + (provider.blocked?.().length ?? 0),
+      0,
+    );
+    if (blocked > 0) {
+      const open = button("chat-link", `Blocked (${blocked})`, () => {
+        this.view = { kind: "blocked" };
+        this.formError = null;
+        this.render();
+      });
+      open.dataset.action = "blocked";
+      links.append(" · ", open);
+    }
     body.append(links);
     if (this.formError !== null)
       body.append(el("p", "chat-error", this.formError));
@@ -520,6 +544,46 @@ export class ChatScreen {
       el("h2", "chat-title chat-title-small", "New chat"),
     );
     return [bar, form];
+  }
+
+  /** The people the user blocked, from every provider that blocks, each with Unblock. */
+  private drawBlocked(): HTMLElement[] {
+    const bar = el("header", "chat-bar chat-bar-small");
+    bar.append(this.back(), el("h2", "chat-title chat-title-small", "Blocked"));
+    const body = el("div", "chat-body");
+    const list = el("ul", "chat-list chat-blocked");
+    for (const provider of this.inbox.providers())
+      for (const summary of provider.blocked?.() ?? []) {
+        const item = el("li", "chat-row");
+        item.dataset.conversation = `${provider.id}/${summary.id}`;
+        const text = el("span", "chat-row-text");
+        text.append(
+          el("span", "chat-row-title", summary.title),
+          el("span", "chat-row-preview", summary.subtitle),
+        );
+        const unblock = button("chat-pill", "Unblock", () =>
+          this.act(() => provider.unblock!(summary.id)),
+        );
+        unblock.disabled = this.busy || provider.unblock === undefined;
+        unblock.dataset.action = "unblock";
+        item.append(avatar(summary), text, unblock);
+        list.append(item);
+      }
+    if (list.childElementCount === 0)
+      body.append(
+        this.empty("No one is blocked", "People you block show here."),
+      );
+    else body.append(list);
+    body.append(
+      el(
+        "p",
+        "chat-identity-line",
+        "Blocking is kept on this device only. Unblocking reads what they sent that the network still holds.",
+      ),
+    );
+    if (this.formError !== null)
+      body.append(el("p", "chat-error", this.formError));
+    return [bar, body];
   }
 
   /** The workers for this wallet, their state, the form to add one, and the draft chat switch. */

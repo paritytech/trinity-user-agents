@@ -7,7 +7,15 @@ import type {
   ChainDirectory,
   PeopleConsumer,
 } from "./directory.js";
-import { ChatEngine, WRITES_OFF, type StatementStoreLike } from "./engine.js";
+import {
+  ChatEngine,
+  WRITES_OFF,
+  type HopService,
+  type StatementStoreLike,
+} from "./engine.js";
+import { MemoryHopNode } from "./hop-memory.js";
+import { HOP_MAX_FILE_BYTES } from "./hop.js";
+import * as sr25519 from "@scure/sr25519";
 import { bytes, concat, equalBytes, text, u64 } from "./codec.js";
 import { cryptoRandom } from "./crypto.js";
 import { ChatDiagnostics } from "./diagnostics.js";
@@ -167,7 +175,7 @@ function directory(people: Person[]): ChainDirectory {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-async function pair(bobAllowed = true) {
+async function pair(bobAllowed = true, hop?: HopService) {
   const store = new MemoryStatementStore();
   const alice = keys(ALICE);
   const bob = keys(BOB);
@@ -186,6 +194,7 @@ async function pair(bobAllowed = true) {
       now: () => (clock += 1000),
       writes: () => true,
       retryDelayMs: 10,
+      hop,
     });
   const aliceEngine = engine(alice, true);
   const bobEngine = engine(bob, bobAllowed);
@@ -611,7 +620,10 @@ describe("chat engine control messages", () => {
       [bobSide.messages[0].id, "request"],
       [bobSide.messages[1].id, "accepted"],
       ["c3", "text"],
-      ["c4", "unsupported"],
+    ]);
+    // The reaction lands on the text it names, not as a bubble of its own.
+    expect(bobSide.messages[2].reactions).toEqual([
+      { emoji: "+1", from: "peer" },
     ]);
     // The whole request is acknowledged, controls included.
     expect(bobSide.acknowledged).toBe("q-control");
@@ -956,5 +968,375 @@ describe("chat engine diagnostics", () => {
       }),
     );
     engine.stop();
+  });
+});
+
+/** Alice and Bob with an accepted chat, and each side's view of the other. */
+async function connected(hop?: HopService) {
+  const pairing = await pair(true, hop);
+  await pairing.aliceEngine.startChat("bob.02", "hi");
+  await settle();
+  await pairing.bobEngine.accept(pairing.bobEngine.snapshot().requests[0].id);
+  await settle();
+  const toBob = pairing.aliceEngine.snapshot().contacts[0].account;
+  const toAlice = pairing.bobEngine.snapshot().contacts[0].account;
+  return { ...pairing, toBob, toAlice };
+}
+
+describe("chat engine reactions", () => {
+  test("a reaction reaches the peer on the message it names, and is acknowledged", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await aliceEngine.send(toBob, "lunch?");
+    await settle();
+    const target = bobEngine
+      .snapshot()
+      .contacts[0].messages.find((message) => message.text === "lunch?")!;
+    await bobEngine.react(toAlice, target.id, "👍");
+    await settle();
+    const onAlice = aliceEngine
+      .snapshot()
+      .contacts[0].messages.find((message) => message.id === target.id)!;
+    expect(onAlice.reactions).toEqual([{ emoji: "👍", from: "peer" }]);
+    expect(bobEngine.snapshot().contacts[0].pending).toEqual([]);
+    // No bubble was added for the reaction on either side.
+    expect(aliceEngine.snapshot().contacts[0].messages.length).toBe(3);
+  });
+
+  test("a new emoji replaces the user's old one, and the same one again removes it", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await aliceEngine.send(toBob, "lunch?");
+    await settle();
+    const id = bobEngine.snapshot().contacts[0].messages.at(-1)!.id;
+    await bobEngine.react(toAlice, id, "👍");
+    await bobEngine.react(toAlice, id, "❤️");
+    await settle();
+    const reactions = () =>
+      aliceEngine
+        .snapshot()
+        .contacts[0].messages.find((message) => message.id === id)!.reactions;
+    expect(reactions()).toEqual([{ emoji: "❤️", from: "peer" }]);
+    expect(
+      bobEngine
+        .snapshot()
+        .contacts[0].messages.find((message) => message.id === id)!.reactions,
+    ).toEqual([{ emoji: "❤️", from: "self" }]);
+    await bobEngine.react(toAlice, id, "❤️");
+    await settle();
+    expect(reactions()).toEqual([]);
+  });
+
+  test("a reaction delivered again changes nothing after its removal", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await aliceEngine.send(toBob, "lunch?");
+    await settle();
+    const id = bobEngine.snapshot().contacts[0].messages.at(-1)!.id;
+    bobEngine.stop();
+    await bobEngine.react(toAlice, id, "👍").catch(() => {});
+    await bobEngine.start();
+    await bobEngine.react(toAlice, id, "👍");
+    await settle();
+    // Alice restarts and the store delivers Bob's latest request again.
+    aliceEngine.stop();
+    await aliceEngine.start();
+    await settle();
+    expect(
+      aliceEngine
+        .snapshot()
+        .contacts[0].messages.find((message) => message.id === id)!.reactions ??
+        [],
+    ).toEqual([]);
+  });
+});
+
+describe("chat engine block and leave", () => {
+  test("a blocked person's messages are not read or acknowledged until unblocked", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await bobEngine.block(toAlice);
+    await aliceEngine.send(toBob, "are you there?");
+    await settle();
+    const bobSide = () => bobEngine.snapshot().contacts[0];
+    expect(bobSide().blocked).toBe(true);
+    expect(bobSide().messages.some((m) => m.text === "are you there?")).toBe(
+      false,
+    );
+    expect(aliceEngine.snapshot().contacts[0].messages.at(-1)!.status).toBe(
+      "sent",
+    );
+    await expect(bobEngine.send(toAlice, "hi")).rejects.toThrow("You blocked");
+    await bobEngine.unblock(toAlice);
+    await settle();
+    expect(bobSide().blocked).toBeUndefined();
+    expect(bobSide().messages.some((m) => m.text === "are you there?")).toBe(
+      true,
+    );
+    expect(aliceEngine.snapshot().contacts[0].messages.at(-1)!.status).toBe(
+      "acknowledged",
+    );
+  });
+
+  test("a blocked person's new request is set aside", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await bobEngine.block(toAlice);
+    await aliceEngine.leave(toBob);
+    // Alice left, then asks again: Bob blocked her, so no request shows.
+    await aliceEngine.startChat("bob.02", "again");
+    await settle();
+    expect(bobEngine.snapshot().requests).toEqual([]);
+  });
+
+  test("leaving tells the peer, keeps the conversation out of the list, and a new request reopens it", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    await aliceEngine.send(toBob, "bye");
+    await settle();
+    await aliceEngine.leave(toBob);
+    await settle();
+    expect(aliceEngine.snapshot().contacts).toEqual([]);
+    const bobSide = bobEngine.snapshot().contacts[0];
+    expect(bobSide.peerLeft).toBe(true);
+    expect(bobSide.messages.at(-1)).toMatchObject({
+      direction: "in",
+      kind: "left",
+    });
+    await expect(bobEngine.send(toAlice, "wait")).rejects.toThrow(
+      "left this chat",
+    );
+
+    await aliceEngine.startChat("bob.02", "back again");
+    await settle();
+    const [request] = bobEngine.snapshot().requests;
+    expect(request.welcome).toBe("back again");
+    await bobEngine.accept(request.id);
+    await settle();
+    const reopened = bobEngine.snapshot().contacts;
+    expect(reopened.length).toBe(1);
+    expect(reopened[0].peerLeft).toBe(false);
+    expect(reopened[0].messages.map((m) => m.text)).toContain("bye");
+  });
+
+  test("leaving changes nothing when the store does not keep the message", async () => {
+    const { store, aliceEngine, toBob } = await connected();
+    for (const connection of store.connections) connection.drop();
+    await expect(aliceEngine.leave(toBob)).rejects.toThrow(
+      "The message that you left was not sent",
+    );
+    expect(aliceEngine.snapshot().contacts.length).toBe(1);
+  });
+});
+
+const NODE = "wss://hop.invalid";
+
+/** One HOP node in memory both sides use, and a synthetic sender account. */
+function memoryHop(): { node: MemoryHopNode; hop: HopService } {
+  const node = new MemoryHopNode();
+  const secret = sr25519.secretFromSeed(new Uint8Array(32).fill(3));
+  return {
+    node,
+    hop: {
+      nodes: () => [NODE],
+      connect: async () => node.connect(),
+      sender: {
+        publicKey: sr25519.getPublicKey(secret),
+        sign: (payload) => sr25519.sign(secret, payload),
+      },
+    },
+  };
+}
+
+describe("chat engine files", () => {
+  test("a file is uploaded, named in a rich text message, and fetched by the peer", async () => {
+    const { node, hop } = memoryHop();
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected(hop);
+    const bytes = new TextEncoder().encode("synthetic file body");
+    await aliceEngine.sendFile(
+      toBob,
+      { bytes, name: "note.txt", mimeType: "text/plain" },
+      "here it is",
+    );
+    await settle();
+    const sent = aliceEngine.snapshot().contacts[0].messages.at(-1)!;
+    expect(sent.status).toBe("acknowledged");
+    const received = bobEngine.snapshot().contacts[0].messages.at(-1)!;
+    expect(received.text).toBe("here it is");
+    // The wire carries no file name; the rest arrives as the sender gave it.
+    expect(received.attachments).toEqual([
+      {
+        identifier: sent.attachments![0].identifier,
+        ticket: sent.attachments![0].ticket,
+        node: NODE,
+        kind: "file",
+        mimeType: "text/plain",
+        size: bytes.length,
+      },
+    ]);
+    expect(await bobEngine.fetchFile(toAlice, received.id, 0)).toEqual(bytes);
+    // Fetching acknowledges nothing: the entry stays for other devices.
+    expect(node.calls.filter((call) => call === "hop_ack")).toEqual([]);
+  });
+
+  test("a file on a node this host was not given is not fetched", async () => {
+    const { hop } = memoryHop();
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected(hop);
+    await aliceEngine.sendFile(
+      toBob,
+      { bytes: Uint8Array.of(1, 2, 3), name: "a.bin", mimeType: "" },
+      "",
+    );
+    await settle();
+    const received = bobEngine.snapshot().contacts[0].messages.at(-1)!;
+    received.attachments![0].node = "wss://elsewhere.invalid";
+    await expect(bobEngine.fetchFile(toAlice, received.id, 0)).rejects.toThrow(
+      "not configured with",
+    );
+  });
+
+  test("a failed upload keeps the message, marked failed, and sends nothing", async () => {
+    const { node, hop } = memoryHop();
+    node.authorized.add(`0x${"00".repeat(32)}`);
+    const { store, aliceEngine, toBob } = await connected(hop);
+    const before = store.submitted.length;
+    await expect(
+      aliceEngine.sendFile(
+        toBob,
+        { bytes: Uint8Array.of(1), name: "a.bin", mimeType: "" },
+        "",
+      ),
+    ).rejects.toThrow("no storage authorization");
+    const message = aliceEngine.snapshot().contacts[0].messages.at(-1)!;
+    expect(message.status).toBe("failed");
+    expect(message.problem).toContain("The file was not uploaded");
+    expect(store.submitted.length).toBe(before);
+  });
+
+  test("files are refused without a node, and above 128 MiB", async () => {
+    const { aliceEngine, toBob } = await connected();
+    expect(aliceEngine.fileProblem()).toContain("No HOP node");
+    await expect(
+      aliceEngine.sendFile(
+        toBob,
+        { bytes: Uint8Array.of(1), name: "a", mimeType: "" },
+        "",
+      ),
+    ).rejects.toThrow("No HOP node");
+    const { hop } = memoryHop();
+    const withHop = await connected(hop);
+    await expect(
+      withHop.aliceEngine.sendFile(
+        withHop.toBob,
+        {
+          bytes: { length: HOP_MAX_FILE_BYTES + 1 } as Uint8Array,
+          name: "big",
+          mimeType: "",
+        },
+        "",
+      ),
+    ).rejects.toThrow("128 MiB");
+  });
+
+  test("diagnostics keep the plaintext with every ticket replaced by zeros", async () => {
+    const { hop } = memoryHop();
+    const pairing = await pair(true, hop);
+    const diagnostics = new ChatDiagnostics();
+    diagnostics.payloads.setLevel("decrypted");
+    const watched = new ChatEngine({
+      keys: pairing.alice,
+      openStore: async () => pairing.store.connect(true),
+      directory: directory([
+        { label: "alice.01", keys: pairing.alice, allowance: true },
+        { label: "bob.02", keys: pairing.bob, allowance: true },
+      ]),
+      storage: new MemoryStorage(),
+      recordKey: "watched",
+      writes: () => true,
+      hop,
+      payloads: diagnostics.payloads,
+    });
+    await watched.start();
+    await watched.startChat("bob.02", "hi");
+    await settle();
+    await pairing.bobEngine.accept(pairing.bobEngine.snapshot().requests[0].id);
+    await settle();
+    const toBob = watched.snapshot().contacts[0].account;
+    await watched.sendFile(
+      toBob,
+      { bytes: Uint8Array.of(5, 6), name: "x", mimeType: "" },
+      "",
+    );
+    await settle();
+    const ticket = watched.snapshot().contacts[0].messages.at(-1)!
+      .attachments![0].ticket!;
+    const kept = JSON.stringify(diagnostics.payloads.snapshot());
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.includes(ticket.slice(2))).toBe(false);
+    const plaintexts = diagnostics.payloads
+      .snapshot()
+      .statements.flatMap((entry) =>
+        entry.plaintext === null
+          ? []
+          : [Buffer.from(entry.plaintext).toString("hex")],
+      );
+    expect(plaintexts.some((text) => text.includes(ticket.slice(2)))).toBe(
+      false,
+    );
+    expect(plaintexts.some((text) => text.includes("00".repeat(32)))).toBe(
+      true,
+    );
+    watched.stop();
+  });
+});
+
+describe("chat engine call signals", () => {
+  test("an offer becomes a call line on both sides, and the answer and end reach the peer", async () => {
+    const { aliceEngine, bobEngine, toBob, toAlice } = await connected();
+    const heard: string[] = [];
+    bobEngine.onCall((signal) =>
+      heard.push(`${signal.content.kind} ${signal.id}`),
+    );
+    const offerId = await aliceEngine.sendCall(toBob, {
+      kind: "call-offer",
+      sdp: Uint8Array.of(1, 2),
+      video: true,
+    });
+    await settle();
+    expect(heard).toEqual([`call-offer ${offerId}`]);
+    const line = () =>
+      bobEngine.snapshot().contacts[0].messages.find((m) => m.id === offerId)!;
+    expect(line()).toMatchObject({
+      kind: "call",
+      direction: "in",
+      call: { video: true },
+    });
+    // Acknowledged, the offer's setup is no longer kept.
+    const own = aliceEngine
+      .snapshot()
+      .contacts[0].messages.find((m) => m.id === offerId)!;
+    expect(own.status).toBe("acknowledged");
+    expect(own.call?.setup).toBeUndefined();
+
+    const heardByAlice: string[] = [];
+    aliceEngine.onCall((signal) => heardByAlice.push(signal.content.kind));
+    await bobEngine.sendCall(toAlice, {
+      kind: "call-answer",
+      offerId,
+      sdp: Uint8Array.of(3),
+    });
+    await bobEngine.sendCall(toAlice, {
+      kind: "call-candidates",
+      offerId,
+      sdp: Uint8Array.of(4),
+    });
+    await settle();
+    await aliceEngine.sendCall(toBob, { kind: "call-closed", offerId });
+    await settle();
+    expect(heardByAlice).toEqual(["call-answer", "call-candidates"]);
+    expect(line().call).toMatchObject({
+      answeredAt: expect.any(Number),
+      closedBy: "peer",
+    });
+    // Signals are not bubbles: the conversation holds one line for the call.
+    expect(
+      bobEngine.snapshot().contacts[0].messages.filter((m) => m.kind === "call")
+        .length,
+    ).toBe(1);
+    expect(bobEngine.snapshot().contacts[0].pending).toEqual([]);
   });
 });

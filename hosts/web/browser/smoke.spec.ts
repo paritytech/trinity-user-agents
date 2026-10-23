@@ -854,9 +854,17 @@ describe("product worker chat", () => {
         const hello = page.locator(".chat-message", {
           hasText: "hello from the fixture",
         });
-        expect(await hello.locator(".chat-reaction").allInnerTexts()).toEqual([
-          "👍",
-        ]);
+        expect(
+          await hello
+            .locator(".chat-reaction:not(.chat-reaction-add)")
+            .allInnerTexts(),
+        ).toEqual(["👍"]);
+        // The user's reaction goes to the worker through the core as MessagePosted(Reaction).
+        await hello.locator('[data-action="react"]').click();
+        await hello.locator('.chat-reaction-picker [data-emoji="❤️"]').click();
+        await hello
+          .locator('.chat-reaction[data-self="true"][data-emoji="❤️"]')
+          .waitFor();
         // A button press reaches the worker for that message, and it answers.
         await page
           .locator('.chat-actions[data-layout="Grid"] .chat-action', {
@@ -890,6 +898,7 @@ describe("product worker chat", () => {
           room: "created",
           actions: ["bump"],
           messages: ["hi there"],
+          reactions: [expect.stringMatching(/^Reaction \S+ ❤️$/)],
           errors: [],
         });
         const { buttons, triggered } = seen as {

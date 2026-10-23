@@ -16,6 +16,14 @@ import {
   lookupOwner,
   type ChainDirectory,
 } from "./directory.js";
+import {
+  HOP_MAX_FILE_BYTES,
+  hopDownload,
+  hopUpload,
+  knownNode,
+  type HopConnection,
+  type HopSender,
+} from "./hop.js";
 import type { ChatKeys } from "./keys.js";
 import {
   ACKNOWLEDGED,
@@ -37,7 +45,10 @@ import {
   sessionTopic,
   unsealRequest,
   unsealSession,
+  withoutTickets,
   type ChatMessage,
+  type Attachment,
+  type MessageContent,
   type OpenedRequest,
   type SessionData,
 } from "./protocol.js";
@@ -62,6 +73,8 @@ import {
   type ChatRecord,
   type Contact,
   type IncomingRequest,
+  type PendingMessage,
+  type StoredAttachment,
   type StoredMessage,
 } from "./store.js";
 
@@ -110,6 +123,26 @@ export interface ChatEngineDeps {
    * the clear. Only statement bytes and plaintext go here, never a key.
    */
   payloads?: PayloadSink;
+  /** How files travel. Absent: this engine neither sends nor fetches files. */
+  hop?: HopService;
+}
+
+/** The HOP nodes this host may use, and the account that pays for uploads. */
+export interface HopService {
+  /** The nodes configured for the network. Only these are ever connected to. */
+  nodes(): readonly string[];
+  connect(node: string): Promise<HopConnection>;
+  /** Null when this host has no account to submit with. */
+  sender: HopSender | null;
+}
+
+/** A file to send, read by the host from what the user picked. */
+export interface OutgoingFile {
+  bytes: Uint8Array;
+  name: string;
+  mimeType: string;
+  /** For images whose size the host could read. */
+  image?: { width: number; height: number };
 }
 
 /** What a submission carries, for {@link ChatEngineDeps.payloads}. */
@@ -121,7 +154,7 @@ interface SubmitPayload {
 
 /** Why a submission was made, for diagnostics. */
 interface SubmitContext {
-  purpose: "chat request" | "accept" | "messages" | "ack";
+  purpose: "chat request" | "accept" | "messages" | "leave" | "ack";
   peer: string;
   requestId?: string;
   messages?: number;
@@ -161,6 +194,38 @@ export const WRITES_OFF =
 const NO_ALLOWANCE =
   "This identity has no statement allowance on the People chain, so it cannot publish chat statements.";
 const SKIPPED_LIMIT = 20;
+/** Reaction and call signal ids kept per contact to recognise one delivered again. */
+const SEEN_SIGNALS_LIMIT = 500;
+/** Call signals older than this are not sent again: the call is long over. */
+const CALL_SIGNAL_TTL_MS = 2 * 60_000;
+
+/** A call signal from a peer, for whoever runs calls. */
+export interface IncomingCallSignal {
+  account: HexString;
+  /** The message's id; for an offer, the call's id. */
+  id: string;
+  /** As the sender stamped it. */
+  at: number;
+  content: Extract<
+    MessageContent,
+    { kind: "call-offer" | "call-answer" | "call-candidates" | "call-closed" }
+  >;
+}
+
+/** A call signal this host sends. */
+export type OutgoingCallSignal = Extract<
+  MessageContent,
+  { kind: "call-offer" | "call-answer" | "call-candidates" | "call-closed" }
+>;
+
+/** One message of a request this host sends: a bubble or a pending reaction. */
+interface Outgoing {
+  id: string;
+  at: number;
+  content: MessageContent;
+  /** The stored bubble, whose status follows the request. */
+  message?: StoredMessage;
+}
 const RETRY_DELAY_MS = 5_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 
@@ -187,6 +252,11 @@ export class ChatEngine {
   private readonly now: () => number;
   private readonly random: RandomBytes;
   private readonly newId: () => string;
+  /** Transfers in flight, ended by {@link stop}. */
+  private readonly transfers = new Map<string, AbortController>();
+  private readonly callListeners = new Set<
+    (signal: IncomingCallSignal) => void
+  >();
 
   constructor(private readonly deps: ChatEngineDeps) {
     this.record = loadChatRecord(deps.storage, deps.recordKey);
@@ -293,6 +363,8 @@ export class ChatEngine {
 
   /** Stop listening, and stop reconnecting. */
   stop(): void {
+    for (const transfer of this.transfers.values()) transfer.abort();
+    this.transfers.clear();
     this.run += 1;
     this.clearRetry();
     this.dropConnection();
@@ -408,7 +480,7 @@ export class ChatEngine {
       );
       throw error;
     }
-    this.deps.payloads?.plaintext(statement, plaintext);
+    this.deps.payloads?.plaintext(statement, withoutTickets(plaintext));
     return plaintext;
   }
 
@@ -458,11 +530,17 @@ export class ChatEngine {
           seen("declined earlier");
           continue;
         }
-        if (this.contact(peer)?.state === "active") {
+        const existing = this.contact(peer);
+        if (existing?.blocked) {
+          seen("blocked");
+          continue;
+        }
+        // A peer who left and asks again is a new request, as on the apps.
+        if (existing?.state === "active" && existing.peerLeft !== true) {
           seen("contact active");
           continue;
         }
-        const waiting = this.contact(peer);
+        const waiting = existing?.state === "requested" ? existing : undefined;
         if (waiting !== undefined) {
           // Both sides asked at once; the peer's request answers this host's.
           waiting.state = "active";
@@ -570,9 +648,9 @@ export class ChatEngine {
   private async listenToSessions(): Promise<void> {
     const store = this.store;
     if (store === null) return;
-    const topics = this.record.contacts.map((contact) =>
-      this.incomingTopic(contact),
-    );
+    const topics = this.record.contacts
+      .filter((contact) => contact.blocked !== true)
+      .map((contact) => this.incomingTopic(contact));
     const topicIds = topics.map(bytesToHex);
     const fingerprint = topicIds.join();
     if (fingerprint === this.sessionTopics) return;
@@ -606,6 +684,7 @@ export class ChatEngine {
         const topic = statement.topics[0];
         const contact = this.record.contacts.find(
           (candidate) =>
+            candidate.blocked !== true &&
             topic !== undefined &&
             equalBytes(this.incomingTopic(candidate), topic),
         );
@@ -671,11 +750,17 @@ export class ChatEngine {
           data.code === ACKNOWLEDGED &&
           contact.outbound?.requestId === data.requestId
         ) {
+          const delivered = new Set(contact.outbound.messageIds);
           for (const message of contact.messages)
-            if (contact.outbound.messageIds.includes(message.id))
+            if (delivered.has(message.id)) {
               message.status = "acknowledged";
+              if (message.call !== undefined) delete message.call.setup;
+            }
+          contact.pending = (contact.pending ?? []).filter(
+            (pending) => !delivered.has(pending.id),
+          );
           contact.outbound = null;
-          if (this.writesAllowed() && this.unacknowledged(contact).length > 0)
+          if (this.writesAllowed() && this.outgoing(contact).length > 0)
             await this.flush(contact);
         }
         return;
@@ -714,6 +799,19 @@ export class ChatEngine {
       );
       return "unreadable";
     }
+    if (message.content.kind === "reaction")
+      return this.receiveReaction(contact, message.id, message.content);
+    if (
+      message.content.kind === "call-answer" ||
+      message.content.kind === "call-candidates" ||
+      message.content.kind === "call-closed"
+    )
+      return this.receiveCallSignal(
+        contact,
+        message.id,
+        Number(message.timestampMs),
+        message.content,
+      );
     if (contact.messages.some((known) => known.id === message.id))
       return "duplicate";
     const base = {
@@ -730,6 +828,14 @@ export class ChatEngine {
           text: message.content.text,
         });
         return "added";
+      case "rich":
+        contact.messages.push({
+          ...base,
+          kind: "text",
+          text: message.content.text ?? "",
+          attachments: message.content.attachments.map(storedAttachment),
+        });
+        return "added";
       case "accepted":
         contact.messages.push({
           ...base,
@@ -737,6 +843,27 @@ export class ChatEngine {
           text: "Accepted the chat request",
         });
         return "added";
+      case "call-offer":
+        contact.messages.push({
+          ...base,
+          kind: "call",
+          text: "",
+          call: { video: message.content.video },
+        });
+        this.emitCall({
+          account: contact.account,
+          id: message.id,
+          at: base.at,
+          content: message.content,
+        });
+        return "added";
+      case "left":
+        contact.peerLeft = true;
+        contact.messages.push({ ...base, kind: "left", text: "" });
+        return "added";
+      case "contact-added":
+        contact.peerLeft = false;
+        return "control";
       case "control":
         // A peer's push token and device list. This host sends no push
         // notifications and talks to the peer pairwise, so neither is kept.
@@ -749,6 +876,76 @@ export class ChatEngine {
         });
         return "added";
     }
+  }
+
+  /**
+   * Apply the peer's reaction to the message it names. Each emoji is kept
+   * once per side, as the apps key it; a removal takes that emoji away. A
+   * reaction to a message this host does not have is not kept.
+   */
+  private receiveReaction(
+    contact: Contact,
+    id: string,
+    reaction: Extract<MessageContent, { kind: "reaction" }>,
+  ): "added" | "duplicate" | "control" {
+    if (this.seenBefore(contact, id)) return "duplicate";
+    const target = contact.messages.find(
+      (message) => message.id === reaction.messageId,
+    );
+    if (target === undefined) return "control";
+    const others = (target.reactions ?? []).filter(
+      (entry) => !(entry.from === "peer" && entry.emoji === reaction.emoji),
+    );
+    target.reactions = reaction.removed
+      ? others
+      : [...others, { emoji: reaction.emoji, from: "peer" }];
+    return "added";
+  }
+
+  /** Whether a signal was handled before; remembers it when not. */
+  private seenBefore(contact: Contact, id: string): boolean {
+    const seen = contact.seenSignals ?? [];
+    if (seen.includes(id)) return true;
+    contact.seenSignals = [...seen, id].slice(-SEEN_SIGNALS_LIMIT);
+    return false;
+  }
+
+  /** Note what an answer or an end does to the call's line, and hand the signal on. */
+  private receiveCallSignal(
+    contact: Contact,
+    id: string,
+    at: number,
+    content: Extract<
+      MessageContent,
+      { kind: "call-answer" | "call-candidates" | "call-closed" }
+    >,
+  ): "added" | "duplicate" | "control" {
+    if (this.seenBefore(contact, id)) return "duplicate";
+    const call = contact.messages.find(
+      (message) => message.kind === "call" && message.id === content.offerId,
+    )?.call;
+    if (call !== undefined && content.kind === "call-answer")
+      call.answeredAt ??= at;
+    if (
+      call !== undefined &&
+      content.kind === "call-closed" &&
+      call.closedBy === undefined
+    ) {
+      call.closedBy = "peer";
+      call.endedAt = at;
+    }
+    this.emitCall({ account: contact.account, id, at, content });
+    return content.kind === "call-candidates" ? "control" : "added";
+  }
+
+  private emitCall(signal: IncomingCallSignal): void {
+    for (const listener of [...this.callListeners]) listener(signal);
+  }
+
+  /** Follow the call signals peers send. */
+  onCall(listener: (signal: IncomingCallSignal) => void): () => void {
+    this.callListeners.add(listener);
+    return () => this.callListeners.delete(listener);
   }
 
   // -------------------------------------------------------------------------
@@ -802,7 +999,7 @@ export class ChatEngine {
       const encoded = this.sign(statement);
       hash = bytesToHex(statementHash(encoded));
       this.deps.payloads?.statement("out", payload.stream, encoded);
-      this.deps.payloads?.plaintext(hash, payload.plaintext);
+      this.deps.payloads?.plaintext(hash, withoutTickets(payload.plaintext));
       const result = await store.submit(encoded);
       if (!isStored(result)) {
         report("refused", {
@@ -821,31 +1018,92 @@ export class ChatEngine {
     }
   }
 
-  private unacknowledged(contact: Contact): StoredMessage[] {
-    return contact.messages.filter(
-      (message) =>
-        message.direction === "out" &&
-        (message.kind === "text" || message.kind === "accepted") &&
-        message.status !== "acknowledged",
-    );
-  }
-
-  /**
-   * Put every unacknowledged message in one request on this host's request
-   * channel. A newer request replaces the one before it, as the app does.
-   */
-  private async flush(contact: Contact): Promise<void> {
-    const messages = this.unacknowledged(contact);
-    if (messages.length === 0) return;
-    const requestId = this.newId();
-    const encoded = messages.map((message) =>
-      encodeMessage({
+  /** Every message the peer has not acknowledged: bubbles first, then pending reactions. */
+  private outgoing(contact: Contact): Outgoing[] {
+    const bubbles: Outgoing[] = contact.messages
+      .filter(
+        (message) =>
+          message.direction === "out" &&
+          (message.kind === "text" ||
+            message.kind === "accepted" ||
+            (message.kind === "call" &&
+              message.call?.setup !== undefined &&
+              message.call.closedBy === undefined)) &&
+          message.status !== "acknowledged" &&
+          uploaded(message),
+      )
+      .map((message) => ({
         id: message.id,
-        timestampMs: BigInt(message.at),
+        at: message.at,
         content:
           message.kind === "accepted"
             ? { kind: "accepted", requestId: message.text }
-            : { kind: "text", text: message.text },
+            : message.kind === "call"
+              ? {
+                  kind: "call-offer",
+                  sdp: hexToBytes(message.call!.setup!),
+                  video: message.call!.video,
+                }
+              : message.attachments !== undefined
+                ? {
+                    kind: "rich",
+                    text: message.text === "" ? null : message.text,
+                    attachments: message.attachments.map(wireAttachment),
+                  }
+                : { kind: "text", text: message.text },
+        message,
+      }));
+    const now = this.now();
+    const signals = (contact.pending ?? [])
+      .filter(
+        (pending) =>
+          pending.content.kind === "reaction" ||
+          now - pending.at < CALL_SIGNAL_TTL_MS,
+      )
+      .map((pending: PendingMessage): Outgoing => {
+        const content = pending.content;
+        return {
+          id: pending.id,
+          at: pending.at,
+          content:
+            content.kind === "call-answer"
+              ? {
+                  kind: "call-answer",
+                  offerId: content.offerId,
+                  sdp: hexToBytes(content.sdp),
+                }
+              : content.kind === "call-candidates"
+                ? {
+                    kind: "call-candidates",
+                    offerId: content.offerId,
+                    sdp: hexToBytes(content.sdp),
+                  }
+                : content,
+        };
+      });
+    return [...bubbles, ...signals];
+  }
+
+  /**
+   * Put every unacknowledged message, and `extra`, in one request on this
+   * host's request channel. A newer request replaces the one before it, as
+   * the app does. Resolves to whether the store kept it.
+   */
+  private async flush(
+    contact: Contact,
+    extra: Outgoing[] = [],
+  ): Promise<boolean> {
+    const outgoing = [...this.outgoing(contact), ...extra];
+    if (outgoing.length === 0) return true;
+    const messages = outgoing.flatMap((entry) =>
+      entry.message === undefined ? [] : [entry.message],
+    );
+    const requestId = this.newId();
+    const encoded = outgoing.map((entry) =>
+      encodeMessage({
+        id: entry.id,
+        timestampMs: BigInt(entry.at),
+        content: entry.content,
       }),
     );
     const topic = this.outgoingTopic(contact);
@@ -871,29 +1129,33 @@ export class ChatEngine {
           ),
         },
         {
-          purpose: messages.some((message) => message.kind === "accepted")
-            ? "accept"
-            : "messages",
+          purpose: extra.some((entry) => entry.content.kind === "left")
+            ? "leave"
+            : messages.some((message) => message.kind === "accepted")
+              ? "accept"
+              : "messages",
           peer: shortHex(contact.account),
           requestId,
-          messages: messages.length,
+          messages: outgoing.length,
         },
         { stream: "sessions", plaintext },
       );
       contact.expiry.request = expiry.toString();
       contact.outbound = {
         requestId,
-        messageIds: messages.map((message) => message.id),
+        messageIds: outgoing.map((entry) => entry.id),
       };
       for (const message of messages) {
         message.status = "sent";
         delete message.problem;
       }
+      return true;
     } catch (error) {
       for (const message of messages) {
         message.status = "failed";
         message.problem = errorText(error);
       }
+      return false;
     }
   }
 
@@ -956,37 +1218,45 @@ export class ChatEngine {
         throw new Error("That request is no longer here.");
       if (request.problem !== null || request.peerChatKey === null)
         throw new Error(request.problem ?? "The sender has no chat key.");
-      const contact: Contact = {
+      const opened: StoredMessage[] = [
+        {
+          id: request.id,
+          direction: "in",
+          kind: "request",
+          text: request.welcome ?? "",
+          at: request.at,
+          status: "received",
+        },
+        {
+          id: this.newId(),
+          direction: "out",
+          kind: "accepted",
+          text: request.id,
+          at: this.now(),
+          status: "pending",
+        },
+      ];
+      // A peer who left and asked again keeps the conversation's history.
+      const returning = this.contact(request.peer);
+      const contact: Contact = returning ?? {
         account: request.peer,
         chatKey: request.peerChatKey,
         name: request.name,
         state: "active",
-        messages: [
-          {
-            id: request.id,
-            direction: "in",
-            kind: "request",
-            text: request.welcome ?? "",
-            at: request.at,
-            status: "received",
-          },
-          {
-            id: this.newId(),
-            direction: "out",
-            kind: "accepted",
-            text: request.id,
-            at: this.now(),
-            status: "pending",
-          },
-        ],
+        messages: [],
         outbound: null,
         expiry: { request: null, response: null },
         acknowledged: null,
       };
+      contact.chatKey = request.peerChatKey;
+      contact.name = request.name ?? contact.name;
+      contact.state = "active";
+      contact.peerLeft = false;
+      contact.messages.push(...opened);
       this.record.requests = this.record.requests.filter(
         (candidate) => candidate.id !== requestId,
       );
-      this.record.contacts.push(contact);
+      if (returning === undefined) this.record.contacts.push(contact);
       await this.listenToSessions();
       await this.flush(contact);
       this.changed();
@@ -1090,11 +1360,7 @@ export class ChatEngine {
   send(account: HexString, text: string): Promise<void> {
     return this.userAction("send", async () => {
       this.requireWrites();
-      const contact = this.contact(account);
-      if (contact === undefined)
-        throw new Error("There is no chat with that account.");
-      if (contact.state !== "active")
-        throw new Error("The request has not been accepted yet.");
+      const contact = this.activeContact(account);
       contact.messages.push({
         id: this.newId(),
         direction: "out",
@@ -1109,6 +1375,372 @@ export class ChatEngine {
     });
   }
 
+  /**
+   * Set the user's reaction on one of a contact's messages, or take it away
+   * with `null`. The user keeps one emoji per message, as the iOS app does:
+   * a new one is sent first, then the old one is removed; the same one again
+   * removes it.
+   */
+  react(
+    account: HexString,
+    messageId: string,
+    emoji: string | null,
+  ): Promise<void> {
+    return this.userAction("react", async () => {
+      this.requireWrites();
+      const contact = this.activeContact(account);
+      const target = contact.messages.find(
+        (message) => message.id === messageId,
+      );
+      if (target === undefined || !reactable(target))
+        throw new Error("That message cannot take a reaction.");
+      const mine = (target.reactions ?? []).filter(
+        (entry) => entry.from === "self",
+      );
+      const placing =
+        emoji !== null && !mine.some((entry) => entry.emoji === emoji)
+          ? emoji
+          : null;
+      const pending = (reaction: string, removed: boolean): PendingMessage => ({
+        id: this.newId(),
+        at: this.now(),
+        content: { kind: "reaction", messageId, emoji: reaction, removed },
+      });
+      contact.pending = [
+        ...(contact.pending ?? []),
+        ...(placing === null ? [] : [pending(placing, false)]),
+        ...mine.map((entry) => pending(entry.emoji, true)),
+      ];
+      target.reactions = [
+        ...(target.reactions ?? []).filter((entry) => entry.from !== "self"),
+        ...(placing === null
+          ? []
+          : [{ emoji: placing, from: "self" as const }]),
+      ];
+      this.changed();
+      await this.flush(contact);
+      this.changed();
+    });
+  }
+
+  private activeContact(account: HexString): Contact {
+    const contact = this.contact(account);
+    if (contact === undefined)
+      throw new Error("There is no chat with that account.");
+    if (contact.blocked) throw new Error("You blocked this person.");
+    if (contact.state !== "active")
+      throw new Error("The request has not been accepted yet.");
+    if (contact.peerLeft) throw new Error("They left this chat.");
+    return contact;
+  }
+
+  /**
+   * Block a contact here. Nothing is sent: the conversation leaves the list,
+   * its session is no longer followed, and nothing the person sends is read
+   * or acknowledged. Its history stays, for when they are unblocked.
+   */
+  block(account: HexString): Promise<void> {
+    return this.setBlocked(account, true);
+  }
+
+  /** Follow a blocked contact again. Messages still in the store are read then. */
+  unblock(account: HexString): Promise<void> {
+    return this.setBlocked(account, false);
+  }
+
+  private setBlocked(account: HexString, blocked: boolean): Promise<void> {
+    return this.userAction(blocked ? "block" : "unblock", async () => {
+      const contact = this.contact(account);
+      if (contact === undefined)
+        throw new Error("There is no chat with that account.");
+      if (blocked) contact.blocked = true;
+      else delete contact.blocked;
+      await this.listenToSessions();
+      this.changed();
+    });
+  }
+
+  /**
+   * Leave a conversation: tell the peer (kind 13), then stop following it
+   * and take it off the list. The conversation is kept in the record, not
+   * deleted. Nothing changes when the store does not keep the message.
+   */
+  leave(account: HexString): Promise<void> {
+    return this.userAction("leave", async () => {
+      this.requireWrites();
+      const contact = this.contact(account);
+      if (contact === undefined)
+        throw new Error("There is no chat with that account.");
+      if (contact.state !== "active")
+        throw new Error("The request has not been accepted yet.");
+      const left: Outgoing = {
+        id: this.newId(),
+        at: this.now(),
+        content: { kind: "left" },
+      };
+      if (!(await this.flush(contact, [left]))) {
+        this.changed();
+        throw new Error(
+          `The message that you left was not sent: ${contact.messages.find((message) => message.status === "failed")?.problem ?? "the statement store did not keep it"}`,
+        );
+      }
+      contact.messages.push({
+        id: left.id,
+        direction: "out",
+        kind: "left",
+        text: "",
+        at: left.at,
+        status: "sent",
+      });
+      this.record.contacts = this.record.contacts.filter(
+        (candidate) => candidate !== contact,
+      );
+      this.record.left.push(contact);
+      await this.listenToSessions();
+      this.changed();
+    });
+  }
+
+  /**
+   * Send a call signal. An offer becomes the call's line in the
+   * conversation, and its id is the call's; the rest go as pending signals,
+   * sent again until acknowledged or stale. Resolves to the message id.
+   */
+  sendCall(account: HexString, signal: OutgoingCallSignal): Promise<string> {
+    return this.serial(async () => {
+      this.requireWrites();
+      const contact = this.activeContact(account);
+      const id = this.newId();
+      const at = this.now();
+      if (signal.kind === "call-offer")
+        contact.messages.push({
+          id,
+          direction: "out",
+          kind: "call",
+          text: "",
+          at,
+          status: "pending",
+          call: { video: signal.video, setup: bytesToHex(signal.sdp) },
+        });
+      else {
+        if (signal.kind === "call-closed") {
+          const call = contact.messages.find(
+            (message) =>
+              message.kind === "call" && message.id === signal.offerId,
+          )?.call;
+          if (call !== undefined && call.closedBy === undefined) {
+            call.closedBy = "self";
+            call.endedAt = at;
+          }
+        }
+        if (signal.kind === "call-answer") {
+          const call = contact.messages.find(
+            (message) =>
+              message.kind === "call" && message.id === signal.offerId,
+          )?.call;
+          if (call !== undefined) call.answeredAt ??= at;
+        }
+        contact.pending = [
+          ...(contact.pending ?? []),
+          {
+            id,
+            at,
+            content:
+              signal.kind === "call-closed"
+                ? signal
+                : signal.kind === "call-answer"
+                  ? {
+                      kind: "call-answer",
+                      offerId: signal.offerId,
+                      sdp: bytesToHex(signal.sdp),
+                    }
+                  : {
+                      kind: "call-candidates",
+                      offerId: signal.offerId,
+                      sdp: bytesToHex(signal.sdp),
+                    },
+          },
+        ];
+      }
+      this.changed();
+      if (!(await this.flush(contact))) {
+        this.changed();
+        throw new Error("The call signal was not sent.");
+      }
+      this.changed();
+      return id;
+    });
+  }
+
+  /** Why this engine cannot send files now, or null. */
+  fileProblem(): string | null {
+    const hop = this.deps.hop;
+    if (hop === undefined || hop.nodes().length === 0)
+      return "No HOP node is configured for this network, so files cannot be sent or fetched.";
+    if (hop.sender === null)
+      return "This host has no account to submit files with.";
+    return null;
+  }
+
+  /**
+   * Send a file: show it at once as pending, seal and submit it to a HOP
+   * node, then send the message that names it. The upload runs outside the
+   * engine's queue, so receiving goes on meanwhile; {@link cancel} or
+   * {@link stop} ends it. The bytes are not kept: a failed upload is sent
+   * again by picking the file again.
+   */
+  async sendFile(
+    account: HexString,
+    file: OutgoingFile,
+    caption: string,
+  ): Promise<void> {
+    const problem = this.fileProblem();
+    if (problem !== null) throw new Error(problem);
+    if (file.bytes.length > HOP_MAX_FILE_BYTES)
+      throw new Error("The file is larger than 128 MiB.");
+    const hop = this.deps.hop!;
+    const nodes = hop.nodes();
+    const node = nodes[Math.floor(Math.random() * nodes.length)];
+    const id = this.newId();
+    const controller = new AbortController();
+    let message!: StoredMessage;
+    let run = 0;
+    await this.userAction("send file", async () => {
+      this.requireWrites();
+      const contact = this.activeContact(account);
+      message = {
+        id,
+        direction: "out",
+        kind: "text",
+        text: caption,
+        at: this.now(),
+        status: "pending",
+        attachments: [
+          {
+            node,
+            kind: file.image === undefined ? "file" : "image",
+            mimeType: file.mimeType || "application/octet-stream",
+            size: file.bytes.length,
+            ...file.image,
+            name: file.name,
+          },
+        ],
+      };
+      contact.messages.push(message);
+      this.transfers.set(id, controller);
+      run = this.run;
+      this.changed();
+    });
+    let reference: { identifier: Uint8Array; ticket: Uint8Array };
+    try {
+      const connection = await hop.connect(node);
+      try {
+        reference = await hopUpload(
+          connection,
+          file.bytes,
+          hop.sender!,
+          { random: this.random, now: this.now },
+          { signal: controller.signal },
+        );
+      } finally {
+        connection.close();
+      }
+    } catch (error) {
+      this.transfers.delete(id);
+      await this.serial(async () => {
+        message.status = "failed";
+        message.problem = controller.signal.aborted
+          ? "Canceled."
+          : `The file was not uploaded: ${errorText(error)}`;
+        this.changed();
+      });
+      this.emit({
+        type: "action-failed",
+        action: "upload",
+        reason: sanitizeReason(errorText(error)),
+      });
+      throw error;
+    }
+    this.transfers.delete(id);
+    await this.userAction("send file", async () => {
+      const attachment = message.attachments![0];
+      attachment.identifier = bytesToHex(reference.identifier);
+      attachment.ticket = bytesToHex(reference.ticket);
+      const contact = this.contact(account);
+      if (run !== this.run || contact === undefined) {
+        message.status = "failed";
+        message.problem = "Chat stopped before the file was sent.";
+        this.changed();
+        return;
+      }
+      await this.flush(contact);
+      this.changed();
+    });
+  }
+
+  /** Why a file a message names cannot be fetched here, or null. */
+  fetchProblem(attachment: StoredAttachment): string | null {
+    if (attachment.identifier === undefined || attachment.ticket === undefined)
+      return "Not uploaded.";
+    const nodes = this.deps.hop?.nodes() ?? [];
+    if (nodes.length === 0)
+      return "No HOP node is configured for this network.";
+    if (!knownNode(nodes, attachment.node ?? ""))
+      return "On a HOP node this host is not configured with.";
+    return null;
+  }
+
+  /** End a file transfer this host started. */
+  cancel(messageId: string): void {
+    this.transfers.get(messageId)?.abort();
+  }
+
+  /**
+   * Fetch and open a file a message names, from the node it names, only when
+   * that node is one this host was configured with. Nothing is acknowledged,
+   * so the file stays in the pool for the other side's devices.
+   */
+  async fetchFile(
+    account: HexString,
+    messageId: string,
+    index: number,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array> {
+    const hop = this.deps.hop;
+    const attachment = this.contact(account)?.messages.find(
+      (message) => message.id === messageId,
+    )?.attachments?.[index];
+    if (attachment === undefined) throw new Error("That file is not here.");
+    const problem = this.fetchProblem(attachment);
+    if (problem !== null || hop === undefined)
+      throw new Error(`The file is not fetched: ${problem}`);
+    const controller = new AbortController();
+    const key = `fetch:${messageId}:${index}`;
+    this.transfers.get(key)?.abort();
+    this.transfers.set(key, controller);
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort);
+    try {
+      const connection = await hop.connect(attachment.node!);
+      try {
+        return await hopDownload(
+          connection,
+          {
+            identifier: hexToBytes(attachment.identifier!),
+            ticket: hexToBytes(attachment.ticket!),
+          },
+          HOP_MAX_FILE_BYTES,
+          { signal: controller.signal },
+        );
+      } finally {
+        connection.close();
+      }
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      if (this.transfers.get(key) === controller) this.transfers.delete(key);
+    }
+  }
+
   /** Send the unacknowledged messages of a contact again. */
   retry(account: HexString): Promise<void> {
     return this.userAction("retry", async () => {
@@ -1119,4 +1751,56 @@ export class ChatEngine {
       this.changed();
     });
   }
+}
+
+/** Whether a message is a bubble a reaction can name. */
+export const reactable = (message: StoredMessage): boolean =>
+  message.kind === "text" || message.kind === "request";
+
+/** Whether every file of a message has been uploaded, so the message can be sent. */
+const uploaded = (message: StoredMessage): boolean =>
+  (message.attachments ?? []).every(
+    (attachment) => attachment.identifier !== undefined,
+  );
+
+function storedAttachment(attachment: Attachment): StoredAttachment {
+  const meta = attachment.meta;
+  return {
+    identifier: bytesToHex(attachment.identifier),
+    ticket: bytesToHex(attachment.ticket),
+    node: attachment.node,
+    kind: meta.kind,
+    mimeType: meta.mimeType,
+    size: meta.size,
+    ...(meta.kind === "image"
+      ? { width: meta.width, height: meta.height }
+      : {}),
+    ...(meta.kind === "video" ? { duration: meta.duration } : {}),
+  };
+}
+
+function wireAttachment(attachment: StoredAttachment): Attachment {
+  const general = { mimeType: attachment.mimeType, size: attachment.size };
+  return {
+    identifier: hexToBytes(attachment.identifier!),
+    ticket: hexToBytes(attachment.ticket!),
+    node: attachment.node!,
+    meta:
+      attachment.kind === "image"
+        ? {
+            kind: "image",
+            ...general,
+            width: attachment.width ?? 0,
+            height: attachment.height ?? 0,
+            thumbnail: null,
+          }
+        : attachment.kind === "video"
+          ? {
+              kind: "video",
+              ...general,
+              duration: attachment.duration ?? 0,
+              thumbnail: null,
+            }
+          : { kind: "file", ...general },
+  };
 }

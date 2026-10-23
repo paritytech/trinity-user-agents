@@ -135,6 +135,37 @@ describe("decoded layers keep protocol fields apart from annotations", () => {
     });
   });
 
+  test("an attachment is read field by field, and its ticket is marked as replaced", () => {
+    const zeros = new Uint8Array(32);
+    const encoded = concat(
+      head("f", 15),
+      Uint8Array.of(0, 1, 4, 0),
+      bytes(new Uint8Array(32).fill(0x11)),
+      bytes(zeros),
+      Uint8Array.of(0),
+      text("wss://n"),
+      Uint8Array.of(0),
+      text("text/plain"),
+      Uint8Array.of(5, 0, 0, 0),
+    );
+    const decoded = decodeMessageLayer(encoded);
+    expect(decoded.annotations.$.complete).not.toBe(false);
+    const content = decoded.protocol.versioned as {
+      content: { attachments: { value: { items: Record<string, unknown>[] } } };
+    };
+    expect(content.content.attachments.value.items[0]).toMatchObject({
+      index: 0,
+      claimTicket: { length: 32, bytes: bytesToHex(zeros) },
+      nodeEndpoint: { index: 0, url: { utf8: "wss://n" } },
+      meta: { index: 0, mimeType: { utf8: "text/plain" }, fileSize: 5 },
+    });
+    expect(
+      decoded.annotations[
+        "$.versioned.content.attachments.value.items[0].claimTicket"
+      ].sensitive,
+    ).toContain("replaces it with zeros");
+  });
+
   test("an unknown kind stops reading, names where, and keeps the bytes it did not read", () => {
     const encoded = concat(head("u", 99), Uint8Array.of(7, 7));
     const decoded = decodeMessageLayer(encoded);

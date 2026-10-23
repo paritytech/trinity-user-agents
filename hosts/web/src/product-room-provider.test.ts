@@ -270,4 +270,42 @@ describe("product room provider", () => {
     expect(again.reactions).toEqual([{ emoji: "👍", count: 1, self: false }]);
     expect(welcome.reactions).toBeUndefined();
   });
+
+  test("the user's reaction goes to the worker as MessagePosted(Reaction), and a new emoji replaces it", async () => {
+    const { provider, fake } = await setup();
+    await provider.send("lobby", "hi");
+    const [welcome, , mine] = (await provider.timeline("lobby")).messages;
+    // Only the product's own messages take a reaction: their ids are the ones it knows.
+    expect(welcome.reactable).toBe(true);
+    expect(mine.reactable).toBeUndefined();
+    fake.chatActions.length = 0;
+    await provider.react("lobby", welcome.id, "👍");
+    await provider.react("lobby", welcome.id, "🎉");
+    await provider.react("lobby", welcome.id, "🎉");
+    const posted = (
+      tag: "Reaction" | "ReactionRemoved",
+      emoji: string,
+    ): HostChatActionSubscribeItem => ({
+      roomId: "lobby",
+      peer: USER_PEER,
+      payload: {
+        tag: "MessagePosted",
+        value: { tag, value: { messageId: welcome.id, emoji } },
+      },
+    });
+    expect(fake.chatActions).toEqual([
+      posted("Reaction", "👍"),
+      posted("Reaction", "🎉"),
+      posted("ReactionRemoved", "👍"),
+      posted("ReactionRemoved", "🎉"),
+    ]);
+    const [after] = (await provider.timeline("lobby")).messages;
+    expect(after.reactions).toBeUndefined();
+    await provider.react("lobby", welcome.id, "👍");
+    const [placed] = (await provider.timeline("lobby")).messages;
+    expect(placed.reactions).toEqual([{ emoji: "👍", count: 1, self: true }]);
+    await expect(provider.react("lobby", mine.id, "👍")).rejects.toThrow(
+      "no product message",
+    );
+  });
 });

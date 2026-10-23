@@ -21,6 +21,7 @@ describe("NETWORKS", () => {
         textSlot: 1,
         contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
       },
+      identityBackend: "https://identity.dotspark.app",
     });
   });
 
@@ -38,6 +39,7 @@ describe("NETWORKS", () => {
         textSlot: 1,
         contentGateway: "https://previewnet.substrate.dev",
       },
+      identityBackend: "https://identity-previewnet.dotspark.app",
     });
   });
 

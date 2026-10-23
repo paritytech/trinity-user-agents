@@ -24,6 +24,7 @@ import {
   sealRequest,
   sealSession,
   sessionTopic,
+  withoutTickets,
 } from "./protocol.js";
 import {
   decodeStatement,
@@ -235,7 +236,12 @@ describe("sessions", () => {
       text("m1"),
       text("+1"),
     );
-    expect(decodeMessage(reaction).content).toEqual({ kind: "other", tag: 4 });
+    expect(decodeMessage(reaction).content).toEqual({
+      kind: "reaction",
+      messageId: "m1",
+      emoji: "+1",
+      removed: false,
+    });
     expect(
       decodeSessionData(
         encodeSessionData({ kind: "response", requestId: "q1", code: 0 }),
@@ -330,5 +336,122 @@ describe("control messages", () => {
         ),
       ),
     ).toThrow();
+  });
+});
+
+describe("reaction and leave messages, in the apps' byte layout", () => {
+  // id "r1", timestamp 0x0102030405060708, version 0, then the content.
+  const HEAD = "0872310807060504030201" + "00";
+
+  test("a reaction is tag 4, the target id, then the emoji, each as SCALE text", () => {
+    const encoded = encodeMessage({
+      id: "r1",
+      timestampMs: 0x0102030405060708n,
+      content: {
+        kind: "reaction",
+        messageId: "m1",
+        emoji: "👍",
+        removed: false,
+      },
+    });
+    // "m1" = 08 6d 31; "👍" = 10 f0 9f 91 8d.
+    expect(Buffer.from(encoded).toString("hex")).toBe(
+      `${HEAD}04086d3110f09f918d`,
+    );
+  });
+
+  test("a removal is tag 5 with the same fields", () => {
+    const encoded = Buffer.from(`${HEAD}05086d3110f09f918d`, "hex");
+    expect(decodeMessage(encoded).content).toEqual({
+      kind: "reaction",
+      messageId: "m1",
+      emoji: "👍",
+      removed: true,
+    });
+  });
+
+  test("leaving is tag 13 with nothing after it, and contact added is tag 3", () => {
+    const encoded = encodeMessage({
+      id: "r1",
+      timestampMs: 0x0102030405060708n,
+      content: { kind: "left" },
+    });
+    expect(Buffer.from(encoded).toString("hex")).toBe(`${HEAD}0d`);
+    expect(decodeMessage(Buffer.from(`${HEAD}03`, "hex")).content).toEqual({
+      kind: "contact-added",
+    });
+    expect(() => decodeMessage(Buffer.from(`${HEAD}0d00`, "hex"))).toThrow();
+  });
+});
+
+describe("attachments, in the apps' byte layout", () => {
+  const HEAD = "0872310807060504030201" + "00";
+  const IMAGE =
+    "0f" + // RichText
+    "01" +
+    "086869" + // Some("hi")
+    "01" +
+    "04" + // Some(one attachment)
+    "00" + // FileVariant::P2PMixnet
+    "80" +
+    "11".repeat(32) + // identifier
+    "80" +
+    "22".repeat(32) + // claim ticket
+    "00" +
+    "1c7773733a2f2f6e" + // NodeEndpoint::WssUrl("wss://n")
+    "01" +
+    "24696d6167652f706e67" +
+    "0a000000" + // Image: "image/png", 10 bytes
+    "03000000" +
+    "04000000" +
+    "00"; // 3 × 4, no thumbnail
+
+  test("an image is rich text whose attachment names the HOP entry, ticket, node and size", () => {
+    const content = {
+      kind: "rich" as const,
+      text: "hi",
+      attachments: [
+        {
+          identifier: new Uint8Array(32).fill(0x11),
+          ticket: new Uint8Array(32).fill(0x22),
+          node: "wss://n",
+          meta: {
+            kind: "image" as const,
+            mimeType: "image/png",
+            size: 10,
+            width: 3,
+            height: 4,
+            thumbnail: null,
+          },
+        },
+      ],
+    };
+    const encoded = encodeMessage({
+      id: "r1",
+      timestampMs: 0x0102030405060708n,
+      content,
+    });
+    expect(Buffer.from(encoded).toString("hex")).toBe(`${HEAD}${IMAGE}`);
+    expect(decodeMessage(encoded).content).toEqual(content);
+  });
+
+  test("diagnostics get the session data with the ticket zeroed, and nothing else changed", () => {
+    const message = Buffer.from(`${HEAD}${IMAGE}`, "hex");
+    const plaintext = encodeSessionData({
+      kind: "request",
+      requestId: "q",
+      messages: [message],
+    });
+    const redacted = withoutTickets(plaintext);
+    const expected = Buffer.from(plaintext)
+      .toString("hex")
+      .replace("22".repeat(32), "00".repeat(32));
+    expect(Buffer.from(redacted).toString("hex")).toBe(expected);
+    const plain = encodeSessionData({
+      kind: "request",
+      requestId: "q",
+      messages: [Buffer.from(`${HEAD}0d`, "hex")],
+    });
+    expect(withoutTickets(plain)).toBe(plain);
   });
 });

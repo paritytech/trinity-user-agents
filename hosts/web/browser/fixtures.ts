@@ -58,6 +58,10 @@ let sharedBrowser: Promise<Browser> | undefined;
 export function testBrowser(): Promise<Browser> {
   sharedBrowser ??= chromium.launch({
     executablePath: process.env.CHROMIUM_PATH || undefined,
+    // Calls in a test page use generated media, not a camera, so Chromium
+    // would hide host addresses behind mDNS names, which the apps' compact
+    // candidate form cannot carry.
+    args: ["--disable-features=WebRtcHideLocalIpsWithMdns"],
   });
   return sharedBrowser;
 }

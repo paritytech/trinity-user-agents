@@ -2,9 +2,11 @@ import type {
   ChatMessage,
   ChatProvider,
   ConversationSummary,
+  MessageFile,
   ProviderEvent,
 } from "./chat-provider.js";
 import { renderTree } from "./product-render.js";
+import { ask } from "./prompt.js";
 
 /**
  * One conversation on the Chat screen, for any provider: a header, the
@@ -168,25 +170,64 @@ function fileLink(
   return card;
 }
 
-/** Draw a message's reactions, one chip per emoji with its count. */
+/** Raster images a fetched file is shown as. Anything else is only saved, never opened here. */
+const SHOWN_IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+
+const fileLabel = (file: MessageFile): string =>
+  file.name ??
+  (file.kind === "image" ? "Image" : file.kind === "video" ? "Video" : "File");
+
+/** The emoji the reaction picker offers. */
+export const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+/**
+ * Draw a message's reactions, one chip per emoji with its count. When the
+ * user can react, a chip is a button that sets or takes away their emoji,
+ * and a last button opens the picker.
+ */
 function drawReactions(
   container: HTMLElement,
-  reactions: ChatMessage["reactions"],
+  message: ChatMessage,
+  react: ((emoji: string | null) => void) | null,
 ): void {
-  container.hidden = reactions === undefined || reactions.length === 0;
-  container.replaceChildren(
-    ...(reactions ?? []).map((reaction) => {
-      const chip = el(
-        "span",
-        "chat-reaction",
-        reaction.count > 1
-          ? `${reaction.emoji} ${reaction.count}`
-          : reaction.emoji,
+  const reactions = message.reactions ?? [];
+  const canReact = react !== null && message.reactable === true;
+  container.hidden = reactions.length === 0 && !canReact;
+  const chips: HTMLElement[] = reactions.map((reaction) => {
+    const label =
+      reaction.count > 1
+        ? `${reaction.emoji} ${reaction.count}`
+        : reaction.emoji;
+    const chip = canReact
+      ? button("chat-reaction", label, () => react(reaction.emoji))
+      : el("span", "chat-reaction", label);
+    chip.dataset.emoji = reaction.emoji;
+    if (reaction.self) chip.dataset.self = "true";
+    return chip;
+  });
+  if (canReact) {
+    const add = button("chat-reaction chat-reaction-add", "☺+", () => {
+      const picker = el("div", "chat-reaction-picker");
+      picker.setAttribute("role", "group");
+      picker.setAttribute("aria-label", "Pick a reaction");
+      for (const emoji of QUICK_REACTIONS) {
+        const pick = button("chat-reaction", emoji, () => react(emoji));
+        pick.dataset.emoji = emoji;
+        picker.append(pick);
+      }
+      picker.append(
+        button("chat-reaction", "×", () =>
+          drawReactions(container, message, react),
+        ),
       );
-      if (reaction.self) chip.dataset.self = "true";
-      return chip;
-    }),
-  );
+      container.replaceChildren(picker);
+      (picker.firstElementChild as HTMLElement | null)?.focus();
+    });
+    add.setAttribute("aria-label", "React");
+    add.dataset.action = "react";
+    chips.push(add);
+  }
+  container.replaceChildren(...chips);
 }
 
 /** How close to the end, in pixels, still counts as reading the newest messages. */
@@ -219,6 +260,7 @@ export class ConversationView {
   private error: string | null = null;
   private composerShown = "";
   private readonly input = el("textarea", "chat-input chat-composer-input");
+  private readonly picker = el("input", "chat-file-picker");
   private readonly onVisibility = () => this.reportSeen();
 
   constructor(
@@ -238,6 +280,9 @@ export class ConversationView {
     this.input.rows = 1;
     this.input.dataset.focus = "composer";
     this.input.addEventListener("input", () => (this.draft = this.input.value));
+    this.picker.type = "file";
+    this.picker.hidden = true;
+    this.picker.addEventListener("change", () => this.sendPicked());
     this.update();
     void this.load();
   }
@@ -347,7 +392,7 @@ export class ConversationView {
             JSON.stringify(message.content);
         if (keepsCard) {
           if (known.reactions !== null)
-            drawReactions(known.reactions, message.reactions);
+            drawReactions(known.reactions, message, this.reactTo(message));
           known.message = message;
           continue;
         }
@@ -458,10 +503,43 @@ export class ConversationView {
       el("span", "chat-row-title", summary?.title ?? ""),
       el("span", "chat-row-preview", summary?.subtitle ?? this.provider.label),
     );
+    const controls = this.provider.controls?.(this.conversationId) ?? {};
+    const more: HTMLElement[] = [];
+    const calls = this.provider.calls;
+    if (calls !== undefined) {
+      const blocked = calls.blocked(this.conversationId);
+      for (const video of [false, true]) {
+        const call = button(
+          "chat-icon-button chat-call-button",
+          video ? "▶" : "☏",
+          () => {
+            this.error = null;
+            calls.start(this.conversationId, video).catch((error: unknown) => {
+              this.error = errorText(error);
+              this.drawFooter();
+            });
+          },
+        );
+        call.setAttribute("aria-label", video ? "Video call" : "Audio call");
+        call.title = blocked ?? (video ? "Video call" : "Audio call");
+        call.dataset.action = video ? "video-call" : "audio-call";
+        call.disabled = blocked !== null;
+        more.push(call);
+      }
+    }
+    if (controls.block || controls.leave) {
+      const open = button("chat-icon-button chat-more", "⋯", () => {
+        void this.openControls();
+      });
+      open.setAttribute("aria-label", "Chat options");
+      open.dataset.action = "chat-options";
+      more.push(open);
+    }
     this.bar.replaceChildren(
       back,
       ...(summary === undefined ? [] : [avatar(summary, "small")]),
       heading,
+      ...more,
     );
   }
 
@@ -486,6 +564,18 @@ export class ConversationView {
       };
       const send = el("button", "chat-send", "Send");
       send.type = "submit";
+      const files = this.provider.files;
+      if (files !== undefined) {
+        const blocked = files.blocked(this.conversationId);
+        const attach = button("chat-icon-button chat-attach", "+", () =>
+          this.picker.click(),
+        );
+        attach.setAttribute("aria-label", "Attach a file");
+        attach.dataset.action = "attach";
+        attach.disabled = blocked !== null;
+        attach.title = blocked ?? "Attach a file";
+        form.append(attach, this.picker);
+      }
       form.append(this.input, send);
       form.addEventListener("submit", (event) => {
         event.preventDefault();
@@ -507,6 +597,185 @@ export class ConversationView {
     this.footer.hidden = parts.length === 0;
     this.footer.replaceChildren(...parts);
     if (hadFocus) this.input.focus();
+  }
+
+  /** What sets the user's reaction on `message`, when the provider takes reactions. */
+  private reactTo(
+    message: ChatMessage,
+  ): ((emoji: string | null) => void) | null {
+    const react = this.provider.react?.bind(this.provider);
+    if (react === undefined) return null;
+    return (emoji) => {
+      this.error = null;
+      react(this.conversationId, message.id, emoji).catch((error: unknown) => {
+        this.error = errorText(error);
+        this.drawFooter();
+      });
+    };
+  }
+
+  /** The conversation's own controls, such as blocking or leaving, behind one button. */
+  private async openControls(): Promise<void> {
+    const controls = this.provider.controls?.(this.conversationId) ?? {};
+    const title = this.summary?.title ?? "this chat";
+    type Choice = "block" | "leave" | null;
+    const choice = await ask<Choice>({
+      title,
+      fields: [],
+      layout: "list",
+      choices: [
+        ...(controls.block && this.provider.block !== undefined
+          ? [{ label: "Block", value: "block" as const }]
+          : []),
+        ...(controls.leave && this.provider.leave !== undefined
+          ? [{ label: "Leave chat", value: "leave" as const }]
+          : []),
+        { label: "Cancel", value: null },
+      ],
+      dismissed: null,
+    });
+    if (choice === null) return;
+    const confirmed = await ask<boolean>({
+      title:
+        choice === "block"
+          ? `Block ${title}?`
+          : `Leave the chat with ${title}?`,
+      subtitle:
+        choice === "block"
+          ? "They are not told. Their chat leaves your list and the contact picker, and what they send is not read until you unblock them in Blocked."
+          : "They are told that you left. The chat leaves your list and its messages are kept on this device. They can send a new request later.",
+      fields: [],
+      choices: [
+        { label: "Cancel", value: false },
+        {
+          label: choice === "block" ? "Block" : "Leave",
+          value: true,
+          primary: true,
+        },
+      ],
+      dismissed: false,
+    });
+    if (!confirmed) return;
+    this.error = null;
+    try {
+      if (choice === "block") await this.provider.block!(this.conversationId);
+      else await this.provider.leave!(this.conversationId);
+    } catch (error) {
+      this.error = errorText(error);
+      this.drawFooter();
+    }
+  }
+
+  /** Send the file the user picked, with what they typed as its caption. */
+  private sendPicked(): void {
+    const file = this.picker.files?.[0];
+    this.picker.value = "";
+    const files = this.provider.files;
+    if (file === undefined || files === undefined) return;
+    if (file.size > files.maxBytes) {
+      this.error = `The file is larger than ${formatSize(files.maxBytes)}.`;
+      this.drawFooter();
+      return;
+    }
+    const caption = this.draft.trim();
+    this.draft = this.input.value = "";
+    this.error = null;
+    this.drawFooter();
+    files.send(this.conversationId, file, caption).catch((error: unknown) => {
+      this.error = errorText(error);
+      this.drawFooter();
+    });
+  }
+
+  /**
+   * A message's files. Nothing is fetched until the user asks; a fetched
+   * file is held as a blob URL until the row goes. Only a raster image is
+   * shown; any other file is saved as plain bytes, never opened here.
+   */
+  private files(
+    message: ChatMessage,
+    files: readonly MessageFile[],
+    cleanup: (() => void)[],
+  ): HTMLElement {
+    const list = el("div", "chat-attachments");
+    const controller = new AbortController();
+    const urls: string[] = [];
+    cleanup.push(() => {
+      controller.abort();
+      for (const url of urls) URL.revokeObjectURL(url);
+    });
+    files.forEach((file, index) => {
+      const card = el("div", "chat-file chat-attachment");
+      card.dataset.kind = file.kind;
+      card.dataset.index = String(index);
+      const details = [
+        file.mimeType || "file",
+        formatSize(file.sizeBytes),
+        ...(file.width !== undefined ? [`${file.width}×${file.height}`] : []),
+      ];
+      card.append(
+        el("span", "chat-file-name", fileLabel(file)),
+        el("span", "chat-file-meta", details.join(" · ")),
+      );
+      const transfer = this.provider.files;
+      if (message.sender.self && message.status === "pending") {
+        const cancel = button("chat-link", "Cancel", () =>
+          transfer?.cancel(this.conversationId, message.id),
+        );
+        cancel.dataset.action = "cancel-upload";
+        card.append(el("span", "chat-file-meta", "Uploading…"), cancel);
+      } else if (file.unavailable !== null || transfer === undefined)
+        card.append(
+          el(
+            "span",
+            "chat-file-meta",
+            file.unavailable ?? "Not available here.",
+          ),
+        );
+      else {
+        const fetch = button(
+          "chat-pill chat-file-fetch",
+          file.kind === "image" ? "Show image" : "Download",
+          () => {
+            fetch.disabled = true;
+            fetch.textContent = "Downloading…";
+            transfer
+              .open(this.conversationId, message.id, index, controller.signal)
+              .then((blob) => {
+                if (controller.signal.aborted) return;
+                const shown = SHOWN_IMAGE.test(blob.type);
+                const url = URL.createObjectURL(
+                  shown
+                    ? blob
+                    : new Blob([blob], { type: "application/octet-stream" }),
+                );
+                urls.push(url);
+                if (shown) {
+                  const image = el("img", "chat-media");
+                  image.src = url;
+                  image.alt = fileLabel(file);
+                  fetch.replaceWith(image);
+                } else {
+                  const save = el("a", "chat-pill chat-file-save", "Save file");
+                  save.href = url;
+                  save.download = file.name ?? "file";
+                  fetch.replaceWith(save);
+                }
+              })
+              .catch((error: unknown) => {
+                if (controller.signal.aborted) return;
+                fetch.disabled = false;
+                fetch.textContent = "Try again";
+                card.append(el("span", "chat-file-meta", errorText(error)));
+              });
+          },
+        );
+        fetch.dataset.action = "fetch-file";
+        card.append(fetch);
+      }
+      list.append(card);
+    });
+    return list;
   }
 
   private retry(message: ChatMessage): HTMLButtonElement {
@@ -541,7 +810,13 @@ export class ConversationView {
     row.dataset.sender = message.sender.id;
     let stop = () => {};
     if (content.tag === "Custom") stop = this.drawCustom(message, row);
-    else row.append(this.bubble(message));
+    else {
+      const cleanup: (() => void)[] = [];
+      row.append(this.bubble(message, cleanup));
+      stop = () => {
+        for (const step of cleanup) step();
+      };
+    }
     if (message.status === "failed") {
       const failed = el(
         "p",
@@ -552,13 +827,13 @@ export class ConversationView {
       row.append(failed);
     }
     const reactions = el("div", "chat-reactions");
-    drawReactions(reactions, message.reactions);
+    drawReactions(reactions, message, this.reactTo(message));
     row.append(reactions);
     return { message, element: row, reactions, stop };
   }
 
   /** A message's bubble: who sent it, what it says, and when. Every field is drawn as text. */
-  private bubble(message: ChatMessage): HTMLElement {
+  private bubble(message: ChatMessage, cleanup: (() => void)[]): HTMLElement {
     const content = message.content;
     const bubble = el("div", "chat-bubble");
     if (content.tag === "Text" && content.label !== undefined)
@@ -582,6 +857,10 @@ export class ConversationView {
         break;
       case "File":
         bubble.append(fileLink(content));
+        break;
+      case "Attachments":
+        text(content.text);
+        bubble.append(this.files(message, content.files, cleanup));
         break;
       case "System":
       case "Custom":

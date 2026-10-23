@@ -65,7 +65,8 @@ export type ChatEventBody =
         | "looked up again"
         | "declined earlier"
         | "contact active"
-        | "answers ours";
+        | "answers ours"
+        | "blocked";
       problem?: string;
     } & Carried)
   | {
@@ -89,7 +90,7 @@ export type ChatEventBody =
     } & Carried)
   | ({
       type: "submit";
-      purpose: "chat request" | "accept" | "messages" | "ack";
+      purpose: "chat request" | "accept" | "messages" | "leave" | "ack";
       peer: string;
       requestId?: string;
       messages?: number;
@@ -432,7 +433,16 @@ export function outcomeWord(event: ChatEventBody): string | null {
 const KIND_LABELS: Record<number, string> = {
   0: "text",
   1: "push token",
+  3: "contact added",
+  4: "reaction",
+  5: "reaction removed",
   7: "reply",
+  8: "call offer",
+  9: "call answer",
+  10: "call ICE candidate",
+  11: "call closed",
+  12: "edited",
+  13: "left chat",
   14: "chat accepted",
   15: "rich text",
   17: "device added",

@@ -290,12 +290,14 @@ not TrUAPI, and is meant to show the boundary a native host could copy.
   count when it keeps one), a conversation's history a page at a time (newest page first, oldest message first in a
   page, with an opaque cursor for the page before), what goes below the messages (a text input, nothing, or why the user
   cannot write), and events that say what changed. A message has a stable id, a sender with an id, a label and whether
-  it is the user's, a status, and `Text`, `System` or `Custom` content.
+  it is the user's, a status, reactions, and `Text`, `System`, `Custom` or `Attachments` content, among others.
 - **What the screen gives back.** `send(conversation, text)`, `retry` of a failed message, and
   `markRead(conversation, message)` for the newest message whose end was actually on screen while the page was visible.
   Opening a conversation is not reading it. A provider without read state gets no `markRead` calls.
 - **Optional parts.** Requests to accept or decline, starting a conversation, an account of its own, drawing `Custom`
-  messages, and contacts for the [contact picker](#contacts). The screen shows each only for the providers that have it.
+  messages, contacts for the [contact picker](#contacts), the user's reactions (`react`, on messages marked
+  `reactable`), blocking and leaving (`controls`, `block`, `unblock`, `blocked`, `leave`), files (`files`) and calls
+  (`calls`). The screen shows each only for the providers that have it, and a disabled control says why.
 - **Lifetime and stale replies.** `src/chat-inbox.ts` builds the providers when a session (wallet, network and identity)
   starts, and disposes all of them when it ends or changes. They run whichever screen or conversation is in front. The
   conversation view tags each read with its own token and the provider's epoch, and drops a reply that comes back after
@@ -325,7 +327,62 @@ yet known to interoperate with the app in every respect.
   its identity proof), accepts or declines them, sends a version 1 request to a lite username or a `0x` account id, and
   exchanges text on the pairwise session with acknowledgements, one request outstanding per direction. A push token
   (kind 1) and device changes (kinds 17 and 18) are read and acknowledged but not shown or kept, as the apps do not show
-  them. Other message kinds show as a placeholder with their kind number.
+  them. Reactions, leaving, blocking, files and calls are below. Other message kinds show as a placeholder with their
+  kind number.
+- **Reactions.** A reaction (kind 4) or its removal (kind 5) names a message and an emoji and is not a bubble. The host
+  keeps one emoji per side and emoji on a message, as both apps key it. The user keeps one emoji per message, as the iOS
+  app does: a new one is sent, then the old one is removed; the same one again removes it. Reactions are sent with the
+  session's other unacknowledged messages until the peer acknowledges them, and one delivered again changes nothing.
+- **Leaving.** Leave chat sends kind 13, then takes the conversation off the list and stops following its session. It is
+  moved to the record's `left` list, not deleted. When the store does not keep the message, nothing changes. When the
+  peer leaves, a line says so and the composer stops, as on Android; a new request from them reopens the conversation
+  with its history, and kind 3 (contact added) clears the state.
+- **Blocking.** Block is local, as on both apps: the person is not told, the conversation leaves the list and the
+  [contact picker](#contacts), its session topic is not followed, so nothing they send is read or acknowledged, and a
+  new request from them is set aside. History is kept. **Blocked** on the list unblocks; what they sent that the store
+  still holds is read then, as on Android.
+- **Files.** A file goes through HOP (`src/chat/hop.ts`), the app's encrypted handoff pool, not Bulletin: the page seals
+  it under keys from a random 32-byte ticket (ChaCha20-Poly1305, whole up to 1,999,936 bytes, else 2,000,000-byte chunks
+  and a root entry naming them), submits each piece to a HOP node over JSON-RPC (`hop_submit`) signed by the
+  `//allowance//bulletin//chat` account, then sends a rich text message (kind 15) naming the root entry, the ticket, the
+  node, the type, the size, and an image's width and height. The limit is 128 MiB. A received file is fetched only when
+  the user presses **Download** or **Show image**, only from a node this host is configured with, and each piece is
+  checked against its hash and its AEAD tag. Only a PNG, JPEG, GIF or WebP is shown; any other file is saved as plain
+  bytes. Nothing is acknowledged (`hop_ack`), so the pool keeps the file for the sender's other devices. Tickets are
+  kept with the message in `localStorage` and replaced with zeros in what the inspector keeps.
+- **HOP nodes.** No network this host knows publishes its HOP nodes, so files stay off until a list of `wss://` URLs is
+  set in `localStorage` under `truapi-web-signing-host:network:<id>:hop-nodes`. Uploads also need the
+  `//allowance//bulletin//chat` account to hold a Bulletin storage authorization, which this host does not obtain.
+- **Calls.** An audio or video call follows the apps' two-stage WebRTC setup (`src/chat/call-wire.ts`,
+  `src/chat/call.ts`): the offer (kind 8), answer (kind 9) and further candidates (kind 10) carry the apps' compact form
+  of the SDP, the receiver rebuilds the SDP from the apps' template, a data channel opens, then the caller adds audio
+  and video and negotiates again over the channel. Kind 11 ends a call in any state. The camera and microphone open only
+  when the user starts or accepts a call, and every track stops when the call ends, the provider stops, or the session
+  changes. An offer older than 30 seconds, or one that arrives during another call, is answered with kind 11, as the iOS
+  app does. An unanswered outgoing call is canceled after 60 seconds; the apps set no limit. The offer is the call's
+  line in the conversation, which reads as outgoing, incoming, missed, declined or canceled, with the duration of an
+  answered call.
+- **ICE servers.** A call uses the JSON `RTCIceServer` list set under
+  `truapi-web-signing-host:network:<id>:ice-servers`, none by default, plus TURN relay credentials when it can get them.
+  A browser that hides its addresses behind mDNS names, as Chromium does until the page holds camera or microphone
+  access, gives candidates the compact form cannot carry.
+- **TURN relay credentials** (`src/chat/turn.ts`, `src/account-proofs.ts`). The native apps get them from the identity
+  backend with a device-attested token, which a browser cannot make. This host uses the backend's proof route,
+  `POST <identity backend>/api/v1/turn/issue-with-proof`, as the game product does. When a call starts or is accepted,
+  after the media opens, the host asks the core, through TrUAPI `account.listRingVrfKeys` and
+  `account.createAccountProof` on a provider for `chat.<tld>`, for a ring-VRF proof with Humanity's key (`peopl.<tld>`,
+  Lite ring first) in the game's context (`dim2.<tld>`, suffix index 0), over
+  `blake2b256("dub/turn-credential/v1" || timestamp as big-endian u64)`. The first ask may show the core's
+  account-access prompt for `peopl.<tld>`. The identity backend comes from `paritytech/triangle-status`
+  `environments.json`: `https://identity.dotspark.app` on Paseo Next v2, `https://identity-previewnet.dotspark.app` on
+  PreviewNet. Credentials stay in memory until 30 seconds before they expire, are dropped when the session ends, and are
+  never logged or captured; the call screen shows only why there is no relay.
+- **Not working yet.** The core gives the proof only when Humanity's manifest and the game's manifest both grant `chat`
+  the `context` scope, and today neither does, so the core answers `NotAllowlisted`, nothing is sent to the backend, and
+  the call says why and goes on without a relay. After any refusal the host asks again only after 1 minute, or 10
+  minutes for a missing grant. The PreviewNet backend lists `dim2.paseo,dim2.test` as accepted products, not
+  `dim2.testnet`, so a PreviewNet proof would be refused there even with the grants. No proof has been redeemed and no
+  relay has been tested.
 - **Where keys come from.** A peer's chat key and username are read from Asset Hub `DotnsGateway.AccountNames` and from
   the People chain `Resources.Consumers` (its `identifier_key`), and a username's account from `LiteLabelOwner` and
   `Resources.UsernameOwnerOf`. App builds that register through the People chain leave no Asset Hub record, so either is
@@ -344,7 +401,10 @@ yet known to interoperate with the app in every respect.
 - **What is tested.** Checked against an outside source: the chat key against the core's pinned Rust value, the identity
   account and chat key against the running core, and the Asset Hub keys and value layout against live storage. Tested
   only against this code: the request, message, session and statement codecs and the engine, by round trips between two
-  copies of it. No captured app traffic and no exchange with a Polkadot app.
+  copies of it. The reaction, leave, attachment and call message layouts, the HOP root entry and the compact SDP are
+  pinned to byte layouts written from the app sources, and the HOP root entry to the iOS app's own test vectors. HOP
+  transfers run against a node in memory and calls against a second call manager in the same page. No captured app
+  traffic, no live HOP node, and no exchange or call with a Polkadot app.
 
 ### Product chats
 
@@ -378,7 +438,11 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
   `ActionTriggered` chat action naming the message and the button, from the peer `native`.
 - **Reactions.** A `Reaction` places the product's emoji on one of the room's messages and `ReactionRemoved` takes it
   off; it is not a message of its own. The product learns only its own messages' ids, so those are the ones it can react
-  to, and a reaction naming any other id is refused. The user cannot react: the room has no picker for it.
+  to, and a reaction naming any other id is refused. The user reacts to the product's messages with the same picker: the
+  host sends `MessagePosted(Reaction)` from the peer `native`, naming the id `post_message` returned, and
+  `MessagePosted(ReactionRemoved)` for the emoji it replaces. The user keeps one emoji per message. The user's own
+  messages take none, because the product does not know their ids. Neither native host does this yet: both refuse
+  reactions in product rooms.
 - **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
   tree the worker sends replaces the card. `src/product-render.ts` draws the tree as DOM: text as text, never markup,
   sizes clamped, colors and type from the host's `--pr-*` tokens, which Chat and Pocket set to the same dark values.
@@ -393,8 +457,9 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
   reach the page and the saved wallets. Its own requests follow the browser. Its notifications, permission requests and
   navigation go through the same callbacks as an app's.
 - **Not served yet.** Input surfaces of a worker, worker demand from the core (a worker runs whenever its wallet is
-  signed in), bot registration, and the core's `beginOperation` lifetime hints. Pocket is served for the pinned Humanity
-  card only; see [Humanity](#humanity).
+  signed in), bot registration, and the core's `beginOperation` lifetime hints. TrUAPI Chat has no operation to block a
+  room, leave or delete it, upload a file, or place a call, so product rooms offer none of them. Pocket is served for
+  the pinned Humanity card only; see [Humanity](#humanity).
 
 ### Draft worker-owned chat
 
@@ -435,9 +500,10 @@ the person the user chose into a contact handle, as `docs/design/contacts-pick-e
 the handle only, never the list, a name or an account. No permission is asked: choosing someone is the consent.
 
 - **Who is offered.** The session's chat contacts, from the providers that offer them (`ChatProvider.contacts`). Today
-  that is Nova chat: its accepted contacts, not requests either side has not accepted yet, as on the native hosts.
-  Product rooms and the draft worker-owned chat offer none, because their peers are what a product says they are, and a
-  contact can become a payment recipient.
+  that is Nova chat: its accepted contacts, not requests either side has not accepted yet, as on the native hosts, and
+  not people the user blocked or conversations the user left. Blocking or leaving tells the core, as any contact leaving
+  does. Product rooms and the draft worker-owned chat offer none, because their peers are what a product says they are,
+  and a contact can become a payment recipient.
 - **Outcomes.** The picker names the requesting product and lists each contact as the host names them, with a short
   account. Choosing one answers `Picked`; Cancel or Escape answers `Dismissed`; a session with no contacts answers
   `NoContacts` and draws nothing. A contact that leaves while the picker is open is not an answer.
@@ -698,8 +764,9 @@ opens, so the light client reaches no chain. It checks that:
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
   when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the core's
   screening, shows the text as text, the file as a link with no referrer, its own reaction and not the one it removed,
-  answers a press on its button for that message, answers what the user types, makes no request outside this host, shows
-  in the inspector, stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
+  receives the user's reaction through the core as `MessagePosted(Reaction)`, answers a press on its button for that
+  message, answers what the user types, makes no request outside this host, shows in the inspector, stops at sign-out,
+  is not seen by another wallet, and starts again when its wallet signs back in;
 - the Humanity card, with every socket closed and every request outside this host, the stood-in Asset Hub and the
   gateway refused: a worker built from `browser/pocket-worker.ts` starts only once Pocket is shown, draws the face after
   it boots, and gets the face's button press; a press on the card opens the Widget built from
@@ -719,15 +786,19 @@ alone over the Nova and product room providers with stand-ins behind them and th
 synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
 sender names and the user's own messages, status changes, a retried message staying one message, custom cards from both
 kinds of worker, a product room's buttons, reaction and non-`https` file, the draft worker answering while another room
-is open, unread cleared only for messages on screen, a worker restart and a new session. Set `CHAT_SCREENSHOTS` to a
-directory to keep screenshots.
+is open, unread cleared only for messages on screen, a worker restart and a new session. It also checks the user's
+reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated image sent and
+fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call manager in the
+same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every track stopped when
+the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set
+`CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
 
-Not covered by automated checks, and tried by hand in Chrome when the behavior changes: WebRTC, camera and microphone
-capture, the phone setup, two tabs with different wallets, the build under a project path, the inspector's rendering,
-and layout on narrow screens.
+Not covered by automated checks, and tried by hand in Chrome when the behavior changes: real camera and microphone
+capture, a call or file transfer with a Polkadot app, the phone setup, two tabs with different wallets, the build under
+a project path, the inspector's rendering, and layout on narrow screens.
 
 ## Layout
 
@@ -744,9 +815,11 @@ and layout on narrow screens.
 - `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
   `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
   reads, `store.ts` the saved conversations and `engine.ts` ties them together, and `diagnostics.ts` holds its events.
-  `capture.ts` keeps payloads when the user asks, `inspect.ts` decodes them, and `memory-rpc.ts` is the in-memory store
-  tests use. `src/chat-screen.ts` draws the Chat screen, `src/chat-diagnostics-view.ts` the inspector's Chat tab and
-  `src/chat-transport-view.ts` an event's payload layers.
+  `hop.ts` moves files through HOP (`hop-memory.ts` is the node tests use), `call-wire.ts` is the call signaling,
+  `call.ts` runs a call and `turn.ts` gets its relay credentials (`src/account-proofs.ts` asks the core for the proof).
+  `src/call-view.ts` draws a call over every screen. `capture.ts` keeps payloads when the user asks, `inspect.ts`
+  decodes them, and `memory-rpc.ts` is the in-memory store tests use. `src/chat-screen.ts` draws the Chat screen,
+  `src/chat-diagnostics-view.ts` the inspector's Chat tab and `src/chat-transport-view.ts` an event's payload layers.
 - `src/contacts.ts`: the contact picker and handle lookup.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,

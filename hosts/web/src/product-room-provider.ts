@@ -9,6 +9,7 @@ import {
   type Composer,
   type ConversationSummary,
   type CustomView,
+  type MessageReaction,
   type ProviderEvent,
   type ProviderStatus,
   type TimelinePage,
@@ -80,6 +81,22 @@ function previewOf(
     case "Custom":
       return content.alt ?? fallback;
   }
+}
+
+/** The product's emoji and the user's, one entry per emoji. */
+function reactionsOf(message: ProductMessage): {
+  reactions?: MessageReaction[];
+} {
+  const byEmoji = new Map<string, MessageReaction>();
+  const add = (emoji: string, self: boolean) => {
+    const known = byEmoji.get(emoji) ?? { emoji, count: 0, self: false };
+    known.count += 1;
+    known.self ||= self;
+    byEmoji.set(emoji, known);
+  };
+  for (const emoji of message.reactions ?? []) add(emoji, false);
+  if (message.userReaction !== undefined) add(message.userReaction, true);
+  return byEmoji.size === 0 ? {} : { reactions: [...byEmoji.values()] };
 }
 
 export class ProductRoomProvider implements ChatProvider {
@@ -188,16 +205,45 @@ export class ProductRoomProvider implements ChatProvider {
         : { id: this.productId, label: room.name, self: false },
       status: out ? "sent" : "received",
       content,
-      ...(message.reactions === undefined || message.reactions.length === 0
-        ? {}
-        : {
-            reactions: message.reactions.map((emoji) => ({
-              emoji,
-              count: 1,
-              self: false,
-            })),
-          }),
+      ...reactionsOf(message),
+      ...(out || this.channel === null ? {} : { reactable: true }),
     };
+  }
+
+  /**
+   * The user's reaction on one of the product's messages, through the
+   * existing TrUAPI types: `MessagePosted(Reaction)` from the user's peer,
+   * naming the id the product got from `post_message`. A new emoji is sent
+   * first, then the old one is removed with `MessagePosted(ReactionRemoved)`;
+   * the same emoji again removes it. The user keeps one emoji per message.
+   */
+  async react(
+    roomId: string,
+    messageId: string,
+    emoji: string | null,
+  ): Promise<void> {
+    const channel = this.channel;
+    const publish = channel?.publishChatAction;
+    if (channel === null || publish === undefined)
+      throw new Error("The product's worker is not running.");
+    const current =
+      this.deps.chat
+        .messages(this.productId, roomId)
+        .find((message) => message.messageId === messageId)?.userReaction ??
+      null;
+    const placing = emoji === current ? null : emoji;
+    this.deps.chat.setUserReaction(this.productId, roomId, messageId, placing);
+    const post = (tag: "Reaction" | "ReactionRemoved", value: string) =>
+      publish.call(channel, {
+        roomId,
+        peer: USER_PEER,
+        payload: {
+          tag: "MessagePosted",
+          value: { tag, value: { messageId, emoji: value } },
+        },
+      });
+    if (placing !== null) await post("Reaction", placing);
+    if (current !== null) await post("ReactionRemoved", current);
   }
 
   composer(roomId: string): Composer {

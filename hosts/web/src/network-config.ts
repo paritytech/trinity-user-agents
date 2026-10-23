@@ -11,7 +11,9 @@
  *   supplies its chains' genesis hashes and specs, so none are copied into
  *   this host;
  * - dotkit's `assets/envs.toml` holds the dotNS TLD, resolver contract, RPC
- *   endpoints and gateways, verified against the chain by its authors.
+ *   endpoints and gateways, verified against the chain by its authors;
+ * - `paritytech/triangle-status` `environments.json` names each
+ *   environment's identity backend (`backend`).
  *
  * `PreviewNet` is the product preview network. Its dotNS TLD is `.testnet`,
  * which is also the identity suffix the core derives product accounts under.
@@ -74,6 +76,11 @@ export interface NetworkConfig {
   webGateway: string;
   /** Read-only DotNS and content endpoints on this network. */
   dotns: DotnsEndpoints;
+  /**
+   * The identity backend (DUB) origin, which issues TURN relay credentials
+   * for a personhood proof. Null where the environment names none.
+   */
+  identityBackend: string | null;
 }
 
 /** Every network this host can be configured for, by id. */
@@ -91,6 +98,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       textSlot: 1,
       contentGateway: "https://paseo-bulletin-next-ipfs.polkadot.io",
     },
+    identityBackend: "https://identity.dotspark.app",
   },
   previewnet: {
     id: "previewnet",
@@ -105,6 +113,7 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
       textSlot: 1,
       contentGateway: "https://previewnet.substrate.dev",
     },
+    identityBackend: "https://identity-previewnet.dotspark.app",
   },
 };
 

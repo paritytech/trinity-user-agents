@@ -90,13 +90,40 @@ export function miniSecret(entropy: Uint8Array): Uint8Array {
   }).slice(0, 32);
 }
 
+/** The sr25519 secret at `//a//b…` from the entropy's mini-secret, as the core derives hard paths. */
+export function deriveHardSecret(
+  entropy: Uint8Array,
+  junctions: readonly string[],
+): Uint8Array {
+  let secret: Uint8Array = sr25519.secretFromSeed(miniSecret(entropy));
+  for (const junction of junctions)
+    secret = sr25519.HDKD.secretHard(secret, junctionCode(junction));
+  return secret;
+}
+
 /** The sr25519 secret of the identity account on the network with `networkSuffix`. */
 export function deriveIdentitySecret(
   entropy: Uint8Array,
   networkSuffix: string,
 ): Uint8Array {
-  let secret: Uint8Array = sr25519.secretFromSeed(miniSecret(entropy));
-  for (const junction of ["product", `uid.${networkSuffix}`])
-    secret = sr25519.HDKD.secretHard(secret, junctionCode(junction));
-  return sr25519.HDKD.secretSoft(secret, identityIndex());
+  return sr25519.HDKD.secretSoft(
+    deriveHardSecret(entropy, ["product", `uid.${networkSuffix}`]),
+    identityIndex(),
+  );
+}
+
+/**
+ * The account that submits chat files to HOP, `//allowance//bulletin//chat`,
+ * as the Android app derives it. A node takes its submissions only while it
+ * holds a Bulletin storage authorization. The secret stays in the closure.
+ */
+export function hopSender(entropy: Uint8Array): {
+  publicKey: Uint8Array;
+  sign(payload: Uint8Array): Uint8Array;
+} {
+  const secret = deriveHardSecret(entropy, ["allowance", "bulletin", "chat"]);
+  return {
+    publicKey: sr25519.getPublicKey(secret),
+    sign: (payload) => sr25519.sign(secret, payload),
+  };
 }
