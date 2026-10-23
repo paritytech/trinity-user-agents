@@ -169,7 +169,7 @@ pub struct EventCallbacks {
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
-	/// Counts preimage lookups, retries included.
+	/// Number of `lookup_preimage` calls.
 	pub preimage_lookups: std::sync::atomic::AtomicUsize,
 	pub preimage_rejection: Mutex<Option<String>>,
 	pub auth_states: Mutex<Vec<AuthState>>,
@@ -1157,7 +1157,7 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 	assert_eq!(second.unwrap(), Some(vec![4, 5, 6]));
 }
 
-/// Long enough for the test retry pauses to ask the host several times.
+/// Long enough for several retries at the test pause lengths.
 const PREIMAGE_QUIET_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// The stream's next item, or `None` when it yields nothing within `wait`.
@@ -1175,14 +1175,13 @@ fn next_preimage_within(
 	})
 }
 
-/// Make the host answer lookups of `key` with `value` from now on.
+/// Set the value the host returns for `key`.
 fn host_preimage(callbacks: &EventCallbacks, key: &[u8], value: Option<Vec<u8>>) {
 	*callbacks.preimages.lock().expect("preimage map mutex poisoned") = vec![(key.to_vec(), value)];
 }
 
-/// A miss can be a fetch that failed, and a host need not notify a value it
-/// can fetch later, so a product waiting on the lookup would otherwise wait
-/// forever. Once the value arrives there is nothing left to ask for.
+/// A lookup whose first fetch failed still gets the value once the host has
+/// it, and the retries stop there.
 #[test]
 fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
 	let (callbacks, _events, platform) = event_platform();
@@ -1204,8 +1203,8 @@ fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
 	);
 }
 
-/// The runtime turns bytes that do not hash to the key into a miss, so they
-/// cannot end the wait either.
+/// The runtime treats bytes that do not hash to the key as a miss, so they
+/// must not stop the retries.
 #[test]
 fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes() {
 	let (callbacks, _events, platform) = event_platform();
@@ -1222,8 +1221,8 @@ fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes(
 	assert_eq!((first, while_wrong, found), (Ok(Some(vec![9, 9, 9])), None, Some(Ok(Some(value)))));
 }
 
-/// A rejection is the host's answer, as it is on the first lookup: the
-/// product sees it, and asking again would repeat a request the host refuses.
+/// A host error during a retry reaches the product and stops the retries,
+/// as an error on the first lookup does.
 #[test]
 fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_asking() {
 	let (callbacks, _events, platform) = event_platform();
@@ -1243,8 +1242,7 @@ fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_as
 	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), lookups_until_rejected);
 }
 
-/// Asking again after a hit would add a gateway request every few seconds to
-/// every lookup a product keeps open.
+/// A hit is not retried. Each retry is another gateway request.
 #[test]
 fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
 	let (callbacks, _events, platform) = event_platform();
@@ -1260,8 +1258,8 @@ fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
 	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
 }
 
-/// Only 32 bytes can be a blake2b-256 digest, so nothing a host returns can
-/// answer any other key.
+/// Preimage keys are 32-byte blake2b-256 digests, so a key of any other
+/// length is not retried.
 #[test]
 fn native_preimage_subscription_does_not_ask_again_for_a_key_no_preimage_hashes_to() {
 	let (callbacks, _events, platform) = event_platform();

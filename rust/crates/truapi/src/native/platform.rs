@@ -502,10 +502,8 @@ impl LocaleHost for CallbackPlatform {
 	}
 }
 
-// Pause before each retry of a preimage lookup that missed. It starts at the
-// CLI host's poll interval and doubles after each further miss, so a key that
-// is never stored costs fewer requests over time. It stops doubling at the
-// maximum, so a value stored later is still found within that time.
+// Pauses between retries of a preimage lookup that missed. The first matches
+// the CLI host's poll interval, and each miss doubles it up to the maximum.
 #[cfg(not(test))]
 const PREIMAGE_RETRY_PAUSE_MIN: Duration = Duration::from_secs(6);
 #[cfg(not(test))]
@@ -527,9 +525,9 @@ impl PreimageHost for CallbackPlatform {
 		async move {
 			let current =
 				callbacks.lookup_preimage(key.clone()).await.map_err(v01::GenericError::from);
-			// A miss may be a fetch that failed, and a host need not notify the
-			// value once it can fetch it, so keep asking until it returns bytes
-			// that hash to the key. Only a 32-byte key can name a preimage.
+			// A miss can mean the fetch failed, and hosts are not required to
+			// notify the value later, so retry until the bytes hash to the key.
+			// Keys that are not 32 bytes can never match.
 			let retry = <[u8; 32]>::try_from(key.as_slice()).ok().filter(|digest| match &current {
 				Ok(Some(value)) => preimage_key(value) != *digest,
 				Ok(None) => true,
@@ -545,9 +543,8 @@ impl PreimageHost for CallbackPlatform {
 	}
 }
 
-/// Ask the host for the preimage of `digest` again, backing off from
-/// [`PREIMAGE_RETRY_PAUSE_MIN`] to [`PREIMAGE_RETRY_PAUSE_MAX`], until it
-/// returns bytes that hash to `digest` or rejects the lookup.
+/// Retry the host lookup until it returns bytes that hash to `digest` or an
+/// error.
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
