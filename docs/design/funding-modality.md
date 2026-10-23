@@ -58,7 +58,7 @@ flowchart LR
 | Trait | Id | Methods | Caller |
 |---|---|---|---|
 | `Funding` | 22 | `request({ id, direction, amount? })` · `statusSubscribe({ id })` | product |
-| `FundingProvider` | 24 | `serveSubscribe` · `answerQuote` · `report` · `presentFrame` · `save` | provider worker |
+| `FundingProvider` | 24 | core → worker: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` | core and provider worker |
 | `Payment` | 9 | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe` | provider worker |
 | `AuthTokens` | 26 | store · read | provider worker |
 | `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed` | core → host |
@@ -67,12 +67,14 @@ Session id: `fs_` + hex(blake2("truapi/funding-id", product, id)). Reused id →
 
 ```mermaid
 flowchart LR
-  serve["serveSubscribe items"] --> Q[Quote] & A[Assigned] & C[Cancel] & CA[CancelAccepted] & CD[CancelDeclined]
-  report["report updates"] --> u1[AwaitingPayment · PaymentReceived · Converting]
+  core["core asks · one answer item each"] --> Q["quote → Quoted | Refused"]
+  core --> A["assign → ack"]
+  core --> C["cancel → Stopped | Offer | Refused"]
+  core --> S["settleCancel(Accepted | Declined) → ack"]
+  report["worker reports"] --> u1[AwaitingPayment · PaymentReceived · Converting]
   report --> u2[Crediting · Delivered · Collecting]
   report --> u3[Payout · PayoutRetrying · Refunding]
   report --> u4[Deposit · Details · Failed]
-  report --> u5[CancelOffer · CancelRefused]
 ```
 
 ## Top-up
@@ -86,15 +88,15 @@ sequenceDiagram
   P->>C: request(id, In, amount?)
   C->>H: present_funding
   H->>C: rail, asset, country
-  C->>W: Quote (every provider)
-  W-->>C: answerQuote
+  C->>W: quote (every provider)
+  W-->>C: Quoted
   C->>H: quote list (request id, best)
   H->>C: select_funding_provider
-  C->>W: Assigned
+  C->>W: assign
   W->>C: presentFrame
   C->>H: provider frame
   W->>C: AwaitingPayment, PaymentReceived, Converting
-  W->>C: save, then payment.topUp(id, amount)
+  W->>W: keep state, then payment.topUp(id, amount)
   C->>H: claim into CASH
   W->>C: Crediting(id, amount), Delivered
   Note over C: settles from final claims
@@ -109,8 +111,8 @@ sequenceDiagram
   participant H as Host
   participant C as Core
   participant W as Provider
-  C->>W: Assigned (Out)
-  W->>C: save, then payment.request(id, amount)
+  C->>W: assign (Out)
+  W->>W: keep state, then payment.request(id, amount)
   C->>H: user approves debit
   W->>C: Collecting(id, amount)
   Note over C: Released (debited)
@@ -153,17 +155,16 @@ The overlay runs on its own task: a request that goes away still starts or disca
 flowchart TD
   c[user cancels] --> mm{money moved?}
   mm -- no --> first{first ask?}
-  first -- yes --> ask[ask provider] --> wait[CancelRequested]
+  first -- yes --> ask[cancel call] --> stopped[Stopped → ended: Cancelled]
   first -- no --> ended[ended: Cancelled]
   mm -- yes --> late{top-up credited?}
   late -- yes --> toolate[TooLate]
-  late -- no --> req[ask provider]
-  req --> refused[CancelRefused · carries on]
-  req --> offer[CancelOffer fee/refund]
+  late -- no --> req[cancel call]
+  req --> refused[Refused · carries on]
+  req --> offer[Offer fee/refund · one per cancel]
   offer --> confirm{confirm_funding_cancel}
-  confirm -- terms changed --> changed[Changed]
-  confirm -- declined --> on[carries on]
-  confirm -- accepted --> refund[Refunding · Failed Refunded]
+  confirm -- declined --> on[settleCancel Declined · carries on]
+  confirm -- accepted --> refund[settleCancel Accepted → Refunding · Failed Refunded]
   refund -. payout landed first .-> paid[PaidOutAfterCancel]
 ```
 
@@ -242,8 +243,9 @@ sequenceDiagram
   H->>C: launch (resume marker set) → start core
   C->>C: load sessions + pack
   C->>H: re-announce unacknowledged
-  C->>W: serveSubscribe replays Assigned(last update, saved)
-  W->>W: continue from saved checkpoint
+  W->>C: handshake (worker connects)
+  C->>W: assign(last update) per session it serves, then unanswered cancel calls
+  W->>W: continue from the state it kept
 ```
 
 ## Test
