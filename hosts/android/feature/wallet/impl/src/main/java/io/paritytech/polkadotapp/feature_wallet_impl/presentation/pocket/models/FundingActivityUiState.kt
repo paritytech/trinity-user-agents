@@ -1,0 +1,83 @@
+package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
+
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import kotlinx.collections.immutable.ImmutableList
+
+/** The CASH card's funding lists: what is in progress, front item first, then the history by day. */
+data class FundingActivityUiState(
+    val inFlight: ImmutableList<FundingActivityRowUi>,
+    val days: ImmutableList<FundingActivityDayUi>,
+    val currentBalance: String?,
+)
+
+data class FundingActivityDayUi(
+    val title: FundingDayTitle,
+    val rows: ImmutableList<FundingActivityRowUi>,
+    val endOfDayBalance: String?,
+)
+
+sealed interface FundingDayTitle {
+    data object Today : FundingDayTitle
+
+    data object Yesterday : FundingDayTitle
+
+    data class Date(val text: String) : FundingDayTitle
+}
+
+data class FundingActivityRowUi(
+    val id: String,
+    val title: FundingRowTitle,
+    val subtitle: FundingRowSubtitle,
+    val icon: FundingRowIcon,
+    /** "+$50 CASH" while moving or once moved, "$50 CASH" when nothing moved. */
+    val amount: String?,
+    val amountTone: FundingAmountTone,
+)
+
+enum class FundingRowTitle {
+    TOPPING_UP,
+    SENDING,
+    TOPPED_UP,
+    SENT,
+    REFUNDED,
+    PAYOUT_FAILED,
+    TOP_UP_FAILED,
+    WITHDRAWAL_FAILED,
+    CANCELLED,
+}
+
+sealed interface FundingRowSubtitle {
+    data class Step(val step: FundingActivityStep) : FundingRowSubtitle
+
+    data class Ended(val rail: FundingRailType?, val moment: FundingMoment) : FundingRowSubtitle
+
+    /** Why the session failed. */
+    data class Failed(val reason: FundingFailureReason) : FundingRowSubtitle
+}
+
+/** "Today at 08:25", "Yesterday at 18:40", "4 Oct at 16:20", "4 Oct 2025". */
+sealed interface FundingMoment {
+    data class TodayAt(val time: String) : FundingMoment
+
+    data class YesterdayAt(val time: String) : FundingMoment
+
+    data class DayAt(val day: String, val time: String) : FundingMoment
+
+    data class Date(val text: String) : FundingMoment
+}
+
+enum class FundingRowIcon {
+    IN_PROGRESS,
+    IN_PROGRESS_WARNING,
+    MOVED_IN,
+    MOVED_OUT,
+    FAILED,
+}
+
+enum class FundingAmountTone {
+    SUCCESS,
+    PRIMARY,
+    SECONDARY,
+}

@@ -1,0 +1,270 @@
+package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
+
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingFailure
+import uniffi.truapi.FundingPayout
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.FundingStage
+import uniffi.truapi.FundingStatus
+import kotlin.time.Clock
+
+class FundingActivityCenterTest {
+    private val runtime = mockk<FundingRuntime> {
+        every { sessionChanges() } returns emptyFlow()
+        coEvery { acknowledge(any()) } returns Result.success(true)
+        coEvery { history() } returns emptyList()
+    }
+    private val saved = mutableListOf<FundingRecord>()
+    private val history = mockk<FundingHistoryRepository> {
+        val record = slot<FundingRecord>()
+        coEvery { save(capture(record)) } answers { saved += record.captured; Result.success(Unit) }
+        coEvery { records() } answers { Result.success(saved.reversed().distinctBy { it.intent }) }
+    }
+    private val center = FundingActivityCenter(runtime, history)
+
+    @Test
+    fun `an ended top-up is written and then acknowledged`() = runBlocking {
+        serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
+
+        val activity = center.observe().first()
+
+        assertEquals(listOf("in"), saved.map { it.intent })
+        coVerify { runtime.acknowledge("in") }
+        assertEquals(listOf(FundingActivityStatus.ToppedUp), activity.history.map { it.status })
+    }
+
+    // The core keeps a released withdrawal until its payout is reported, so the host need not hold it back.
+    @Test
+    fun `a released withdrawal is kept and acknowledged, and stays in progress until its payout`() = runBlocking {
+        serve(session("out", FundingDirection.OUT, FundingStage.Released("50", settledAtMs = 1uL)) to progress(FundingStatus.PreparingPayout))
+
+        val activity = center.observe().first()
+
+        coVerify { runtime.acknowledge("out") }
+        assertEquals(listOf(FundingActivityStep.PreparingPayout), activity.inFlight.map { (it.status as FundingActivityStatus.InProgress).step })
+        assertEquals(emptyList<String>(), activity.history.map { it.id })
+    }
+
+    @Test
+    fun `an acknowledged session is not written again`() = runBlocking {
+        serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL), acknowledged = true) to progress(FundingStatus.ToppedUp))
+
+        center.observe().first()
+
+        assertEquals(emptyList<String>(), saved.map { it.intent })
+        coVerify(exactly = 0) { runtime.acknowledge(any()) }
+    }
+
+    // A late payout or refund report hands the session back unacknowledged, and its stored row has to follow.
+    @Test
+    fun `a failed payout's refund rewrites the stored row with what came back`() = runBlocking {
+        val released = FundingStage.Released("50", settledAtMs = 1uL)
+        serve(session("out", FundingDirection.OUT, released) to progress(FundingStatus.PayoutFailed(refunded = null), FundingPayout.Failed("rejected")))
+        center.observe().first()
+
+        serve(session("out", FundingDirection.OUT, released) to progress(FundingStatus.PayoutFailed(refunded = "45"), FundingPayout.Failed("rejected"), refunded = "45"))
+        val activity = center.observe().first()
+
+        assertEquals(listOf(null, 45.intoBalance()), saved.map { it.refunded })
+        assertEquals(listOf(FundingActivityStatus.PayoutFailed(45.intoBalance())), activity.history.map { it.status })
+    }
+
+    @Test
+    fun `the line in flight is the core's status`() = runBlocking {
+        serve(
+            session("longer", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.TakingLonger),
+            session("retrying", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.Retrying),
+            session("payout", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.RetryingPayout),
+            session("failed", FundingDirection.IN, FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL)) to
+                progress(FundingStatus.Failed(FundingFailure.Declined)),
+        )
+
+        val activity = center.observe().first()
+
+        assertEquals(
+            mapOf(
+                "longer" to FundingActivityStep.TakingLonger,
+                "retrying" to FundingActivityStep.Retrying,
+                "payout" to FundingActivityStep.RetryingPayout,
+            ),
+            activity.inFlight.associate { it.id to (it.status as FundingActivityStatus.InProgress).step },
+        )
+        assertEquals(listOf(FundingActivityStatus.Failed(FundingFailureReason.Declined)), activity.history.map { it.status })
+    }
+
+    @Test
+    fun `a cancel the provider decides shows in flight at each step`() = runBlocking {
+        serve(
+            session("requested", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.CancelRequested),
+            session("offered", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.CancelOffered(fee = "5", refund = "45")),
+            session("refused", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.CancelRefused("already converted")),
+            session("cancelling", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.Cancelling),
+        )
+
+        val activity = center.observe().first()
+
+        assertEquals(
+            mapOf(
+                "requested" to FundingActivityStep.CancelRequested,
+                "offered" to FundingActivityStep.CancelOffered,
+                "refused" to FundingActivityStep.CancelRefused("already converted"),
+                "cancelling" to FundingActivityStep.Cancelling,
+            ),
+            activity.inFlight.associate { it.id to (it.status as FundingActivityStatus.InProgress).step },
+        )
+    }
+
+    // An accepted cancel ends a withdrawal released, so only the session's cancel tells it from a sent one.
+    @Test
+    fun `a withdrawal cancelled on the provider's terms is kept as cancelled with its refund`() = runBlocking {
+        val cancelled = session(
+            "out",
+            FundingDirection.OUT,
+            FundingStage.Released("50", settledAtMs = 1uL),
+            cancel = FundingCancel.Accepted(fee = "5", refund = "45"),
+        )
+        serve(cancelled to progress(FundingStatus.Cancelled(refunded = "45"), refunded = "45"))
+
+        val activity = center.observe().first()
+
+        assertEquals(listOf(FundingRecordOutcome.Cancelled), saved.map { it.outcome })
+        assertEquals(listOf(FundingActivityStatus.Cancelled(45.intoBalance())), activity.history.map { it.status })
+    }
+
+    /** The payout went through before the provider could act on the accepted cancel, so the withdrawal stands. */
+    @Test
+    fun `a withdrawal paid out after the user accepted a cancel is kept as sent`() = runBlocking {
+        val paidOut = session(
+            "out",
+            FundingDirection.OUT,
+            FundingStage.Released("50", settledAtMs = 1uL),
+            cancel = FundingCancel.Overtaken(fee = "5", refund = "45"),
+        )
+        serve(paidOut to progress(FundingStatus.PaidOutAfterCancel, payout = FundingPayout.PaidOut))
+
+        center.observe().first()
+
+        assertEquals(listOf(FundingRecordOutcome.Released), saved.map { it.outcome })
+    }
+
+    // No status change announces a session turning slow, so the list wakes itself at the time the core gave.
+    @Test
+    fun `the list is read again once a session turns taking longer`() = runBlocking {
+        val longerAt = Clock.System.now().toEpochMilliseconds().toULong() + 50uL
+        serve(session("in", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.WaitingForPayment, longerAtMs = longerAt))
+
+        val reads = withTimeout(2_000) { center.observe().take(2).toList() }
+
+        assertEquals(2, reads.size)
+    }
+
+    // The core keeps every session the host recorded, so a row lost from the store comes back from its summary, once.
+    @Test
+    fun `a row lost from the store is rebuilt from the core's history once, and a stored row wins`() = runBlocking {
+        serve(session("kept", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
+        coEvery { runtime.history() } returns listOf(
+            summary("kept", FundingStage.Delivered("40", settledAtMs = 1uL)),
+            summary("lost", FundingStage.Released("30", settledAtMs = 2uL)),
+        )
+
+        center.observe().first()
+        center.observe().first()
+
+        assertEquals(1, saved.count { it.intent == "lost" })
+        assertEquals(setOf(50.intoBalance()), saved.filter { it.intent == "kept" }.mapTo(mutableSetOf()) { it.settledAmount })
+        coVerify(exactly = 1) { runtime.history() }
+    }
+
+    // A core that cannot be read yet leaves the rebuild for the next reload.
+    @Test
+    fun `the rebuild waits for the core`() = runBlocking {
+        serve()
+        coEvery { runtime.history() } returns null
+        center.observe().first()
+
+        coEvery { runtime.history() } returns listOf(summary("lost", FundingStage.Delivered("30", settledAtMs = 2uL)))
+        center.observe().first()
+
+        assertEquals(listOf("lost"), saved.map { it.intent })
+    }
+
+    private fun summary(intent: String, stage: FundingStage) = FundingSessionSummary(
+        intent = intent,
+        ownerProductId = null,
+        direction = FundingDirection.IN,
+        amount = "50",
+        stage = stage,
+        openedAtMs = 0uL,
+    )
+
+    private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
+        coEvery { runtime.sessions() } returns entries.map { it.first }
+        entries.forEach { (session, progress) -> coEvery { runtime.progress(session.intent) } returns progress }
+    }
+
+    private fun progress(
+        status: FundingStatus,
+        payout: FundingPayout? = null,
+        refunded: String? = null,
+        longerAtMs: ULong? = null,
+    ) = FundingProgress(
+        steps = emptyList(),
+        failedAtMs = null,
+        transactionId = null,
+        reference = null,
+        deposit = null,
+        mismatch = null,
+        retrying = false,
+        payout = payout,
+        refunded = refunded,
+        status = status,
+        longerAtMs = longerAtMs,
+        moneyMoved = false,
+    )
+
+    private fun session(
+        intent: String,
+        direction: FundingDirection,
+        stage: FundingStage,
+        acknowledged: Boolean = false,
+        cancel: FundingCancel? = null,
+    ) = FundingSession(
+        intent = intent,
+        ownerProductId = null,
+        direction = direction,
+        amount = "50",
+        stage = stage,
+        openedAtMs = 0uL,
+        deadlineMs = 0uL,
+        acknowledged = acknowledged,
+        providerId = "ramp.dot",
+        assignedAtMs = 0uL,
+        cancel = cancel,
+        updates = emptyList(),
+        started = emptyList(),
+        choice = null,
+        refund = null,
+    )
+}

@@ -1,0 +1,83 @@
+package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingBalance
+import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
+import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingQuoteAsk
+import uniffi.truapi.FundingQuoteList
+import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSession
+import java.math.BigDecimal
+import javax.inject.Inject
+import uniffi.truapi.FundingCountry as CoreFundingCountry
+
+class FundingFlowInteractor @Inject constructor(
+    @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
+    private val balance: FundingBalance,
+    private val runtime: FundingRuntime,
+    private val branding: FundingProviderBranding,
+) {
+    suspend fun cash(): FundingCash {
+        val asset = chainAssetProvider.asset()
+        return FundingCash(symbol = asset.symbol, precision = asset.precision)
+    }
+
+    suspend fun spendable(cash: FundingCash): BigDecimal? =
+        balance.spendable()?.let { cash.decimal(it.value.toString()) }
+
+    /** The country the core detected, which quotes go by until the user picks one. */
+    suspend fun detectedCountry(): FundingCountry? = runtime.detectedCountry()?.let { FundingCountries.country(it) }
+
+    fun countries(): List<FundingCountry> = FundingCountries.all()
+
+    suspend fun brand(providerId: String): FundingProviderBrand = branding.brand(providerId)
+
+    suspend fun candidates(intent: String): List<FundingCandidate> = runtime.candidates(intent)
+
+    suspend fun session(intent: String): FundingSession? = runtime.session(intent)
+
+    suspend fun progress(intent: String): FundingProgress? = runtime.progress(intent)
+
+    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
+
+    /** What the providers take for the choice on screen, in the balance's decimals; unknown bounds stay `null`. */
+    suspend fun amountLimits(
+        intent: String,
+        cash: FundingCash,
+        rail: FundingRail,
+        asset: String,
+        network: String?,
+        country: String?,
+    ): FundingLimits {
+        val limits = runtime.amountLimits(intent, rail, asset, network, country)
+        return FundingLimits(minimum = limits?.min?.let(cash::decimal), maximum = limits?.max?.let(cash::decimal))
+    }
+
+    suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
+
+    suspend fun countrySupport(intent: String, rail: FundingRail, asset: String): List<CoreFundingCountry> =
+        runtime.countries(intent, rail, asset)
+
+    suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
+        runtime.selectProvider(intent, providerId, quoteId)
+
+    suspend fun cancel(intent: String): Result<CancelOutcome> = runtime.cancel(intent)
+
+    suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation> =
+        runtime.confirmCancel(intent, terms)
+
+    /** The provider's screen has done its part once the payment is seen or the session is over. */
+    suspend fun paymentMoved(intent: String): Boolean = runtime.paymentMoved(intent)
+
+    fun quoteLists(intent: String): Flow<FundingQuoteList> = runtime.quoteLists(intent)
+
+    fun sessionChanges(intent: String): Flow<Unit> = runtime.sessionChanges().filter { it == intent }.map { }
+}

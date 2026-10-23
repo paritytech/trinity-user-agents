@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
@@ -53,11 +54,12 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
+    private val fundingEntryPoints: FundingEntryPoints,
 ) : BaseViewModel(), SendPaymentContract {
+    private val withdrawalInProgress = MutableStateFlow(false)
+
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
-
-    private val fundingSheetInProgress = MutableStateFlow(false)
 
     private val _messageEvents = OneShotEventChannel<Int>()
     override val messageEvents = _messageEvents.receiveAsFlow()
@@ -88,7 +90,7 @@ class SendPaymentViewModel @Inject constructor(
     ) { inputValue, results ->
         SendPaymentUiState(
             input = inputValue,
-            sendToYourselfVisible = inputValue.isEmpty(),
+            sendToYourselfVisible = inputValue.isEmpty() && fundingEntryPoints.visible,
             results = results,
         )
     }.stateIn(
@@ -96,7 +98,7 @@ class SendPaymentViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = SendPaymentUiState(
             input = "",
-            sendToYourselfVisible = true,
+            sendToYourselfVisible = fundingEntryPoints.visible,
             results = PaymentSearchResults.Loading
         )
     )
@@ -129,21 +131,20 @@ class SendPaymentViewModel @Inject constructor(
         }
     }
 
-    override fun onSendToYourselfClick() = launchUnit {
-        if (fundingSheetInProgress.value) return@launchUnit
-        fundingSheetInProgress.enable()
-        interactor.getFundingConfig()
-            .onSuccess { walletRouter.openSpaSheet(it.offrampUrl) }
-            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
-        fundingSheetInProgress.disable()
-    }
-
     override fun onPasteClick() {
         clipboardService.getPrimaryClip()?.let { onInputChange(it) }
     }
 
     override fun onScannerClick() {
         walletRouter.openScanAddressQr()
+    }
+
+    override fun onSendToYourselfClick() = launchUnit {
+        if (withdrawalInProgress.value) return@launchUnit
+        withdrawalInProgress.enable()
+        interactor.openWithdrawal()
+            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
+        withdrawalInProgress.disable()
     }
 
     override fun onBackClick() {

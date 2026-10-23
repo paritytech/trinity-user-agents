@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -47,6 +49,7 @@ sealed interface WorkerExecutionState {
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
+ * A worker the app ships runs from its own files, with no dotNS lookup.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -57,6 +60,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
+    private val bundledProducts: BundledProducts,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     dispatchers: CoroutineDispatchers,
 ) {
@@ -123,11 +127,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val script = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
+        val bundled = bundledProducts.product(productId)?.takeIf(bundledProducts::hasWorker)
+        val (scriptUrl, includesChat) = if (bundled != null) {
+            bundled.workerScriptUrl to bundledProducts.includesChat(bundled)
+        } else {
+            val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
+            resolved.scriptUrl to resolved.includesChat
+        }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
-        val workerScript = WorkerScript.of(script.scriptUrl)
+        val workerScript = WorkerScript.of(scriptUrl)
+        val bundledContent = bundled?.let { BundledProductContent.worker(it, bundledProducts) }
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, bundledContent), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
@@ -143,7 +154,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-                chat = if (script.includesChat) {
+                chat = if (includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {
                     null

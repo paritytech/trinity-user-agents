@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.database.dao.FileUploadDao
 import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
+import io.paritytech.polkadotapp.database.dao.ProductFundingRecordDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
 import io.paritytech.polkadotapp.database.dao.ProductTopUpDao
@@ -155,6 +156,11 @@ class DbModule {
     @Singleton
     fun provideProductTopUpDao(appDatabase: AppDatabase): ProductTopUpDao =
         appDatabase.productTopUpDao()
+
+    @Provides
+    @Singleton
+    fun provideProductFundingRecordDao(appDatabase: AppDatabase): ProductFundingRecordDao =
+        appDatabase.productFundingRecordDao()
 
     @Provides
     @Singleton

@@ -1,0 +1,91 @@
+package io.paritytech.polkadotapp.feature_products_api.domain.funding
+
+import io.paritytech.polkadotapp.chains.network.binding.Balance
+import kotlin.time.Instant
+
+/** How value moves between the user's balance and the outside. */
+enum class FundingRailType {
+    CARD,
+    BANK,
+    CRYPTO,
+}
+
+/** The CASH card's funding lists: sessions in flight, then ended ones, newest first. */
+data class FundingActivity(
+    val inFlight: List<FundingActivityItem>,
+    val history: List<FundingActivityItem>,
+)
+
+/** One row of the funding lists. */
+data class FundingActivityItem(
+    val id: String,
+    val direction: FundingDirection,
+    val rail: FundingRailType?,
+    val amount: Balance?,
+    val date: Instant,
+    val status: FundingActivityStatus,
+)
+
+sealed interface FundingActivityStatus {
+    /** In flight, with where it has got to. */
+    data class InProgress(val step: FundingActivityStep) : FundingActivityStatus
+
+    data object ToppedUp : FundingActivityStatus
+
+    data object Sent : FundingActivityStatus
+
+    data object Refunded : FundingActivityStatus
+
+    /** The provider could not pay out; [refunded] is what its refund returned to the balance, once it has. */
+    data class PayoutFailed(val refunded: Balance?) : FundingActivityStatus
+
+    data class Failed(val reason: FundingFailureReason) : FundingActivityStatus
+
+    /** Value out, cancelled on the provider's terms; [refunded] is what came back to the balance, once it has. */
+    data class Cancelled(val refunded: Balance?) : FundingActivityStatus
+}
+
+/** Where a session in flight stands, as one line under it. */
+sealed interface FundingActivityStep {
+    /** Value in, before the provider has the user's card payment. */
+    data object WaitingForPayment : FundingActivityStep
+
+    /** Value in, before the provider has the user's bank transfer. */
+    data object WaitingForTransfer : FundingActivityStep
+
+    /** Value in, before the provider has the user's crypto deposit. */
+    data object WaitingForDeposit : FundingActivityStep
+
+    /** Value in, once the provider has the payment: converting it to the balance asset. */
+    data object Converting : FundingActivityStep
+
+    /** Value in, the provider retrying a top-up that claimed only part of the amount. */
+    data object Retrying : FundingActivityStep
+
+    /** Value out, until the balance has been debited. */
+    data object TransactionInitiated : FundingActivityStep
+
+    /** Value out to a card or a bank, debited and waiting for the provider's payout. */
+    data object PreparingPayout : FundingActivityStep
+
+    /** Value out to a crypto wallet, debited and converting to [asset]. */
+    data class ConvertingOut(val asset: String) : FundingActivityStep
+
+    /** Value out, the provider retrying the payout. */
+    data object RetryingPayout : FundingActivityStep
+
+    /** Slower than the time the chosen quote gave. */
+    data object TakingLonger : FundingActivityStep
+
+    /** The user asked to cancel, and the provider has not answered. */
+    data object CancelRequested : FundingActivityStep
+
+    /** The provider can cancel for a fee, and waits for the user. */
+    data object CancelOffered : FundingActivityStep
+
+    /** The provider will not cancel, for [reason]; the session carries on. */
+    data class CancelRefused(val reason: String) : FundingActivityStep
+
+    /** The user accepted the provider's terms, and the provider is refunding them. */
+    data object Cancelling : FundingActivityStep
+}
