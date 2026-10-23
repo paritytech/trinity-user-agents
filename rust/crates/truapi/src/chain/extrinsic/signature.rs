@@ -11,16 +11,20 @@ use super::{
 	ExtensionError, InheritedImplication, TransactionExtension, well_known::VERIFY_MULTI_SIGNATURE,
 };
 
+/// Signs Substrate payloads: gives an account id and signs bytes. `Sync`, so a
+/// build holding one can run on any thread.
+pub type SubstrateSigner = dyn Signer<SubstrateConfig> + Sync;
+
 /// `VerifyMultiSignature` carrying the signer's signature over the
 /// extrinsic's implication. A V5 extrinsic carries it as an extension; a V4
 /// one takes it out of the pipeline and puts the signature in its preamble.
 pub struct VerifySignatureExtension<'a> {
-	signer: &'a (dyn Signer<SubstrateConfig> + Sync),
+	signer: &'a SubstrateSigner,
 }
 
 impl<'a> VerifySignatureExtension<'a> {
 	/// Signs with `signer`.
-	pub fn new(signer: &'a (dyn Signer<SubstrateConfig> + Sync)) -> Self {
+	pub fn new(signer: &'a SubstrateSigner) -> Self {
 		Self { signer }
 	}
 

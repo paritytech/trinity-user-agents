@@ -2,15 +2,16 @@
 
 use subxt::{
 	ArcMetadata,
-	config::substrate::SubstrateConfig,
 	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
-	tx::{Payload, Signer},
+	tx::Payload,
 	utils::{AccountId32, H256},
 };
 
 use super::{
-	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension, extension::SuppliedExtension,
-	signature::VerifySignatureExtension, well_known::restrict_origins,
+	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension,
+	extension::SuppliedExtension,
+	signature::{SubstrateSigner, VerifySignatureExtension},
+	well_known::restrict_origins,
 };
 use crate::chain::HashAndNumber;
 
@@ -128,7 +129,7 @@ impl<'a> ExtrinsicBuilder<'a> {
 
 	/// Adds `VerifyMultiSignature`, signed by `signer`. A V5 extrinsic carries
 	/// it as an extension; a V4 one carries its signature in the preamble.
-	pub fn with_signer(&mut self, signer: &'a (dyn Signer<SubstrateConfig> + Sync)) -> &mut Self {
+	pub fn with_signer(&mut self, signer: &'a SubstrateSigner) -> &mut Self {
 		self.signature = Some(VerifySignatureExtension::new(signer));
 		self
 	}

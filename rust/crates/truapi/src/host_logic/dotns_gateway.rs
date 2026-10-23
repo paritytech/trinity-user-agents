@@ -16,15 +16,12 @@
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
-use subxt::{
-	config::substrate::SubstrateConfig, ext::scale_encode::EncodeAsType, tx::Signer,
-	utils::MultiSignature,
-};
+use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain::{ExtensionError, InheritedImplication, TransactionExtension},
+	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
 	dotns_views::{call_string, network_tld, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
@@ -135,7 +132,7 @@ pub struct AsDotnsGatewayExtension<'a> {
 	/// The People root revision the proof is built against.
 	pub revision: u32,
 	/// The account registering the username.
-	pub who: &'a (dyn Signer<SubstrateConfig> + Sync),
+	pub who: &'a SubstrateSigner,
 }
 
 impl TransactionExtension for AsDotnsGatewayExtension<'_> {

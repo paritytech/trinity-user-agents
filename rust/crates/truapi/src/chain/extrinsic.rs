@@ -24,4 +24,5 @@ pub use extension::{
 	ExtensionError, InheritedImplication, PreencodedValue, RawExtension, TransactionExtension,
 };
 pub use service::{ExtrinsicService, ExtrinsicServiceDeps};
+pub use signature::SubstrateSigner;
 pub use version::ExtrinsicVersion;
