@@ -26,6 +26,9 @@ For each host this prints three gates as `name=true|false` lines, the format
 - `<host>_changed`: a `core` or `tree` path changed, so the host's app is
   different. A workflow triggered by a merge reads this to decide whether
   there is a new build.
+- `<host>_affected`: any of the host's paths or the core changed, whatever
+  `--force` says. A host too costly to run on every push to main reads this
+  there instead of its core and tree gates.
 
 and one gate per package, `package_<package>`, true when one of its inputs
 changed.
@@ -87,6 +90,7 @@ def gates(registry: dict, paths: list[str] | None, force: bool = False) -> dict[
         result[f"{host}_core"] = core or force
         result[f"{host}_tree"] = suite or force
         result[f"{host}_changed"] = core or tree
+        result[f"{host}_affected"] = core or suite
     for package, entries in registry.get("packages", {}).items():
         result[f"package_{package}"] = hit(entries) or force
     return result

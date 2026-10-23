@@ -417,7 +417,9 @@ jobs:
   preview:
     name: Simulator preview build
     needs: core
-    if: ${{ inputs.preview && !startsWith(github.head_ref, 'release/') }}
+    # A skipped ancestor fails an implicit success(), and a preview run skips
+    # bindings, so the core's result is checked directly.
+    if: ${{ !cancelled() && needs.core.result == 'success' && inputs.preview && !startsWith(github.head_ref, 'release/') }}
     # The Parity pool, out of the hosted macOS queue.
     runs-on: parity-macos
     timeout-minutes: 60

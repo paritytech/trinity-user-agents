@@ -2,9 +2,10 @@ name: Label builds
 
 # The builds and tests a pull request asks for with a label, rather than
 # running on every commit. Each job calls one workflow and starts when its label
-# is added, and again on each later push, or when the pull request is opened or
-# reopened with the label on, so the result follows the branch instead of
-# pinning to whichever commit was the head when someone asked.
+# is added, and again on each later push, so the result follows the branch
+# instead of pinning to whichever commit was the head when someone asked. The
+# simulator preview and the instrumented tests also start when the pull request
+# is opened or reopened with the label on.
 #
 # `labeled` fires for every label, so each job matches only its own label being
 # added. Matching on the label being present would let any other label, added
@@ -12,9 +13,9 @@ name: Label builds
 # the same commit. ci.yml does not run on `labeled`, so a label never reruns the
 # required checks.
 #
-# Each called workflow sets its concurrency on its jobs, and a skipped job never
-# joins a group, so a run started by one label never cancels a build another
-# label started.
+# Every concurrency group is on a job, either the calling job here or the jobs
+# of the called workflow, and a skipped job never joins a group, so a run
+# started by one label never cancels a build another label started.
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
@@ -50,7 +51,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && ((github.event.action == 'labeled' && github.event.label.name == 'ios-device-build')
-          || (github.event.action != 'labeled'
+          || (github.event.action == 'synchronize'
               && contains(github.event.pull_request.labels.*.name, 'ios-device-build')))
     uses: ./.github/workflows/ios-device-preview.yml
     secrets: inherit
@@ -64,7 +65,7 @@ jobs:
     name: Android device preview
     if: >-
       (github.event.action == 'labeled' && github.event.label.name == 'android-device-build')
-      || (github.event.action != 'labeled'
+      || (github.event.action == 'synchronize'
           && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
     uses: ./.github/workflows/android-device-preview.yml
     secrets: inherit
@@ -90,7 +91,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-          || (github.event.action != 'labeled'
+          || (github.event.action == 'synchronize'
               && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))
     uses: ./.github/workflows/host-playground-e2e.yml
     secrets: inherit

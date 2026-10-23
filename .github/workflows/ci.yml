@@ -12,12 +12,12 @@ on:
 # nothing and reports nothing. A release commit therefore gets a group of its
 # own, keyed by its SHA, where no later push to the same branch can reach it.
 # Ordinary pushes keep sharing a group. A pull request cancels its superseded
-# run. A push runs to the end, so each one that changes the iOS app publishes
-# the core and the bindings record pull requests reuse; a later push waits, and
-# replaces any push still waiting behind it.
+# run. A push or a dispatch runs to the end, so each one that changes the iOS
+# app publishes the core and the bindings record pull requests reuse; a later
+# one waits, and replaces any still waiting behind it.
 concurrency:
   group: ci-${{ github.ref }}-${{ startsWith(github.event.head_commit.message, 'release:') && github.sha || 'shared' }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -294,6 +294,8 @@ jobs:
       android_core: ${{ steps.hosts.outputs.android_core }}
       android_tree: ${{ steps.hosts.outputs.android_tree }}
       android_changed: ${{ steps.hosts.outputs.android_changed }}
+      ios_affected: ${{ steps.hosts.outputs.ios_affected }}
+      android_affected: ${{ steps.hosts.outputs.android_affected }}
       # And one per package a host consumes, from the same registry.
       package_swift: ${{ steps.hosts.outputs.package_swift }}
       package_kotlin: ${{ steps.hosts.outputs.package_kotlin }}
@@ -375,8 +377,9 @@ jobs:
       # UniFFI surface change leaves no ios/ or android/ diff to key on, and
       # each package's list names every input its job reads, the crates its
       # bindings are generated from included. The step above has fetched the merge
-      # group's base. A push to main runs every suite, and diffs from the
-      # previous tip of main only so that each host's changed gate is real.
+      # group's base. A push to main runs every suite but the iOS one, which
+      # runs when the push reaches the app, and diffs from the previous tip of
+      # main so that each host's changed and affected gates are real.
       # The registry is checked here, on every run, so a change that removes a
       # path it names fails before it can merge.
       - name: Evaluate the host registry
@@ -603,18 +606,24 @@ jobs:
 
   # The app built from this tree, with the core it consumes. Never for a pull
   # request from a fork, because every job runs on the Parity machines, which
-  # are persistent and shared. Not in the merge queue either, which has no Mac
-  # capacity for it yet: a pull request runs it before it can be queued, and
-  # main runs it again after it lands. Only main, of the branches this workflow
-  # pushes to, carries the app.
+  # are persistent and shared. Not for Dependabot either, whose runs get none of
+  # the secrets the app is configured with. Not in the merge queue, which has no
+  # Mac capacity for it yet: a pull request runs it before it can be queued, and
+  # main runs it again after it lands, for a push that reaches the app. Only
+  # main, of the branches this workflow pushes to, carries the app. A release
+  # commit skips it, because release.yml publishes only when this whole run
+  # succeeds, and the release pull request already ran it.
   ios-app:
     name: iOS app
     needs: changes
     if: >-
-      (needs.changes.outputs.ios_core == 'true' || needs.changes.outputs.ios_tree == 'true')
-      && needs.changes.outputs.trusted == 'true'
-      && github.event_name != 'merge_group'
-      && (github.event_name != 'push' || github.ref == 'refs/heads/main')
+      needs.changes.outputs.trusted == 'true'
+      && github.actor != 'dependabot[bot]'
+      && ((github.event_name == 'push' && github.ref == 'refs/heads/main'
+           && !startsWith(github.event.head_commit.message, 'release:')
+           && needs.changes.outputs.ios_affected == 'true')
+          || (github.event_name != 'push' && github.event_name != 'merge_group'
+              && (needs.changes.outputs.ios_core == 'true' || needs.changes.outputs.ios_tree == 'true')))
     uses: ./.github/workflows/ios-app.yml
     secrets: inherit
     # What ios-app.yml asks for: reading main's artifacts, and annotating and
