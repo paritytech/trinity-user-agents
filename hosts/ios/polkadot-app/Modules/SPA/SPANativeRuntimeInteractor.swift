@@ -204,7 +204,7 @@ private extension SPANativeRuntimeInteractor {
 
             // Bytes come from the executable's own subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let content = try await contentLoader.open(domain, policy: .untilCancelled)
+            let content = try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler())
             resolvedProduct = content.resolved
 
             let contentURL = content.appContent.localURL
@@ -281,6 +281,12 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 private extension SPANativeRuntimeInteractor {
     var productDomain: ProductId {
         configuration.page.host.toDotDomain()
+    }
+
+    func phaseHandler() -> ProductLoadPhaseHandler {
+        { [weak self] phase in
+            Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
+        }
     }
 
     func registerPresence() {

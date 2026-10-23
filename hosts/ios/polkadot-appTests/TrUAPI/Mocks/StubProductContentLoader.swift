@@ -49,7 +49,11 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
     }
 
-    func open(_ productId: ProductId, policy _: ProductLoadPolicy) async throws -> ProductContent {
+    func open(
+        _ productId: ProductId,
+        policy _: ProductLoadPolicy,
+        onPhase _: @escaping ProductLoadPhaseHandler
+    ) async throws -> ProductContent {
         let contentHash = state.withLock { state in
             state.openedIds.append(productId)
             return state.contentHash

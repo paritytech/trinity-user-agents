@@ -1,4 +1,5 @@
 import Foundation
+import os
 import FoundationExt
 import Revive
 import StructuredConcurrencyTestSupport
@@ -126,6 +127,51 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 1)
     }
 
+    @Test func networkOpenReportsResolvingDownloadAndUnpacking() async throws {
+        let environment = try Environment(self)
+        let phases = PhaseRecorder()
+
+        _ = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
+
+        #expect(phases.recorded == [
+            .resolving,
+            .downloading(downloadedBytes: StubCarFetcher.downloadedBytes, totalBytes: StubCarFetcher.totalBytes),
+            .unpacking
+        ])
+    }
+
+    @Test func networkOpenReportsWaitingForNetworkAndRetries() async throws {
+        let environment = try Environment(
+            self,
+            fetchFailures: [URLError(.notConnectedToInternet), URLError(.timedOut)],
+            isPathSatisfied: false
+        )
+        let phases = PhaseRecorder()
+
+        let open = Task {
+            try await environment.loader.open(self.productId, policy: .untilCancelled, onPhase: phases.record)
+        }
+
+        await environment.path.waitForStreamRequests(2)
+        environment.path.simulate(isSatisfied: true)
+        await clock.resumeSleep(for: .seconds(1))
+        _ = try await open.value
+
+        #expect(phases.recorded.contains(.waitingForNetwork))
+        #expect(phases.recorded.contains(.retrying(attempt: 1)))
+    }
+
+    @Test func cachedOpenReportsNoPhases() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        let phases = PhaseRecorder()
+
+        let cached = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
+
+        #expect(cached.source == .cache)
+        #expect(phases.recorded.isEmpty)
+    }
+
     @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
         let environment = try Environment(self)
         let first = try await environment.loader.open(productId, policy: .untilCancelled)
@@ -248,5 +294,15 @@ private extension ProductContentLoaderTests {
                 logger: SilentLogger()
             )
         }
+    }
+}
+
+private final class PhaseRecorder: @unchecked Sendable {
+    private let phases = OSAllocatedUnfairLock(initialState: [ProductLoadPhase]())
+
+    var recorded: [ProductLoadPhase] { phases.withLock { $0 } }
+
+    var record: ProductLoadPhaseHandler {
+        { [phases] phase in phases.withLock { $0.append(phase) } }
     }
 }

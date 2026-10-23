@@ -64,7 +64,11 @@ public actor ProductContentLoader {
 }
 
 extension ProductContentLoader: ProductContentLoading {
-    public func open(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ProductContent {
+    public func open(
+        _ productId: ProductId,
+        policy: ProductLoadPolicy,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> ProductContent {
         if let cached = try? await cache.open(productId) {
             appliedVersions[cached.version.productId] = cached.version
             Task { _ = await self.refresh(productId) }
@@ -73,7 +77,9 @@ extension ProductContentLoader: ProductContentLoading {
 
         try Task.checkCancellation()
 
-        let fetched = try await retrying(policy: policy) { [fetcher] in try await fetcher.fetch(productId) }
+        let fetched = try await retrying(policy: policy, onPhase: onPhase) { [fetcher] in
+            try await fetcher.fetch(productId, onPhase: onPhase)
+        }
         await cache.apply(fetched.version)
         appliedVersions[fetched.version.productId] = fetched.version
 
@@ -170,6 +176,7 @@ private extension ProductContentLoader {
 
     func retrying<T: Sendable>(
         policy: ProductLoadPolicy,
+        onPhase: ProductLoadPhaseHandler = { _ in },
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         var failedAttempts = 0
@@ -185,6 +192,7 @@ private extension ProductContentLoader {
                 }
 
                 guard try await isPathSatisfied() else {
+                    onPhase(.waitingForNetwork)
                     try await waitForSatisfiedPath()
                     continue
                 }
@@ -195,6 +203,7 @@ private extension ProductContentLoader {
                     throw error
                 }
 
+                onPhase(.retrying(attempt: failedAttempts))
                 try await timing.clock.sleep(for: backoff(afterFailedAttempts: failedAttempts))
             }
         }

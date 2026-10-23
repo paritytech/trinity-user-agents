@@ -16,7 +16,7 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     func showLoading()
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
-    func updateLoadProgress(_ progress: DotNsLoadProgress)
+    func updateLoadPhase(_ phase: ProductLoadPhase)
 }
 
 @MainActor
@@ -25,7 +25,6 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapMoreButton()
     func didTapMinimize()
     func didTapClose()
-    func didTapRetry()
     func didTapRefresh()
     func didBecomeVisible()
     func didInterceptNavigation(to url: URL)
@@ -53,7 +52,7 @@ protocol SPAInteractorOutputProtocol: AnyObject {
     func didRequestReload()
     func didRestartLoading()
     func didPrepareChat(chatId: Chat.Id)
-    func didUpdateLoadProgress(_ progress: DotNsLoadProgress)
+    func didUpdateLoadPhase(_ phase: ProductLoadPhase)
 }
 
 @MainActor

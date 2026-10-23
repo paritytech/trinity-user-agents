@@ -145,7 +145,7 @@ private extension SPARustRuntimeInteractor {
 
         switch configuration.contentSource {
         case .dotNs:
-            return try await contentLoader.open(domain, policy: .untilCancelled).resolved
+            return try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler()).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
         #if DEBUG
@@ -232,6 +232,12 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 private extension SPARustRuntimeInteractor {
     var productDomain: ProductId {
         configuration.page.host.toDotDomain()
+    }
+
+    func phaseHandler() -> ProductLoadPhaseHandler {
+        { [weak self] phase in
+            Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
+        }
     }
 
     func didStartServing(runtime: SPARuntimeProtocol) async {
