@@ -187,6 +187,20 @@ fn resolve_targets(
 		.collect()
 }
 
+/// Wallet and device targets first, since pairing depends on them, then products
+/// rotated by `period` so a full period does not skip the same products every day.
+fn renewal_order(targets: Vec<StatementRenewalTarget>, period: u32) -> Vec<StatementRenewalTarget> {
+	let (mut products, mut order): (Vec<_>, Vec<_>) = targets.into_iter().partition(|target| {
+		matches!(target, StatementRenewalTarget::ProductStatementAllowance { .. })
+	});
+	if !products.is_empty() {
+		let len = products.len();
+		products.rotate_left(period as usize % len);
+	}
+	order.extend(products);
+	order
+}
+
 /// The ledger targets `owner` promised, dropping any it did not.
 ///
 /// An entry promised by a different identity would consume this one's slots for
@@ -239,6 +253,7 @@ pub async fn renew_now(
 		owner_key(&entropy)?,
 	)
 	.await?;
+	let targets = renewal_order(targets, period);
 	let resolved = resolve_targets(&entropy, signing_host.network_suffix(), &targets);
 	if resolved.is_empty() {
 		return Ok(StatementRenewalReport {
@@ -832,6 +847,41 @@ mod tests {
 
 			assert_eq!(read_targets(&storage, OWNER).await.unwrap(), vec![product("a.dot")]);
 		});
+	}
+
+	/// With more products than slots, a fixed order would leave the same
+	/// products unrenewed every day.
+	#[test]
+	fn renewal_puts_wallet_targets_first_and_rotates_products_by_period() {
+		let device = StatementRenewalTarget::Account { account_id: [1; 32], label: "d".into() };
+		let ledger = vec![
+			product("a.dot"),
+			StatementRenewalTarget::WalletSso,
+			product("b.dot"),
+			device.clone(),
+			product("c.dot"),
+		];
+
+		assert_eq!(
+			renewal_order(ledger.clone(), 3),
+			vec![
+				StatementRenewalTarget::WalletSso,
+				device.clone(),
+				product("a.dot"),
+				product("b.dot"),
+				product("c.dot"),
+			]
+		);
+		assert_eq!(
+			renewal_order(ledger, 4),
+			vec![
+				StatementRenewalTarget::WalletSso,
+				device,
+				product("b.dot"),
+				product("c.dot"),
+				product("a.dot"),
+			]
+		);
 	}
 
 	#[test]
