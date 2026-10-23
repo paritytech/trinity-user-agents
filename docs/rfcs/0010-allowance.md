@@ -345,6 +345,8 @@ sequenceDiagram
 
 **Slot reassignment over key rotation.** Whether scaling allowance (repeated `host_request_resource_allocation` calls) or renewing an expiring slot (automatic, Account-Holder-driven), the same allowance account is assigned to an additional / fresh slot rather than rotated to a new account. This keeps the Host's cached key valid across the account's full lifetime and avoids invalidating in-flight submissions.
 
+**Statement-store renewal takes only free slots.** Automatic statement-store renewal never replaces a slot held by another account. When a period has no free slot left, the Account Holder reports the remaining renewal targets as exhausted for that period instead.
+
 **No product or Host control over which slot.** Slot selection is entirely the Account Holder's concern — it owns the slot table and performs the ring-VRF assignment. Neither products nor Hosts address individual slots or can cause a specific slot to be released.
 
 ## Drawbacks
