@@ -15,7 +15,10 @@ use parity_scale_codec::Encode;
 use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
-use crate::{PairedSsoPeer, PairingProposal, host_logic::worker::WorkerTransition};
+use crate::{
+	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	host_logic::worker::WorkerTransition,
+};
 
 use super::{
 	callbacks::{
@@ -166,6 +169,9 @@ pub struct EventCallbacks {
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
+	/// Number of `lookup_preimage` calls.
+	pub preimage_lookups: std::sync::atomic::AtomicUsize,
+	pub preimage_rejection: Mutex<Option<String>>,
 	pub auth_states: Mutex<Vec<AuthState>>,
 	pub chain_id: Mutex<Option<u32>>,
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -220,6 +226,8 @@ impl EventCallbacks {
 			}),
 			locale: Mutex::new(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() }),
 			preimages: Mutex::new(Vec::new()),
+			preimage_lookups: std::sync::atomic::AtomicUsize::new(0),
+			preimage_rejection: Mutex::new(None),
 			auth_states: Mutex::new(Vec::new()),
 			chain_id: Mutex::new(None),
 			on_chain_connect: Mutex::new(None),
@@ -366,6 +374,15 @@ impl HostCallbacks for EventCallbacks {
 		Ok(self.permission_confirmation_result)
 	}
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+		self.preimage_lookups.fetch_add(1, Ordering::SeqCst);
+		if let Some(reason) = self
+			.preimage_rejection
+			.lock()
+			.expect("preimage rejection mutex poisoned")
+			.clone()
+		{
+			return Err(HostRejection::Rejected { reason });
+		}
 		Ok(self
 			.preimages
 			.lock()
@@ -1138,6 +1155,294 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 
 	assert_eq!(first.unwrap(), Some(vec![1, 2, 3]));
 	assert_eq!(second.unwrap(), Some(vec![4, 5, 6]));
+}
+
+/// Long enough for several retries at the test pause lengths.
+const PREIMAGE_QUIET_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The stream's next item, or `None` when it yields nothing within `wait`.
+fn next_preimage_within(
+	stream: &mut BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>>,
+	wait: std::time::Duration,
+) -> Option<Result<Option<Vec<u8>>, v01::GenericError>> {
+	futures::executor::block_on(async {
+		match futures::future::select(stream.next(), futures_timer::Delay::new(wait)).await {
+			futures::future::Either::Left((item, _)) => {
+				Some(item.expect("the preimage stream ended"))
+			},
+			futures::future::Either::Right(_) => None,
+		}
+	})
+}
+
+/// Set the value the host returns for `key`.
+fn host_preimage(callbacks: &EventCallbacks, key: &[u8], value: Option<Vec<u8>>) {
+	*callbacks.preimages.lock().expect("preimage map mutex poisoned") = vec![(key.to_vec(), value)];
+}
+
+/// A lookup whose first fetch failed still gets the value once the host has
+/// it, and the retries stop there.
+#[test]
+fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	let mut stream = platform.lookup_preimage(key.clone());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_found = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_found = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, found, after_found), (Ok(None), Some(Ok(Some(value))), None));
+	assert_eq!(
+		callbacks.preimage_lookups.load(Ordering::SeqCst),
+		lookups_until_found,
+		"the lookup kept asking after it had the value"
+	);
+}
+
+/// The runtime treats bytes that do not hash to the key as a miss, so they
+/// must not stop the retries.
+#[test]
+fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
+	let mut stream = platform.lookup_preimage(key.clone());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let while_wrong = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+
+	assert_eq!((first, while_wrong, found), (Ok(Some(vec![9, 9, 9])), None, Some(Ok(Some(value)))));
+}
+
+/// A host error during a retry reaches the product and stops the retries,
+/// as an error on the first lookup does.
+#[test]
+fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_asking() {
+	let (callbacks, _events, platform) = event_platform();
+	let mut stream = platform.lookup_preimage(preimage_key(&[1, 2, 3]).to_vec());
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	*callbacks.preimage_rejection.lock().expect("preimage rejection mutex poisoned") =
+		Some("key refused".to_string());
+	let rejected = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_rejected = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_rejection = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!(
+		(first, rejected, after_rejection),
+		(Ok(None), Some(Err(v01::GenericError { reason: "key refused".to_string() })), None)
+	);
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), lookups_until_rejected);
+}
+
+/// A hit is not retried. Each retry is another gateway request.
+#[test]
+fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let mut stream = platform.lookup_preimage(key);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, later), (Ok(Some(value)), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
+}
+
+/// Preimage keys are 32-byte blake2b-256 digests, so a key of any other
+/// length is not retried.
+#[test]
+fn native_preimage_subscription_does_not_ask_again_for_a_key_no_preimage_hashes_to() {
+	let (callbacks, _events, platform) = event_platform();
+	let mut stream = platform.lookup_preimage(vec![7; 20]);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, later), (Ok(None), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
+}
+
+/// An execution whose host answers preimage lookups from the returned
+/// callbacks, and the bridge URL a product dials.
+fn preimage_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = native_product_execution(callbacks.clone(), "lookup.dot");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	(callbacks, execution, url)
+}
+
+/// A `preimage_lookup_subscribe` frame a product sends as `request_id`.
+fn preimage_lookup_frame(
+	request_id: &str,
+	message_type: u8,
+	value: Vec<u8>,
+) -> tokio_tungstenite::tungstenite::Message {
+	use crate::frame::{Payload, ProtocolMessage, subscription_ids};
+
+	let ids = subscription_ids("preimage_lookup_subscribe").expect("known subscription");
+	let frame = ProtocolMessage {
+		request_id: request_id.into(),
+		payload: Payload { trait_id: ids.trait_id, method_id: ids.method_id, message_type, value },
+	};
+	tokio_tungstenite::tungstenite::Message::Binary(frame.encode())
+}
+
+/// Start the lookup of `key` as `request_id`.
+fn start_preimage_lookup(request_id: &str, key: &[u8]) -> tokio_tungstenite::tungstenite::Message {
+	let request = truapi::versioned::preimage::RemotePreimageLookupSubscribeRequest::V1(
+		v01::RemotePreimageLookupSubscribeRequest { key: key.to_vec() },
+	);
+	preimage_lookup_frame(request_id, crate::frame::MESSAGE_TYPE_START, request.encode())
+}
+
+/// Stop the lookup open as `request_id`.
+fn stop_preimage_lookup(request_id: &str) -> tokio_tungstenite::tungstenite::Message {
+	preimage_lookup_frame(request_id, crate::frame::MESSAGE_TYPE_STOP, Vec::new())
+}
+
+/// The next answer to lookup `request_id`, or `None` if none arrives within
+/// `wait`.
+async fn next_preimage_answer<S>(
+	ws: &mut S,
+	request_id: &str,
+	wait: std::time::Duration,
+) -> Option<Option<Vec<u8>>>
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+	use truapi::versioned::preimage::RemotePreimageLookupSubscribeItem;
+
+	use crate::frame::{MESSAGE_TYPE_RECEIVE, ProtocolMessage};
+
+	let answer = async {
+		loop {
+			match ws.next().await {
+				Some(Ok(WsMessage::Binary(bytes))) => {
+					let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+					if frame.request_id != request_id {
+						continue;
+					}
+					assert_eq!(frame.payload.message_type, MESSAGE_TYPE_RECEIVE);
+					let RemotePreimageLookupSubscribeItem::V1(item) =
+						RemotePreimageLookupSubscribeItem::decode(&mut &frame.payload.value[..])
+							.expect("decode lookup item");
+					return item.value;
+				},
+				Some(Ok(_)) => {},
+				Some(Err(error)) => panic!("bridge error: {error}"),
+				None => panic!("bridge closed"),
+			}
+		}
+	};
+	tokio::time::timeout(wait, answer).await.ok()
+}
+
+/// Host lookups counted once in-flight work settles, then again after
+/// [`PREIMAGE_QUIET_WINDOW`]. Equal counts mean nothing is still retrying.
+async fn preimage_lookups_settled(callbacks: &EventCallbacks) -> (usize, usize) {
+	tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+	let settled = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	tokio::time::sleep(PREIMAGE_QUIET_WINDOW).await;
+	(settled, callbacks.preimage_lookups.load(Ordering::SeqCst))
+}
+
+/// A runtime for the product's side of the bridge.
+fn bridge_test_runtime() -> tokio::runtime::Runtime {
+	tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("test runtime")
+}
+
+/// The bug's path over the bridge: a lookup whose first fetch failed gets the
+/// value once the host has it, and bytes that do not hash to the key never
+/// reach the product.
+#[test]
+fn a_product_gets_a_preimage_the_host_finds_after_a_miss() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value).to_vec();
+
+	let answers = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &key)).await.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
+		let while_wrong = next_preimage_answer(&mut ws, "lookup", PREIMAGE_QUIET_WINDOW).await;
+		host_preimage(&callbacks, &key, Some(value.clone()));
+		let found =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		(first, while_wrong, found)
+	});
+
+	assert_eq!(answers, (Some(None), None, Some(Some(value))));
+}
+
+/// A product that unsubscribes stops the retries, so a lookup it gave up on
+/// does not keep calling the host.
+#[test]
+fn a_stopped_preimage_lookup_stops_asking_the_host() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let (first, (settled, later)) = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &preimage_key(&[1, 2, 3])))
+			.await
+			.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		ws.send(stop_preimage_lookup("lookup")).await.expect("stop lookup");
+		(first, preimage_lookups_settled(&callbacks).await)
+	});
+
+	assert_eq!(first, Some(None));
+	assert_eq!(later, settled, "the host was asked again after the product stopped the lookup");
+}
+
+/// A product whose connection closes, for example on a page reload, stops
+/// the retries too.
+#[test]
+fn a_closed_connection_stops_its_preimage_lookups() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let (first, (settled, later)) = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &preimage_key(&[1, 2, 3])))
+			.await
+			.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		drop(ws);
+		(first, preimage_lookups_settled(&callbacks).await)
+	});
+
+	assert_eq!(first, Some(None));
+	assert_eq!(later, settled, "the host was asked again after the connection closed");
 }
 
 #[test]
