@@ -76,7 +76,7 @@ on:
         required: false
       SENTRY_DSN_ANDROID:
         required: false
-      SENTRY_AUTH_TOKEN:
+      SENTRY_READ_TOKEN_JOLLITY:
         required: false
       E2E_IOS_MNEMONIC:
         required: false
@@ -189,7 +189,7 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech' }}
           SENTRY_NATIVE_PROJECT: ${{ vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android' }}
           SENTRY_JOLLITY_PROJECT: ${{ vars.SENTRY_JOLLITY_PROJECT != '' && vars.SENTRY_JOLLITY_PROJECT != 'your-sentry-project' && vars.SENTRY_JOLLITY_PROJECT || 'jollity-next' }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN_JOLLITY }}
           SENTRY_DSN_ANDROID: ${{ secrets.SENTRY_DSN_ANDROID }}
           SENTRY_DSN_FILE: ${{ runner.temp }}/android-sentry-dsn
         run: node e2e/host-playground/resolve-sentry-dsn.mjs
@@ -280,7 +280,7 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech' }}
           SENTRY_NATIVE_PROJECT: ${{ vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android' }}
           SENTRY_JOLLITY_PROJECT: ${{ vars.SENTRY_JOLLITY_PROJECT != '' && vars.SENTRY_JOLLITY_PROJECT != 'your-sentry-project' && vars.SENTRY_JOLLITY_PROJECT || 'jollity-next' }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_READ_TOKEN_JOLLITY }}
           SENTRY_POLL_ATTEMPTS: ${{ vars.SENTRY_POLL_ATTEMPTS || '20' }}
           SENTRY_POLL_INTERVAL_MS: ${{ vars.SENTRY_POLL_INTERVAL_MS || '15000' }}
           TELEMETRY_DEVICE_EVIDENCE: ${{ env.OUT }}/telemetry.json
