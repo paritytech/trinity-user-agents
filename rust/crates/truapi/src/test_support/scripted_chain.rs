@@ -11,11 +11,19 @@ use futures::{
 	channel::mpsc as fut_mpsc,
 	stream::{BoxStream, StreamExt},
 };
-use serde_json::Value;
+use parity_scale_codec::Encode;
+use serde_json::{Value, json};
+use sp_crypto_hashing::blake2_256;
+use subxt::{
+	config::substrate::{Digest, SubstrateHeader},
+	utils::H256,
+};
 
 use crate::{
-	chain_runtime::{RuntimeChainProvider, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
+	test_support::test_spawner,
 };
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
@@ -187,4 +195,87 @@ pub fn wait_for_sent(
 		std::thread::sleep(std::time::Duration::from_millis(10));
 	}
 	provider.sent.lock().unwrap().clone()
+}
+
+/// A chain that serves the bulletin fixture over chainHead and answers the
+/// first `refused` follows with a JSON-RPC error of `refusal_code`, as dotli
+/// refuses a follow while a halted chain waits to be redialed.
+pub fn chain_refusing_follows(
+	refused: usize,
+	refusal_code: i32,
+) -> (Arc<ScriptedProvider>, ChainRuntime) {
+	let header = SubstrateHeader::<H256> {
+		parent_hash: H256::zero(),
+		number: 1,
+		state_root: H256::zero(),
+		extrinsics_root: H256::zero(),
+		digest: Digest::default(),
+	};
+	let finalized = H256(blake2_256(&header.encode()));
+	let follows = AtomicUsize::new(0);
+	let operations = AtomicUsize::new(0);
+	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
+		let request: Value = serde_json::from_str(request).unwrap();
+		let reply = |result: Value| {
+			json!({"jsonrpc": "2.0", "id": request["id"], "result": result}).to_string()
+		};
+		let follow_event = |result: Value| {
+			json!({
+				"jsonrpc": "2.0",
+				"method": "chainHead_v1_followEvent",
+				"params": {"subscription": "follow", "result": result}
+			})
+			.to_string()
+		};
+		match request["method"].as_str().unwrap() {
+			"chainHead_v1_follow" if follows.fetch_add(1, Ordering::SeqCst) < refused => {
+				vec![
+					json!({
+						"jsonrpc": "2.0",
+						"id": request["id"],
+						"error": {"code": refusal_code, "message": "chain halted"}
+					})
+					.to_string(),
+				]
+			},
+			"chainHead_v1_follow" => vec![
+				reply(json!("follow")),
+				follow_event(json!({
+					"event": "initialized",
+					"finalizedBlockHashes": [finalized],
+					"finalizedBlockRuntime": null
+				})),
+			],
+			"chainHead_v1_header" => {
+				vec![reply(json!(format!("0x{}", hex::encode(header.encode()))))]
+			},
+			"chainHead_v1_call" => {
+				let operation_id = format!("call-{}", operations.fetch_add(1, Ordering::SeqCst));
+				let output = bulletin_runtime_call(request["params"][2].as_str().unwrap())
+					.expect("a runtime call the fixture answers");
+				vec![
+					reply(json!({"result": "started", "operationId": operation_id})),
+					follow_event(json!({
+						"event": "operationCallDone",
+						"operationId": operation_id,
+						"output": format!("0x{}", hex::encode(output))
+					})),
+				]
+			},
+			_ => vec![reply(Value::Null)],
+		}
+	}));
+	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	(provider, chain)
+}
+
+/// How many `chainHead_v1_follow` requests the core sent.
+pub fn follow_count(provider: &ScriptedProvider) -> usize {
+	provider
+		.sent
+		.lock()
+		.unwrap()
+		.iter()
+		.filter(|request| request.contains("chainHead_v1_follow"))
+		.count()
 }

@@ -74,6 +74,10 @@ use truapi::v01::{
 
 use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
 
+mod follow_retry;
+
+use follow_retry::FollowRetryingRpcClient;
+
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
 const CONNECT_METHOD: &str = "remote_chain_connect";
 /// Method tag for failures building or using the legacy Subxt client.
@@ -1215,7 +1219,7 @@ impl ChainConnection {
 		const METHOD: &str = "subxt_connection";
 		let config = self.chain_config(METHOD)?;
 		let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
-			.build(RpcClient::new(self.rpc_client.clone()));
+			.build(RpcClient::new(FollowRetryingRpcClient::new(self.rpc_client.clone())));
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
@@ -1223,7 +1227,7 @@ impl ChainConnection {
 			async move {
 				while let Some(result) = driver.next().await {
 					if let Err(error) = result {
-						tracing::debug!(target: "subxt", "chainHead backend error={error}");
+						warn!(target: "subxt", "chainHead backend error={error}");
 					}
 				}
 				// The backend can make no further progress; drop the cached
