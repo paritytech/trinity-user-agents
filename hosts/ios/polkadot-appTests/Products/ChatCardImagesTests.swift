@@ -67,6 +67,7 @@ private struct NoScripts: ChatProductFileProviding {
 private final class NoRuntime: TrUAPIHostRuntimeProviding {
     func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
+    @MainActor var presentationView: ControllerBackedProtocol? { nil }
     func attach(workerManager _: any TrUAPIWorkerManaging) {}
 }
 

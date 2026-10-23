@@ -66,6 +66,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            case let .bundled(directory):
+                try await serveContent(
+                    at: directory,
+                    domain: configuration.page.host.toDotDomain()
+                )
             #if DEBUG
                 case let .devServer(url, _):
                     url
@@ -131,6 +136,14 @@ private extension SPARustRuntime {
         let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
         let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
 
+        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
+
+        return try await serveContent(at: contentURL, domain: domain)
+    }
+
+    /// Serves the App's files at `contentURL` under `domain`'s origin, which
+    /// is what permission grants and web storage are keyed by.
+    func serveContent(at contentURL: URL, domain: String) async throws -> URL {
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
@@ -140,8 +153,6 @@ private extension SPARustRuntime {
         guard let productURL = schemeHandler.getProductUrl() else {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
-
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
 
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()

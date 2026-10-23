@@ -14,6 +14,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     }
 
     private let statusTitleView = NetworkStatusTitleView()
+    private let purseTitleView = PurseTitleView()
 
     init(
         presenter: WalletMainPresenterProtocol,
@@ -55,6 +56,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 
         rootView.viewModel.onCollapse = { [weak self] in
             self?.collapseExpandedSection()
+        }
+
+        rootView.viewModel.onPurseCollapse = { [weak self] progress in
+            self?.purseTitleView.apply(progress: progress)
         }
 
         rootView.viewModel.onCollectibles = { [weak self] in
@@ -168,7 +173,9 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
         resetRightButton()
-        setTitleCenter(PaymentAssetBranding.shared.current.symbol)
+        navigationItem.style = .navigator
+        purseTitleView.apply(progress: 0)
+        navigationItem.titleView = purseTitleView
     }
 
     private func showIdentityDetailsOverlay() {

@@ -13,6 +13,7 @@ import ChainRegistry
 import BackgroundExecution
 import Products
 import UIKitExt
+import TrUAPIHost
 
 final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     weak var presenter: AssetDetailsInteractorOutputProtocol?
@@ -30,8 +31,8 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     private var recoveredBalanceTask: Task<Void, Error>?
     private var accountBackupStatusTask: Task<Void, Error>?
 
-    private let fundingDomainProvider: FundingDomainProviding
-    private var topUpProductTask: Task<Void, Never>?
+    private let fundingOpener: FundingOpening
+    private var fundingTasks: [FundingDirection: Task<Void, Never>] = [:]
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -44,13 +45,13 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         chainAsset: ChainAsset,
         coinageService: CoinageServicing,
         coinageBackupSyncService: any CoinageBackupSyncServicing,
-        fundingDomainProvider: FundingDomainProviding
+        fundingOpener: FundingOpening
     ) {
         self.priceLocalSubscriptionFactory = priceLocalSubscriptionFactory
         self.chainAsset = chainAsset
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
-        self.fundingDomainProvider = fundingDomainProvider
+        self.fundingOpener = fundingOpener
     }
 
     deinit {
@@ -59,7 +60,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         recoveredBalanceTask?.cancel()
         accountBackupStatusTask?.cancel()
         priceSubscriptionTask?.cancel()
-        topUpProductTask?.cancel()
+        fundingTasks.values.forEach { $0.cancel() }
     }
 }
 
@@ -80,14 +81,14 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         coinageBackupSyncService.acknowledgeRecovery()
     }
 
-    func openTopUpProduct() {
-        topUpProductTask?.cancel()
-        topUpProductTask = Task { [weak presenter, fundingDomainProvider] in
+    func openFunding(_ direction: FundingDirection) {
+        fundingTasks[direction]?.cancel()
+        fundingTasks[direction] = Task { [weak presenter, fundingOpener] in
             do {
-                let page = try await RampAction.topUp.resolvePage(using: fundingDomainProvider)
-                await presenter?.didResolveTopUpProduct(.success(page))
+                _ = try await fundingOpener.openFunding(direction: direction)
+                await presenter?.didCompleteFunding(direction, result: .success(()))
             } catch {
-                await presenter?.didResolveTopUpProduct(.failure(error))
+                await presenter?.didCompleteFunding(direction, result: .failure(error))
             }
         }
     }
