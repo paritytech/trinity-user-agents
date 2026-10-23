@@ -7,7 +7,7 @@
 //! pairing deeplink and observe connection status.
 
 use std::{
-	collections::HashMap,
+	collections::{HashMap, VecDeque},
 	fs,
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
@@ -118,6 +118,10 @@ pub struct CliPlatform {
 	/// Navigation transcript (`TRUAPI_NAVIGATIONS_LOG`): one JSON line
 	/// `{"url":…,"at":<unix ms>}` per destination the core accepted.
 	navigations_log: Option<PathBuf>,
+	/// Delays before auto-accepting each resource allocation, in order
+	/// (`TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS`, comma-separated milliseconds).
+	/// Lets an e2e play a person who approves after the product's deadline.
+	allocation_approval_delays: Mutex<VecDeque<Duration>>,
 	ui: Option<UiHandle>,
 	/// Serializes interactive CLI prompts so concurrent confirmations don't
 	/// interleave on stdin.
@@ -196,6 +200,12 @@ impl CliPlatform {
 			approval: Mutex::new(approval),
 			approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
 			navigations_log: std::env::var_os("TRUAPI_NAVIGATIONS_LOG").map(PathBuf::from),
+			allocation_approval_delays: Mutex::new(
+				allocation_approval_delays(
+					std::env::var("TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS").ok().as_deref(),
+				)
+				.unwrap_or_else(|reason| panic!("TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS: {reason}")),
+			),
 			ui,
 			prompt_lock: AsyncMutex::new(()),
 		})
@@ -347,6 +357,16 @@ impl CliPlatform {
 	) -> PermissionDecision {
 		let decision = match self.approval_policy() {
 			ApprovalPolicy::AutoAccept => {
+				if action == ALLOCATE_RESOURCES_ACTION {
+					let delay = self
+						.allocation_approval_delays
+						.lock()
+						.expect("allocation approval delays mutex poisoned")
+						.pop_front();
+					if let Some(delay) = delay {
+						tokio::time::sleep(delay).await;
+					}
+				}
 				if let Some(ui) = &self.ui {
 					ui.success(format!("Approved {action} automatically"), Some(detail));
 				} else {
@@ -371,6 +391,26 @@ impl CliPlatform {
 		}
 		decision
 	}
+}
+
+/// The approval action a resource allocation prompt is summarised as.
+const ALLOCATE_RESOURCES_ACTION: &str = "allocate resources";
+
+/// Parse `TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS`: comma-separated milliseconds,
+/// one per allocation approval in order. Approvals past the end of the list
+/// are not delayed. The list is positional, so one bad entry refuses it all.
+fn allocation_approval_delays(spec: Option<&str>) -> Result<VecDeque<Duration>, String> {
+	let Some(spec) = spec.filter(|spec| !spec.trim().is_empty()) else {
+		return Ok(VecDeque::new());
+	};
+	spec.split(',')
+		.map(|ms| {
+			ms.trim()
+				.parse()
+				.map(Duration::from_millis)
+				.map_err(|_| format!("{ms:?} is not a number of milliseconds"))
+		})
+		.collect()
 }
 
 /// Append one `<approved|denied> <action>` line to the approvals transcript.
@@ -905,7 +945,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             ),
         ),
         UserConfirmationReview::ResourceAllocation(_) => (
-            "allocate resources",
+            ALLOCATE_RESOURCES_ACTION,
             "A product requested host-managed resources.".to_string(),
         ),
         UserConfirmationReview::AccountAccess(review) => (
@@ -1246,6 +1286,19 @@ fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn allocation_approval_delays_are_taken_in_order() {
+		assert_eq!(
+			[None, Some(""), Some("0, 15000,250"), Some("0,15s,0")].map(allocation_approval_delays),
+			[
+				Ok(VecDeque::new()),
+				Ok(VecDeque::new()),
+				Ok(VecDeque::from([0, 15_000, 250].map(Duration::from_millis))),
+				Err(r#""15s" is not a number of milliseconds"#.to_string()),
+			],
+		);
+	}
 
 	/// The preset production builds from, so tests exercise the same config.
 	fn test_network() -> crate::network::NetworkConfig {

@@ -2262,6 +2262,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
+| `TRUAPI_ALLOCATION_APPROVAL_DELAYS_MS` | Under `--auto-accept`, comma-separated milliseconds to wait before approving each resource allocation, in order. Later allocations are approved at once. A malformed list stops the host at startup. |
 | `TRUAPI_NAVIGATIONS_LOG` | Append one JSON line `{"url","at"}` (`at` in Unix milliseconds) per `navigate_to` destination the host accepted. Unset, nothing is written; set, a transcript that cannot be written fails that `navigate_to` call. The terminal UI shows each accepted destination either way. |
 
 ## 22. Current v0.1 operational constraints
