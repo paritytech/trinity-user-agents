@@ -277,9 +277,14 @@ Native signing hosts serve the `NftPurse` API from the
 the core database. A product creates purses it owns and lists any owner's
 purses: its own freely, Root's or another product's with the user's
 `NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
-Calls that need items on chain answer unavailable for now. A host without a
-core database, such as the browser core, answers `Unsupported` to the two
-served calls.
+`createItems` derives receiving keys in a purse on the hard path
+`//nft//<purse>//<installation>//<index>`, under the installation the host
+reports through `currentInstallation`. A tracker watches
+`Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
+`queryPurse` pages through the keys that hold an NFT. The same grant covers
+both. Calls that move items answer unavailable for now. A host without a core
+database, such as the browser core, answers `Unsupported` to the four served
+calls.
 
 ### Trinity stack descriptors
 

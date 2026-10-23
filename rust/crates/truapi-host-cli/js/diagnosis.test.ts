@@ -60,7 +60,7 @@ describe("generated-example battery", () => {
       ],
       [
         "Nft Purse",
-        "NFT purses serve two methods so far, and only on a signing host; the truapi runtime tests cover them",
+        "NFT purses serve four methods so far, only on a signing host, and their examples name purses that may not exist; the truapi runtime tests cover them",
       ],
     ]);
 

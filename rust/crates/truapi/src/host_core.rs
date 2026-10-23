@@ -912,23 +912,56 @@ impl SigningHostRuntime {
 	/// Install the core-owned database that durable consumers share.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
-	///
-	/// Also starts the durable transaction engine over it, which builds
-	/// scheduled transactions and reports pending work to the observer
-	/// installed with [`Self::set_durable_work_observer`]; install that
-	/// first.
+	/// consumer. Returns whether this call installed it. Nothing runs over it
+	/// until [`Self::start_core_services`].
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		if !self.services.install_core_db(db.clone()) {
-			return false;
+		self.services.install_core_db(db)
+	}
+
+	/// Install the provider of the installation id NFT purse item keys are
+	/// derived under. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_installation_provider(
+		&self,
+		provider: Arc<dyn crate::installation::InstallationIdProvider>,
+	) -> bool {
+		self.services.install_installation_provider(provider)
+	}
+
+	/// Starts what runs over the core database: the durable transaction
+	/// engine, then NFT purses with the tracker of their holdings. Call it
+	/// once the setters it reads have run: [`Self::set_core_db`],
+	/// [`Self::set_installation_provider`] and
+	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
+	/// is skipped and logged. A second call does nothing.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
+	pub fn start_core_services(&self) {
+		let Ok(db) = self.services.core_db() else {
+			tracing::warn!("no core database set, durable transactions and NFT purses are off");
+			return;
+		};
+		if !start_durable_engine(&self.services, db.clone()) {
+			return;
 		}
-		let engine = durable_engine(&self.services, db);
-		self.services.install_durable_engine(engine.clone());
-		forward_durable_work(&self.services, &engine);
-		engine.ensure_submissions_started();
-		true
+		self.start_nft_purses(db);
+	}
+
+	/// Installs the NFT ledger over `db` and starts tracking its holdings,
+	/// when an installation provider is set.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_nft_purses(&self, db: crate::store::Db) {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return;
+		};
+		let keys = self.signing_host.clone();
+		let ledger =
+			crate::nft::NftLedger::new(crate::nft::NftLedgerDeps { db, installation, keys });
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -1250,6 +1283,20 @@ impl SigningHostRuntime {
 	}
 }
 
+/// Installs the durable transaction engine over `db`, reports its pending
+/// work and starts its submissions. False when an engine is already
+/// installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_durable_engine(services: &Arc<RuntimeServices>, db: crate::store::Db) -> bool {
+	let engine = durable_engine(services, db);
+	if !services.install_durable_engine(engine.clone()) {
+		return false;
+	}
+	forward_durable_work(services, &engine);
+	engine.ensure_submissions_started();
+	true
+}
+
 /// The durable transaction engine over `db`, reading and submitting through
 /// the runtime's chain connections.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1257,7 +1304,10 @@ fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 ) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+	use crate::{
+		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		time::RealTimer,
+	};
 
 	let chain = Arc::new(services.chain.clone());
 	DurableTxEngine::new(DurableDeps {
@@ -1270,6 +1320,25 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// Starts tracking what NFT item keys hold on Asset Hub, which runs the
+/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
+	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
+
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
+		return;
+	};
+	let tracker = HoldingTracker::start(HoldingTrackerDeps {
+		ledger,
+		storage: Arc::new(services.chain.clone()),
+		genesis: genesis.into(),
+		spawner: services.spawner.clone(),
+	});
+	services.install_holding_tracker(tracker);
 }
 
 /// Reports every change of the engine's pending work to the host observer,
@@ -3641,51 +3710,103 @@ mod tests {
 		assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
 	}
 
-	/// Every durable consumer shares one core database: a second installer
-	/// must not swap it, and a host that configured none gets a clear error
-	/// rather than a silently missing store.
+	/// A signing host runtime over a stub platform, with no core database.
 	#[cfg(not(target_arch = "wasm32"))]
-	#[test]
-	fn the_core_database_is_installed_once_and_reports_when_missing() {
-		use crate::{
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-			store::{Db, DbConfig, DbError, DbLocation},
-		};
-		use futures::executor::block_on;
+	fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
+		use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
+		let host = HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		};
+		let genesis = ([0; 32], [0xbb; 32], [0xcc; 32]);
 		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
+			host,
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			genesis.0,
+			genesis.1,
+			genesis.2,
 			"paseo".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		let db_config = DbConfig {
+		let platform = Arc::new(StubPlatform::default());
+		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
+	}
+
+	/// An empty database in memory.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn memory_db() -> crate::store::Db {
+		use crate::store::{Db, DbConfig, DbLocation};
+
+		let config = DbConfig {
 			location: DbLocation::Memory,
-			migrations: || rusqlite_migration::Migrations::new(Vec::new()),
+			migrations: crate::store::core_migrations,
 			readers: 1,
 		};
+		futures::executor::block_on(Db::open(config)).expect("database opens")
+	}
 
-		assert!(matches!(runtime.services.core_db(), Err(DbError::NotConfigured)));
-		let installed = block_on(Db::open(db_config.clone())).expect("database opens");
-		let other = block_on(Db::open(db_config)).expect("database opens");
-		assert!(runtime.set_core_db(installed));
-		assert!(!runtime.set_core_db(other));
+	/// Every durable consumer shares one core database: a second installer
+	/// must not swap it.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_core_database_is_installed_once() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
 
-		let db = runtime.services.core_db().expect("installed database is served");
-		let answer: i64 =
-			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
-				.expect("installed database serves writes");
-		assert_eq!(answer, 42);
+		assert!(!runtime.set_core_db(memory_db()));
+	}
+
+	/// A host that configured no database gets a clear error rather than a
+	/// silently missing store.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn a_missing_core_database_is_reported() {
+		let (runtime, _platform) = test_signing_runtime();
+
+		assert!(matches!(runtime.services.core_db(), Err(crate::store::DbError::NotConfigured)));
+	}
+
+	/// NFT item keys are derived under the installation, so without a
+	/// provider there must be no purses rather than keys under a guessed one.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
+	/// The setters only store their inputs, so purses are served once the
+	/// services start and not before.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_are_served_once_core_services_start() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_some());
+	}
+
+	/// Durable transactions do not depend on NFT purses, so the engine runs
+	/// even when purses are off.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_durable_engine_starts_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.durable_engine().is_some());
 	}
 
 	#[test]

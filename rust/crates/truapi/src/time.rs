@@ -1,4 +1,4 @@
-//! [`Timer`]: every wait the engine makes, so tests control time.
+//! [`Timer`]: waits that tests can control.
 
 use core::time::Duration;
 
@@ -21,3 +21,9 @@ impl Timer for RealTimer {
 		Box::pin(futures_timer::Delay::new(duration))
 	}
 }
+
+#[cfg(test)]
+mod manual;
+
+#[cfg(test)]
+pub use manual::ManualTimer;

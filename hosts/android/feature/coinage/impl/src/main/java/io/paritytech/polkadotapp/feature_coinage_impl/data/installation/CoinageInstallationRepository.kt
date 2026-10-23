@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_coinage_impl.data.installation
 import io.paritytech.polkadotapp.database.dao.CoinageInstallationDao
 import io.paritytech.polkadotapp.database.model.CoinageInstallationLocal
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageCurrentInstallation
 import javax.inject.Inject
 
 data class PreviousInstallation(
@@ -12,9 +13,7 @@ data class PreviousInstallation(
     val initialScanCompleted: Boolean,
 )
 
-interface CoinageInstallationRepository {
-    suspend fun getOrCreateCurrent(): CoinageInstallationId
-
+interface CoinageInstallationRepository : CoinageCurrentInstallation {
     suspend fun addPrevious(installations: Collection<CoinageInstallationId>)
 
     suspend fun getPrevious(): List<PreviousInstallation>

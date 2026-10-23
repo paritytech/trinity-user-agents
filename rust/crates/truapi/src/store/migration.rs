@@ -3,6 +3,7 @@
 mod v0_to_v1_durable_tx;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
+mod v3_to_v4_nft_items;
 
 use rusqlite_migration::Migrations;
 
@@ -13,5 +14,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v0_to_v1_durable_tx::create_durable_tx(),
 		v1_to_v2_scheduled_submissions::recreate_durable_tx_for_scheduled_submissions(),
 		v2_to_v3_nft_purses::create_nft_purse(),
+		v3_to_v4_nft_items::create_nft_items(),
 	])
 }

@@ -23,6 +23,7 @@ mod frame_server;
 #[cfg(feature = "test-host")]
 mod funding_host;
 mod game;
+mod installation;
 mod local_network;
 mod network;
 mod platform;
@@ -1791,6 +1792,8 @@ fn build_signing_runtime(
 		truapi::store::core_db_config(&storage_path),
 	))
 	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
+	let installation_path = storage_path.join("installation");
+	let installation = Arc::new(installation::CliInstallation::new(installation_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
@@ -1822,6 +1825,8 @@ fn build_signing_runtime(
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
+	runtime.set_installation_provider(installation);
+	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
 }

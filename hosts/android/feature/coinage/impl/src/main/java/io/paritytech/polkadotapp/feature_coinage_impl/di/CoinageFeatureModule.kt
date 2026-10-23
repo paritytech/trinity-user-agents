@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.Exte
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageCurrentInstallation
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
@@ -221,6 +222,9 @@ interface CoinageFeatureModule {
 
     @Binds
     fun bindCoinageInstallationRepository(impl: RealCoinageInstallationRepository): CoinageInstallationRepository
+
+    @Binds
+    fun bindCoinageCurrentInstallation(impl: RealCoinageInstallationRepository): CoinageCurrentInstallation
 
     @Binds
     @Singleton
