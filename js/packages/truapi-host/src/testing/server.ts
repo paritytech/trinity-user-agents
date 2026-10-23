@@ -167,16 +167,25 @@ export async function createTestHostServer(
         "back from the host and fund that, rather than pinning one.",
     );
   }
-  // Without a `productUrl` the server answers a bare base, so chains, an
-  // in-page statement store or seeded storage asked for here would reach no
-  // page. Refused rather than dropped.
+  // Without a `productUrl` the server answers a bare base, so any page option
+  // asked for here would reach no page. Refused rather than dropped.
   if (!options.productUrl) {
-    const refused = [
-      options.networks?.length && "networks",
-      options.chain && "chain",
-      options.loopbackStatements && "loopbackStatements",
-      Object.keys(options.productStorage ?? {}).length && "productStorage",
-    ].filter((name): name is string => typeof name === "string");
+    const asked: [string, unknown][] = [
+      ["networks", options.networks?.length],
+      ["chain", options.chain],
+      ["loopbackStatements", options.loopbackStatements],
+      ["productStorage", Object.keys(options.productStorage ?? {}).length],
+      ["productId", options.productId],
+      ["mock", options.mock],
+      ["runtimeConfig", options.runtimeConfig],
+      ["accounts", options.accounts?.length],
+      ["loginBehavior", options.loginBehavior],
+      ["topology", options.topology],
+      ["allowances", options.allowances],
+      ["withheldResources", options.withheldResources?.length],
+      ["logLevel", options.logLevel],
+    ];
+    const refused = asked.filter(([, value]) => value).map(([name]) => name);
     if (refused.length) {
       throw new Error(
         `createTestHostServer: ${refused.map((name) => `\`${name}\``).join(", ")} ` +
