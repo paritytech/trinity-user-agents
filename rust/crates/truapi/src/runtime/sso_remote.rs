@@ -64,6 +64,12 @@ impl SsoSessionKey {
 	pub fn from_session(session: &SsoSessionInfo) -> Self {
 		Self { own: session.session_id_own, peer: session.session_id_peer }
 	}
+	/// Whether this channel is still selected by the canonical session.
+	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
+		state.current().as_ref().is_some_and(|current| {
+			current.sso.as_ref().is_some_and(|sso| Self::from_session(sso) == self)
+		})
+	}
 }
 
 /// Unregisters a disconnect waiter when the waiting call finishes.

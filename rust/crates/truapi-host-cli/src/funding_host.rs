@@ -130,7 +130,7 @@ impl CliFundingHost {
 		let (Some(runtime), Some(product)) = (runtime.upgrade(), product) else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		runtime.select_funding_provider(&intent, &product.product_id).await?;
+		runtime.select_funding_provider(&intent, product.product_id.as_str()).await?;
 		let runtime = Arc::downgrade(&runtime);
 		let transcript = self.transcript.clone();
 		match outcome {
@@ -282,7 +282,7 @@ impl FundingPlatform for CliFundingHost {
 				FundingDirection::Out => "Out",
 			},
 			"amount": session.amount.map(|amount| amount.to_string()),
-			"product": product.map(|product| product.product_id.clone()),
+			"product": product.map(|product| product.product_id.as_str()),
 			"outcome": format!("{outcome:?}"),
 		}));
 		let runtime = self.runtime.clone();
@@ -333,7 +333,7 @@ impl FundingPlatform for CliFundingHost {
 		self.transcript.record(serde_json::json!({
 			"kind": "frame",
 			"intent": intent,
-			"provider": provider.product_id,
+			"provider": provider.product_id.as_str(),
 			"route": shown,
 		}));
 		Ok(outcome)
@@ -392,7 +392,7 @@ impl CliPaymentHost {
 		}
 		let line = serde_json::json!({
 			"kind": kind,
-			"product": product.product_id,
+			"product": product.product_id.as_str(),
 			"id": hex::encode(id),
 			"amount": amount.to_string(),
 		});
@@ -485,10 +485,9 @@ mod tests {
 		let directory = tempfile::tempdir().expect("temporary directory");
 		let host = CliPaymentHost { ledger: directory.path().join("missing").join("ledger.jsonl") };
 		let product = ProductContext::new_with_execution(
-			"ramp.dot".to_string(),
+			"ramp.dot".parse().expect("valid product"),
 			truapi::platform::ProductExecutionKind::Worker,
-		)
-		.expect("valid product");
+		);
 
 		let started = futures::executor::block_on(host.top_up(
 			&product,

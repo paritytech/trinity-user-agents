@@ -24,12 +24,12 @@ final class LocalNotificationGameReminder {
 }
 
 extension LocalNotificationGameReminder: GameStartReminderServicing {
-    func scheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, productId: ProductId) {
         localNotificationService.notificationAccessStatus { status in
             guard status == .allowed else {
                 return
             }
-            self.performScheduleReminder(gameDate: gameDate, productId: productId, timingSeconds: timingSeconds)
+            self.performScheduleReminder(gameDate: gameDate, productId: productId)
         }
     }
 
@@ -40,8 +40,8 @@ extension LocalNotificationGameReminder: GameStartReminderServicing {
 }
 
 private extension LocalNotificationGameReminder {
-    func performScheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
-        let notificationDate = Int(gameDate.timeIntervalSinceReferenceDate) - timingSeconds
+    func performScheduleReminder(gameDate: Date, productId: ProductId) {
+        let notificationDate = Int(gameDate.timeIntervalSinceReferenceDate)
         let storedDate = settingsManager.integer(for: keys.notificationDate)
 
         guard notificationDate != storedDate else {
@@ -63,7 +63,7 @@ private extension LocalNotificationGameReminder {
 
         localNotificationService.scheduleNotification(
             withIdentifier: keys.notificationIdentifier,
-            content: makeContent(timingSeconds: timingSeconds, productId: productId),
+            content: makeContent(productId: productId),
             after: fireDate.timeIntervalSince(Date())
         ) { [logger] error in
             logger.debug("gameStart scheduled with error: \(String(describing: error))")
@@ -74,11 +74,9 @@ private extension LocalNotificationGameReminder {
         localNotificationService.cancelScheduledNotifications(withIdentifiers: [keys.notificationIdentifier])
     }
 
-    func makeContent(timingSeconds: Int, productId: ProductId) -> UNNotificationContent {
+    func makeContent(productId: ProductId) -> UNNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = String(
-            localized: .Notification.gameNotificationGameStartTitle(String(timingSeconds))
-        )
+        content.title = String(localized: .Notification.gameNotificationGameStartTitle)
         content.body = String(localized: .Notification.gameNotificationGameStartBody)
         // An ordinary notification: the core asks for this one when no alarm may ring.
         content.sound = .default

@@ -19,7 +19,7 @@ use truapi::latest::{
 };
 use url::Url;
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, ProductId};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
@@ -62,7 +62,7 @@ pub struct FundingSessionSummary {
 	/// The session's identifier.
 	pub intent: String,
 	/// Product that opened the session, `None` when the host did.
-	pub owner_product_id: Option<String>,
+	pub owner_product_id: Option<ProductId>,
 	/// Which way value crossed the boundary.
 	pub direction: FundingDirection,
 	/// Amount sought, in the user's payment balance units.
@@ -120,7 +120,7 @@ pub struct FundingSession {
 	pub intent: String,
 	/// Product that opened the session and the only one that may watch it.
 	/// `None` when the host opened it, as the Balance card does.
-	pub owner_product_id: Option<String>,
+	pub owner_product_id: Option<ProductId>,
 	/// Which way value crosses the boundary.
 	pub direction: FundingDirection,
 	/// Amount sought, in the user's payment balance units. `None` until the
@@ -337,7 +337,7 @@ impl FundingSession {
 	/// provider takes it.
 	pub fn new(
 		intent: String,
-		owner_product_id: Option<String>,
+		owner_product_id: Option<ProductId>,
 		direction: FundingDirection,
 		amount: Option<u128>,
 		now_ms: u64,
@@ -915,7 +915,7 @@ pub fn retained(
 			.then_with(|| b.settled_at_ms().cmp(&a.settled_at_ms()))
 	});
 	open.append(&mut unrecorded);
-	let mut owner: Option<Option<String>> = None;
+	let mut owner: Option<Option<ProductId>> = None;
 	let mut owner_run = 0;
 	let (newest, older): (Vec<_>, Vec<_>) = recorded.into_iter().partition(|session| {
 		if owner.as_ref() == Some(&session.owner_product_id) {
@@ -1134,7 +1134,7 @@ mod tests {
 	fn session(direction: FundingDirection) -> FundingSession {
 		FundingSession::new(
 			"fs_1".to_string(),
-			Some("wallet.dot".to_string()),
+			Some(ProductId::for_test("wallet.dot")),
 			direction,
 			Some(100),
 			NOW,
@@ -1155,7 +1155,7 @@ mod tests {
 	fn recorded_sessions_keep_the_newest_per_owner_and_compact_the_rest() {
 		let recorded = |intent: String, owner: &str, settled_at_ms: u64| FundingSession {
 			acknowledged: true,
-			owner_product_id: Some(owner.to_string()),
+			owner_product_id: Some(ProductId::for_test(owner)),
 			..expired(&intent, settled_at_ms)
 		};
 		let mut sessions: Vec<FundingSession> = (0..RECORDED_PER_OWNER as u64 + 2)
@@ -1167,7 +1167,7 @@ mod tests {
 		let (kept, compacted) = retained(sessions);
 		let count = |owner: &str| {
 			kept.iter()
-				.filter(|session| session.owner_product_id.as_deref() == Some(owner))
+				.filter(|session| session.owner_product_id.as_ref().is_some_and(|id| *id == owner))
 				.count()
 		};
 

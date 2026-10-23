@@ -6,7 +6,6 @@ import MessageExchangeKit
 actor IncomingChatRequestCoordinationContext {
     let remoteContactResolver: RemoteContactResolving
     let requestStoreService: ChatRequestStoreServicing
-    let messageExchangeModeProvider: any MessageExchangeModeProviding
     private let contactsStorageService: ContactsLocalStorageServicing
 
     let discoveryOwnKeyIds: Set<Chat.Contact.Own>
@@ -20,7 +19,6 @@ actor IncomingChatRequestCoordinationContext {
         discoveryOwnKeyIds: Set<Chat.Contact.Own>,
         matchOwnKeyIds: Set<Chat.Contact.Own>,
         requestStoreService: ChatRequestStoreServicing,
-        messageExchangeModeProvider: any MessageExchangeModeProviding,
         contactsStorageService: ContactsLocalStorageServicing,
         remoteContactResolver: RemoteContactResolving
     ) {
@@ -28,7 +26,6 @@ actor IncomingChatRequestCoordinationContext {
         self.matchOwnKeyIds = matchOwnKeyIds
         self.remoteContactResolver = remoteContactResolver
         self.requestStoreService = requestStoreService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.contactsStorageService = contactsStorageService
     }
 
@@ -153,13 +150,12 @@ private extension IncomingChatRequestCoordinationContext {
             return
         }
 
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact.ownKeyId)
-        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice(for: contact.ownKeyId)
+        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice()
         try await requestStoreService.acceptOutgoingRequest(
             existingOutgoingRequest.requestId,
-            messageExchangeMode: messageExchangeMode,
             remoteIncoming: remoteRequest,
-            acceptorDevice: acceptorDevice
+            acceptorDevice: acceptorDevice,
+            peerDevice: nil
         )
 
         await erasePushToken(contact)
@@ -203,14 +199,9 @@ private extension IncomingChatRequestCoordinationContext {
             return
         }
 
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact.ownKeyId)
-        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice(for: contact.ownKeyId)
+        let acceptorDevice = try requestStoreService.buildLocalAcceptorDevice()
         try await requestStoreService.acceptIncomingRequest(
-            .new(
-                remoteRequest,
-                messageExchangeMode: messageExchangeMode,
-                acceptorDevice: acceptorDevice
-            )
+            .new(remoteRequest, acceptorDevice: acceptorDevice)
         )
         await erasePushToken(contact)
         await eraseVoIPPushToken(contact)

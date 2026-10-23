@@ -41,7 +41,7 @@ use crate::{
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
-		ProductContext, ProductExecutionKind,
+		ProductContext, ProductExecutionKind, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
 	unix_time::current_unix_millis,
@@ -331,7 +331,7 @@ impl FundingRegistry {
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
 	/// no such session is held, `Some(None)` when the host opened it.
-	pub fn owner(&self, intent: &str) -> Option<Option<String>> {
+	pub fn owner(&self, intent: &str) -> Option<Option<ProductId>> {
 		if let Some(session) = self.lock_sessions().get(intent) {
 			return Some(session.owner_product_id.clone());
 		}
@@ -711,11 +711,11 @@ impl FundingRegistry {
 				ended.iter().filter_map(|intent| holding.remove(intent)).collect();
 			(acquire, release)
 		};
-		for provider in &acquire {
-			services.worker_ledger.acquire(provider);
+		for provider in acquire.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
+			services.worker_ledger.acquire(&provider);
 		}
-		for provider in &release {
-			services.worker_ledger.release(provider);
+		for provider in release.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
+			services.worker_ledger.release(&provider);
 		}
 		for (intent, provider, settlement) in due {
 			if self.lock_following().insert(intent.clone()) {
@@ -1084,17 +1084,15 @@ impl RuntimeServices {
 		intent: &str,
 		provider_id: &str,
 	) -> Result<bool, FundingSessionError> {
-		let provider = ProductContext::new_with_execution(
-			provider_id.to_string(),
-			ProductExecutionKind::Worker,
-		)
-		.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
+		let provider = provider_id
+			.parse::<ProductId>()
+			.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		self.funding()
 			.select_provider(
 				self.platform.as_ref(),
 				current_unix_millis(),
 				intent,
-				&provider.product_id,
+				provider.as_str(),
 			)
 			.await
 	}
@@ -1110,16 +1108,16 @@ impl RuntimeServices {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
 			let registry = self.funding();
-			let provider =
-				match ProductContext::new_with_execution(provider_id, ProductExecutionKind::Worker)
-				{
-					Ok(provider) => provider,
-					Err(error) => {
-						tracing::warn!(%error, "a funding session names an invalid provider");
-						registry.lock_following().remove(&intent);
-						return;
-					},
-				};
+			let provider = match provider_id.parse::<ProductId>() {
+				Ok(product_id) => {
+					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+				},
+				Err(error) => {
+					tracing::warn!(%error, "a funding session names an invalid provider");
+					registry.lock_following().remove(&intent);
+					return;
+				},
+			};
 			let moved = match settlement {
 				Settlement::TopUps(top_ups) => {
 					let mut credited: Option<u128> = Some(0);
@@ -1396,7 +1394,7 @@ mod tests {
 	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
 		FundingSession::new(
 			intent.to_string(),
-			Some("wallet.dot".to_string()),
+			Some(ProductId::for_test("wallet.dot")),
 			FundingDirection::In,
 			Some(100),
 			opened_at_ms,
@@ -1507,8 +1505,10 @@ mod tests {
 	}
 
 	fn worker(provider_id: &str) -> ProductContext {
-		ProductContext::new_with_execution(provider_id.to_string(), ProductExecutionKind::Worker)
-			.expect("test provider id is valid")
+		ProductContext::new_with_execution(
+			ProductId::for_test(provider_id),
+			ProductExecutionKind::Worker,
+		)
 	}
 
 	// A top-up does not say which session it is for, so its amount picks the
@@ -1521,7 +1521,7 @@ mod tests {
 		for (intent, amount) in [("fs_fifty", 50), ("fs_thirty", 30)] {
 			let mut session = FundingSession::new(
 				intent.to_string(),
-				Some("wallet.dot".to_string()),
+				Some(ProductId::for_test("wallet.dot")),
 				FundingDirection::In,
 				Some(amount),
 				NOW,
@@ -1850,7 +1850,7 @@ mod tests {
 			(
 				None,
 				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
-				Some(Some("wallet.dot".to_string())),
+				Some(Some(ProductId::for_test("wallet.dot"))),
 				true,
 				(0..=RECORDED_PER_OWNER as u64)
 					.rev()

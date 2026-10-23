@@ -13,6 +13,8 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
+use crate::nft_purse::NftPurses;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
@@ -23,7 +25,7 @@ use crate::{
 		TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
@@ -383,6 +385,12 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// NFT purses over the core database, once it is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn nft_purses(&self) -> Option<NftPurses> {
+		self.core_db.get().cloned().map(NftPurses::new)
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

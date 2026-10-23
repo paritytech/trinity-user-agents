@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import DesignSystem
 
 public struct FiatOnRampViewLayout: View {
     @Bindable var viewModel: FiatOnRampViewModel
@@ -57,7 +58,7 @@ public struct FiatOnRampViewLayout: View {
             if let amountError = viewModel.amountError {
                 Text(amountError)
                     .textStyle(.body14Regular())
-                    .foregroundStyle(Color(.systemError))
+                    .foregroundStyle(Color.fgError)
                     .multilineTextAlignment(.center)
                     .padding(.top, 12)
             }
