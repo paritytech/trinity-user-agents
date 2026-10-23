@@ -406,8 +406,8 @@ pub struct NetworkConfig {
 	pub people_genesis: [u8; 32],
 	pub bulletin_genesis: [u8; 32],
 	/// Asset Hub genesis hash, both the role's identity in
-	/// [`NetworkConfig::host_chain_set`] and its routing key. The chain it connects
-	/// to is authoritative for `CheckGenesis`.
+	/// [`NetworkConfig::host_chain_set`] and its routing key, and the genesis the
+	/// CLI's Asset Hub extrinsics sign in `CheckGenesis`.
 	///
 	/// Wrong here is worse than stale elsewhere: routing matches on it, so a value
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.

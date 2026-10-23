@@ -22,7 +22,10 @@ pub mod slot;
 mod test_fixtures;
 /// Captured chain metadata for wallet allowance tests.
 #[cfg(test)]
-pub use test_fixtures::{asset_hub as asset_hub_test_metadata, people as people_test_metadata};
+pub use test_fixtures::{
+	ASSET_HUB_METADATA as ASSET_HUB_TEST_METADATA_BYTES, asset_hub as asset_hub_test_metadata,
+	people as people_test_metadata,
+};
 mod view;
 mod view_cache;
 

@@ -16,6 +16,7 @@
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
+use subxt::ext::scale_encode::EncodeAsType;
 use thiserror::Error;
 use tracing::warn;
 
@@ -72,7 +73,8 @@ pub fn build_reservation_message(
 
 /// The `Link` argument of `register_name`: how the new full-person username
 /// relates to the account's previous lite identity.
-#[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub enum Link {
 	/// Links the full username to an existing lite username, in dotted form
 	/// such as `alice.01`. The chat key is inherited from the lite entry.
@@ -88,18 +90,16 @@ pub fn build_register_proof_message(who: &[u8; 32], label: &[u8], link: &Link) -
 	blake2_256(&(who, label, link).encode())
 }
 
-/// Encodes the `DotnsGateway.register_name { who, label, link }` call.
-/// Layout: dispatch indices, the raw account, the compact-prefixed label, then
-/// the link.
-pub fn encode_register_name_call(
-	call_indices: [u8; 2],
-	who: &[u8; 32],
-	label: &[u8],
-	link: &Link,
-) -> Vec<u8> {
-	let mut call = call_indices.to_vec();
-	(who, label, link).encode_to(&mut call);
-	call
+/// `DotnsGateway.register_name` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct RegisterNameCallArgs {
+	/// Account the username is registered for.
+	pub who: [u8; 32],
+	/// Base label to register.
+	pub label: Vec<u8>,
+	/// How the new username relates to the account's lite identity.
+	pub link: Link,
 }
 
 /// Encodes the `AsDotnsGateway` extension extra.
@@ -944,14 +944,33 @@ mod tests {
 		);
 	}
 
+	/// The call arguments encode by name against Asset Hub's metadata into the
+	/// positional layout the gateway has always received.
 	#[test]
-	fn register_name_call_and_extension_extra_have_the_reference_layout() {
-		let link = Link::LiteUsername(b"alice.01".to_vec());
-		let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
-		assert_eq!(&call[..2], &[0x6a, 0x01]);
-		assert_eq!(&call[2..34], &[0x44; 32]);
-		assert_eq!(&call[34..], &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]);
+	fn register_name_call_args_encode_to_the_reference_layout() {
+		use subxt::{Metadata, ext::frame_decode::extrinsics::encode_call_data};
 
+		let metadata = Metadata::decode_from(
+			crate::runtime::statement_allowance::ASSET_HUB_TEST_METADATA_BYTES,
+		)
+		.unwrap();
+		let link = Link::LiteUsername(b"alice.01".to_vec());
+		let args = RegisterNameCallArgs {
+			who: [0x44; 32],
+			label: b"alicebc".to_vec(),
+			link: link.clone(),
+		};
+
+		let call =
+			encode_call_data("DotnsGateway", "register_name", &args, &metadata, metadata.types())
+				.unwrap();
+
+		let arguments = [vec![0x44; 32], b"alicebc".to_vec().encode(), link.encode()].concat();
+		assert_eq!(&call[2..], &arguments[..]);
+	}
+
+	#[test]
+	fn the_extension_extra_has_the_reference_layout() {
 		// Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
 		// revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
 		// RegisterFullName field order.
