@@ -26,21 +26,21 @@ Alice wants Bob, one of her contacts, to join her in a product. Her host sends t
 sees it there, chooses what to share back, and opens the product, installing it first if he doesn't have it yet.
 
 ```text
- Product (Alice)                Alice's host                 Statement store                 Bob's host                 Chat
-        |                             |                             |                             |                       |
-        |------- contacts.pick ------>|                             |                             |                       |
-        |<.... Picked { handle } .....|                             |                             |                       |
-        |------- sharing.send ------->|                             |                             |                       |
-        |                             | Alice confirms              |                             |                       |
-        |<...... { shareId } .........|                             |                             |                       |
-        |                             |------- ShareRequest ------->|                             |                       |
-        |                             |                             |------- ShareRequest ------->|                       |
-        |                             |                             |                             |--------- card ------->|
-        |                             |                             |                             |<-- Review & share ----|
-        |                             |                             |<------ ShareResponse -------|                       |
-        |                             |<------ ShareResponse -------|                             |                       |
-        |<------ ShareResponse -------|                             |                             |                       |
-        |                             |                             |                             |                       |
+ Product (Alice)                Alice's host                   Bob's host                 Chat
+        |                             |                             |                       |
+        |------- contacts.pick ------>|                             |                       |
+        |<.... Picked { handle } .....|                             |                       |
+        |------- sharing.send ------->|                             |                       |
+        |                             | Alice confirms              |                       |
+        |<...... { shareId } .........|                             |                       |
+        |                             |------- ShareRequest ------->|                       |
+        |                             | (via Alice and Bob's chat)  |                       |
+        |                             |                             |--------- card ------->|
+        |                             |                             |<-- Review & share ----|
+        |                             |<------ ShareResponse -------|                       |
+        |                             | (via Alice and Bob's chat)  |                       |
+        |<------ ShareResponse -------|                             |                       |
+        |                             |                             |                       |
 ```
 
 1. Alice picks Bob in the host's contact selector. A product gets a handle.
@@ -59,20 +59,19 @@ sharing request to the shop's sharing inbox; it never appears in chat.
 See [Sharing inbox](#sharing-inbox) for how requests reach a DotNS name.
 
 ```text
- Market (Alice)                 Alice's host                 Statement store                Acme's host           Market (Acme)
-        |                             |                             |                             |                       |
-        |------- sharing.send ------->|                             |                             |                       |
-        |                             | Alice confirms              |                             |                       |
-        |<...... { shareId } .........|                             |                             |                       |
-        |                             | looks up acme.dot           |                             |                       |
-        |                             |------- ShareRequest ------->|                             |                       |
-        |                             |                             |------- ShareRequest ------->|                       |
-        |                             |                             |                             | keeps grants          |
-        |                             |                             |                             | notifies Acme         |
-        |                             |                             |                             |------ Received ------>|
-        |                             |                             |                             |<--- opens route ------|
-        |                             |                             |                             |----- draws data ----->|
-        |                             |                             |                             |                       |
+ Market (Alice)                 Alice's host                   Acme's host            Market (Acme)
+        |                             |                             |                       |
+        |------- sharing.send ------->|                             |                       |
+        |                             | Alice confirms              |                       |
+        |<...... { shareId } .........|                             |                       |
+        |                             |------- ShareRequest ------->|                       |
+        |                             | (via acme.dot sharing inbox)|                       |
+        |                             |                             | keeps grants          |
+        |                             |                             | notifies Acme         |
+        |                             |                             |------ Received ------>|
+        |                             |                             |<--- opens route ------|
+        |                             |                             |----- draws data ----->|
+        |                             |                             |                       |
 ```
 
 1. Market calls `sharing.send` with `to: DotNs("acme.dot")` and the scopes Alice gives in `give`. Alice confirms in a
@@ -141,10 +140,13 @@ pub enum HostSharingSendError {
 
 #### Delivering through the statement store
 
-Alice's host finds her chat with Bob from the handle and posts the sharing request there, stamped with the calling
-product's id. It travels as an
+Alice's host finds her chat with Bob from the handle and posts the sharing request there as a chat message. Like every
+chat message, it travels as a statement in their chat session. Its content is an
 [RFC2](https://github.com/paritytech/trinity-user-agents/blob/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md)
-`Custom` message with a message type reserved for hosts.
+`Custom` message with a message type reserved for hosts, and its payload is the `ShareRequest`, stamped with the calling
+product's id.
+
+For a DotNS name, the same `Custom` message goes in a statement to the name's [sharing inbox](#sharing-inbox) instead.
 
 ```rust
 MessageContent::Custom {
