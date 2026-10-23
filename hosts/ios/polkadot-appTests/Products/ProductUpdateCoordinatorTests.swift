@@ -115,6 +115,19 @@ struct ProductUpdateCoordinatorTests {
         #expect(!coordinator.applyPendingUpdate(of: Self.productId))
     }
 
+    @Test func supersededContentIsRemovedAtStartAndAfterAnApplyKeepingWhatOpenSPAsServe() async {
+        let reloader = StubSPAProductReloader()
+        reloader.servedContentHash = "01"
+        _ = coordinator.register(productId: "other.dot", reloader: reloader)
+        coordinator.start()
+
+        loader.simulate(update: Self.makeUpdate())
+        await workerReloader.waitForReloads(1)
+        await loader.waitForRemovals(2)
+
+        #expect(loader.keptHashesOnRemoval == [["01"], ["01"]])
+    }
+
     @Test func updatePublishedBeforeStartIsStillHandled() async {
         let update = Self.makeUpdate()
         let coordinator = ProductUpdateCoordinator(

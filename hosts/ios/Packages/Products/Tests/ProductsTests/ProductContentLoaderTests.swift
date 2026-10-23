@@ -10,8 +10,8 @@ import Testing
 final class ProductContentLoaderTests {
     private struct Unreachable: Error {}
 
-    private static let contentHash = Data(repeating: 0xCD, count: 34)
-    private static let updatedContentHash = Data(repeating: 0xCE, count: 34)
+    private let contentHash: Data
+    private let updatedContentHash: Data
 
     private let suiteName = "ProductContentLoaderTests.\(UUID().uuidString)"
     private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
@@ -20,8 +20,10 @@ final class ProductContentLoaderTests {
     private let storage = InMemoryDotNsContentStorage()
     private let contentHashCache = ContentHashCache()
 
-    init() {
-        contracts.set(contentHash: Self.contentHash, name: productId)
+    init() throws {
+        contentHash = try Data.randomOrError(of: 34)
+        updatedContentHash = try Data.randomOrError(of: 34)
+        contracts.set(contentHash: contentHash, name: productId)
     }
 
     deinit {
@@ -39,7 +41,7 @@ final class ProductContentLoaderTests {
             await clock.resumeSleep(for: .seconds(delay))
         }
 
-        #expect(try await open.value.appContent.localURL == storage.directory(for: Self.contentHash.toHex()))
+        #expect(try await open.value.appContent.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
@@ -269,6 +271,55 @@ final class ProductContentLoaderTests {
         #expect(reporter.reported.isEmpty)
     }
 
+    @Test func supersededArchiveIsRemovedOnceNothingUsesIt() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+        await environment.loader.apply(update)
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(!storage.contentExists(contentHash: contentHash.toHex()))
+        #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
+    }
+
+    @Test func archiveServedByAnOpenSPAIsKept() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+        await environment.loader.apply(update)
+
+        await environment.loader.removeSupersededContent(keeping: [contentHash.toHex()])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+    }
+
+    @Test func archivesOfTheAppliedAndThePendingVersionAreKept() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        _ = try #require(await environment.loader.refresh(productId))
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+        #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
+    }
+
+    @Test func recentlyWrittenArchiveIsKept() async throws {
+        let environment = try Environment(self, now: Date(timeIntervalSince1970: 60))
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+        await environment.loader.apply(update)
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+    }
+
     @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
         let environment = try Environment(self)
         let first = try await environment.loader.open(productId, policy: .untilCancelled)
@@ -289,12 +340,12 @@ final class ProductContentLoaderTests {
         let opened = try await environment.loader.open(productId, policy: .untilCancelled)
         var updates = environment.loader.updates().makeAsyncIterator()
 
-        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId)
         let update = try #require(await environment.loader.refresh(productId))
 
         #expect(update.previous == opened.version)
-        #expect(update.latest.appContent.contentHash == Self.updatedContentHash.toHex())
-        #expect(storage.contentExists(contentHash: Self.updatedContentHash.toHex()))
+        #expect(update.latest.appContent.contentHash == updatedContentHash.toHex())
+        #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
         #expect(try await updates.next() == update)
     }
 
@@ -302,7 +353,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
         let opened = try await environment.loader.open(productId, policy: .untilCancelled)
 
-        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId)
         let update = try #require(await environment.loader.refresh(productId))
 
         #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == opened.version)
@@ -323,7 +374,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
         _ = try await environment.loader.open(productId, policy: .untilCancelled)
 
-        contracts.set(contentHash: Self.updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId)
 
         #expect(await environment.loader.refresh(productId) != nil)
         #expect(await environment.loader.refresh(productId) == nil)
@@ -359,7 +410,8 @@ private extension ProductContentLoaderTests {
             isPathSatisfied: Bool = true,
             expiringBackgroundRuns: Int = 0,
             reporter: RecordingIssueReporter = RecordingIssueReporter(),
-            dates: [Date] = [Date(timeIntervalSince1970: 0)]
+            dates: [Date] = [Date(timeIntervalSince1970: 0)],
+            now: Date = Date()
         ) throws {
             fetcher = StubCarFetcher(failures: fetchFailures)
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
@@ -379,6 +431,7 @@ private extension ProductContentLoaderTests {
                     snapshot: snapshot,
                     storage: localStorage,
                     tldProvider: StubTldProvider(),
+                    dateProvider: SequencedDateProvider([now]),
                     logger: SilentLogger()
                 ),
                 environment: ProductContentLoader.Environment(

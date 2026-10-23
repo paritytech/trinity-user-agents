@@ -1,27 +1,36 @@
 import Foundation
+import FoundationExt
 import SDKLogger
 
 public protocol ProductVersionCaching: Sendable {
     func open(_ productId: ProductId) async throws -> ProductContent
     func apply(_ version: ProductVersion) async
     func invalidate(_ version: ProductVersion) async
+    func removeSupersededContent(keeping pinnedHashes: Set<String>) async
 }
 
 public actor ProductVersionCache {
     private let snapshot: DotNsRecordSnapshotProtocol
     private let storage: DotNsLocalStorage
     private let tldProvider: DotNsTldProviding
+    private let dateProvider: DateProviding
     private let logger: SDKLoggerProtocol
+
+    private enum Constants {
+        static let minimumAgeBeforeRemoval: TimeInterval = 10 * 60
+    }
 
     public init(
         snapshot: DotNsRecordSnapshotProtocol,
         storage: DotNsLocalStorage,
         tldProvider: DotNsTldProviding,
+        dateProvider: DateProviding = NowDateProvider(),
         logger: SDKLoggerProtocol
     ) {
         self.snapshot = snapshot
         self.storage = storage
         self.tldProvider = tldProvider
+        self.dateProvider = dateProvider
         self.logger = logger
     }
 }
@@ -60,6 +69,28 @@ extension ProductVersionCache: ProductVersionCaching {
 
         for (name, hash) in version.contentHashes {
             storage.contentHashes.putContentHash(name: name, hash: hash)
+        }
+    }
+
+    public func removeSupersededContent(keeping pinnedHashes: Set<String>) async {
+        let now = await dateProvider.read()
+        let keptHashes = pinnedHashes.union(storage.contentHashes.allContentHashes())
+
+        let superseded = storage.content.storedContents().filter { content in
+            !keptHashes.contains(content.contentHash)
+                && now.timeIntervalSince(content.modifiedAt) >= Constants.minimumAgeBeforeRemoval
+        }
+
+        for content in superseded {
+            do {
+                try storage.content.deleteContent(contentHash: content.contentHash)
+            } catch {
+                logger.error("Failed to remove superseded product content: \(error)")
+            }
+        }
+
+        if !superseded.isEmpty {
+            logger.debug("Removed \(superseded.count) superseded product archives")
         }
     }
 

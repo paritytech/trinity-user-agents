@@ -122,6 +122,11 @@ extension ProductContentLoader: ProductContentLoading {
         Array(pendingByProduct.values)
     }
 
+    public func removeSupersededContent(keeping servedHashes: Set<String>) async {
+        let pendingHashes = pendingByProduct.values.flatMap(\.latest.version.contentHashes.values)
+        await cache.removeSupersededContent(keeping: servedHashes.union(pendingHashes))
+    }
+
     public nonisolated func updates() -> AnyAsyncSequence<ProductUpdate> {
         updatesSubject.eraseToAnyAsyncSequence()
     }

@@ -4,6 +4,8 @@ import Products
 
 @MainActor
 protocol SPAProductReloading: AnyObject {
+    var servedContentHash: String? { get }
+
     func serveAppliedBuild()
 }
 
@@ -66,6 +68,8 @@ final class ProductUpdateCoordinator {
             for update in await contentLoader.pendingUpdates() {
                 self?.handle(update)
             }
+
+            await self?.removeSupersededContent()
 
             do {
                 for try await update in updates {
@@ -152,6 +156,7 @@ private extension ProductUpdateCoordinator {
             }
 
             await workerReloader.reloadWorker(of: update.productId)
+            await self?.removeSupersededContent()
         }
 
         showNextNotice()
@@ -193,6 +198,11 @@ private extension ProductUpdateCoordinator {
 
         noticeProductId = nil
         noticePresenter.hide()
+    }
+
+    func removeSupersededContent() async {
+        let servedHashes = Set(presences.values.compactMap { $0.reloader?.servedContentHash })
+        await contentLoader.removeSupersededContent(keeping: servedHashes)
     }
 
     func refreshPresentedProducts() {

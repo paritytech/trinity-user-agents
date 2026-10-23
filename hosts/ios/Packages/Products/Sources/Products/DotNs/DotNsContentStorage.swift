@@ -9,6 +9,16 @@ public enum DotNsContentStorageError: Error {
     case invalidContentHash(String)
 }
 
+public struct DotNsStoredContent: Equatable, Sendable {
+    public let contentHash: String
+    public let modifiedAt: Date
+
+    public init(contentHash: String, modifiedAt: Date) {
+        self.contentHash = contentHash
+        self.modifiedAt = modifiedAt
+    }
+}
+
 public protocol DotNsContentStorageProtocol {
     func saveContent(contentHash: String, write: (CarContentWriter) throws -> Void) throws
     func getContentDirectory(contentHash: String) -> URL?
@@ -16,6 +26,7 @@ public protocol DotNsContentStorageProtocol {
     func deleteContent(contentHash: String) throws
     func loadContent(contentHash: String, relativePath: String) -> Data?
     func deleteAll() throws
+    func storedContents() -> [DotNsStoredContent]
 }
 
 public final class DotNsContentStorage: DotNsContentStorageProtocol {
@@ -85,6 +96,24 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
     public func deleteAll() throws {
         guard fileManager.fileExists(atPath: baseDirectory.path) else { return }
         try fileManager.removeItem(at: baseDirectory)
+    }
+
+    public func storedContents() -> [DotNsStoredContent] {
+        let entries = (try? fileManager.contentsOfDirectory(
+            at: baseDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+
+        return entries.compactMap { entry in
+            let contentHash = entry.lastPathComponent
+
+            guard (try? contentDirectory(for: contentHash)) != nil else { return nil }
+
+            let modifiedAt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+
+            return DotNsStoredContent(contentHash: contentHash, modifiedAt: modifiedAt)
+        }
     }
 }
 
