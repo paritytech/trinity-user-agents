@@ -88,6 +88,9 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
         guard try await promptOsPermissionIfNeeded(currentStatus: osPermission, capability: capability) else {
             throw DevicePermissionRequestError.osDenied
         }
+        if state != .allowedAlways, decision == .allowAlways {
+            try await repository.grant(productId: productId, permission: permission)
+        }
         return decision
     }
 }

@@ -300,13 +300,24 @@ struct DeviceCapabilityPermissionHandlerTests {
     }
 
     @Test(arguments: [PermissionDecision.allowOnce, .allowAlways, .deny])
-    func requestDecisionPreservesConsentWithoutDuplicatingGrants(decision: PermissionDecision) async throws {
+    func requestDecisionRecordsOnlyAStandingGrantForSettings(decision: PermissionDecision) async throws {
         let (handler, repository, _, _) = makeSUT(osStatus: .allowed, promptDecision: decision)
         let result = try await handler.requestDecision(productId: productId, capability: capability)
         #expect(result == decision)
+        let recorded: ProductPermissionState = decision == .allowAlways ? .allowedAlways : .notDetermined
         #expect(try await repository.getPermissionState(
             productId: productId, permission: .deviceCapability(capability)
-        ) == .notDetermined)
+        ) == recorded)
+    }
+
+    @Test
+    func requestDecisionDoesNotRewriteAGrantItAnsweredFrom() async throws {
+        let (handler, repository, requester, _) = makeSUT(osStatus: .allowed, promptDecision: .deny)
+        repository.stubState(productId: productId, permission: .deviceCapability(capability), state: .allowedAlways)
+        let result = try await handler.requestDecision(productId: productId, capability: capability)
+        #expect(result == .allowAlways)
+        #expect(requester.promptCalls.isEmpty)
+        #expect(repository.grantCalls.isEmpty)
     }
 
     @Test
