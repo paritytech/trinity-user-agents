@@ -49,15 +49,6 @@ interface ProductSessionController {
     fun ensureActiveLive()
 
     /**
-     * The product in the tab with [id] when it has published a build other than the one its page shows, else null.
-     * A sleeping tab never has one: it loads the latest build when it wakes up.
-     */
-    suspend fun productWithNewBuild(id: Long): Result<ProductId?>
-
-    /** Reload the page of the tab with [id], which picks up the product's latest build. */
-    fun reloadTab(id: Long)
-
-    /**
      * Reload the active tab, clearing the WebView http cache first so a development server's changed bytes
      * are not hidden behind the previous build. The cache is process-wide, so this drops every tab's cached
      * responses. No-op when the active tab has no live WebView.

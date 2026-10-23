@@ -26,7 +26,6 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.Persisted
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.gatewayUrlOf
-import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -159,15 +158,6 @@ class RealProductSessionController @Inject constructor(
         persist(tab)
     }
 
-    override suspend fun productWithNewBuild(id: Long): Result<ProductId?> {
-        val tab = tabs.value.firstOrNull { it.id == id } ?: return Result.success(null)
-        return tab.hasNewBuild().map { hasNewBuild -> if (hasNewBuild) productIdOf(tab.url.value) else null }
-    }
-
-    override fun reloadTab(id: Long) {
-        tabs.value.firstOrNull { it.id == id }?.reloadOnNewBuild()
-    }
-
     // Focus the same-product tab (one per product), else open a new one from [url] (keeping its path).
     private fun openTab(url: String) {
         val tld = dotNsTldProvider.currentTldOrNull()
@@ -218,7 +208,6 @@ class RealProductSessionController @Inject constructor(
         var lastActive = 0L
 
         private var scope: CoroutineScope? = null
-        private var provider: BrowserWebViewProvider? = null
         val isLive: Boolean get() = scope != null
 
         // What the active-tab UI shows: reacts to this tab's own url/title/progress.
@@ -234,16 +223,8 @@ class RealProductSessionController @Inject constructor(
         fun sleep() {
             scope?.cancel()
             scope = null
-            provider = null
             webView.value = null
             loadProgress.value = DotNsLoadProgress.Idle
-        }
-
-        suspend fun hasNewBuild(): Result<Boolean> = provider?.hasNewBuild() ?: Result.success(false)
-
-        fun reloadOnNewBuild() {
-            val provider = provider ?: return
-            scope?.launch { provider.reloadOnNewBuild() }
         }
 
         fun info(activeId: Long?, icons: Map<String, String>): Flow<TabInfo> =
@@ -263,7 +244,6 @@ class RealProductSessionController @Inject constructor(
                 scope = scope,
                 onDeeplink = { launchDeeplink(it, scope) },
             )
-            this.provider = provider
 
             // A dev server tab keeps the address it was opened with, since the page's own navigation can drop
             // the `product_id` it runs as, and a woken or restored tab is rebuilt from this address.

@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHost
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductsInUse
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
 
@@ -31,6 +32,7 @@ class ChatWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: DotNsServingHostResolver,
+    productsInUse: ProductsInUse,
     @Assisted private val config: ChatWebViewConfig,
     @Assisted private val scope: CoroutineScope,
 ) : WebViewProvider(dispatchers) {
@@ -43,6 +45,10 @@ class ChatWebViewProvider @AssistedInject constructor(
     private val workerScript: WorkerScript = config.workerScript
 
     override val callingProductIdProvider = FixedProductId(productId)
+
+    init {
+        productsInUse.hold(productId, scope)
+    }
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, workerScript.baseUrl)
 

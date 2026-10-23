@@ -1,19 +1,30 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
+import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
-import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
+import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdater
+import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -27,155 +38,192 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
-private const val TAB_ID = 7L
-private const val OTHER_TAB_ID = 8L
-
 private val TLD = DotNsTld.parse("paseo")!!
 private val PRODUCT = ProductId.fromStoredValue("getcash.paseo")
+private val OTHER_PRODUCT = ProductId.fromStoredValue("swap.paseo")
+
+private const val PRODUCT_APP = "app.getcash.paseo"
+private const val PRODUCT_WORKER = "worker.getcash.paseo"
+private const val OTHER_PRODUCT_APP = "app.swap.paseo"
 
 class SpaBrowserViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
+    private val activeTab = MutableStateFlow<BrowserSessionInfo?>(null)
+    private val pendingNames = MutableStateFlow<Set<String>>(emptySet())
+
     private val productSessionController: ProductSessionController = mockk(relaxUnitFun = true)
+    private val productUpdater: ProductUpdater = mockk(relaxUnitFun = true)
+    private val interactor: SpaBrowserInteractor = mockk()
     private val router: ProductsRouter = mockk(relaxUnitFun = true)
     private val dotNsTldProvider: DotNsTldProvider = mockk()
-    private val openTabs = MutableStateFlow(listOf(activeTab()))
 
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { productSessionController.activeTab } returns MutableStateFlow(null)
-        every { productSessionController.openTabs } returns openTabs
+        mockkStatic(Uri::class)
+        activeTab.value = tabOn(PRODUCT)
+        every { productSessionController.activeTab } returns activeTab
+        every { productSessionController.openTabs } returns MutableStateFlow(emptyList())
         every { productSessionController.webView } returns MutableStateFlow(null)
         every { productSessionController.loadProgress } returns MutableStateFlow(DotNsLoadProgress.Idle)
+        every { productUpdater.observePendingNames() } returns pendingNames
+        coEvery { productUpdater.check(any()) } returns Result.success(Unit)
+        coEvery { interactor.resolveProduct(any()) } answers { Result.success(resolved(firstArg())) }
         coEvery { dotNsTldProvider.getTld() } returns Result.success(TLD)
     }
 
     @After
-    fun tearDown() = Dispatchers.resetMain()
+    fun tearDown() {
+        unmockkStatic(Uri::class)
+        Dispatchers.resetMain()
+    }
 
-    // A player in the middle of a round would lose it, so the new build waits for their consent. The prompt names
-    // the product, since "the app" could as well be read as the host app.
+    // A player in the middle of a round would lose it, so the new build waits for their consent.
     @Test
-    fun `a new build is offered rather than loaded`() = runTest(testDispatcher) {
-        withOutdatedTab()
+    fun `a downloaded build is offered rather than loaded`() = runTest(testDispatcher) {
         val model = viewModel()
 
-        model.onScreenStarted()
+        pendingNames.value = setOf(PRODUCT_APP)
         advanceUntilIdle()
 
-        assertEquals(PRODUCT.value, model.state.value.newBuildPromptProduct)
-        verifyTabNotReloaded()
+        assertEquals(PRODUCT, model.state.value.updateReadyFor)
+        verifyNothingApplied()
+    }
+
+    @Test
+    fun `a build downloaded for another product is not offered`() = runTest(testDispatcher) {
+        val model = viewModel()
+
+        pendingNames.value = setOf(OTHER_PRODUCT_APP)
+        advanceUntilIdle()
+
+        assertNull(model.state.value.updateReadyFor)
+    }
+
+    // Reloading the page would change nothing on screen; the worker picks its build up once the product is off screen.
+    @Test
+    fun `a new build of the product's worker alone is not offered on its page`() = runTest(testDispatcher) {
+        val model = viewModel()
+
+        pendingNames.value = setOf(PRODUCT_WORKER)
+        advanceUntilIdle()
+
+        assertNull(model.state.value.updateReadyFor)
     }
 
     // A built-in product should feel like part of the app, which updates without asking either.
     @Test
     fun `a built-in product is not asked about its new build`() = runTest(testDispatcher) {
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } returns Result.success(ReservedProductIds.game(TLD))
+        val game = ReservedProductIds.game(TLD)
+        activeTab.value = tabOn(game)
         val model = viewModel()
 
-        model.onScreenStarted()
+        pendingNames.value = setOf("app.${game.value}")
         advanceUntilIdle()
 
-        assertNull(model.state.value.newBuildPromptProduct)
-        verifyTabNotReloaded()
+        assertNull(model.state.value.updateReadyFor)
     }
 
+    // Only the page's own name: the product's worker may be running on its build, and that one waits for the idle moment.
     @Test
-    fun `agreeing to the new build reloads the tab`() = runTest(testDispatcher) {
-        withOutdatedTab()
+    fun `agreeing to the new build applies the page's build and reloads the page`() = runTest(testDispatcher) {
         val model = viewModel()
-        model.onScreenStarted()
+        pendingNames.value = setOf(PRODUCT_APP, PRODUCT_WORKER)
         advanceUntilIdle()
 
-        model.onReloadForNewBuildConfirmed()
+        model.onUpdateReloadClick()
         advanceUntilIdle()
 
-        assertNull(model.state.value.newBuildPromptProduct)
-        verify { productSessionController.reloadTab(TAB_ID) }
+        coVerify { productUpdater.applyName(PRODUCT_APP) }
+        coVerify(exactly = 0) { productUpdater.applyName(PRODUCT_WORKER) }
+        verify { productSessionController.reload() }
     }
 
+    // "Not now" means not on this visit; the build is still there to offer when the user comes back.
     @Test
-    fun `declining the new build leaves the tab as it is`() = runTest(testDispatcher) {
-        withOutdatedTab()
+    fun `putting the new build off hides the offer until the screen is next started`() = runTest(testDispatcher) {
         val model = viewModel()
+        pendingNames.value = setOf(PRODUCT_APP)
+        advanceUntilIdle()
+
+        model.onUpdateDismissClick()
+        advanceUntilIdle()
+        assertNull(model.state.value.updateReadyFor)
+        verifyNothingApplied()
+
         model.onScreenStarted()
         advanceUntilIdle()
-
-        model.onReloadForNewBuildDismissed()
-        advanceUntilIdle()
-
-        assertNull(model.state.value.newBuildPromptProduct)
-        verifyTabNotReloaded()
+        assertEquals(PRODUCT, model.state.value.updateReadyFor)
     }
 
+    // The app may have been away for days; the product on screen is checked without waiting for the next background run.
     @Test
-    fun `a tab on the latest build is left alone`() = runTest(testDispatcher) {
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } returns Result.success(null)
+    fun `starting the screen checks the product on it for a new build`() = runTest(testDispatcher) {
         val model = viewModel()
 
         model.onScreenStarted()
         advanceUntilIdle()
 
-        assertNull(model.state.value.newBuildPromptProduct)
+        coVerify { productUpdater.check(PRODUCT) }
     }
 
     // Coming back to the app offline must not interrupt the product with an error.
     @Test
     fun `a check that cannot reach the chain is left unanswered`() = runTest(testDispatcher) {
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } returns Result.failure(IllegalStateException("no node"))
+        coEvery { productUpdater.check(PRODUCT) } returns Result.failure(IllegalStateException("no node"))
         val model = viewModel()
 
         model.onScreenStarted()
         advanceUntilIdle()
 
-        assertNull(model.state.value.newBuildPromptProduct)
+        assertNull(model.state.value.updateReadyFor)
     }
 
-    // The answer comes from the chain, and by then the user may be looking at another product.
-    @Test
-    fun `a new build is not offered over a tab the user switched to`() = runTest(testDispatcher) {
-        val answer = CompletableDeferred<Result<ProductId?>>()
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } coAnswers { answer.await() }
-        val model = viewModel()
-        model.onScreenStarted()
-        advanceUntilIdle()
-
-        openTabs.value = listOf(activeTab().copy(isActive = false), activeTab().copy(id = OTHER_TAB_ID))
-        answer.complete(Result.success(PRODUCT))
-        advanceUntilIdle()
-
-        assertNull(model.state.value.newBuildPromptProduct)
+    private fun verifyNothingApplied() {
+        coVerify(exactly = 0) { productUpdater.applyName(any()) }
+        verify(exactly = 0) { productSessionController.reload() }
     }
 
-    // A tab that woke up from sleep already runs the latest build, so an offer made before must not stay up.
-    @Test
-    fun `a later check that finds the tab up to date withdraws the offer`() = runTest(testDispatcher) {
-        withOutdatedTab()
-        val model = viewModel()
-        model.onScreenStarted()
-        advanceUntilIdle()
+    private fun resolved(productId: ProductId) = ResolvedProduct(
+        product = Product(id = productId, name = productId.value, icon = null),
+        executables = Executables(
+            app = ProductExecutable.App(host = ExecutableHost("app.${productId.value}"), appVersion = SemVer.ZERO),
+            widget = null,
+            worker = null,
+        ),
+    )
 
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } returns Result.success(null)
-        model.onScreenStarted()
-        advanceUntilIdle()
+    private fun tabOn(productId: ProductId): BrowserSessionInfo {
+        val url = "https://${productId.value}/"
+        stubUri(url, host = productId.value)
 
-        assertNull(model.state.value.newBuildPromptProduct)
+        return BrowserSessionInfo(
+            title = productId.value,
+            host = productId.value,
+            url = url,
+            isLoading = false,
+            loadFraction = null,
+            isDevServer = false,
+        )
     }
 
-    private fun withOutdatedTab() {
-        coEvery { productSessionController.productWithNewBuild(TAB_ID) } returns Result.success(PRODUCT)
+    // The product id is read off the tab's url through android.net.Uri, which a unit test has to stand in for.
+    private fun stubUri(url: String, host: String) {
+        val uri = mockk<Uri>()
+        val builder = mockk<Uri.Builder>()
+        every { uri.toString() } returns url
+        every { uri.host } returns host
+        every { uri.buildUpon() } returns builder
+        every { builder.authority(any()) } returns builder
+        every { builder.build() } returns uri
+        every { Uri.parse(url) } returns uri
     }
-
-    private fun verifyTabNotReloaded() {
-        verify(exactly = 0) { productSessionController.reloadTab(any()) }
-    }
-
-    private fun activeTab() = TabInfo(id = TAB_ID, title = "Game", host = "game.dot", iconUrl = null, isActive = true)
 
     private fun viewModel() = SpaBrowserViewModel(
         productSessionController = productSessionController,
-        interactor = mockk(),
+        interactor = interactor,
+        productUpdater = productUpdater,
         router = router,
         dotNsTldProvider = dotNsTldProvider,
         savedStateHandle = SavedStateHandle(),

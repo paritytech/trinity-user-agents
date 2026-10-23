@@ -287,10 +287,8 @@
     <string name="spa_browser_menu_refresh">Refresh</string>
     <string name="spa_browser_menu_share">Share</string>
     <string name="spa_browser_page_no_app_surface">This product doesn\'t have an app on this device.</string>
-    <string name="spa_browser_new_build_title">New version of “%1$s” is available</string>
-    <string name="spa_browser_new_build_message">Reload to use the new version. Anything you haven\'t saved in “%1$s” will be lost.</string>
-    <string name="spa_browser_new_build_reload">Reload</string>
-    <string name="spa_browser_new_build_later">Later</string>
+    <string name="spa_browser_update_ready">New version of “%1$s” is ready</string>
+    <string name="spa_browser_update_reload">Reload</string>
     <string name="product_resolution_error_malformed_manifest">This product published a manifest this app can\'t read. Contact the product\'s developer.</string>
     <string name="product_resolution_error_unknown">Couldn\'t load this product.</string>
     <string name="debug_menu_enable_retro_mode">Enable retro mode</string>

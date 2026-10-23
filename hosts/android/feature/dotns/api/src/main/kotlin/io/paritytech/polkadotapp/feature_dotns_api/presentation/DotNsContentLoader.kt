@@ -33,9 +33,4 @@ class DotNsContentLoader(
         lastRequestedDomain.value = dotNsName
         return delegate.resolveToLocalUri(dotNsName)
     }
-
-    override suspend fun updateToLatest(dotNsName: String): Result<Uri> {
-        lastRequestedDomain.value = dotNsName
-        return delegate.updateToLatest(dotNsName)
-    }
 }

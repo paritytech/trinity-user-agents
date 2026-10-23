@@ -3,6 +3,11 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -12,21 +17,33 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
+import io.paritytech.polkadotapp.design.components.button.default.PolkadotButtonSize
+import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
-import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
+import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.Close
+import io.paritytech.polkadotapp.design.components.icon.vectors.Info
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
+import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
@@ -56,32 +73,8 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         state = state,
         webView = webView,
         onRefresh = viewModel::onRefresh,
-    )
-
-    val newBuildProduct = state.newBuildPromptProduct
-    if (newBuildProduct != null) {
-        NewBuildDialog(
-            product = newBuildProduct,
-            onReload = viewModel::onReloadForNewBuildConfirmed,
-            onDismiss = viewModel::onReloadForNewBuildDismissed,
-        )
-    }
-}
-
-@Composable
-private fun NewBuildDialog(
-    product: String,
-    onReload: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    NovaAlertDialog(
-        title = stringResource(RCommon.string.spa_browser_new_build_title, product),
-        text = stringResource(RCommon.string.spa_browser_new_build_message, product),
-        positiveButtonTitle = stringResource(RCommon.string.spa_browser_new_build_reload),
-        onPositiveButtonClick = onReload,
-        negativeButtonTitle = stringResource(RCommon.string.spa_browser_new_build_later),
-        onNegativeButtonClick = onDismiss,
-        onDismissRequest = onDismiss,
+        onUpdateReload = viewModel::onUpdateReloadClick,
+        onUpdateDismiss = viewModel::onUpdateDismissClick,
     )
 }
 
@@ -90,6 +83,8 @@ internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
     onRefresh: () -> Unit,
+    onUpdateReload: () -> Unit,
+    onUpdateDismiss: () -> Unit,
 ) {
     // No chrome: the product fills the screen. There is no in-screen way to close it — the only exit is
     // the global tab bar (pull it out to switch or manage apps).
@@ -110,6 +105,13 @@ internal fun SpaBrowserScreenInternal(
                         webView = webView,
                     )
 
+                    UpdateReadyNotice(
+                        product = state.updateReadyFor?.value,
+                        onReload = onUpdateReload,
+                        onDismiss = onUpdateDismiss,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+
                     if (state.isDevServer) {
                         PolkadotIconButton(
                             icon = NovaIcons.Refreshing,
@@ -123,6 +125,94 @@ internal fun SpaBrowserScreenInternal(
                     }
                 }
             }
+        }
+    }
+}
+
+// Floats over the page like the root's notices do: the user may be in the middle of something and decides when to reload.
+@Composable
+private fun UpdateReadyNotice(
+    modifier: Modifier = Modifier,
+    product: String?,
+    onReload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // The name stays on the notice while it slides out, or the text would go blank for the exit animation.
+    var shownProduct by remember { mutableStateOf(product) }
+    if (product != null) shownProduct = product
+
+    AnimatedVisibility(
+        modifier = modifier.padding(
+            horizontal = PolkadotTheme.spacings.mediumIncreased,
+            vertical = PolkadotTheme.spacings.small,
+        ),
+        visible = product != null,
+        enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+    ) {
+        UpdateReadyNoticeContent(
+            product = shownProduct.orEmpty(),
+            onReload = onReload,
+            onDismiss = onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun UpdateReadyNoticeContent(
+    product: String,
+    onReload: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val closeDescription = stringResource(RCommon.string.common_close)
+
+    PolkadotSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            // A tap on the notice must not reach the page under it.
+            .pointerInput(Unit) {},
+        color = PolkadotTheme.colors.bg.action.tertiary,
+        shape = PolkadotTheme.shapes.extraMedium,
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                start = PolkadotTheme.spacings.mediumIncreased,
+                top = PolkadotTheme.spacings.small,
+                bottom = PolkadotTheme.spacings.small,
+                end = PolkadotTheme.spacings.extraTiny,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
+        ) {
+            NovaIcon(
+                modifier = Modifier.size(NoticeIconSize),
+                imageVector = NovaIcons.Info,
+                tint = PolkadotTheme.colors.fg.secondary,
+            )
+
+            NovaText(
+                modifier = Modifier.weight(1f),
+                text = stringResource(RCommon.string.spa_browser_update_ready, product),
+                style = PolkadotTheme.typography.body.medium,
+                color = PolkadotTheme.colors.fg.primary,
+            )
+
+            PolkadotTextButton(
+                text = stringResource(RCommon.string.spa_browser_update_reload),
+                style = PolkadotButtonStyle.ghost(),
+                size = PolkadotButtonSize.medium(),
+                shape = PolkadotTheme.shapes.full,
+                onClick = onReload,
+            )
+
+            PolkadotIconButton(
+                modifier = Modifier.semantics { contentDescription = closeDescription },
+                icon = NovaIcons.Close,
+                onClick = onDismiss,
+                style = PolkadotButtonStyle.ghost(),
+                size = PolkadotIconButtonSize.small(),
+                shape = PolkadotTheme.shapes.full,
+            )
         }
     }
 }
@@ -192,6 +282,8 @@ private fun SpaBrowserPageContent(
     }
 }
 
+private val NoticeIconSize = 24.dp
+
 private const val RESOLVE_BAND_END = 0.1f
 private const val DOWNLOAD_BAND_END = 0.9f
 private const val BAND_ANIM_MILLIS = 300
@@ -213,6 +305,8 @@ private fun SpaBrowserScreenPreview() {
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
+            onUpdateReload = {},
+            onUpdateDismiss = {},
             onRefresh = {},
         )
     }
