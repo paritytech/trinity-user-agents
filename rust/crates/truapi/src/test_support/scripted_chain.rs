@@ -76,6 +76,14 @@ impl ScriptedProvider {
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
 	}
+
+	/// Give the next connection a fresh response stream, once the previous
+	/// one has ended.
+	pub fn renew_stream(&self) {
+		let (tx, rx) = fut_mpsc::unbounded();
+		*self.sender.lock().unwrap() = Some(tx);
+		*self.receiver.lock().unwrap() = Some(rx);
+	}
 }
 
 struct ScriptedConnection {
