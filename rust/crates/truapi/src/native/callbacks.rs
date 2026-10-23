@@ -157,6 +157,12 @@ pub trait HostCallbacks: Send + Sync {
 	/// promptly.
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
+	/// The chains the host builds as V5 general transactions, each with its
+	/// transaction extension pipeline. A chain not listed is built as V4.
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
+
 	/// Observe demand on a product's worker crossing zero. `Start` means the
 	/// host runs the worker now, `Stop` that nothing wants it any more. Every
 	/// transition arrives here, in ledger order: the ones the host asks for

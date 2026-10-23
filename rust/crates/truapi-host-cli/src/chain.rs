@@ -21,6 +21,18 @@ use crate::network::ChainEndpoint;
 /// Broadcast backlog for inbound JSON-RPC frames per connection.
 const INBOUND_CHANNEL_CAPACITY: usize = 1024;
 
+/// The CLI's answer to which chains build as V5, for its own extrinsics.
+pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
+
+#[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
 /// Chain provider that maps a requested genesis hash to a WebSocket endpoint.
 ///
 /// The all-zero genesis (the headless SSO sentinel) and any unmapped genesis

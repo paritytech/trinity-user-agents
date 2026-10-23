@@ -9,8 +9,9 @@ rust/crates/
   truapi/                Rust trait + type definitions for protocol versions v0.1 and v0.2
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
-                         holds the host syscall traits (storage, navigation, consent, ...)
-                         and, on native targets, its `durable` module follows presigned
+                         holds the host syscall traits (storage, navigation, consent, ...),
+                         its `chain` module builds the core's own extrinsics through
+                         `ExtrinsicService`, and, on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
                          scheduled ones through their submission policies; its `nft`
                          (purse records, item keys, and the tracker of what they hold on

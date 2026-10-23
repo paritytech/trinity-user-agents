@@ -1155,6 +1155,37 @@ pub trait Features: Send + Sync {
 	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
 }
 
+/// A chain the host builds as V5 general transactions, and the transaction
+/// extension pipeline it uses there.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ChainExtensionVersion {
+	/// Genesis hash of the chain.
+	pub genesis_hash: Bytes32,
+	/// The pipeline's number in the chain's metadata.
+	pub extension_version: u8,
+}
+
+/// The chains a host builds as V5 general transactions. A chain not listed is
+/// built as V4.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ExtensionVersionMap {
+	/// One entry per V5 chain.
+	pub chains: Vec<ChainExtensionVersion>,
+}
+
+/// Which chains the host builds as V5 general transactions. The core builds
+/// its own extrinsics the same way, so both agree on every chain.
+#[async_trait]
+pub trait ExtrinsicVersionHost: Send + Sync {
+	/// The chains the host builds as V5, each with its pipeline. A host that
+	/// never builds V5 lists none.
+	async fn transaction_extension_versions(&self) -> Result<ExtensionVersionMap, GenericError> {
+		Ok(ExtensionVersionMap::default())
+	}
+}
+
 /// Core-owned host-private storage slots. Products never address these slots;
 /// the host chooses the backing store for each slot.
 ///
@@ -3252,6 +3283,7 @@ pub trait Platform:
 	+ Notifications
 	+ Permissions
 	+ Features
+	+ ExtrinsicVersionHost
 	+ ProductStorage
 	+ CoreStorage
 	+ ChainProvider
@@ -3269,6 +3301,7 @@ impl<T> Platform for T where
 		+ Notifications
 		+ Permissions
 		+ Features
+		+ ExtrinsicVersionHost
 		+ ProductStorage
 		+ CoreStorage
 		+ ChainProvider

@@ -155,6 +155,11 @@ public protocol HostBridge: AnyObject, Sendable {
     /// per chain role. Invoked on the dispatcher thread; must return promptly.
     func supportedChains() throws -> HostChainSet
 
+    /// The chains this host builds as V5 general transactions, each with its
+    /// transaction extension pipeline; every other chain is built as V4. The
+    /// core builds its own extrinsics the same way. Defaults to none.
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap
+
     /// Observe demand on a product's worker crossing zero. `.start` means run
     /// the worker now, `.stop` that nothing wants it any more. Every
     /// transition arrives here in ledger order, the ones the app asks for by
@@ -420,6 +425,9 @@ public extension HostBridge {
         )
     }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        ExtensionVersionMap(chains: [])
+    }
     func workerDemandChanged(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
@@ -829,6 +837,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func supportedChains() throws -> HostChainSet {
         try withHostRejection {
             try bridge.supportedChains()
+        }
+    }
+
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try await withHostRejection {
+            try await bridge.transactionExtensionVersions()
         }
     }
 
