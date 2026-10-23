@@ -521,12 +521,15 @@ crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
-it fails here rather than at the next version bump. Every push to main runs the
-jobs below. A pull request touching the app, or the crates its bindings come
-from, always runs `test`; `build` and `preview` are macOS time no test needs, so
-they run once it is labelled `ios-simulator-build`. CI's
-`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates. The first time a
+it fails here rather than at the next version bump. CI's `iOS app` job,
+`ios-app.yml`, is part of `CI Status` and runs `build` and `test` on every push
+to main and on every pull request touching the app or the crates its bindings
+come from; `.github/hosts.json` names those inputs. A pull request from a fork
+skips it, since the Macs are shared, and so does the merge queue. `preview` is
+macOS time no check needs, so `on-label.yml` builds it once the pull request is
+labelled `ios-simulator-build`. CI's `iOS package (Swift + WebKit)` job also
+compiles the TrUAPIHost package against the core on a pull request touching
+`ios/` or the core crates. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ios-simulator-build`, `ios-device-build` and
 `android-device-build`.

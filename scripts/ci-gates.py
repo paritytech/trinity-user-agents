@@ -13,6 +13,9 @@ file. To route a new path, add it to the list below that describes it:
   hash would catch.
 - `hosts.<host>.ci`: a workflow or action that runs the host's suite but does
   not change the app.
+- `packages.<package>`: every input of a package a host consumes, such as the
+  Swift package under `ios/`. A package list is complete on its own, since a
+  package is often built from less than the whole core.
 
 For each host this prints three gates as `name=true|false` lines, the format
 `$GITHUB_OUTPUT` takes:
@@ -24,14 +27,18 @@ For each host this prints three gates as `name=true|false` lines, the format
   different. A workflow triggered by a merge reads this to decide whether
   there is a new build.
 
+and one gate per package, `package_<package>`, true when one of its inputs
+changed.
+
     ci-gates.py --base <rev> [--head <rev>]           gates for base..head
     ci-gates.py --base <rev> [--head <rev>] --force   the same, with every
-                                                      core and tree gate true
+                                                      core, tree and package
+                                                      gate true
     ci-gates.py --all                                 every gate true
     ci-gates.py --check                               validate the registry
 
-`--force` is for a push to main, where every suite runs so each landed commit
-is checked in full, while `<host>_changed` still says whether the push changed
+`--force` is for a push to main, where every suite and package check runs so
+each landed commit is checked in full, while `<host>_changed` still says whether the push changed
 the app. `--all` is for a run with nothing to diff against, such as a dispatch.
 """
 
@@ -80,6 +87,8 @@ def gates(registry: dict, paths: list[str] | None, force: bool = False) -> dict[
         result[f"{host}_core"] = core or force
         result[f"{host}_tree"] = suite or force
         result[f"{host}_changed"] = core or tree
+    for package, entries in registry.get("packages", {}).items():
+        result[f"package_{package}"] = hit(entries) or force
     return result
 
 
@@ -101,6 +110,8 @@ def check(registry: dict) -> list[str]:
             if name not in spec:
                 problems.append(f"hosts.{host} has no {name} list")
             lists[f"hosts.{host}.{name}"] = spec.get(name, [])
+    for package, entries in registry.get("packages", {}).items():
+        lists[f"packages.{package}"] = entries
     for where, entries in lists.items():
         if len(set(entries)) != len(entries):
             problems.append(f"{where} lists an entry more than once")
@@ -124,7 +135,7 @@ def main() -> int:
     mode.add_argument("--all", action="store_true", help="every gate true")
     mode.add_argument("--check", action="store_true", help="validate the registry")
     parser.add_argument("--head", default="HEAD", help="revision to diff to")
-    parser.add_argument("--force", action="store_true", help="force every core and tree gate")
+    parser.add_argument("--force", action="store_true", help="force every core, tree and package gate")
     args = parser.parse_args()
 
     registry = load()

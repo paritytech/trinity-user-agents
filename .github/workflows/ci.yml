@@ -11,10 +11,13 @@ on:
 # `release:` commit, and a cancelled run is not success, so it publishes
 # nothing and reports nothing. A release commit therefore gets a group of its
 # own, keyed by its SHA, where no later push to the same branch can reach it.
-# Ordinary pushes keep sharing a group and keep cancelling each other.
+# Ordinary pushes keep sharing a group. A pull request cancels its superseded
+# run. A push runs to the end, so each one that changes the iOS app publishes
+# the core and the bindings record pull requests reuse; a later push waits, and
+# replaces any push still waiting behind it.
 concurrency:
   group: ci-${{ github.ref }}-${{ startsWith(github.event.head_commit.message, 'release:') && github.sha || 'shared' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
@@ -279,11 +282,6 @@ jobs:
     timeout-minutes: 10
     runs-on: ubuntu-latest
     outputs:
-      sdk_swift: ${{ steps.filter.outputs.sdk_swift }}
-      sdk_kotlin: ${{ steps.filter.outputs.sdk_kotlin }}
-      sdk_provider_kotlin: ${{ steps.filter.outputs.sdk_provider_kotlin }}
-      host_android: ${{ steps.filter.outputs.host_android }}
-      host_android_tree: ${{ steps.filter.outputs.host_android_tree }}
       cli_package: ${{ steps.filter.outputs.cli_package }}
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
@@ -296,6 +294,10 @@ jobs:
       android_core: ${{ steps.hosts.outputs.android_core }}
       android_tree: ${{ steps.hosts.outputs.android_tree }}
       android_changed: ${{ steps.hosts.outputs.android_changed }}
+      # And one per package a host consumes, from the same registry.
+      package_swift: ${{ steps.hosts.outputs.package_swift }}
+      package_kotlin: ${{ steps.hosts.outputs.package_kotlin }}
+      package_provider_kotlin: ${{ steps.hosts.outputs.package_provider_kotlin }}
       # False for a pull request from a fork, whose code must not reach the
       # self-hosted runners, which are persistent and shared.
       trusted: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -312,21 +314,8 @@ jobs:
       # queued ahead in the same group. A push or a dispatch runs every gate, so
       # each commit that lands on main is still checked in full.
       #
-      # These lists and .github/hosts.json describe the same inputs while the
-      # jobs below move onto the registry's gates; a path added here is added
-      # there too.
-      #
-      # Neither binding set is committed, so a UniFFI surface change leaves no
-      # ios/ or android/ diff to key on. Each list therefore names every input
-      # its gated job actually reads: the crates the bindings are generated
-      # from, the generator itself, the Makefile targets that drive it, and the
-      # manifest that pins each platform's toolchain, and the workspace manifest
-      # and lockfile, which is where the bindings generator version and the
-      # codegen profile live. js/container is in the
-      # Swift list because it is compiled into the TrUAPIHost target as a
-      # resource; the root Gradle files are in the Kotlin list because they pin
-      # AGP and Kotlin. Both lists name this workflow, so editing a filter
-      # exercises the jobs that filter gates.
+      # The hosts and the packages they consume are gated by the next step,
+      # from .github/hosts.json. These are the gates for everything else.
       - name: Detect which areas changed
         id: filter
         env:
@@ -346,11 +335,6 @@ jobs:
 
           if [ -z "$base" ]; then
             {
-              echo "sdk_swift=true"
-              echo "sdk_kotlin=true"
-              echo "sdk_provider_kotlin=true"
-              echo "host_android=true"
-              echo "host_android_tree=true"
               echo "cli_package=true"
               echo "workflows=true"
             } >> "$GITHUB_OUTPUT"
@@ -366,24 +350,7 @@ jobs:
             fi
           }
 
-          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|rust/crates/truapi-verifiable/|js/packages/truapi/|\.github/workflows/ci\.yml$)'
           gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
-          gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
-
-          # The provider AAR is generated from its own cdylib and compiles
-          # without codegen output, so it moves on a narrower set than the host
-          # shell: the crate, the bindings generator and the Gradle wiring that
-          # compiles the result.
-          gate sdk_provider_kotlin '^(android/truapi-provider/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|Makefile$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|\.github/workflows/ci\.yml$)'
-          # The vendored Android host, plus the crates its bindings are
-          # generated from. Nothing gated on this tree before, so a core change
-          # that broke it reached a release with no gate in between.
-          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
-          # The app tree itself, as opposed to the core it consumes. Only a
-          # change here can break the app's own unit tests, so a core-only change
-          # runs the bindings check without them.
-          gate host_android_tree '^(hosts/android/|android/truapi-host/|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
-
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
           # to build without, and the dependency set the musl link has to
@@ -404,7 +371,10 @@ jobs:
 
       # The host registry, evaluated on the same base as the gates above. A
       # host is gated on its own inputs and the shared core, so an edit to this
-      # workflow alone runs no host. The step above has fetched the merge
+      # workflow alone runs no host. Neither binding set is committed, so a
+      # UniFFI surface change leaves no ios/ or android/ diff to key on, and
+      # each package's list names every input its job reads, the crates its
+      # bindings are generated from included. The step above has fetched the merge
       # group's base. A push to main runs every suite, and diffs from the
       # previous tip of main only so that each host's changed gate is real.
       # The registry is checked here, on every run, so a change that removes a
@@ -438,7 +408,7 @@ jobs:
     needs: [changes, codegen]
     # Never for a pull request from a fork, because the Parity machines are
     # persistent and shared. The merge queue runs it once the change is approved.
-    if: needs.changes.outputs.sdk_swift == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.package_swift == 'true' && needs.changes.outputs.trusted == 'true'
     # The Parity pool, where the core builds already run, rather than the hosted
     # macOS queue that can hold a merge past the queue's timeout.
     runs-on: parity-macos-large
@@ -593,7 +563,7 @@ jobs:
   android-bindings:
     name: Android host (kotlin compile)
     needs: changes
-    if: needs.changes.outputs.sdk_kotlin == 'true'
+    if: needs.changes.outputs.package_kotlin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -631,150 +601,48 @@ jobs:
       - name: Compile the shell against the bindings
         run: gradle :truapi-host:assembleRelease
 
+  # The app built from this tree, with the core it consumes. Never for a pull
+  # request from a fork, because every job runs on the Parity machines, which
+  # are persistent and shared. Not in the merge queue either, which has no Mac
+  # capacity for it yet: a pull request runs it before it can be queued, and
+  # main runs it again after it lands. Only main, of the branches this workflow
+  # pushes to, carries the app.
+  ios-app:
+    name: iOS app
+    needs: changes
+    if: >-
+      (needs.changes.outputs.ios_core == 'true' || needs.changes.outputs.ios_tree == 'true')
+      && needs.changes.outputs.trusted == 'true'
+      && github.event_name != 'merge_group'
+      && (github.event_name != 'push' || github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/ios-app.yml
+    secrets: inherit
+    # What ios-app.yml asks for: reading main's artifacts, and annotating and
+    # commenting on the pull request.
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    with:
+      tree: ${{ needs.changes.outputs.ios_tree == 'true' }}
+
   # The app tree vendored at hosts/android consumes the core in this repository
   # rather than a published package, so a core change that breaks it fails here
-  # instead of at the next version bump. The job builds the core, generates the
+  # instead of at the next version bump. Its compile job builds the core, generates the
   # Kotlin bindings, and compiles the app code that pattern matches over the
   # generated types, which is where a removed or renamed variant surfaces.
   #
   # A change to the app tree also runs every unit test in it, the app module's
   # and each library module's, since nothing else here does: the workflows
   # under hosts/android/.github are never read.
-  host-android-bindings:
-    name: Android host app (compile and unit tests)
+  android-app:
+    name: Android app
     needs: changes
-    if: needs.changes.outputs.host_android == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Shared with the Android distribution workflows, so a toolchain moves
-      # in one place. This job compiles rather than signs, so it takes no
-      # configuration or keystore, and it is the one that writes the cache the
-      # others read.
-      - name: Set up the Android build
-        id: setup
-        uses: ./.github/actions/setup-android-build
-        with:
-          save_cache: "true"
-
-      # The app module applies the Google Services plugin, which needs a
-      # configuration naming the debug package before it configures. The unit
-      # tests never reach Firebase, so a placeholder with no real project is
-      # enough, and it keeps the gate independent of the real configuration.
-      - name: Write a placeholder Google configuration
-        working-directory: hosts/android
-        run: |
-          cat > app/google-services.json <<'JSON'
-          {
-            "project_info": {"project_number": "0", "project_id": "ci", "storage_bucket": "ci.appspot.com"},
-            "client": [{
-              "client_info": {
-                "mobilesdk_app_id": "1:0:android:0000000000000000",
-                "android_client_info": {"package_name": "io.parity.polkadotapp.debug"}
-              },
-              "oauth_client": [],
-              "api_key": [{"current_key": "ci"}],
-              "services": {"appinvite_service": {"other_platform_oauth_client": []}}
-            }],
-            "configuration_version": "1"
-          }
-          JSON
-
-      # No truapi.dir: the core resolves two levels up, which is one of the
-      # properties this job keeps true.
-      #
-      # Compiling the modules that consume the bindings is the bindings check.
-      # Generated bindings cannot disagree with the library they were generated
-      # from, so compiling them alone proves nothing; the signal is in the app
-      # code that pattern matches over core types, and these test tasks compile
-      # all of it, building :bindings:truapi-host on the way.
-      #
-      # The products module's release tests and the instrumentation compile run
-      # for every change. A change to the app tree adds testGpDebugUnitTest, the
-      # app module and the only one with flavours, and testDebugUnitTest, every
-      # library module. Without those the build configures only what it runs.
-      #
-      # These values are configuration rather than credentials, and the app tree
-      # reads each of them from the environment when it is absent from
-      # local.properties. Placeholders are enough to configure every module, and
-      # keep the gate independent of secrets this repository does not hold.
-      - name: Compile the Android consumers and instrumentation, run unit tests
-        working-directory: hosts/android
-        env:
-          # The real id, because it is the one the Google configuration is
-          # built for.
-          APPLICATION_ID: io.parity.polkadotapp
-          IOS_BUNDLE_ID: io.parity.polkadotapp
-          APPLICATION_NAME: Polkadot
-          CONTACT_EMAIL: ci@example.invalid
-          CURRENCY_SYMBOL: DOT
-          FIAT_SYMBOL: "$"
-          FIRESTORE_DATABASE_ID: ci
-          GOOGLE_OAUTH_ID: ci
-          # Typed as a long, so a non-numeric placeholder is a compile error.
-          GOOGLE_PROJECT_ID: "0"
-          LOG_COLLECTION_EMAIL: ci@example.invalid
-          NIGHTLY_FUNDING_MNEMONIC: ci
-          PRIVACY_POLICY_URL: https://example.invalid/privacy
-          SENTRY_ORG: ci
-          SENTRY_PROJECT: ci
-          TERMS_OF_USE_URL: https://example.invalid/terms
-          ALL_UNIT_TESTS: ${{ needs.changes.outputs.host_android_tree }}
-        run: |
-          set -euo pipefail
-          tasks=(:feature:products:impl:testReleaseUnitTest :bindings:truapi-host:compileDebugAndroidTestKotlin)
-          if [ "$ALL_UNIT_TESTS" = true ]; then
-            tasks+=(testGpDebugUnitTest testDebugUnitTest)
-          else
-            tasks+=(--configure-on-demand)
-          fi
-          ./gradlew --continue "${tasks[@]}"
-
-  host-android-detekt:
-    name: Android host (detekt)
-    needs: changes
-    if: needs.changes.outputs.host_android == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Reads the cache the compile gate writes rather than writing its own,
-      # since the two want the same toolchain and only one of them needs to
-      # pay for it.
-      - name: Set up the Android build
-        uses: ./.github/actions/setup-android-build
-
-      # Static analysis reads sources, but Gradle configures the whole build to
-      # find the task, and configuration is where a missing value throws. This
-      # needs CONTACT_EMAIL where the compile gate does not: that gate names a
-      # module and configures on demand, while detekt at the root configures
-      # every module, including the one that reads it.
-      - name: Run detekt
-        working-directory: hosts/android
-        env:
-          APPLICATION_ID: io.parity.polkadotapp
-          IOS_BUNDLE_ID: io.parity.polkadotapp
-          APPLICATION_NAME: Polkadot
-          CONTACT_EMAIL: ci@example.invalid
-          CURRENCY_SYMBOL: DOT
-          FIAT_SYMBOL: "$"
-          FIRESTORE_DATABASE_ID: ci
-          GOOGLE_OAUTH_ID: ci
-          GOOGLE_PROJECT_ID: "0"
-          LOG_COLLECTION_EMAIL: ci@example.invalid
-          NIGHTLY_FUNDING_MNEMONIC: ci
-          PRIVACY_POLICY_URL: https://example.invalid/privacy
-          SENTRY_ORG: ci
-          SENTRY_PROJECT: ci
-          TERMS_OF_USE_URL: https://example.invalid/terms
-        run: ./gradlew :config:detekt:rules:test detekt --no-daemon
+    if: needs.changes.outputs.android_core == 'true' || needs.changes.outputs.android_tree == 'true'
+    uses: ./.github/workflows/android-app.yml
+    with:
+      tree: ${{ needs.changes.outputs.android_tree == 'true' }}
 
   # The provider ships as its own AAR, so its bindings compile on a path the
   # host gate never touches. `make provider-android-check` generates first and
@@ -785,7 +653,7 @@ jobs:
   provider-android-bindings:
     name: Android provider (kotlin compile)
     needs: changes
-    if: needs.changes.outputs.sdk_provider_kotlin == 'true'
+    if: needs.changes.outputs.package_provider_kotlin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -1483,8 +1351,8 @@ jobs:
         ios-swift,
         android-bindings,
         provider-android-bindings,
-        host-android-bindings,
-        host-android-detekt,
+        ios-app,
+        android-app,
         cli-package,
         ts-client,
         ts-host,
@@ -1534,8 +1402,7 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           REQUIRED: >-
             rust headless-install wasm-provider licenses codegen ios-bindings changes ios-swift
-            android-bindings provider-android-bindings host-android-bindings
-            host-android-detekt
+            android-bindings provider-android-bindings ios-app android-app
             cli-package ts-client
             ts-host host-wasm ts-debugger ts-trinity-stack bundle-size playground explorer e2e workflow-lint
             release-guard changeset-guard
