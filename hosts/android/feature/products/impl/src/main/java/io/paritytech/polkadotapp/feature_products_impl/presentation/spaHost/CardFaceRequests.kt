@@ -37,7 +37,7 @@ internal class CardFaceRequests : ExpandedCardFace {
         return when (answer) {
             FaceShownAnswer.APPLIED -> ExpandedCardFaceOutcome.APPLIED
             FaceShownAnswer.USER_MOVING -> ExpandedCardFaceOutcome.USER_MOVING
-            null -> ExpandedCardFaceOutcome.NOT_PRESENTED
+            FaceShownAnswer.NOT_PRESENTED, null -> ExpandedCardFaceOutcome.NOT_PRESENTED
         }
     }
 

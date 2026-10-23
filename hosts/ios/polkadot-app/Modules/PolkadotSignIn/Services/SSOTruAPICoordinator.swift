@@ -15,6 +15,7 @@ import StructuredConcurrency
 final class SSOTruAPICoordinator {
     private let ownKeyId: Chat.Contact.Own
     private let serviceFactory: MessageExchageServiceMaking
+    private let signerResolver: PeerSessionSignerResolving
     private let chainId: ChainModel.Id
     private let chainRegistry: ChainRegistryProtocol
     private let hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking
@@ -29,6 +30,7 @@ final class SSOTruAPICoordinator {
     init(
         ownKeyId: Chat.Contact.Own,
         serviceFactory: MessageExchageServiceMaking,
+        signerResolver: PeerSessionSignerResolving,
         runtimeProvider: TrUAPIHostRuntimeProviding,
         chainId: ChainModel.Id = AppConfig.Chains.chatChain,
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
@@ -39,6 +41,7 @@ final class SSOTruAPICoordinator {
     ) {
         self.ownKeyId = ownKeyId
         self.serviceFactory = serviceFactory
+        self.signerResolver = signerResolver
         self.runtimeProvider = runtimeProvider
         self.chainId = chainId
         self.chainRegistry = chainRegistry
@@ -84,6 +87,7 @@ extension SSOTruAPICoordinator: MessageExchangeSignInHostCoordinating {
                     retryMatcher: StatementSubmitErrorMatcher.retryWhenTimeoutOrNoAllowance(),
                     logger: logger
                 ),
+                statementSignerResolver: signerResolver,
                 delegate: AnyPeerSessionDelegate(self)
             )
             await state.setExchangeService(service)
