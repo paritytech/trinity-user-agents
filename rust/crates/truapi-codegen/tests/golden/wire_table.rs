@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "9afae8af27c8cee3";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "830841e2e22e670f";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -584,6 +584,36 @@ pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `funding_provider_assign`.
+pub const FUNDING_PROVIDER_ASSIGN: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_cancel`.
+pub const FUNDING_PROVIDER_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 2,
+};
+
+/// Wire discriminants for `funding_provider_settle_cancel`.
+pub const FUNDING_PROVIDER_SETTLE_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 3,
+};
+
+/// Wire discriminants for `funding_provider_report`.
+pub const FUNDING_PROVIDER_REPORT: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 4,
+};
+
+/// Wire discriminants for `funding_provider_present_frame`.
+pub const FUNDING_PROVIDER_PRESENT_FRAME: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 5,
+};
+
 /// Wire discriminants for `scanner_scan`.
 pub const SCANNER_SCAN: MethodIds = MethodIds {
     trait_id: 25,
@@ -1025,6 +1055,26 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "expanded_card_set_face_shown",
         kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
+    },
+    WireEntry {
+        method: "funding_provider_assign",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_ASSIGN),
+    },
+    WireEntry {
+        method: "funding_provider_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_settle_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_SETTLE_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_report",
+        kind: WireKind::Request(FUNDING_PROVIDER_REPORT),
+    },
+    WireEntry {
+        method: "funding_provider_present_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_PRESENT_FRAME),
     },
     WireEntry {
         method: "scanner_scan",

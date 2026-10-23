@@ -61,6 +61,7 @@ use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use funding::FundingProviderLink;
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -98,7 +99,7 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
@@ -116,6 +117,11 @@ use truapi::{
 			HostFundingError, HostFundingRequest, HostFundingResponse,
 			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
 			HostFundingStatusSubscribeRequest,
+		},
+		funding_provider::{
+			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
+			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
+			HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -675,6 +681,20 @@ impl ProductConnection {
 			return Err(CallError::Denied);
 		}
 		self.pocket_platform.clone().ok_or(CallError::Unsupported)
+	}
+
+	/// Funding provider access policy for this connection: a provider serves
+	/// sessions only from a Worker execution with an active session, and only
+	/// where the host has a funding surface.
+	fn funding_provider_access<E>(
+		&self,
+	) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.services.funding().platform().ok_or(CallError::Unsupported)
 	}
 }
 
@@ -1504,6 +1524,67 @@ impl Renderer for ProductRuntimeHost {
 						.subscribe()
 						.map(|item| item.map(IntoLatest::into_latest)),
 				)
+			})
+			.await
+	}
+}
+
+#[truapi::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+	async fn report(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingReportRequest,
+	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+		version(request)
+			.exec(|latest::HostFundingReportRequest { intent, update }| async move {
+				self.connection.funding_provider_access()?;
+				let reported = self
+					.connection
+					.services
+					.funding()
+					.report(
+						self.connection.platform.as_ref(),
+						crate::current_unix_millis(),
+						&self.connection.product,
+						&intent,
+						update,
+					)
+					.await?;
+				// A cancel offer can lapse on its own, so the expiry sweep keeps
+				// time for it.
+				self.connection.services.funding().keep_expiring(&self.connection.services);
+				reported.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+	async fn present_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingPresentFrameRequest,
+	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
+				let domain = CallError::Domain;
+				let platform = self.connection.funding_provider_access()?;
+				if !self
+					.connection
+					.services
+					.funding()
+					.is_serving(self.connection.product.product_id.as_str(), &intent)
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
+				}
+				let target = crate::host_logic::funding::checked_frame_target(target)
+					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				let outcome = platform
+					.present_provider_frame(&self.connection.product, intent, target)
+					.await
+					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				Ok(latest::HostFundingPresentFrameResponse { outcome })
 			})
 			.await
 	}

@@ -38,11 +38,15 @@ use truapi::{
 };
 
 use crate::{
+	current_unix_millis,
 	host_internal::{
 		extrinsic::sr25519_secret_from_bytes,
 		permissions::{PermissionsService, TemporaryPermissions},
 	},
-	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
+	platform::{
+		PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext,
+		ProductExecutionKind,
+	},
 	runtime::{ProductRuntimeHost, payment_id::host_payment_id, versioning::version},
 };
 
@@ -143,6 +147,54 @@ impl CoinPayment for ProductRuntimeHost {
 		version(request)
 			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
 			.await
+	}
+}
+
+impl ProductRuntimeHost {
+	/// Record funds this product's worker starts on the funding sessions it
+	/// serves, so its reports can name them, before the host sees them: funds
+	/// whose record cannot be stored are not started. Returns whether any
+	/// session recorded them.
+	async fn record_funding_start<E>(
+		&self,
+		direction: latest::FundingDirection,
+		host_id: [u8; 32],
+		amount: u128,
+	) -> Result<bool, CallError<E>> {
+		let registry = self.connection.services.funding();
+		if self.connection.product.execution_kind != ProductExecutionKind::Worker ||
+			registry.platform().is_none()
+		{
+			return Ok(false);
+		}
+		Ok(registry
+			.record_start(
+				self.connection.platform.as_ref(),
+				current_unix_millis(),
+				self.connection.product.product_id.as_str(),
+				direction,
+				host_id,
+				amount,
+			)
+			.await?)
+	}
+
+	/// Drop the record of funds the host refused to start.
+	async fn forget_funding_start(&self, host_id: [u8; 32]) {
+		let forgotten = self
+			.connection
+			.services
+			.funding()
+			.forget_start(
+				self.connection.platform.as_ref(),
+				current_unix_millis(),
+				self.connection.product.product_id.as_str(),
+				host_id,
+			)
+			.await;
+		if let Err(error) = forgotten {
+			tracing::warn!(%error, "dropping the record of refused funds failed");
+		}
 	}
 }
 
@@ -334,7 +386,22 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		match platform.request_payment(&self.connection.product, request).await {
+		let (host_id, amount) = (request.id, request.amount);
+		let recorded = self
+			.record_funding_start(latest::FundingDirection::Out, host_id, amount)
+			.await?;
+		let requested = platform.request_payment(&self.connection.product, request).await;
+		// A repeat of a payment the host already holds keeps the record an
+		// earlier call made, so a worker that restarted can still name it. A
+		// record this call made goes: the host's payment under that id may ask
+		// another amount or belong to an ended session. Any other failure
+		// means no money moves under this id.
+		if requested.as_ref().is_err_and(|error| {
+			recorded || !matches!(error, latest::HostPaymentError::AlreadyExists)
+		}) {
+			self.forget_funding_start(host_id).await;
+		}
+		match requested {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
 			// balance was short; to any other it reads as a refusal.
@@ -362,10 +429,18 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		platform
-			.top_up(&self.connection.product, request)
-			.await
-			.map_err(CallError::Domain)
+		let (host_id, amount) = (request.id, request.amount);
+		let recorded =
+			self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
+		let started = platform.top_up(&self.connection.product, request).await;
+		// As for payments: only a record an earlier call made survives a
+		// top-up the host already holds.
+		if started.as_ref().is_err_and(|error| {
+			recorded || !matches!(error, latest::HostPaymentTopUpError::AlreadyExists)
+		}) {
+			self.forget_funding_start(host_id).await;
+		}
+		started.map_err(CallError::Domain)
 	}
 }
 

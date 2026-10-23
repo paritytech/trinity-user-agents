@@ -5,9 +5,12 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
-use crate::platform::{
-	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
-	PermissionAuthorizationRequest, ProductExecutionKind,
+use crate::{
+	host_logic::funding::{CancelConfirmation, CancelOutcome, FundingCancel},
+	platform::{
+		AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
+		PermissionAuthorizationRequest, ProductExecutionKind,
+	},
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -2841,6 +2844,7 @@ struct RecordingFundingPlatform {
 	outcome: crate::platform::FundingPresentOutcome,
 	presented: Mutex<Vec<(Option<ProductId>, crate::platform::FundingPresentation)>>,
 	announced: Mutex<Vec<String>>,
+	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
 }
 
 impl RecordingFundingPlatform {
@@ -2849,6 +2853,7 @@ impl RecordingFundingPlatform {
 			outcome,
 			presented: Mutex::new(Vec::new()),
 			announced: Mutex::new(Vec::new()),
+			framed: Mutex::new(Vec::new()),
 		})
 	}
 }
@@ -2865,6 +2870,16 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 			.expect("presented mutex poisoned")
 			.push((product.map(|product| product.product_id.clone()), session));
 		Ok(self.outcome)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		self.framed.lock().expect("framed mutex poisoned").push(target);
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 
 	fn funding_session_changed(
@@ -2934,7 +2949,10 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	})
 	.expect("opened")
 	.intent;
-	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	assert_eq!(
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
+		CancelOutcome::Ended
+	);
 	// The expiry sweep the open armed would wait out the session's deadline.
 	drop(tasks.take());
 	let announced_on_resume = || {
@@ -2974,6 +2992,14 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 			.len();
 		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
 		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 }
 
@@ -3026,6 +3052,15 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 			.lock()
 			.expect("write error mutex poisoned") = Some("disk full");
 		Ok(self.outcome)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 }
 
@@ -3111,6 +3146,11 @@ fn funding_host(
 		install_pairing_session(&host, session_info());
 	}
 	host
+}
+
+/// A fresh intent for a session the test opens itself.
+fn new_intent() -> String {
+	format!("fs_{}", nanoid::nanoid!(10))
 }
 
 /// The funding id the tests' products choose.
@@ -3257,6 +3297,14 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
 		let answer = self.answer.lock().expect("answer mutex poisoned").take();
 		Ok(answer.expect("overlay shown once").await.expect("answered"))
+	}
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 }
 
@@ -8600,6 +8648,772 @@ fn payment_host(
 	host
 }
 
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+	let (host_config, _) = runtime_config("funding.dot");
+	RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		test_spawner(),
+	)
+}
+
+/// A provider's worker connection, signed in.
+fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+	let (host_config, _) = runtime_config(provider_id);
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test(provider_id),
+		crate::platform::ProductExecutionKind::Worker,
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// A call a provider's worker received from the core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProviderCallSeen {
+	Assign(v01::FundingAssignment),
+	Cancel(String),
+	Settle(String, v01::FundingCancelDecision),
+}
+
+/// A provider's worker as the core calls it: it records every call, takes
+/// every session and decision, and answers cancels with the answers queued
+/// for them, in order.
+#[derive(Default)]
+struct ScriptedProviderLink {
+	calls: Mutex<Vec<ProviderCallSeen>>,
+	cancel_answers: Mutex<std::collections::VecDeque<v01::FundingCancelAnswer>>,
+}
+
+impl ScriptedProviderLink {
+	fn answer_cancels(&self, answers: impl IntoIterator<Item = v01::FundingCancelAnswer>) {
+		self.cancel_answers.lock().expect("answers mutex poisoned").extend(answers);
+	}
+
+	fn seen(&self, call: ProviderCallSeen) {
+		self.calls.lock().expect("calls mutex poisoned").push(call);
+	}
+
+	/// The calls received, once there are at least `count`.
+	fn calls(&self, count: usize) -> Vec<ProviderCallSeen> {
+		for _ in 0..200 {
+			let calls = self.calls.lock().expect("calls mutex poisoned").clone();
+			if calls.len() >= count {
+				return calls;
+			}
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		self.calls.lock().expect("calls mutex poisoned").clone()
+	}
+}
+
+impl crate::runtime::FundingProviderLink for ScriptedProviderLink {
+	fn assign(&self, session: v01::FundingAssignment) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Assign(session));
+		Box::pin(async { true })
+	}
+
+	fn cancel(
+		&self,
+		intent: String,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		self.seen(ProviderCallSeen::Cancel(intent));
+		let answer = self.cancel_answers.lock().expect("answers mutex poisoned").pop_front();
+		Box::pin(async move { answer })
+	}
+
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: v01::FundingCancelDecision,
+	) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Settle(intent, decision));
+		Box::pin(async { true })
+	}
+}
+
+/// Connect a scripted worker for `provider_id`, as its handshake does.
+fn connect_provider(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> Arc<ScriptedProviderLink> {
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(provider_id, link.clone());
+	services.funding().connected(provider_id);
+	link
+}
+
+/// Wait until session `intent` satisfies `done`, then return it.
+fn wait_for_session(
+	services: &RuntimeServices,
+	intent: &str,
+	done: impl Fn(&crate::host_logic::funding::FundingSession) -> bool,
+) -> Option<crate::host_logic::funding::FundingSession> {
+	for _ in 0..200 {
+		let session = services.funding().get(intent)?;
+		if done(&session) {
+			return Some(session);
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	services.funding().get(intent)
+}
+
+fn report_funding(
+	host: &ProductRuntimeHost,
+	intent: &str,
+	update: v01::FundingUpdate,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+	futures::executor::block_on(truapi::api::FundingProvider::report(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding_provider::HostFundingReportRequest::V1(
+			v01::HostFundingReportRequest { intent: intent.to_string(), update },
+		),
+	))
+	.map(|_| ())
+}
+
+fn wait_for_stage(
+	services: &RuntimeServices,
+	intent: &str,
+) -> Option<v01::HostFundingStatusSubscribeItem> {
+	for _ in 0..200 {
+		let session = services.funding().get(intent)?;
+		if session.is_terminal() {
+			return Some(session.wire_item());
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	None
+}
+
+// The provider's worker takes a session from assignment to delivered, and a
+// restart in between loses nothing: the restarted worker is assigned the
+// session again with its last update when it connects, and the host still
+// decides delivery from the claim of the top-up the provider named.
+#[test]
+fn a_provider_worker_delivers_a_session_across_a_restart() {
+	let storage = stub_platform();
+	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
+		let services = funding_services_over(storage.clone());
+		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Started,
+		)));
+		assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+		services.resume_funding();
+		services
+	};
+	let before = start(&storage);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot"))
+			.expect("selected")
+	);
+	let worker = provider_worker(&before, "ramp.dot");
+	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
+	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
+	let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
+	report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
+	top_up(&worker, 1_000, product_account_source()).expect("top-up accepted");
+	report_funding(&worker, &intent, crediting.clone()).expect("crediting");
+
+	let after = start(&storage);
+	let restarted = provider_worker(&after, "ramp.dot");
+	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
+	report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+	let assignment = |expires_at, last_update| {
+		Some(ProviderCallSeen::Assign(v01::FundingAssignment {
+			intent: intent.clone(),
+			direction: v01::FundingDirection::In,
+			amount: Some(1_000),
+			expires_at,
+			last_update,
+		}))
+	};
+	const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+	assert_eq!(
+		(assigned, replayed, wait_for_stage(&after, &intent)),
+		(
+			assignment(assigned_at.map(|at| at + WEEK_MS), None),
+			assignment(None, Some(crediting)),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+		)
+	);
+}
+
+// The core follows a provider's top-up under the id the host received it
+// with, so delivery is decided from the top-up the provider actually started.
+#[test]
+fn a_session_settles_from_the_top_up_the_provider_started() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
+			.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	top_up(&worker, 1_000, product_account_source()).expect("top-up accepted");
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 },
+	)
+	.expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+	let stage = wait_for_stage(&services, &intent);
+	let started_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
+	assert_eq!(
+		(stage, engine.followed.lock().expect("followed mutex poisoned").clone()),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+			vec![("ramp.dot".to_string(), started_id)],
+		)
+	);
+}
+
+// The host opens a provider's page in its own frame, so the core refuses one
+// that is not plain https before the host sees it.
+#[test]
+fn a_provider_frame_opens_only_https_pages() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
+			.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let present = |url: &str| {
+		futures::executor::block_on(truapi::api::FundingProvider::present_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingPresentFrameRequest::V1(
+				v01::HostFundingPresentFrameRequest {
+					intent: intent.clone(),
+					target: v01::FundingFrameTarget::Page {
+						url: url.to_string(),
+						return_url: None,
+					},
+				},
+			),
+		))
+	};
+
+	let refused = present("http://widget.example.com/");
+	let shown = present("https://widget.example.com/buy");
+
+	assert_eq!(
+		(
+			refused.map(|_| ()),
+			shown.map(|_| ()),
+			platform.framed.lock().expect("framed mutex poisoned").clone(),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingPresentFrameError::V1(
+					v01::HostFundingPresentFrameError::InvalidUrl
+				)
+			)),
+			Ok(()),
+			vec![v01::FundingFrameTarget::Page {
+				url: "https://widget.example.com/buy".to_string(),
+				return_url: None,
+			}],
+		)
+	);
+}
+
+// Only the assigned provider's worker may serve or report on a session.
+#[test]
+fn only_the_assigned_provider_worker_reports() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
+			.expect("selected")
+	);
+	let app = funding_host(&services, "ramp.dot", true);
+	let other = provider_worker(&services, "other.dot");
+
+	assert!(matches!(
+		(
+			report_funding(&app, &intent, v01::FundingUpdate::AwaitingPayment),
+			report_funding(&other, &intent, v01::FundingUpdate::AwaitingPayment),
+		),
+		(
+			Err(CallError::Denied),
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingReportError::V1(
+					v01::HostFundingReportError::NotFound
+				)
+			)),
+		)
+	));
+}
+
+/// Open an inbound session for `amount` and hand it to `ramp.dot`.
+fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(amount),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
+			.expect("selected")
+	);
+	intent
+}
+
+fn crediting(
+	worker: &ProductRuntimeHost,
+	intent: &str,
+	top_up_id: [u8; 32],
+	amount: u128,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+	report_funding(worker, intent, v01::FundingUpdate::Crediting { top_up_id, amount })
+}
+
+fn not_started() -> CallError<truapi::versioned::funding_provider::HostFundingReportError> {
+	CallError::Domain(truapi::versioned::funding_provider::HostFundingReportError::V1(
+		v01::HostFundingReportError::NotStarted,
+	))
+}
+
+// The core settles from the top-ups it saw the provider's worker start, so a
+// worker cannot credit more than it started, or replay a top-up that settled
+// an earlier session.
+#[test]
+fn a_provider_credits_only_what_it_started_for_the_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let earlier = served_session(&services, 600);
+	let worker = provider_worker(&services, "ramp.dot");
+	top_up(&worker, 600, product_account_source()).expect("top-up accepted");
+	let inflated = crediting(&worker, &earlier, [7; 32], 1_000);
+	crediting(&worker, &earlier, [7; 32], 600).expect("crediting");
+	report_funding(&worker, &earlier, v01::FundingUpdate::Delivered).expect("delivered");
+	let earlier_stage = wait_for_stage(&services, &earlier);
+	let later = served_session(&services, 600);
+
+	assert_eq!(
+		(inflated, earlier_stage, crediting(&worker, &later, [7; 32], 600)),
+		(
+			Err(not_started()),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 600 }),
+			Err(not_started()),
+		)
+	);
+}
+
+// A provider cannot settle a session with a top-up that already settled
+// another: starting it again under the same id is refused by the host, and
+// the core keeps no record of it for the later session, whatever amount it
+// asks, so naming it there is refused and nothing settles.
+#[test]
+fn a_settled_top_up_started_again_settles_nothing() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let earlier = served_session(&services, 1);
+	let worker = provider_worker(&services, "ramp.dot");
+	top_up(&worker, 1, product_account_source()).expect("top-up accepted");
+	crediting(&worker, &earlier, [7; 32], 1).expect("crediting");
+	report_funding(&worker, &earlier, v01::FundingUpdate::Delivered).expect("delivered");
+	let earlier_stage = wait_for_stage(&services, &earlier);
+	let later = served_session(&services, 1_000);
+
+	let restarted = top_up(&worker, 1_000, product_account_source());
+	let named = crediting(&worker, &later, [7; 32], 1_000);
+
+	assert_eq!(
+		(
+			earlier_stage,
+			restarted,
+			named,
+			services.funding().get(&later).map(|session| session.started),
+			services.funding().get(&later).map(|session| session.is_terminal()),
+		),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1 }),
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
+				v01::HostPaymentTopUpError::AlreadyExists
+			))),
+			Err(not_started()),
+			Some(Vec::new()),
+			Some(false),
+		)
+	);
+}
+
+/// A top-up engine that does not know a top-up on the first read, as one
+/// still catching up would, and reports it claimed after.
+#[derive(Default)]
+struct LateTopUpPlatform {
+	reads: std::sync::atomic::AtomicUsize,
+}
+
+#[truapi::async_trait]
+impl crate::platform::TopUpPlatform for LateTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Ok(())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		let status = match self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+			0 => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
+			_ => Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+		};
+		Box::pin(futures::stream::iter([status]))
+	}
+}
+
+// A top-up the host does not know right after the provider named it may
+// only be slow to appear, so the core reads it again rather than failing a
+// session whose funds are on their way.
+#[test]
+fn a_top_up_unknown_at_first_still_settles_once_claimed() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(LateTopUpPlatform::default())));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	top_up(&worker, 500, product_account_source()).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+	let mut stage = None;
+	for _ in 0..300 {
+		stage = services.funding().get(&intent).filter(|session| session.is_terminal());
+		if stage.is_some() {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+
+	assert_eq!(
+		stage.map(|session| session.wire_item()),
+		Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 })
+	);
+}
+
+// A provider that never answers a cancel would hold the session and keep its
+// worker running; the user asking again ends the session and lets the
+// worker go.
+#[test]
+fn a_second_cancel_ends_the_session_and_releases_the_worker() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let cancel = || futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let held = services.worker_ledger.count(&ProductId::for_test("ramp.dot"));
+
+	let first = cancel();
+	let held_after_first = services.worker_ledger.count(&ProductId::for_test("ramp.dot"));
+	let second = cancel();
+
+	assert_eq!(
+		(
+			held,
+			first,
+			held_after_first,
+			second,
+			services.worker_ledger.count(&ProductId::for_test("ramp.dot")),
+			services.funding().get(&intent).map(|session| session.wire_item()),
+		),
+		(
+			1,
+			CancelOutcome::Requested,
+			1,
+			CancelOutcome::Ended,
+			0,
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+		)
+	);
+}
+
+// Once money moved, the user's cancel travels to the provider and back: the
+// provider answers with terms, the user accepts them in the host, the
+// provider hears so, settles and ends the session, and its worker is let go.
+// A second offer that lapses at once is declined on the core's clock, and the
+// provider hears that too.
+#[test]
+fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let accepted = served_session(&services, 500);
+	let lapsing = served_session(&services, 300);
+	let worker = provider_worker(&services, "ramp.dot");
+	let link = connect_provider(&services, "ramp.dot");
+	link.answer_cancels([
+		v01::FundingCancelAnswer::Offer { fee: 10, refund: 490, expires_at: None },
+		v01::FundingCancelAnswer::Offer { fee: 0, refund: 300, expires_at: Some(1) },
+	]);
+	let assigned = link.calls(2).len();
+	let cancel = |intent: &str| {
+		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
+	};
+	let received = v01::FundingUpdate::PaymentReceived { finalized: true };
+	report_funding(&worker, &accepted, received.clone()).expect("received");
+	report_funding(&worker, &lapsing, received).expect("received");
+
+	let asked = cancel(&accepted);
+	let offered = wait_for_session(&services, &accepted, |session| {
+		matches!(session.cancel, Some(FundingCancel::Offered { .. }))
+	})
+	.and_then(|session| session.cancel);
+	let answer = futures::executor::block_on(services.confirm_funding_cancel(
+		&accepted,
+		Some(crate::host_logic::funding::CancelTerms { fee: 10, refund: 490 }),
+	))
+	.expect("confirm");
+	link.calls(4);
+	report_funding(
+		&worker,
+		&accepted,
+		v01::FundingUpdate::Failed { reason: v01::FundingFailure::Cancelled },
+	)
+	.expect("settled");
+
+	cancel(&lapsing);
+	let calls = link.calls(6);
+	let lapsed = wait_for_session(&services, &lapsing, |session| session.cancel.is_none())
+		.map(|session| session.cancel);
+
+	assert_eq!(
+		(
+			assigned,
+			asked,
+			offered,
+			answer,
+			calls[2..].to_vec(),
+			services.funding().get(&accepted).map(|session| session.wire_item()),
+			lapsed,
+			futures::executor::block_on(services.confirm_funding_cancel(&lapsing, None))
+				.expect("confirm"),
+			services.worker_ledger.count(&ProductId::for_test("ramp.dot")),
+		),
+		(
+			2,
+			CancelOutcome::Requested,
+			Some(FundingCancel::Offered { fee: 10, refund: 490, expires_at: None }),
+			CancelConfirmation::Accepted,
+			vec![
+				ProviderCallSeen::Cancel(accepted.clone()),
+				ProviderCallSeen::Settle(
+					accepted.clone(),
+					v01::FundingCancelDecision::Accepted { fee: 10, refund: 490 },
+				),
+				ProviderCallSeen::Cancel(lapsing.clone()),
+				ProviderCallSeen::Settle(lapsing.clone(), v01::FundingCancelDecision::Declined),
+			],
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+			Some(None),
+			CancelConfirmation::NoOffer,
+			1,
+		)
+	);
+}
+
+// Before money moved the provider stops, and the core ends the session. A
+// cancel asked while no worker was connected reaches the worker when it
+// connects, after the session it is about.
+#[test]
+fn a_cancel_waits_for_the_provider_to_connect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let asked = futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let link = Arc::new(ScriptedProviderLink::default());
+	link.answer_cancels([v01::FundingCancelAnswer::Stopped]);
+	services.funding().link("ramp.dot", link.clone());
+	services.funding().connected("ramp.dot");
+
+	let calls = link.calls(2);
+	let ended = wait_for_session(&services, &intent, |session| session.is_terminal())
+		.map(|session| session.wire_item());
+
+	assert_eq!(
+		(
+			asked,
+			calls
+				.into_iter()
+				.map(|call| matches!(call, ProviderCallSeen::Assign(_)))
+				.collect::<Vec<_>>(),
+			ended
+		),
+		(
+			CancelOutcome::Requested,
+			vec![true, false],
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+		)
+	);
+}
+
+/// An overlay in which the user picks `ramp.dot` and then closes without
+/// starting.
+struct SelectThenCloseFundingPlatform {
+	services: std::sync::OnceLock<std::sync::Weak<RuntimeServices>>,
+	storage: Arc<crate::test_support::StubPlatform>,
+	/// Whether the session was stored while the overlay was still up.
+	stored_while_up: Mutex<Option<bool>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let services = self.services.get().and_then(std::sync::Weak::upgrade).expect("services");
+		assert!(
+			services
+				.select_funding_provider(&session.intent, "ramp.dot")
+				.await
+				.expect("selected")
+		);
+		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+			.await
+			.expect("loaded")
+			.iter()
+			.any(|stored| stored.intent == session.intent);
+		*self.stored_while_up.lock().expect("stored mutex poisoned") = Some(stored);
+		Ok(crate::platform::FundingPresentOutcome::Dismissed)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+}
+
+// A provider chosen in the overlay may start work before the overlay closes,
+// so closing it does not drop the session from under the provider: the
+// session is stored from the choice on, runs as started, and the provider is
+// asked to stop.
+#[test]
+fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_to_stop() {
+	let storage = stub_platform();
+	let services = funding_services_on(storage.clone(), test_spawner());
+	let platform = Arc::new(SelectThenCloseFundingPlatform {
+		services: std::sync::OnceLock::new(),
+		storage,
+		stored_while_up: Mutex::new(None),
+	});
+	assert!(platform.services.set(Arc::downgrade(&services)).is_ok());
+	assert!(services.funding().install_platform(platform.clone()));
+
+	let opened = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.map(|session| session.intent);
+	let kept = opened.as_ref().ok().and_then(|intent| services.funding().get(intent));
+
+	assert_eq!(
+		(
+			*platform.stored_while_up.lock().expect("stored mutex poisoned"),
+			kept.as_ref().map(|session| (session.is_terminal(), session.cancel.clone())),
+		),
+		(Some(true), Some((false, Some(FundingCancel::Requested))))
+	);
+}
+
 #[derive(Default)]
 struct RecordingTopUpPlatform {
 	started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,
@@ -8613,10 +9427,11 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		product: &ProductContext,
 		request: truapi::latest::HostPaymentTopUpRequest,
 	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
-		self.started
-			.lock()
-			.expect("started mutex poisoned")
-			.push((product.product_id.to_string(), request));
+		let mut started = self.started.lock().expect("started mutex poisoned");
+		if started.iter().any(|(_, held)| held.id == request.id) {
+			return Err(truapi::latest::HostPaymentTopUpError::AlreadyExists);
+		}
+		started.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 
@@ -9253,4 +10068,67 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 			0,
 		)
 	);
+}
+
+/// A host engine that refuses every top-up, as one does when the user
+/// declines it or its source is busy.
+struct RefusingTopUpPlatform;
+
+#[truapi::async_trait]
+impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Err(v01::HostPaymentTopUpError::SourceBusy)
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		Box::pin(futures::stream::empty())
+	}
+}
+
+// A worker that died with a top-up pending repeats it under the same id once
+// it runs again. When the host refuses the repeat, no money moved under that
+// id, so the record an earlier call left behind goes too, and the session is
+// not locked by funds that never started.
+#[test]
+fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform)));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	let provider = ProductContext::new_with_execution(
+		ProductId::for_test("ramp.dot"),
+		crate::platform::ProductExecutionKind::Worker,
+	);
+	let host_id = crate::runtime::payment_id::host_payment_id(&provider, [7; 32]);
+	futures::executor::block_on(services.funding().record_start(
+		services.platform.as_ref(),
+		crate::unix_time::current_unix_millis(),
+		"ramp.dot",
+		v01::FundingDirection::In,
+		host_id,
+		500,
+	))
+	.expect("recorded");
+
+	let repeated = top_up(&worker, 500, product_account_source());
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((repeated.is_err(), session.started.len(), session.money_moved()), (true, 0, false));
 }

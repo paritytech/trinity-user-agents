@@ -2799,48 +2799,6 @@ pub trait ChatPlatform: Send + Sync {
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 }
 
-/// A funding session as the host overlay needs it to open on the right screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingPresentation {
-	/// Session id.
-	pub intent: String,
-	/// Which way value moves, which decides the screen the overlay opens on.
-	pub direction: FundingDirection,
-	/// Amount the caller asked for, or `None` to let the user choose.
-	pub amount: Option<u128>,
-}
-
-/// How the user left the funding overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum FundingPresentOutcome {
-	/// The user went ahead; the session runs on without the overlay.
-	Started,
-	/// The user closed the overlay before starting; the core discards the
-	/// session.
-	Dismissed,
-}
-
-/// Host-implemented funding surface: the native overlay a funding session
-/// runs in. Optional: a host that omits it leaves funding requests answered
-/// `Unsupported`.
-#[async_trait]
-pub trait FundingPlatform: Send + Sync {
-	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
-	async fn present_funding(
-		&self,
-		product: Option<&ProductContext>,
-		session: FundingPresentation,
-	) -> Result<FundingPresentOutcome, GenericError>;
-
-	/// Observe a session's status change, for host UI such as the in-flight
-	/// pill.
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
-		let _ = (intent, status);
-	}
-}
-
 /// Host-implemented balance view: what a payment request can spend right now,
 /// the figure the host checks a payment against. Optional: a host that omits
 /// it leaves balance subscriptions answered `Unsupported`.
@@ -2913,6 +2871,59 @@ pub trait PaymentPlatform: Send + Sync {
 		product: &ProductContext,
 		id: Bytes32,
 	) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
+}
+
+/// A funding session as the host overlay needs it to open on the right screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingPresentation {
+	/// Session id.
+	pub intent: String,
+	/// Which way value moves, which decides the screen the overlay opens on.
+	pub direction: FundingDirection,
+	/// Amount the caller asked for, or `None` to let the user choose.
+	pub amount: Option<u128>,
+}
+
+/// How the user left the funding overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingPresentOutcome {
+	/// The user went ahead; the session runs on without the overlay.
+	Started,
+	/// The user closed the overlay before starting; the core discards the
+	/// session.
+	Dismissed,
+}
+
+/// Host-implemented funding surface: the native overlay a funding session
+/// runs in. Optional: a host that omits it leaves funding requests answered
+/// `Unsupported`.
+#[async_trait]
+pub trait FundingPlatform: Send + Sync {
+	/// Show the funding overlay for a session that `product` opened, or the
+	/// host itself when `product` is `None`.
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: FundingPresentation,
+	) -> Result<FundingPresentOutcome, GenericError>;
+
+	/// Show `target` for `provider`'s session `intent` in a frame the host
+	/// owns, and answer once it closes. A page is an https URL the core has
+	/// checked: the host shows its origin, and closes the frame with
+	/// `Returned` when the page reaches its return URL.
+	async fn present_provider_frame(
+		&self,
+		provider: &ProductContext,
+		intent: String,
+		target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
+
+	/// Observe a session's status change, for host UI such as the in-flight
+	/// pill.
+	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+		let _ = (intent, status);
+	}
 }
 
 /// Host-implemented adapter through which product Pocket calls reach the

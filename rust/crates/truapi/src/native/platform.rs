@@ -706,6 +706,18 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	async fn present_provider_frame(
+		&self,
+		provider: &ProductContext,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
+		self.funding
+			.present_provider_frame(provider.product_id.to_string(), intent, target)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
 		self.funding.funding_session_changed(intent, status);
 	}

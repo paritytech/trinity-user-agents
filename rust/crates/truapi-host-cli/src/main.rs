@@ -20,7 +20,6 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
-#[cfg(feature = "test-host")]
 mod funding_host;
 mod game;
 mod local_network;
@@ -83,8 +82,8 @@ use crate::{
 		SessionClearTarget, SessionProfile,
 	},
 	signing_shell::{
-		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
-		ScriptCommand, SessionCommand, ShellCommand, parse_command,
+		ApprovalCommand, DeviceCommand, FundingCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand,
+		ProductCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
 	},
 	terminal_ui::{
 		ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
@@ -1409,6 +1408,13 @@ async fn run_signing_host(
 		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
 
 	if let Some(script) = args.script {
+		if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+			read_script_user_commands(
+				session.runtime.clone(),
+				session.platform.clone(),
+				session.network,
+			);
+		}
 		let product_id = product.current();
 		let script_product_id = product_id.clone();
 		let script_frame_url = frame_url.clone();
@@ -1817,8 +1823,7 @@ fn build_signing_runtime(
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	#[cfg(feature = "test-host")]
-	funding_host::CliFundingHost::install_from_env(&runtime);
+	funding_host::CliFundingHost::install(&runtime, platform.clone());
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
@@ -2623,6 +2628,59 @@ async fn renew_pairing_allowances(
 }
 
 /// Renew tracked statement-store allowances now, reporting each target.
+/// Take the user's commands from a stdin that is not a terminal while a
+/// script runs, so a battery can act as the user: `/funding` acts on a
+/// session and `/approval` changes how confirmations are answered. A prompt
+/// still has no terminal to ask on, so under manual approval it is refused.
+fn read_script_user_commands(
+	runtime: Arc<SigningHostRuntime>,
+	platform: Arc<CliPlatform>,
+	network: NetworkConfig,
+) {
+	tokio::spawn(async move {
+		use tokio::io::AsyncBufReadExt;
+		let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+		while let Ok(Some(line)) = lines.next_line().await {
+			if line.trim().is_empty() {
+				continue;
+			}
+			let done = match parse_command(&line) {
+				Ok(ShellCommand::Funding(command)) => run_funding(&runtime, command).await,
+				Ok(ShellCommand::Approval(ApprovalCommand::Manual)) => {
+					platform.set_approval_policy(ApprovalPolicy::Prompt);
+					Ok("Approval mode set to manual".to_string())
+				},
+				Ok(ShellCommand::Approval(ApprovalCommand::Automatic)) => {
+					approval_policy(true, network).map(|policy| {
+						platform.set_approval_policy(policy);
+						"Approval mode set to automatic".to_string()
+					})
+				},
+				Ok(_) => {
+					Err(anyhow::anyhow!("{} is not available while a script runs", line.trim()))
+				},
+				Err(error) => Err(anyhow::anyhow!(error)),
+			};
+			match done {
+				Ok(done) => terminal_ui::output_success(done, None),
+				Err(error) => terminal_ui::output_warning(error.to_string(), None),
+			}
+		}
+	});
+}
+
+/// Act on a funding session as the user, and say what that did.
+async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> Result<String> {
+	match command {
+		FundingCommand::Cancel(intent) => {
+			let outcome = funding_host::cancel(runtime, &intent)
+				.await
+				.map_err(|reason| anyhow::anyhow!("cancelling {intent} failed: {reason}"))?;
+			Ok(format!("Cancel of {intent}: {outcome}"))
+		},
+	}
+}
+
 async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
 	use truapi::statement_allowance::renewal::TargetRenewalStatus;
 
@@ -3328,7 +3386,8 @@ async fn pairing_interactive_loop(
 			ShellCommand::Devices(_) |
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
-			ShellCommand::Renew => {
+			ShellCommand::Renew |
+			ShellCommand::Funding(_) => {
 				ui.error("command is only available on the signing host");
 			},
 		}
@@ -3746,6 +3805,10 @@ async fn execute_interactive_operation(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Funding(command) => {
+			let done = run_funding(&session.runtime, command).await?;
+			ui.success(done, None);
+		},
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -3886,6 +3949,10 @@ async fn execute_non_interactive_command(
 			return Ok(Some(target));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Funding(command) => {
+			let done = run_funding(&session.runtime, command).await?;
+			terminal_ui::output_success(done, None);
+		},
 	}
 	Ok(None)
 }
