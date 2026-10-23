@@ -235,6 +235,8 @@ export function createTransport(
     string,
     {
       ids: MethodIds;
+      payload: Uint8Array;
+      reopenOnReset: boolean;
       sent: boolean;
       onReceive: (payload: Uint8Array) => void;
       onInterrupt?: (payload: Uint8Array) => void;
@@ -326,6 +328,34 @@ export function createTransport(
     }
   }
 
+  /**
+   * Interrupt current operations, keeping the streams that asked to be reopened
+   * and starting them on the next connection. Only a stream whose start the
+   * host received is kept, so a host that never comes back closes it on the
+   * next reset instead of reopening it forever. The restart waits a microtask,
+   * so the provider finishes retiring the connection that just ended first.
+   */
+  function resetOperations(error: Error) {
+    const reopening = [...subscriptions].filter(
+      ([, subscription]) => subscription.reopenOnReset && subscription.sent,
+    );
+    for (const [requestId] of reopening) subscriptions.delete(requestId);
+    interruptOperations(error);
+    for (const [requestId, subscription] of reopening) {
+      if (closedError) {
+        try {
+          subscription.onClose?.(closedError);
+        } catch {}
+        continue;
+      }
+      subscription.sent = false;
+      subscriptions.set(requestId, subscription);
+    }
+    void Promise.resolve().then(() => {
+      for (const [requestId] of reopening) startSubscription(requestId);
+    });
+  }
+
   /** Close permanently; a provider reset only interrupts current operations. */
   function closeWithError(error: unknown) {
     if (closedError) return;
@@ -339,7 +369,7 @@ export function createTransport(
     closeWithError(error);
   });
   const unsubscribeReset = provider.subscribeReset?.((error) => {
-    if (!closedError) interruptOperations(error);
+    if (!closedError) resetOperations(error);
   });
 
   const unsubscribeMessage = provider.subscribe((message) => {
@@ -629,6 +659,33 @@ export function createTransport(
     }
   }
 
+  /** Send a subscription's `Start` once the connection is ready, or close it if it never is. */
+  function startSubscription(requestId: string) {
+    const subscription = subscriptions.get(requestId);
+    if (!subscription) return;
+    prepare(
+      subscription.ids,
+      () => {
+        if (subscriptions.get(requestId) !== subscription) return;
+        subscription.sent = true;
+        send({
+          requestId,
+          payload: {
+            traitId: subscription.ids.trait,
+            methodId: subscription.ids.method,
+            messageType: MESSAGE_TYPE_START,
+            value: subscription.payload,
+          },
+        });
+      },
+      (error) => {
+        if (subscriptions.get(requestId) !== subscription) return;
+        subscriptions.delete(requestId);
+        subscription.onClose?.(toError(error));
+      },
+    );
+  }
+
   function prepare(
     ids: MethodIds,
     ready: () => void,
@@ -875,6 +932,7 @@ export function createTransport(
       onReceive,
       onInterrupt,
       onClose,
+      reopenOnReset = false,
     }: SubscribeRawParams) {
       if (closedError) {
         onClose?.(closedError);
@@ -884,31 +942,14 @@ export function createTransport(
       const requestId = `${requestIdPrefix}${++idCounter}`;
       subscriptions.set(requestId, {
         ids,
+        payload,
+        reopenOnReset,
         sent: false,
         onReceive,
         onInterrupt,
         onClose,
       });
-      prepare(
-        ids,
-        () => {
-          const entry = subscriptions.get(requestId);
-          if (!entry) return;
-          entry.sent = true;
-          send({
-            requestId,
-            payload: {
-              traitId: ids.trait,
-              methodId: ids.method,
-              messageType: MESSAGE_TYPE_START,
-              value: payload,
-            },
-          });
-        },
-        (error) => {
-          if (subscriptions.delete(requestId)) onClose?.(toError(error));
-        },
-      );
+      startSubscription(requestId);
       return {
         subscriptionId: requestId,
         unsubscribe: () => {

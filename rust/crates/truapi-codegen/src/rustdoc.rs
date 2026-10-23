@@ -130,6 +130,9 @@ pub struct WireAttrs {
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
+	/// This product-started subscription is started again after a connection
+	/// reset, because the host buffers its items across connections.
+	pub reopen_on_reset: bool,
 	/// Method frame discriminant.
 	pub id: Option<u8>,
 }
@@ -842,6 +845,10 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
 	}
 
+	if wire.reopen_on_reset && (wire.host_initiated || !matches!(kind, MethodKind::Subscription)) {
+		bail!("`reopen_on_reset` method `{name}` must be a product-started subscription");
+	}
+
 	Ok(Some(MethodDef {
 		name,
 		kind,
@@ -926,6 +933,9 @@ fn extract_wire_attrs(docs: &str) -> WireAttrs {
 		}
 		if line.trim_end() == "@wire_internal" {
 			attrs.internal = true;
+		}
+		if line.trim_end() == "@wire_reopen_on_reset" {
+			attrs.reopen_on_reset = true;
 		}
 		const NEEDLE: &str = "@wire_id=";
 		let Some(start) = line.find(NEEDLE).map(|index| index + NEEDLE.len()) else {
@@ -1537,7 +1547,15 @@ mod tests {
 			extract_wire_attrs(
 				"Method summary.\n@wire_id=2\n@wire_host_initiated\n@wire_internal\n"
 			),
-			WireAttrs { host_initiated: true, internal: true, id: Some(2) }
+			WireAttrs { host_initiated: true, internal: true, id: Some(2), ..WireAttrs::default() }
+		);
+	}
+
+	#[test]
+	fn reopen_on_reset_marker_reaches_the_method_attributes() {
+		assert_eq!(
+			extract_wire_attrs("Method summary.\n@wire_id=1\n@wire_reopen_on_reset\n"),
+			WireAttrs { reopen_on_reset: true, id: Some(1), ..WireAttrs::default() }
 		);
 	}
 

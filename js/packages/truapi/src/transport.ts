@@ -264,6 +264,15 @@ export interface SubscribeRawParams {
    * the subscription.
    **/
   onClose?: (error: Error) => void;
+
+  /**
+   * Start the subscription again on the next connection after a provider
+   * reset, instead of closing it. Only for streams whose items the host
+   * buffers across connections, so nothing is lost or repeated in between.
+   * A stream reopens once per start the host received: a reset that lands
+   * before the reopened stream starts closes it.
+   **/
+  reopenOnReset?: boolean;
 }
 
 /** Product-side registration for one host-initiated subscription method. **/

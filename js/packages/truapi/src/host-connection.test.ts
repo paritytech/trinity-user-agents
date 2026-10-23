@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "bun:test";
 import { createHostConnection } from "./host-connection.js";
-import { createClient } from "./generated/client.js";
+import { createClient, type TrUApiClient } from "./generated/client.js";
 import { createTransport } from "./client.js";
 import {
     ConnectionResetError,
@@ -9,6 +9,7 @@ import {
     decodeWireMessage,
     encodeWireMessage,
     MESSAGE_TYPE_RECEIVE,
+    MESSAGE_TYPE_START,
     type ProtocolMessage,
     type WebSocketWireProvider,
 } from "./transport.js";
@@ -86,6 +87,56 @@ function host(createProvider?: (url: string) => WebSocketWireProvider) {
             answer = value;
         },
     };
+}
+
+/**
+ * Open a product stream, drop the connection once the host has started it, then
+ * send `item` on the next connection and report what the product saw.
+ */
+async function deliverAcrossReset<Item>(
+    stream: {
+        ids: { trait: number; method: number };
+        subscribe(
+            client: TrUApiClient,
+            observer: { next(item: Item): void; error(error: unknown): void },
+        ): void;
+        encode(item: Item): Uint8Array;
+    },
+    item: Item,
+) {
+    const fixture = host();
+    const client = fixture.connection.client;
+    await client.system.handshake();
+    const received: Item[] = [];
+    const errors: unknown[] = [];
+    stream.subscribe(client, {
+        next: (next) => received.push(next),
+        error: (error) => errors.push(error),
+    });
+    const starts = () =>
+        fixture.frames.filter(
+            (frame) =>
+                frame.payload.traitId === stream.ids.trait &&
+                frame.payload.methodId === stream.ids.method &&
+                frame.payload.messageType === MESSAGE_TYPE_START,
+        );
+    await until(() => starts().length === 1);
+
+    fixture.sockets[0]!.close();
+    await until(() => starts().length === 2);
+    fixture.sockets[1]!.send(
+        encodeWireMessage({
+            requestId: starts()[1]!.requestId,
+            payload: {
+                traitId: stream.ids.trait,
+                methodId: stream.ids.method,
+                messageType: MESSAGE_TYPE_RECEIVE,
+                value: stream.encode(item),
+            },
+        })._unsafeUnwrap(),
+    );
+    await until(() => received.length === 1);
+    return { received, errors };
 }
 
 const permission: T.RemotePermissionRequest = {
@@ -250,6 +301,76 @@ describe("shared SDK host connection", () => {
                     frame.payload.traitId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
             ),
         ).toHaveLength(2);
+    });
+
+    // The host holds actions while the product has no stream open, so a stream
+    // that a reset ended for good would strand every later press or message. It
+    // has to start again on the next connection without the product noticing.
+    it("reopens the renderer action stream on the next connection after a reset", async () => {
+        const press: T.HostRendererActionSubscribeItem = {
+            context: {
+                tag: "ChatMessage",
+                value: { roomId: "jollity", messageId: "card", messageType: "jollity.gamecard" },
+            },
+            actionId: "open-card",
+            payload: "0x",
+        };
+
+        const delivered = await deliverAcrossReset(
+            {
+                ids: W.RENDERER_ACTION_SUBSCRIBE,
+                subscribe: (client, observer) => client.renderer.actionSubscribe().subscribe(observer),
+                encode: (item) => T.VersionedHostRendererActionSubscribeItem.enc({ tag: "V1", value: item }),
+            },
+            press,
+        );
+
+        expect(delivered).toEqual({ received: [press], errors: [] });
+    });
+
+    it("reopens the chat action stream on the next connection after a reset", async () => {
+        const message: T.HostChatActionSubscribeItem = {
+            roomId: "jollity",
+            peer: "native",
+            payload: { tag: "MessagePosted", value: { tag: "Text", value: { text: "play" } } },
+        };
+
+        const delivered = await deliverAcrossReset(
+            {
+                ids: W.CHAT_ACTION_SUBSCRIBE,
+                subscribe: (client, observer) => client.chat.actionSubscribe().subscribe(observer),
+                encode: (item) => T.VersionedHostChatActionSubscribeItem.enc({ tag: "V1", value: item }),
+            },
+            message,
+        );
+
+        expect(delivered).toEqual({ received: [message], errors: [] });
+    });
+
+    // Only a stream the host had started is reopened. One the reset caught before
+    // its start reached the host is closed without dialling again, so a host that
+    // stays away cannot keep the client reconnecting for it.
+    it("closes without reconnecting a renderer action stream that a reset caught before it started", async () => {
+        const createProvider = createWebSocketProviderFactory();
+        let connects = 0;
+        const fixture = host((url) => {
+            connects += 1;
+            return createProvider(url);
+        });
+        fixture.answer(false);
+        const errors: unknown[] = [];
+        fixture.connection.client.renderer
+            .actionSubscribe()
+            .subscribe({ error: (error) => errors.push(error.cause) });
+        await until(() => fixture.sockets.length === 1);
+
+        fixture.sockets[0]!.close();
+        await until(() => errors.length === 1);
+
+        expect({ error: (errors[0] as Error).name, connects }).toEqual({
+            error: "ConnectionResetError",
+            connects: 1,
+        });
     });
 
     it("keeps legacy replies separate and does not replace the legacy port after a disconnect", async () => {
