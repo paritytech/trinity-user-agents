@@ -4,9 +4,9 @@ use std::sync::{Arc, OnceLock};
 
 use tokio_rustls::rustls::{ClientConfig, RootCertStore};
 
-/// One shared client config; webpki roots rather than the platform verifier so
-/// the behaviour is identical on every native target, including a statically
-/// linked binary on a system without a certificate store.
+/// The TLS config every native `wss` connection uses, built once. It trusts the
+/// bundled webpki roots rather than the operating system's trust store, so
+/// certificate checks are the same on every native target.
 pub fn client_config() -> Arc<ClientConfig> {
 	static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
 	Arc::clone(CONFIG.get_or_init(|| {
