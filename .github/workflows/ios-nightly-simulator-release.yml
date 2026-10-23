@@ -168,9 +168,11 @@ jobs:
           echo "archive=hosts/ios/build_simulator/$ARCHIVE" >> "$GITHUB_OUTPUT"
 
       # Generated notes compare against the newest release of any kind unless
-      # told otherwise, and this repository also publishes Android nightlies and npm releases. The previous
-      # simulator release is the base, so the notes list what changed since it.
-      - name: Find the previous simulator release
+      # told otherwise, and this repository also publishes Android nightlies
+      # and npm releases. The base is the last simulator release the room was
+      # told about, so the notes list everything since that announcement,
+      # including what a dispatched or unannounced build in between carried.
+      - name: Find the last announced simulator release
         id: previous
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
@@ -182,7 +184,10 @@ jobs:
             const { data } = await github.rest.repos.listReleases({
               owner: context.repo.owner, repo: context.repo.repo, per_page: 100,
             });
-            const previous = data.find(r => !r.draft && r.tag_name.startsWith(prefix) && r.tag_name !== tag);
+            const series = data.filter(r => !r.draft && r.tag_name.startsWith(prefix) && r.tag_name !== tag);
+            // The announcement marks a release once the room has it. Until one
+            // carries the marker, the newest of the series is the base.
+            const previous = series.find(r => (r.body || '').includes('<!-- nightly-announced -->')) || series[0];
             core.info(previous ? `Notes start from ${previous.tag_name}` : 'No previous release; GitHub picks the base');
             core.setOutput('tag', previous ? previous.tag_name : '');
 
@@ -196,8 +201,8 @@ jobs:
           target_commitish: ${{ steps.tag.outputs.sha }}
           name: ${{ steps.tag.outputs.name }}
           # GitHub generates a "What's Changed" list between this tag and the
-          # previous simulator release, which is the changelog the nightly
-          # announcement links to. softprops/action-gh-release prepends the
+          # last announced simulator release, which is the changelog the
+          # nightly announcement links to. softprops/action-gh-release prepends the
           # body below to those notes, so the install snippet sits above it.
           generate_release_notes: true
           previous_tag: ${{ steps.previous.outputs.tag }}

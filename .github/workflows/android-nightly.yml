@@ -339,9 +339,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Generated notes compare against the newest release of any kind unless
-      # told otherwise, and this repository also publishes iOS simulator nightlies and npm releases. The previous
-      # Android nightly release is the base, so the notes list what changed since it.
-      - name: Find the previous Android nightly release
+      # told otherwise, and this repository also publishes simulator nightlies
+      # and npm releases. The base is the last Android nightly the room was told
+      # about, so the notes list everything since that announcement, including
+      # what a dispatched build in between already carried.
+      - name: Find the last announced Android nightly
         id: previous
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
@@ -353,7 +355,10 @@ jobs:
             const { data } = await github.rest.repos.listReleases({
               owner: context.repo.owner, repo: context.repo.repo, per_page: 100,
             });
-            const previous = data.find(r => !r.draft && r.tag_name.startsWith(prefix) && r.tag_name !== tag);
+            const series = data.filter(r => !r.draft && r.tag_name.startsWith(prefix) && r.tag_name !== tag);
+            // The announcement marks a release once the room has it. Until one
+            // carries the marker, the newest of the series is the base.
+            const previous = series.find(r => (r.body || '').includes('<!-- nightly-announced -->')) || series[0];
             core.info(previous ? `Notes start from ${previous.tag_name}` : 'No previous release; GitHub picks the base');
             core.setOutput('tag', previous ? previous.tag_name : '');
 
@@ -509,9 +514,9 @@ jobs:
     # a failed night.
     continue-on-error: true
     timeout-minutes: 10
-    # Narrower than the workflow default, which this job has no use for.
+    # contents: write is for marking the release as announced.
     permissions:
-      contents: read
+      contents: write
     steps:
       # The action below is held in this repository, so it has to be on disk.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -542,3 +547,5 @@ jobs:
           relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
           relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
           room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
+          release_tag: ${{ needs.nightly.outputs.tag }}
+          github_token: ${{ github.token }}

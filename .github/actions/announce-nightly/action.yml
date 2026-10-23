@@ -2,7 +2,9 @@ name: "Announce a nightly"
 description: >-
   Posts a nightly announcement to every CI Matrix room through the relay's
   release endpoint, which renders it. The message links to the changelog
-  rather than listing what merged.
+  rather than listing what merged. Once every room has it, the release is
+  marked as announced, which makes it the base the next nightly's changelog
+  starts from.
 inputs:
   platform:
     description: "Platform named in the heading, such as iOS."
@@ -26,6 +28,14 @@ inputs:
   room_ids:
     description: "Comma separated Matrix room ids."
     required: true
+  release_tag:
+    description: "The prerelease this announcement is for; empty when there is none to mark."
+    required: false
+    default: ""
+  github_token:
+    description: "Token with contents write, used to mark the release as announced."
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -69,3 +79,27 @@ runs:
           fi
         done
         exit "$failed"
+
+    # The next nightly's changelog starts from the newest release carrying
+    # this marker, so a build that was never announced, a dispatched one or a
+    # night whose announcement failed, never becomes that base and nothing
+    # merged before it goes unannounced. The marker is an HTML comment, so the
+    # rendered notes do not show it.
+    - name: Mark the release as announced
+      if: inputs.release_tag != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        GH_REPO: ${{ github.repository }}
+        TAG: ${{ inputs.release_tag }}
+      run: |
+        set -euo pipefail
+        marker='<!-- nightly-announced -->'
+        notes="$RUNNER_TEMP/announced-notes.md"
+        gh release view "$TAG" --json body --jq .body > "$notes"
+        if grep -qF "$marker" "$notes"; then
+          exit 0
+        fi
+        printf '\n\n%s\n' "$marker" >> "$notes"
+        gh release edit "$TAG" --notes-file "$notes" > /dev/null
+        echo "Marked $TAG as announced"

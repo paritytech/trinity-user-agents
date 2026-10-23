@@ -175,6 +175,9 @@ jobs:
     if: >-
       ${{ !cancelled() &&
       needs.build_nightly.outputs.succeeded == 'true' }}
+    # contents: write is for marking the simulator release as announced.
+    permissions:
+      contents: write
     steps:
       # The announcement carries the bare join URL, a substring of the secret
       # rather than its value, which nothing redacts. This repository is public,
@@ -224,3 +227,5 @@ jobs:
           relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
           relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
           room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
+          release_tag: ${{ needs.build_simulator.outputs.tag }}
+          github_token: ${{ github.token }}
