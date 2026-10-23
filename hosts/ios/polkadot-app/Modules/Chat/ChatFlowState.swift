@@ -15,6 +15,7 @@ final class ChatFlowState {
     let notificationsCleaner: any PushNotificationsCleaning
     let coinageService: CoinageServicing
     let networkStatusService: NetworkStatusProviding
+    let allowanceCleanupService: AllowanceCleanupServicing
     let flowState: SPAFlowState
 
     init(
@@ -28,6 +29,7 @@ final class ChatFlowState {
         notificationsCleaner: any PushNotificationsCleaning,
         coinageService: CoinageServicing,
         networkStatusService: NetworkStatusProviding,
+        allowanceCleanupService: AllowanceCleanupServicing,
         flowState: SPAFlowState
     ) {
         self.extensionsRegistry = extensionsRegistry
@@ -40,6 +42,7 @@ final class ChatFlowState {
         self.notificationsCleaner = notificationsCleaner
         self.coinageService = coinageService
         self.networkStatusService = networkStatusService
+        self.allowanceCleanupService = allowanceCleanupService
         self.flowState = flowState
     }
 }

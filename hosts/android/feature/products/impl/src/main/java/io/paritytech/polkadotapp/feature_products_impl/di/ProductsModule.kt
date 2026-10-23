@@ -104,6 +104,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealPr
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.AccountAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.BalanceAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.NftPurseReadPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.RemotePermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.UserIdentityAccessPermissionHandler
@@ -114,16 +115,16 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.OkHttpRemot
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
@@ -150,14 +151,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
-import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketTabDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.FundingResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
-import io.paritytech.polkadotapp.feature_scan_api.domain.DeeplinkScanContentParser
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -230,7 +229,7 @@ internal interface ProductsModule {
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
 
     @Binds
-    fun bindPocketImageResolver(impl: RealPocketImageResolver): PocketImageResolver
+    fun bindProductImageResolver(impl: RealProductImageResolver): ProductImageResolver
 
     @Binds
     @Singleton
@@ -255,10 +254,6 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindPocketDeepLinkHandler(impl: PocketDeepLinkHandler): DeepLinkHandler
-
-    @Binds
-    @IntoSet
-    fun bindPocketTabDeepLinkHandler(impl: PocketTabDeepLinkHandler): DeepLinkHandler
 
     @Binds
     fun bindProductLocalStorage(impl: RealProductLocalStorage): ProductLocalStorage
@@ -343,6 +338,11 @@ internal interface ProductsModule {
     fun bindUserIdentityAccessPermissionHandler(
         impl: UserIdentityAccessPermissionHandler,
     ): ProductPermissionHandler<ProductPermission.UserIdentityAccess>
+
+    @Binds
+    fun bindNftPurseReadPermissionHandler(
+        impl: NftPurseReadPermissionHandler,
+    ): ProductPermissionHandler<ProductPermission.NftPurseRead>
 
     @Binds
     @Singleton
@@ -471,11 +471,6 @@ internal interface ProductsModule {
         @IntoSet
         fun providePocketScanContentParser(handler: PocketDeepLinkHandler): ScanContentParser =
             PocketScanContentParser(handler)
-
-        @Provides
-        @IntoSet
-        fun providePocketTabScanContentParser(handler: PocketTabDeepLinkHandler): ScanContentParser =
-            DeeplinkScanContentParser(handler)
 
         @Provides
         @Singleton

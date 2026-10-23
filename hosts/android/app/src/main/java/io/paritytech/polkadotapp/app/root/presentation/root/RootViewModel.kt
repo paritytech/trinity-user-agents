@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.common.utils.stateInBackground
+import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
@@ -60,6 +61,7 @@ class RootViewModel @Inject constructor(
     private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
     private val exploreProductsService: ExploreProductsService,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
     featureOverlays: Set<@JvmSuppressWildcards ChatOverlay>,
@@ -72,6 +74,7 @@ class RootViewModel @Inject constructor(
     override val chatOverlays = chatEngine.observeActiveOverlays().map { featureOverlays.toList() + it }
     override val isOnboarded = observeAccountOnboardingStatus().map { it.isOnboarded }
     override val bottomNavHeight = bottomNavHeightProvider.heightDp
+    val appTheme = appThemeSelector.selectedTheme
     override val chainsHealth = chainHealthMixinFactory.create(this).model
 
     private val networkStatusTooltipDismissed = MutableStateFlow(!rootInteractor.shouldShowNetworkStatusTooltip())
@@ -83,6 +86,17 @@ class RootViewModel @Inject constructor(
         chainRingsOnScreen,
     ) { dismissed, onboarded, ringsOnScreen ->
         !dismissed && onboarded && ringsOnScreen
+    }.stateInBackground(initialValue = false)
+
+    private val paymentsSetupNoticeDismissed = MutableStateFlow(false)
+
+    // Registration starts only after onboarding, so a wait before it is not a delayed backup.
+    override val isPaymentsSetupNoticeVisible = combine(
+        rootInteractor.observePaymentsSetupPending(),
+        isOnboarded,
+        paymentsSetupNoticeDismissed,
+    ) { pending, onboarded, dismissed ->
+        pending && onboarded && !dismissed
     }.stateInBackground(initialValue = false)
 
     private val servicesScope = ComputationalScope(viewModelScope + coroutineDispatchers.computation)
@@ -140,6 +154,10 @@ class RootViewModel @Inject constructor(
         if (networkStatusTooltipDismissed.value) return
         networkStatusTooltipDismissed.value = true
         rootInteractor.markNetworkStatusTooltipShown()
+    }
+
+    override fun dismissPaymentsSetupNotice() {
+        paymentsSetupNoticeDismissed.value = true
     }
 
     private suspend fun checkDevReset() {

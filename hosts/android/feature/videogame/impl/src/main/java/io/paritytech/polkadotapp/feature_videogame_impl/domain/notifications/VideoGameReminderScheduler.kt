@@ -8,7 +8,6 @@ import android.os.Build
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import javax.inject.Inject
 
 interface VideoGameReminderScheduler {
@@ -18,7 +17,6 @@ interface VideoGameReminderScheduler {
 
 class RealVideoGameReminderScheduler @Inject constructor(
     private val contextManager: ContextManager,
-    private val alarmPreferences: VideoGameSettingsPreferences,
 ) : VideoGameReminderScheduler {
     private companion object {
         const val PRODUCT_GAME_REQUEST_CODE_BASE = 1000
@@ -29,14 +27,13 @@ class RealVideoGameReminderScheduler @Inject constructor(
 
     override fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp) {
         val notificationType = VideoGameNotificationType.ProductGameStartsSoon(productId.value)
-        val triggerAtMillis = gameStartMillis - alarmPreferences.getAlarmOffset().inWholeMilliseconds
-
-        if (triggerAtMillis <= System.currentTimeMillis()) {
+        // Rings at the start itself.
+        if (gameStartMillis <= System.currentTimeMillis()) {
             cancelAlarm(notificationType)
             return
         }
 
-        scheduleAlarm(notificationType, triggerAtMillis)
+        scheduleAlarm(notificationType, gameStartMillis)
     }
 
     override fun cancelProductGameStart(productId: ProductId) =

@@ -2,14 +2,12 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,9 +16,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -37,21 +33,22 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBr
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
-import io.paritytech.polkadotapp.design.components.icon.vectors.WarningFilled
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
-import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberCountUp
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketBalanceSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarBalanceStatus
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -89,16 +86,11 @@ fun CashCardFace(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(CardSizes.HEIGHT)
+            .aspectRatio(WalletLeatherRenderer.ASPECT)
             .clip(CardShape)
             .background(WalletFallback)
     ) {
-        Image(
-            modifier = Modifier.matchParentSize(),
-            painter = painterResource(R.drawable.img_cash_card_wallet),
-            contentDescription = null,
-            contentScale = ContentScale.Crop
-        )
+        WalletLeatherSurface(modifier = Modifier.matchParentSize())
 
         Column(
             modifier = Modifier
@@ -118,6 +110,31 @@ fun CashCardFace(
                         is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
 
                         DigitalDollarBalanceStatus.TotalOnly -> Unit
+                    }
+                }
+
+                if (isExpanded) {
+                    Column(
+                        modifier = Modifier.align(Alignment.BottomStart)
+                    ) {
+                        AnimatedContent(
+                            targetState = card.balanceStatus,
+                            contentKey = { it::class },
+                            label = "DigitalDollarBalanceStatus"
+                        ) { status ->
+                            when (status) {
+                                DigitalDollarBalanceStatus.Syncing -> SyncProgress()
+                                is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
+
+                                DigitalDollarBalanceStatus.TotalOnly -> Unit
+                            }
+                        }
+
+                        BalanceAmount(
+                            amounts = card.amounts,
+                            cardId = card.id,
+                            isHidden = false
+                        )
                     }
                 }
             }
@@ -281,19 +298,6 @@ private fun DigitalDollarCardPartlyReadyPreview() {
 
 @Preview
 @Composable
-private fun DigitalDollarCardAccountBackupPendingPreview() {
-    DigitalDollarCardPreviewContainer(
-        amounts = LoadingState.Loaded(
-            PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
-        ),
-        syncInProgress = false,
-        isExpanded = true,
-        accountBackupPending = true,
-    )
-}
-
-@Preview
-@Composable
 private fun DigitalDollarCardCollapsedPreview() {
     DigitalDollarCardPreviewContainer(
         amounts = LoadingState.Loaded(
@@ -339,7 +343,6 @@ private fun DigitalDollarCardPreviewContainer(
     amounts: LoadingState<PocketCardUiModel.DigitalDollar.Amounts>,
     syncInProgress: Boolean,
     isExpanded: Boolean,
-    accountBackupPending: Boolean = false,
 ) {
     PolkadotTheme {
         CompositionLocalProvider(
@@ -350,7 +353,6 @@ private fun DigitalDollarCardPreviewContainer(
                 card = PocketCardUiModel.DigitalDollar(
                     amounts = amounts,
                     syncInProgress = syncInProgress,
-                    accountBackupPending = accountBackupPending,
                 ),
                 isExpanded = isExpanded
             )

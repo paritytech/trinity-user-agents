@@ -68,7 +68,7 @@ on:
         required: false
       SENTRY_AUTH_TOKEN:
         required: false
-      SENTRY_DSN:
+      SENTRY_DSN_IOS:
         required: false
 
 env:
@@ -90,7 +90,10 @@ env:
 jobs:
   prepare_build_metadata:
     name: Prepare Build Metadata
-    runs-on: macos-26
+    # The Parity pool, like the TestFlight build it gates: reading the build
+    # number needs fastlane and Xcode, and the hosted macOS queue can hold this
+    # short job for hours.
+    runs-on: parity-macos-large
     # actions: read is what lets the pull request lookup below find the run
     # this one follows. check_build_result declares it for the same call.
     permissions:
@@ -121,7 +124,7 @@ jobs:
           echo "${BUILD_CONFIGURATION} is published from this repository."
 
       - name: Security Check - Verify bot-initiated workflow
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_BRANCH: ${{ inputs.release_branch }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
@@ -153,14 +156,14 @@ jobs:
             console.log('Security checks passed!');
 
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
 
       - name: Prepare TestFlight release notes
         id: release_notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           RELEASE_BRANCH: ${{ inputs.release_branch }}
@@ -248,16 +251,18 @@ jobs:
     # produces distinct job names — check-job-conclusion matches by name suffix and
     # would otherwise resolve both lookups to the same leg.
     name: Check and Build TestFlight (${{ inputs.build_configuration }})
-    # The same runner as the pull request gate, because the app's
-    # timing-sensitive tests exceed their limits on the standard runner.
-    runs-on: macos-26-xlarge
+    # The same runner as the pull request test gate, because the app's
+    # timing-sensitive tests exceed their limits on shared hosted runners.
+    runs-on: parity-macos-large
     needs: prepare_build_metadata
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -294,11 +299,41 @@ jobs:
           match_password: ${{ secrets.MATCH_PASSWORD }}
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
+
+      # The distribute action runs the unit tests before it archives. xcpretty
+      # drops the failing test names, and on a reused runner the result bundle
+      # does not outlive the next job, so both are taken here.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            summary="$(xcrun xcresulttool get test-results summary --path "$result")"
+            echo "$summary"
+            {
+              echo "### Unit test results for this failed build"
+              echo '```json'
+              echo "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No result bundle: the run failed before the tests"
+          fi
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ inputs.build_configuration }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hosts/ios/fastlane/test_output/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Comment on PR with build info
         if: inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
           MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
@@ -330,7 +365,7 @@ jobs:
         if: >-
           github.event_name == 'workflow_dispatch' &&
           inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           # Statuses are keyed by context, so each configuration needs its own — a nightly
@@ -375,7 +410,7 @@ jobs:
       succeeded: ${{ steps.check.outputs.succeeded }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the build result
         id: check
         uses: ./hosts/ios/.github/actions/check-job-conclusion

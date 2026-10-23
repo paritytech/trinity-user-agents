@@ -21,7 +21,7 @@ use crate::{
 	runtime::{
 		RuntimeServices,
 		authority::ProductAuthority,
-		signing_host::sso_responder::current_unix_secs,
+		signing_host::allowance::current_unix_secs,
 		statement_allowance::{
 			self, fetch_chain_state, fetch_metadata, find_including_rings,
 			renewal::{
@@ -365,7 +365,7 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use truapi::latest::GenericError;
+	use truapi::latest::{GenericError, ProductId};
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -633,30 +633,6 @@ mod tests {
 		});
 	}
 
-	#[test]
-	fn an_unresolvable_target_is_skipped_not_fatal() {
-		// An all-digit product id past `u64::MAX` fails junction derivation with
-		// `NumericJunctionOutOfRange`.
-		let unresolvable = product(&"9".repeat(25));
-		let entropy = [7u8; 32];
-
-		assert!(resolve_target(&entropy, "paseo", &unresolvable).is_err());
-		let targets = [unresolvable, product("a.dot")];
-
-		// Resolving strictly loses the healthy target with the broken one.
-		assert!(
-			targets
-				.iter()
-				.map(|target| resolve_target(&entropy, "paseo", target))
-				.collect::<Result<Vec<_>, _>>()
-				.is_err()
-		);
-
-		let resolved = resolve_targets(&entropy, "paseo", &targets);
-		assert_eq!(resolved.len(), 1);
-		assert_eq!(resolved[0].label, "product:a.dot");
-	}
-
 	/// A fresh ledger lock; each test drives one ledger in isolation.
 	fn lock() -> futures::lock::Mutex<()> {
 		futures::lock::Mutex::new(())
@@ -676,7 +652,9 @@ mod tests {
 	}
 
 	fn product(product_id: &str) -> StatementRenewalTarget {
-		StatementRenewalTarget::ProductStatementAllowance { product_id: product_id.to_string() }
+		StatementRenewalTarget::ProductStatementAllowance {
+			product_id: ProductId::for_test(product_id),
+		}
 	}
 
 	#[test]
@@ -1002,30 +980,5 @@ mod tests {
 	#[test]
 	fn owner_key_follows_the_root_entropy() {
 		assert_ne!(owner_key(&[7u8; 32]).unwrap(), owner_key(&[8u8; 32]).unwrap());
-	}
-
-	// A product connection derives its allowance account from the normalized
-	// id, so tracking any other spelling renews an account no product uses.
-	#[test]
-	fn a_product_target_normalizes_its_identifier() {
-		for supplied in
-			["  truapi-playground.dot  ", "TruAPI-Playground.dot", "TRUAPI-PLAYGROUND.DOT"]
-		{
-			assert_eq!(
-				product(supplied).normalized(),
-				Ok(product("truapi-playground.dot")),
-				"{supplied:?} did not normalize"
-			);
-		}
-		assert_eq!(
-			product("not a product").normalized(),
-			Err("product_id not a product is not a valid product identifier".to_string())
-		);
-		for target in [
-			StatementRenewalTarget::WalletSso,
-			StatementRenewalTarget::Account { account_id: [0x11; 32], label: "device".to_string() },
-		] {
-			assert_eq!(target.clone().normalized(), Ok(target));
-		}
 	}
 }

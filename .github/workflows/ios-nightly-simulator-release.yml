@@ -41,7 +41,7 @@ on:
         required: true
       SENTRY_AUTH_TOKEN:
         required: true
-      SENTRY_DSN:
+      SENTRY_DSN_IOS:
         required: true
   workflow_dispatch:
     inputs:
@@ -63,16 +63,20 @@ env:
 jobs:
   build_simulator:
     name: Build & publish simulator .app
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       download_url: ${{ steps.tag.outputs.download_url }}
       sha: ${{ steps.tag.outputs.sha }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -93,7 +97,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
 
       - name: Build simulator .app
         working-directory: hosts/ios
@@ -161,7 +165,7 @@ jobs:
           echo "archive=hosts/ios/build_simulator/$ARCHIVE" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           # Without this the tag is created at the default branch, so a build of
@@ -195,29 +199,25 @@ jobs:
       # leaving a tag that looks published and a consumer that gets a 404.
       # Read the asset back rather than trusting that it uploaded.
       - name: Confirm the published asset is present and not empty
+        # Through github-script rather than `gh` and `jq`, which the self-hosted
+        # macOS images do not ship.
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
           ASSET: polkadot-app-simulator.app.zip
-        run: |
-          set -euo pipefail
-          # jq takes the name from the environment rather than from the shell, so a
-          # name needing escaping cannot break the filter. `uploaded` is the state
-          # that matters: an asset stranded mid-upload still reports a size, which is
-          # exactly the case this step exists to catch.
-          # shellcheck disable=SC2016  # $ENV.ASSET is jq, and must not expand here
-          size="$(gh release view "$TAG" --json assets \
-            --jq '[.assets[] | select(.name == $ENV.ASSET and .state == "uploaded") | .size] | first // 0')"
-          case "$size" in
-            ''|*[!0-9]*)
-              echo "::error::Could not read a size for $ASSET on $TAG"
-              exit 1
-              ;;
-          esac
-          if [ "$size" -le 0 ]; then
-            echo "::error::$ASSET is missing, empty or unfinished on $TAG"
-            gh release view "$TAG" --json assets \
-              --jq '.assets[] | "\(.name) \(.size) \(.state)"' || true
-            exit 1
-          fi
-          echo "$ASSET published on $TAG, $size bytes"
+        with:
+          script: |
+            const { TAG: tag, ASSET: name } = process.env;
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner, repo: context.repo.repo, tag,
+            });
+            // `uploaded` is the state that matters: an asset stranded mid-upload
+            // still reports a size, which is exactly the case this step exists
+            // to catch.
+            const asset = release.assets.find(a => a.name === name && a.state === 'uploaded');
+            if (!asset || asset.size <= 0) {
+              for (const a of release.assets) core.info(`${a.name} ${a.size} ${a.state}`);
+              core.setFailed(`${name} is missing, empty or unfinished on ${tag}`);
+              return;
+            }
+            core.info(`${name} published on ${tag}, ${asset.size} bytes`);

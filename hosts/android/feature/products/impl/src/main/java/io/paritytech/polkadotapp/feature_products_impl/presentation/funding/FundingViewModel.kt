@@ -371,20 +371,13 @@ class FundingViewModel @Inject constructor(
         if (start.value.isCancelling) return@launchUnit
         start.update { it.copy(isCancelling = true) }
 
-        // Accepting names the terms on screen, so the core refuses them if the provider changed its offer since.
+        // Accepting names the terms on screen, so the core accepts nothing but the offer the user saw.
         val shown = start.value.cancel as? FundingCancel.Offered
         val terms = if (accept) shown?.let { CancelTerms(fee = it.fee, refund = it.refund) } else null
 
         interactor.confirmCancel(intent, terms)
             .logFailure("Funding cancel answer failed")
-            .onSuccess { confirmation ->
-                if (confirmation == CancelConfirmation.CHANGED) {
-                    // Stay on the offer, which now shows the provider's new terms, and let the user answer again.
-                    showMessage(RCommon.string.funding_cancel_offer_changed)
-                } else {
-                    leaveCancelOffer(confirmation.message())
-                }
-            }
+            .onSuccess { confirmation -> leaveCancelOffer(confirmation.message()) }
             .onFailure { leaveCancelOffer(RCommon.string.funding_error_cancel_failed) }
 
         start.update { it.copy(isCancelling = false) }
@@ -396,7 +389,6 @@ class FundingViewModel @Inject constructor(
         CancelConfirmation.DECLINED -> null
         CancelConfirmation.LAPSED -> RCommon.string.funding_cancel_offer_lapsed
         CancelConfirmation.NO_OFFER -> RCommon.string.funding_cancel_offer_gone
-        CancelConfirmation.CHANGED -> RCommon.string.funding_cancel_offer_changed
         CancelConfirmation.TOO_LATE -> RCommon.string.funding_cancel_too_late
     }
 

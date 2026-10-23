@@ -77,6 +77,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val contactsBridge: AppContactsHostBridge,
     private val fundingBridge: AppFundingHostBridge,
     private val bundledProducts: BundledProducts,
+    private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
@@ -124,8 +125,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers funding unsupported.
+        // window where the host lists no contacts or answers payments or funding unsupported.
         runtime.setContacts(contactsBridge)
+        paymentPlatforms.install(runtime)
         runtime.setFunding(fundingBridge)
         // The core discovers the published providers; the host lists only the ones it ships itself.
         bundledProducts.fundingProviders()

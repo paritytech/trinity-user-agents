@@ -241,25 +241,6 @@ class FundingCancelViewModelTest {
         }
     }
 
-    /** The provider changed its terms after the screen showed them, so accepting the old ones must not go through. */
-    @Test
-    fun `accepting terms the provider has since changed keeps the offer up with the new terms`() = runCancelTest {
-        coEvery { interactor.confirmCancel("intent", CancelTerms(fee = "1000000", refund = "9000000")) } returns
-            Result.success(CancelConfirmation.CHANGED)
-        cancel = FundingCancel.Offered(fee = "1000000", refund = "9000000", expiresAt = null)
-        val model = resumed()
-
-        val messages = messages(model)
-        cancel = FundingCancel.Offered(fee = "4000000", refund = "6000000", expiresAt = null)
-        model.onAcceptCancelOffer()
-        runCurrent()
-
-        assertEquals(FundingScreen.CANCEL_OFFER, screen(model))
-        assertEquals(FundingCancelUiState.Offered(fee = "$4 CASH", refund = "$6 CASH"), deposit(model).cancel)
-        assertEquals(listOf(RCommon.string.funding_cancel_offer_changed), messages)
-        stop(model)
-    }
-
     @Test
     fun `a refusal shows the provider's reason and lets the user ask again`() = runCancelTest {
         moneyMoved = true

@@ -52,3 +52,5 @@ public final class ConnectionRetainToken {
 }
 
 extension ConnectionRetainToken: @unchecked Sendable {}
+
+extension ConnectionRetainToken: ConnectionTokenProtocol {}

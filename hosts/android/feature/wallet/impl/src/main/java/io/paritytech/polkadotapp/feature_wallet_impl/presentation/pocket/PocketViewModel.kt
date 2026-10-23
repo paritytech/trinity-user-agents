@@ -82,12 +82,10 @@ class PocketViewModel @Inject constructor(
     private val balanceCard = combine(
         digitalDollarAmounts,
         interactor.observeBackupProgress().onStart { emit(BackupProgress.Unknown) },
-        interactor.observeAccountBackupPending().onStart { emit(false) },
-    ) { amounts, backupProgress, accountBackupPending ->
+    ) { amounts, backupProgress ->
         PocketCardUiModel.DigitalDollar(
             amounts = amounts,
             syncInProgress = backupProgress.isInProgress(),
-            accountBackupPending = accountBackupPending,
         )
     }
 
@@ -190,7 +188,6 @@ class PocketViewModel @Inject constructor(
                 },
                 amounts?.let { tokenAmountFormatter.formatTokenAmount(it.ready, RoundPrecision.FIAT, withSymbol = false) },
                 card.syncInProgress,
-                card.accountBackupPending,
                 amounts?.notFullyReady
             ).joinToString("|")
         }
@@ -205,7 +202,7 @@ class PocketViewModel @Inject constructor(
     )
 
     /** The product page under the expanded card, live only while that card is open. */
-    val expandedProductSession = expandedProduct.session
+    val shownProduct = expandedProduct.shown
 
     /** Whether the selected card opens with its face shown; null until its product has answered. */
     val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
@@ -238,6 +235,7 @@ class PocketViewModel @Inject constructor(
     fun selectCard(card: PocketCardUiModel) {
         selectedCardId.value = card.id
         if (card is PocketCardUiModel.ProductCard) {
+            expandedProduct.showIfHeld(card.key.launchUrl())
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -294,6 +292,7 @@ class PocketViewModel @Inject constructor(
     /**
      * The product is loaded only once the card has finished travelling. Building a WebView while the
      * card is still moving starves the animation, and the card is the part the user is watching.
+     * A product already held is shown at the tap instead, by [selectCard].
      * A card already left can still report itself settled while it fades out, so only the selected
      * one is hosted.
      */
