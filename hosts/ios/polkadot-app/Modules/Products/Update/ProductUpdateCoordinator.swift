@@ -142,6 +142,8 @@ private extension ProductUpdateCoordinator {
     func apply(_ update: ProductUpdate, reloadingPresentations: Bool) {
         let key = update.productId.lowercased()
 
+        logger.debug("Applying product update for \(key), reloading open SPAs: \(reloadingPresentations)")
+
         Task { [weak self, contentLoader, workerReloader] in
             await contentLoader.apply(update)
 
@@ -180,6 +182,7 @@ private extension ProductUpdateCoordinator {
     }
 
     func dismissNotice(of productId: ProductId) {
+        logger.debug("Product update dismissed for \(productId)")
         dismissedProductIds.insert(productId)
         hideNotice(of: productId)
         showNextNotice()
