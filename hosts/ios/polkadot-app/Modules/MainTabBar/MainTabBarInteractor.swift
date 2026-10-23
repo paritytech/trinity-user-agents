@@ -23,6 +23,7 @@ final class MainTabBarInteractor {
     private var productGamePillSubscription: Task<Void, Never>?
     private var chainStatusSubscription: Task<Void, Never>?
     private var tabBarLabelsSubscription: Task<Void, Never>?
+    private var paymentsSetupSubscription: Task<Void, Never>?
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
@@ -57,6 +58,7 @@ final class MainTabBarInteractor {
         serviceCoordinator.throttle()
         chainStatusSubscription?.cancel()
         tabBarLabelsSubscription?.cancel()
+        paymentsSetupSubscription?.cancel()
     }
 }
 
@@ -70,10 +72,23 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
         subscribeToSPATabs()
         subscribeToChainStatus()
         subscribeToTabBarLabels()
+        subscribeToPaymentsSetup()
     }
 }
 
 private extension MainTabBarInteractor {
+    func subscribeToPaymentsSetup() {
+        paymentsSetupSubscription = Task { [weak self, serviceCoordinator, logger] in
+            do {
+                for try await isWaiting in serviceCoordinator.coinageService.subscribeAwaitingInstallationBackup() {
+                    await self?.presenter?.didReceivePaymentsSetupWaiting(isWaiting)
+                }
+            } catch {
+                logger.error("Payments setup stream failed: \(error)")
+            }
+        }
+    }
+
     func subscribeToChainStatus() {
         chainStatusSubscription = Task { [weak self, chainStatusProvider, logger] in
             do {

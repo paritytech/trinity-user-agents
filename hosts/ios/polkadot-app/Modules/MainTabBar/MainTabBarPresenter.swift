@@ -47,6 +47,10 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
+    func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
+        wireframe.showPaymentsSetupNotice(isVisible: isWaiting, from: view)
+    }
+
     func didReceiveWidget(
         configuration: any HashableContentConfiguration,
         for extensionId: ChatExtension.Id
