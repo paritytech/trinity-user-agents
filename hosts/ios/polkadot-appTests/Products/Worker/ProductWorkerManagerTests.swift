@@ -59,6 +59,30 @@ struct ProductWorkerManagerTests {
         withExtendedLifetime((chat, spa)) {}
     }
 
+    @Test func reloadRestartsTheWorkerForItsCurrentHolders() async {
+        let factory = FakeWorkerFactory()
+        let manager = ProductWorkerManager(factory: factory)
+        let spa = await manager.acquire(productId: "getcash")
+
+        await manager.reload(productId: "getcash")
+        let chat = await manager.acquire(productId: "getcash")
+
+        #expect(factory.started == 2)
+        #expect(factory.disposed == 1)
+        #expect(chat.worker as AnyObject? !== spa.worker as AnyObject?)
+
+        withExtendedLifetime((spa, chat)) {}
+    }
+
+    @Test func reloadWithoutHoldersStartsNothing() async {
+        let factory = FakeWorkerFactory()
+        let manager = ProductWorkerManager(factory: factory)
+
+        await manager.reload(productId: "getcash")
+
+        #expect(factory.started == 0)
+    }
+
     @Test("worker is disposed only after the last consumer releases")
     func disposesOnLastRelease() async {
         let factory = FakeWorkerFactory()

@@ -68,6 +68,7 @@ public protocol ProductContentLoading: Sendable {
     func refresh(_ productId: ProductId) async -> ProductUpdate?
     func apply(_ update: ProductUpdate) async
     func pendingUpdates() async -> [ProductUpdate]
+    func removeSupersededContent(keeping servedHashes: Set<String>) async
     func updates() -> AnyAsyncSequence<ProductUpdate>
 }
 

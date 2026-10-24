@@ -3,7 +3,11 @@ import FoundationExt
 import Products
 
 extension ServiceCoordinator {
-    static func registerProductUpdates(contentLoader: ProductContentLoading, logger: LoggerProtocol) {
+    static func registerProductUpdates(
+        contentLoader: ProductContentLoading,
+        workerReloader: ProductWorkerReloading,
+        logger: LoggerProtocol
+    ) {
         MainActor.assumeIsolated {
             let registered: ProductPresenceRegistering? = RootDependencyLocator.getDependency()
 
@@ -11,6 +15,8 @@ extension ServiceCoordinator {
 
             let coordinator = ProductUpdateCoordinator(
                 contentLoader: contentLoader,
+                workerReloader: workerReloader,
+                noticePresenter: ProductUpdateNoticePresenter(application: .shared),
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 logger: logger
             )

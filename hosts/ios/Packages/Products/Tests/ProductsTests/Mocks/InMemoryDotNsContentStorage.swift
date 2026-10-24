@@ -3,16 +3,21 @@ import os
 @testable import Products
 
 final class InMemoryDotNsContentStorage: DotNsContentStorageProtocol, @unchecked Sendable {
-    private let saved = OSAllocatedUnfairLock(initialState: Set<String>())
+    private let saved = OSAllocatedUnfairLock(initialState: [String: Date]())
+    private let savedAt: Date
 
-    var savedHashes: Set<String> { saved.withLock { $0 } }
+    init(savedAt: Date = Date(timeIntervalSince1970: 0)) {
+        self.savedAt = savedAt
+    }
+
+    var savedHashes: Set<String> { saved.withLock { Set($0.keys) } }
 
     func directory(for contentHash: String) -> URL {
         URL(fileURLWithPath: "/content").appendingPathComponent(contentHash)
     }
 
     func saveContent(contentHash: String, write _: (CarContentWriter) throws -> Void) throws {
-        saved.withLock { _ = $0.insert(contentHash) }
+        saved.withLock { $0[contentHash] = savedAt }
     }
 
     func getContentDirectory(contentHash: String) -> URL? {
@@ -20,11 +25,11 @@ final class InMemoryDotNsContentStorage: DotNsContentStorageProtocol, @unchecked
     }
 
     func contentExists(contentHash: String) -> Bool {
-        saved.withLock { $0.contains(contentHash) }
+        saved.withLock { $0[contentHash] != nil }
     }
 
     func deleteContent(contentHash: String) throws {
-        saved.withLock { _ = $0.remove(contentHash) }
+        saved.withLock { _ = $0.removeValue(forKey: contentHash) }
     }
 
     func loadContent(contentHash: String, relativePath _: String) -> Data? {
@@ -33,5 +38,9 @@ final class InMemoryDotNsContentStorage: DotNsContentStorageProtocol, @unchecked
 
     func deleteAll() throws {
         saved.withLock { $0.removeAll() }
+    }
+
+    func storedContents() -> [DotNsStoredContent] {
+        saved.withLock { $0.map { DotNsStoredContent(contentHash: $0.key, modifiedAt: $0.value) } }
     }
 }

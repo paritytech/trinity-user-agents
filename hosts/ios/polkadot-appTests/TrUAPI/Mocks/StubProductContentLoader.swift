@@ -11,8 +11,9 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         var appliedUpdates: [ProductUpdate] = []
         var pendingUpdates: [ProductUpdate] = []
         var contentHash = "00"
+        var keptHashesOnRemoval: [Set<String>] = []
         var refreshWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-        var applyWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        var removalWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     }
 
     let contentURL = URL(fileURLWithPath: "/tmp/spa-test-content")
@@ -30,6 +31,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
     var appliedUpdates: [ProductUpdate] { state.withLock { $0.appliedUpdates } }
+    var keptHashesOnRemoval: [Set<String>] { state.withLock { $0.keptHashesOnRemoval } }
 
     func simulate(appliedContentHash: String) {
         state.withLock { $0.contentHash = appliedContentHash }
@@ -92,22 +94,26 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     }
 
     func apply(_ update: ProductUpdate) async {
+        state.withLock { $0.appliedUpdates.append(update) }
+    }
+
+    func removeSupersededContent(keeping servedHashes: Set<String>) async {
         let ready = state.withLock { state in
-            state.appliedUpdates.append(update)
-            let count = state.appliedUpdates.count
-            let ready = state.applyWaiters.filter { $0.count <= count }
-            state.applyWaiters.removeAll { $0.count <= count }
+            state.keptHashesOnRemoval.append(servedHashes)
+            let count = state.keptHashesOnRemoval.count
+            let ready = state.removalWaiters.filter { $0.count <= count }
+            state.removalWaiters.removeAll { $0.count <= count }
             return ready
         }
 
         ready.forEach { $0.continuation.resume() }
     }
 
-    func waitForApplies(_ count: Int) async {
+    func waitForRemovals(_ count: Int) async {
         await withCheckedContinuation { continuation in
             let isReached = state.withLock { state in
-                guard state.appliedUpdates.count < count else { return true }
-                state.applyWaiters.append((count, continuation))
+                guard state.keptHashesOnRemoval.count < count else { return true }
+                state.removalWaiters.append((count, continuation))
                 return false
             }
 

@@ -272,6 +272,10 @@ private extension SPANativeRuntimeInteractor {
 }
 
 extension SPANativeRuntimeInteractor: SPAProductReloading {
+    var servedContentHash: String? {
+        servedContent?.contentHash
+    }
+
     func serveAppliedBuild() {
         Task { [weak self] in
             await self?.performServeAppliedBuild()

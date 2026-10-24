@@ -1256,6 +1256,30 @@
           }
         }
       }
+    },
+    "update.notice.action": {
+      "comment": "Button on the product update notice that reloads the product into its new build",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        }
+      }
+    },
+    "update.notice.message": {
+      "comment": "Notice at the top of the app when a newer build of an open product has been downloaded",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New version of %1$(product)@ available"
+          }
+        }
+      }
     }
   },
   "version": "1.1"

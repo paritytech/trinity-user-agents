@@ -8,26 +8,74 @@ import UIKit
 @MainActor
 struct ProductUpdateCoordinatorTests {
     private static let productId = "shop.dot"
-    private static let otherProductId = "other.dot"
 
-    private let loader = StubProductContentLoader()
+    private let loader: StubProductContentLoader
+    private let workerReloader = StubProductWorkerReloader()
+    private let notice = StubProductUpdateNoticePresenter()
     private let coordinator: ProductUpdateCoordinator
 
     init() {
-        coordinator = Self.makeCoordinator(loader: loader)
+        self.init(pendingUpdates: [])
     }
 
-    @Test func updateForAProductWithNoOpenSPAIsApplied() async {
+    private init(pendingUpdates: [ProductUpdate]) {
+        loader = StubProductContentLoader(pendingUpdates: pendingUpdates)
+        coordinator = ProductUpdateCoordinator(
+            contentLoader: loader,
+            workerReloader: workerReloader,
+            noticePresenter: notice,
+            applicationStateStreams: ApplicationStateStreamFactory(),
+            logger: Logger.shared
+        )
+    }
+
+    @Test func updateForAProductWithNoOpenSPAIsAppliedAndReloadsTheWorker() async {
         let update = Self.makeUpdate()
         coordinator.start()
 
         loader.simulate(update: update)
-        await loader.waitForApplies(1)
+        await workerReloader.waitForReloads(1)
 
         #expect(loader.appliedUpdates == [update])
+        #expect(workerReloader.reloadedIds == [Self.productId])
+        #expect(notice.shownProductNames.isEmpty)
     }
 
-    @Test func updateForAnOpenProductWaitsUntilTheLastSPACloses() async {
+    @Test func updateForAnOpenProductShowsTheNoticeInsteadOfApplying() async {
+        let reloader = StubSPAProductReloader()
+        _ = coordinator.register(productId: Self.productId, reloader: reloader)
+        coordinator.start()
+
+        loader.simulate(update: Self.makeUpdate())
+        await notice.waitForShows(1)
+
+        #expect(notice.shownProductNames == ["Shop"])
+        #expect(loader.appliedUpdates.isEmpty)
+        #expect(reloader.serveCount == 0)
+    }
+
+    @Test func tappingUpdateAppliesAndReloadsEveryOpenSPAAndTheWorker() async {
+        let first = StubSPAProductReloader()
+        let second = StubSPAProductReloader()
+        _ = coordinator.register(productId: Self.productId, reloader: first)
+        _ = coordinator.register(productId: Self.productId, reloader: second)
+        coordinator.start()
+
+        let update = Self.makeUpdate()
+        loader.simulate(update: update)
+        await notice.waitForShows(1)
+
+        notice.simulateUpdate()
+        await workerReloader.waitForReloads(1)
+
+        #expect(loader.appliedUpdates == [update])
+        #expect(first.serveCount == 1)
+        #expect(second.serveCount == 1)
+        #expect(!notice.isShowing)
+        #expect(notice.shownProductNames.count == 1)
+    }
+
+    @Test func dismissedUpdateIsAppliedOnceTheLastSPACloses() async {
         let first = StubSPAProductReloader()
         let second = StubSPAProductReloader()
         let firstId = coordinator.register(productId: Self.productId, reloader: first)
@@ -36,48 +84,64 @@ struct ProductUpdateCoordinatorTests {
 
         let update = Self.makeUpdate()
         loader.simulate(update: update)
-        loader.simulate(update: Self.makeUpdate(productId: Self.otherProductId))
-        await loader.waitForApplies(1)
+        await notice.waitForShows(1)
 
+        notice.simulateDismiss()
         coordinator.unregister(firstId)
-        #expect(loader.appliedUpdates.map(\.productId) == [Self.otherProductId])
+
+        #expect(!notice.isShowing)
+        #expect(loader.appliedUpdates.isEmpty)
 
         coordinator.unregister(secondId)
-        await loader.waitForApplies(2)
+        await workerReloader.waitForReloads(1)
 
-        #expect(loader.appliedUpdates.last == update)
+        #expect(loader.appliedUpdates == [update])
         #expect(first.serveCount == 0)
         #expect(second.serveCount == 0)
     }
 
-    @Test func refreshAppliesAPendingUpdateAndReloadsEveryOpenSPA() async {
-        let first = StubSPAProductReloader()
-        let second = StubSPAProductReloader()
-        _ = coordinator.register(productId: Self.productId, reloader: first)
-        _ = coordinator.register(productId: Self.productId, reloader: second)
+    @Test func refreshWithAPendingUpdateAppliesItInsteadOfReloadingAlone() async {
+        let reloader = StubSPAProductReloader()
+        _ = coordinator.register(productId: Self.productId, reloader: reloader)
         coordinator.start()
 
         loader.simulate(update: Self.makeUpdate())
-        loader.simulate(update: Self.makeUpdate(productId: Self.otherProductId))
-        await loader.waitForApplies(1)
+        await notice.waitForShows(1)
 
         #expect(coordinator.applyPendingUpdate(of: Self.productId))
-        await first.waitForServes(1)
-        await second.waitForServes(1)
+        await workerReloader.waitForReloads(1)
 
-        #expect(loader.appliedUpdates.count == 2)
+        #expect(reloader.serveCount == 1)
         #expect(!coordinator.applyPendingUpdate(of: Self.productId))
+    }
+
+    @Test func supersededContentIsRemovedAtStartAndAfterAnApplyKeepingWhatOpenSPAsServe() async {
+        let reloader = StubSPAProductReloader()
+        reloader.servedContentHash = "01"
+        _ = coordinator.register(productId: "other.dot", reloader: reloader)
+        coordinator.start()
+
+        loader.simulate(update: Self.makeUpdate())
+        await workerReloader.waitForReloads(1)
+        await loader.waitForRemovals(2)
+
+        #expect(loader.keptHashesOnRemoval == [["01"], ["01"]])
     }
 
     @Test func updatePublishedBeforeStartIsStillHandled() async {
         let update = Self.makeUpdate()
-        let loader = StubProductContentLoader(pendingUpdates: [update])
-        let coordinator = Self.makeCoordinator(loader: loader)
+        let coordinator = ProductUpdateCoordinator(
+            contentLoader: StubProductContentLoader(pendingUpdates: [update]),
+            workerReloader: workerReloader,
+            noticePresenter: notice,
+            applicationStateStreams: ApplicationStateStreamFactory(),
+            logger: Logger.shared
+        )
 
         coordinator.start()
-        await loader.waitForApplies(1)
+        await workerReloader.waitForReloads(1)
 
-        #expect(loader.appliedUpdates == [update])
+        #expect(workerReloader.reloadedIds == [Self.productId])
     }
 
     @Test func returningToTheForegroundRefreshesOpenProducts() async {
@@ -92,15 +156,7 @@ struct ProductUpdateCoordinatorTests {
 }
 
 private extension ProductUpdateCoordinatorTests {
-    static func makeCoordinator(loader: StubProductContentLoader) -> ProductUpdateCoordinator {
-        ProductUpdateCoordinator(
-            contentLoader: loader,
-            applicationStateStreams: ApplicationStateStreamFactory(),
-            logger: Logger.shared
-        )
-    }
-
-    static func makeUpdate(productId: ProductId = productId) -> ProductUpdate {
+    static func makeUpdate() -> ProductUpdate {
         let resolved = ResolvedProduct.legacy(id: productId, displayName: "Shop")
         let previous = ProductVersion(productId: productId, records: [:], contentHashes: [productId: "01"])
         let latest = ProductVersion(productId: productId, records: [:], contentHashes: [productId: "02"])

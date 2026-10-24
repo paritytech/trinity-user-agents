@@ -4,7 +4,13 @@ import Products
 
 @MainActor
 protocol SPAProductReloading: AnyObject {
+    var servedContentHash: String? { get }
+
     func serveAppliedBuild()
+}
+
+protocol ProductWorkerReloading {
+    func reloadWorker(of productId: ProductId) async
 }
 
 @MainActor
@@ -23,20 +29,28 @@ final class ProductUpdateCoordinator {
     }
 
     private let contentLoader: ProductContentLoading
+    private let workerReloader: ProductWorkerReloading
+    private let noticePresenter: ProductUpdateNoticePresenting
     private let applicationStateStreams: ApplicationStateStreamFactory
     private let logger: LoggerProtocol
 
     private var presences: [UUID: Presence] = [:]
     private var pendingUpdates: [ProductId: ProductUpdate] = [:]
+    private var dismissedProductIds: Set<ProductId> = []
+    private var noticeProductId: ProductId?
     private var updatesTask: Task<Void, Never>?
     private var foregroundTask: Task<Void, Never>?
 
     init(
         contentLoader: ProductContentLoading,
+        workerReloader: ProductWorkerReloading,
+        noticePresenter: ProductUpdateNoticePresenting,
         applicationStateStreams: ApplicationStateStreamFactory,
         logger: LoggerProtocol
     ) {
         self.contentLoader = contentLoader
+        self.workerReloader = workerReloader
+        self.noticePresenter = noticePresenter
         self.applicationStateStreams = applicationStateStreams
         self.logger = logger
     }
@@ -54,6 +68,8 @@ final class ProductUpdateCoordinator {
             for update in await contentLoader.pendingUpdates() {
                 self?.handle(update)
             }
+
+            await self?.removeSupersededContent()
 
             do {
                 for try await update in updates {
@@ -87,6 +103,8 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
             return
         }
 
+        dismissedProductIds.remove(presence.productId)
+        hideNotice(of: presence.productId)
         apply(update, reloadingPresentations: false)
     }
 
@@ -103,6 +121,8 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
             return false
         }
 
+        dismissedProductIds.remove(key)
+        hideNotice(of: key)
         apply(update, reloadingPresentations: true)
 
         return true
@@ -119,6 +139,8 @@ private extension ProductUpdateCoordinator {
         }
 
         pendingUpdates[key] = update
+        dismissedProductIds.remove(key)
+        showNextNotice()
     }
 
     func apply(_ update: ProductUpdate, reloadingPresentations: Bool) {
@@ -126,13 +148,18 @@ private extension ProductUpdateCoordinator {
 
         logger.debug("Applying product update for \(key), reloading open SPAs: \(reloadingPresentations)")
 
-        Task { [weak self, contentLoader] in
+        Task { [weak self, contentLoader, workerReloader] in
             await contentLoader.apply(update)
 
             if reloadingPresentations {
                 self?.reloaders(of: key).forEach { $0.serveAppliedBuild() }
             }
+
+            await workerReloader.reloadWorker(of: update.productId)
+            await self?.removeSupersededContent()
         }
+
+        showNextNotice()
     }
 
     func isPresented(_ productId: ProductId) -> Bool {
@@ -141,6 +168,41 @@ private extension ProductUpdateCoordinator {
 
     func reloaders(of productId: ProductId) -> [SPAProductReloading] {
         presences.values.filter { $0.productId == productId }.compactMap(\.reloader)
+    }
+
+    func showNextNotice() {
+        guard noticeProductId == nil,
+              let next = pendingUpdates.first(where: { !dismissedProductIds.contains($0.key) }) else {
+            return
+        }
+
+        let productId = next.key
+        noticeProductId = productId
+
+        noticePresenter.show(
+            productName: next.value.latest.resolved.displayName,
+            onUpdate: { [weak self] in _ = self?.applyPendingUpdate(of: productId) },
+            onDismiss: { [weak self] in self?.dismissNotice(of: productId) }
+        )
+    }
+
+    func dismissNotice(of productId: ProductId) {
+        logger.debug("Product update dismissed for \(productId)")
+        dismissedProductIds.insert(productId)
+        hideNotice(of: productId)
+        showNextNotice()
+    }
+
+    func hideNotice(of productId: ProductId) {
+        guard noticeProductId == productId else { return }
+
+        noticeProductId = nil
+        noticePresenter.hide()
+    }
+
+    func removeSupersededContent() async {
+        let servedHashes = Set(presences.values.compactMap { $0.reloader?.servedContentHash })
+        await contentLoader.removeSupersededContent(keeping: servedHashes)
     }
 
     func refreshPresentedProducts() {

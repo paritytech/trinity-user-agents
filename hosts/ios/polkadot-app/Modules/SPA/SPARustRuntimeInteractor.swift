@@ -216,6 +216,10 @@ private extension SPARustRuntimeInteractor {
 }
 
 extension SPARustRuntimeInteractor: SPAProductReloading {
+    var servedContentHash: String? {
+        servedContent?.contentHash
+    }
+
     func serveAppliedBuild() {
         Task { [weak self, runtime] in
             do {
