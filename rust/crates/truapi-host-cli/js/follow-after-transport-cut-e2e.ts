@@ -2,6 +2,8 @@
 // describes the check.
 
 const STORAGE_METHOD = "remote_chain_head_storage";
+/** What a read on a follow whose transport went must say. */
+const LOST_WITH_CONNECTION = "ended when its connection closed";
 /** Marker for a follow stream that ended with no failure at all. */
 const COMPLETED_WITHOUT_A_FAILURE = "completed without a failure";
 // `System::Number`, present on every chain.
@@ -125,14 +127,13 @@ for (let read = 1; read <= READS_AFTER_THE_CUT; read++) {
   assert(again.isErr(), `read ${read} on the dead follow succeeded`);
   const reason = reasonOf(again.error);
   assert(
-    reason.startsWith(`${STORAGE_METHOD}: `) &&
-      reason.slice(STORAGE_METHOD.length + 2).trim().length > 0,
-    `read ${read} does not say why it failed: "${reason}"`,
+    reason.startsWith(`${STORAGE_METHOD}: `) && reason.includes(LOST_WITH_CONNECTION),
+    `read ${read} does not name the closed connection: "${reason}"`,
   );
   reasons.add(reason);
 }
 console.log(
-  `${READS_AFTER_THE_CUT} reads on the dead follow all failed: ${[...reasons].join(" | ")}`,
+  `${READS_AFTER_THE_CUT} reads on the dead follow named the closed connection: ${[...reasons].join(" | ")}`,
 );
 
 // Nothing is wrong with the chain or the replacement connection: re-following
