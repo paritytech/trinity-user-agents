@@ -173,8 +173,12 @@ public final class ChainSocket: ChainSocketProtocol, @unchecked Sendable {
         case .cancelled,
              .reconnectSuggested(true):
             shutDown(reason: .transport(nil))
+        case .viabilityChanged(false):
+            // A socket rarely outlives its network path, and the periodic ping can be a whole interval away.
+            logger.info("[truapi.chain] chain socket \(host): network path not viable, pinging")
+            pingUnlessAwaitingPong()
         case .reconnectSuggested(false),
-             .viabilityChanged,
+             .viabilityChanged(true),
              .ping:
             break
         }
@@ -244,10 +248,10 @@ private extension ChainSocket {
 
         guard isOpen else { return }
 
-        sendPeriodicPing()
+        pingUnlessAwaitingPong()
     }
 
-    func sendPeriodicPing() {
+    func pingUnlessAwaitingPong() {
         let isAwaitingPong = state.withLockUnchecked { $0.pongDeadline != nil }
 
         guard !isAwaitingPong else { return }

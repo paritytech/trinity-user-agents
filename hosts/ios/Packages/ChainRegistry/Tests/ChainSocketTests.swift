@@ -180,6 +180,48 @@ struct ChainSocketTests {
         #expect(fixture.delegate.closeReasons.isEmpty)
     }
 
+    @Test func lostViabilityPingsAtOnceAndClosesWhenUnanswered() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        #expect(fixture.connection.pingCount == 1)
+        #expect(fixture.delegate.closeReasons.isEmpty)
+
+        fixture.scheduler.fire(after: Timing.pongTimeout)
+
+        #expect(fixture.delegate.closeReasons.count == 1)
+        #expect(fixture.delegate.closeReasons.first?.isLivenessTimeout == true)
+    }
+
+    @Test func socketAnsweringAfterLostViabilityStaysOpen() throws {
+        let fixture = try makeOpenSocket()
+        fixture.connection.onPing = { fixture.socket.handle(.pong(nil)) }
+
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.scheduler.fire(after: Timing.pongTimeout)
+
+        #expect(fixture.connection.pingCount == 1)
+        #expect(fixture.delegate.closeReasons.isEmpty)
+    }
+
+    @Test func lostViabilityKeepsTheRunningPongDeadline() throws {
+        let fixture = try makeOpenSocket()
+        fixture.scheduler.fire(after: Timing.pingInterval)
+
+        fixture.socket.handle(.viabilityChanged(false))
+
+        #expect(fixture.connection.pingCount == 1)
+    }
+
+    @Test func regainedViabilityLeavesTheSocketAlone() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(true))
+
+        #expect(fixture.connection.pingCount == 0)
+        #expect(fixture.delegate.closeReasons.isEmpty)
+    }
+
     @Test func probeIgnoredOnceClosed() throws {
         let fixture = try makeOpenSocket()
         fixture.socket.close()
