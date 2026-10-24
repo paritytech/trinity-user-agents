@@ -91,6 +91,7 @@ extension ProductContentLoader: ProductContentLoading {
 
         return ProductContent(
             resolved: fetched.resolved,
+            contents: fetched.contents,
             appContent: fetched.appContent,
             version: fetched.version,
             source: .network

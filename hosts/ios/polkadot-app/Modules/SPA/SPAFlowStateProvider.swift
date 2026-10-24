@@ -106,6 +106,7 @@ private extension SPAFlowStateProvider {
         }
 
         let backgroundExecutor = ConnectionRetainingExecutor(provider: chainRegistry)
+        let resolverFactory = ProductResolverFactory(screening: .core, logger: Logger.shared)
 
         return ProductContentLoader(
             fetcher: ProductUpdateFetcher(
@@ -113,13 +114,13 @@ private extension SPAFlowStateProvider {
                 carFetcher: carFetcher,
                 storage: storage,
                 hostProvider: hostProvider,
-                logger: Logger.shared
+                resolverFactory: resolverFactory
             ),
             cache: ProductVersionCache(
                 snapshot: DotNsRecordSnapshot(defaults: snapshotDefaults),
                 storage: storage,
                 tldProvider: DotNsTldProviderFacade.shared,
-                logger: Logger.shared
+                resolverFactory: resolverFactory
             ),
             environment: ProductContentLoader.Environment(
                 pathProvider: ProductNetworkPath(),

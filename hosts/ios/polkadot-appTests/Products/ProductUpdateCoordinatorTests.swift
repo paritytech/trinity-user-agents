@@ -160,13 +160,15 @@ private extension ProductUpdateCoordinatorTests {
         let resolved = ResolvedProduct.legacy(id: productId, displayName: "Shop")
         let previous = ProductVersion(productId: productId, records: [:], contentHashes: [productId: "01"])
         let latest = ProductVersion(productId: productId, records: [:], contentHashes: [productId: "02"])
+        let appContent = DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
 
         return ProductUpdate(
             previous: previous,
             latest: FetchedProductVersion(
                 version: latest,
                 resolved: resolved,
-                appContent: DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
+                appContent: appContent,
+                contents: [productId: appContent]
             )
         )
     }

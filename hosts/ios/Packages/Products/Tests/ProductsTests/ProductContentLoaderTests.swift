@@ -425,14 +425,14 @@ private extension ProductContentLoaderTests {
                     carFetcher: fetcher,
                     storage: localStorage,
                     hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
-                    logger: SilentLogger()
+                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
                 ),
                 cache: ProductVersionCache(
                     snapshot: snapshot,
                     storage: localStorage,
                     tldProvider: StubTldProvider(),
-                    dateProvider: SequencedDateProvider([now]),
-                    logger: SilentLogger()
+                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger()),
+                    dateProvider: SequencedDateProvider([now])
                 ),
                 environment: ProductContentLoader.Environment(
                     pathProvider: path,

@@ -5,11 +5,22 @@ public struct FetchedProductVersion: Equatable, Sendable {
     public let version: ProductVersion
     public let resolved: ResolvedProduct
     public let appContent: DotNsResolvedContent
+    public let contents: [ProductId: DotNsResolvedContent]
 
-    public init(version: ProductVersion, resolved: ResolvedProduct, appContent: DotNsResolvedContent) {
+    public init(
+        version: ProductVersion,
+        resolved: ResolvedProduct,
+        appContent: DotNsResolvedContent,
+        contents: [ProductId: DotNsResolvedContent]
+    ) {
         self.version = version
         self.resolved = resolved
         self.appContent = appContent
+        self.contents = contents
+    }
+
+    public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
+        contents[resolved.contentId(for: kind)]
     }
 }
 
@@ -32,20 +43,20 @@ public actor ProductUpdateFetcher {
     private let carFetcher: CarFetcherProtocol
     private let storage: DotNsLocalStorage
     private let hostProvider: ProductHostProviding
-    private let logger: SDKLoggerProtocol
+    private let resolverFactory: ProductResolverFactory
 
     public init(
         contractApi: DotNsContractApiProtocol,
         carFetcher: CarFetcherProtocol,
         storage: DotNsLocalStorage,
         hostProvider: ProductHostProviding,
-        logger: SDKLoggerProtocol
+        resolverFactory: ProductResolverFactory
     ) {
         self.contractApi = contractApi
         self.carFetcher = carFetcher
         self.storage = storage
         self.hostProvider = hostProvider
-        self.logger = logger
+        self.resolverFactory = resolverFactory
     }
 }
 
@@ -64,27 +75,32 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
 
         let dotNsResolver = makeDotNsResolver(carFetcher: carFetcher)
 
-        let manifest = try await ProductResolver(
+        let manifest = try await resolverFactory.makeResolver(
             metadataRepository: ProductMetadataRepository(contractApi: contractApi),
-            hostProvider: hostProvider,
-            logger: logger
+            hostProvider: hostProvider
         ).resolveProductManifest(productId)
         let resolved = manifest.product
 
         let appContent = try await makeDotNsResolver(
             carFetcher: ProgressReportingCarFetcher(carFetcher: carFetcher, onPhase: onPhase)
         ).stageContent(dotNsName: resolved.appContentId)
-        var contentHashes = [resolved.appContentId: appContent.contentHash]
+        var contents = [resolved.appContentId: appContent]
 
-        if let worker = resolved.executables.worker,
-           let workerContent = try await stageWorker(worker.identifier, of: resolved.id, using: dotNsResolver) {
-            contentHashes[worker.identifier] = workerContent.contentHash
+        for contentId in optionalContentIds(of: resolved) where contents[contentId] == nil {
+            if let content = try await stageOptional(contentId, of: resolved.id, using: dotNsResolver) {
+                contents[contentId] = content
+            }
         }
 
         return FetchedProductVersion(
-            version: ProductVersion(productId: resolved.id, records: manifest.records, contentHashes: contentHashes),
+            version: ProductVersion(
+                productId: resolved.id,
+                records: manifest.records,
+                contentHashes: contents.mapValues(\.contentHash)
+            ),
             resolved: resolved,
-            appContent: appContent
+            appContent: appContent,
+            contents: contents
         )
     }
 }
@@ -99,15 +115,19 @@ private extension ProductUpdateFetcher {
         )
     }
 
-    func stageWorker(
-        _ workerId: ProductId,
+    func optionalContentIds(of resolved: ResolvedProduct) -> [ProductId] {
+        [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier].compactMap { $0 }
+    }
+
+    func stageOptional(
+        _ contentId: ProductId,
         of productId: ProductId,
         using dotNsResolver: DotNsResolver
     ) async throws -> DotNsResolvedContent? {
         do {
-            return try await dotNsResolver.stageContent(dotNsName: workerId)
+            return try await dotNsResolver.stageContent(dotNsName: contentId)
         } catch DotNsContractError.contentHashNotFound {
-            logger.warning("Product \(productId) declares a worker with no published content")
+            resolverFactory.logger.warning("Product \(productId) declares \(contentId) with no published content")
             return nil
         }
     }

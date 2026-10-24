@@ -207,7 +207,8 @@ private extension SPANativeRuntimeInteractor {
             let content = try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler())
             resolvedProduct = content.resolved
 
-            let contentURL = content.appContent.localURL
+            let served = try content.served(for: configuration.executable)
+            let contentURL = served.localURL
             let schemeHandler = makeSchemeHandler(
                 domain: domain,
                 contentURL: contentURL
@@ -218,7 +219,7 @@ private extension SPANativeRuntimeInteractor {
             logger.debug("SPA: '\(domain)' content resolved to \(contentURL.path)")
 
             schemeHandlerProxy.setHandler(schemeHandler)
-            servedContent = content.appContent
+            servedContent = served
 
             let scripts = try scriptsFactory.makeScripts()
             try await engine.initialize(with: scripts)
@@ -303,10 +304,12 @@ private extension SPANativeRuntimeInteractor {
         do {
             let content = try await contentLoader.open(productDomain, policy: .untilCancelled)
 
-            if content.appContent != servedContent {
-                let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: content.appContent.localURL)
+            let served = try content.served(for: configuration.executable)
+
+            if served != servedContent {
+                let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: served.localURL)
                 schemeHandlerProxy.setHandler(schemeHandler)
-                servedContent = content.appContent
+                servedContent = served
             }
 
             presenter?.didRequestReload()

@@ -24,14 +24,26 @@ public struct ProductContent: Equatable, Sendable {
 
     public let resolved: ResolvedProduct
     public let appContent: DotNsResolvedContent
+    public let contents: [ProductId: DotNsResolvedContent]
     public let version: ProductVersion
     public let source: Source
 
-    public init(resolved: ResolvedProduct, appContent: DotNsResolvedContent, version: ProductVersion, source: Source) {
+    public init(
+        resolved: ResolvedProduct,
+        contents: [ProductId: DotNsResolvedContent],
+        appContent: DotNsResolvedContent,
+        version: ProductVersion,
+        source: Source
+    ) {
         self.resolved = resolved
+        self.contents = contents
         self.appContent = appContent
         self.version = version
         self.source = source
+    }
+
+    public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
+        contents[resolved.contentId(for: kind)]
     }
 }
 

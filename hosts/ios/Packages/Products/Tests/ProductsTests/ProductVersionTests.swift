@@ -200,7 +200,7 @@ private extension ProductVersionTests {
             snapshot: makeSnapshot(),
             storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
             tldProvider: tldProvider,
-            logger: SilentLogger()
+            resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
         )
     }
 
@@ -210,7 +210,7 @@ private extension ProductVersionTests {
             carFetcher: fetcher,
             storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
             hostProvider: ProductHostFactory(tldProvider: tldProvider),
-            logger: SilentLogger()
+            resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
         )
     }
 }

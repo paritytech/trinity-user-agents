@@ -13,8 +13,8 @@ public actor ProductVersionCache {
     private let snapshot: DotNsRecordSnapshotProtocol
     private let storage: DotNsLocalStorage
     private let tldProvider: DotNsTldProviding
+    private let resolverFactory: ProductResolverFactory
     private let dateProvider: DateProviding
-    private let logger: SDKLoggerProtocol
 
     private enum Constants {
         static let minimumAgeBeforeRemoval: TimeInterval = 10 * 60
@@ -24,14 +24,14 @@ public actor ProductVersionCache {
         snapshot: DotNsRecordSnapshotProtocol,
         storage: DotNsLocalStorage,
         tldProvider: DotNsTldProviding,
-        dateProvider: DateProviding = NowDateProvider(),
-        logger: SDKLoggerProtocol
+        resolverFactory: ProductResolverFactory,
+        dateProvider: DateProviding = NowDateProvider()
     ) {
         self.snapshot = snapshot
         self.storage = storage
         self.tldProvider = tldProvider
+        self.resolverFactory = resolverFactory
         self.dateProvider = dateProvider
-        self.logger = logger
     }
 }
 
@@ -40,24 +40,29 @@ extension ProductVersionCache: ProductVersionCaching {
         let hostProvider = ProductHostFactory(tldProvider: SnapshotDotNsTldProvider(tldProvider: tldProvider))
         _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
 
-        let manifest = try await ProductResolver(
+        let manifest = try await resolverFactory.makeResolver(
             metadataRepository: SnapshotProductMetadataRepository(snapshot: snapshot),
-            hostProvider: hostProvider,
-            logger: logger
+            hostProvider: hostProvider
         ).resolveProductManifest(productId)
         let resolved = manifest.product
 
         let appContent = try content(of: resolved.appContentId)
-        var contentHashes = [resolved.appContentId: appContent.contentHash]
+        var contents = [resolved.appContentId: appContent]
 
-        if let worker = resolved.executables.worker, let workerContent = try? content(of: worker.identifier) {
-            contentHashes[worker.identifier] = workerContent.contentHash
+        let optionalIds = [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier]
+        for contentId in optionalIds.compactMap({ $0 }) where contents[contentId] == nil {
+            contents[contentId] = try? content(of: contentId)
         }
 
         return ProductContent(
             resolved: resolved,
+            contents: contents,
             appContent: appContent,
-            version: ProductVersion(productId: resolved.id, records: manifest.records, contentHashes: contentHashes),
+            version: ProductVersion(
+                productId: resolved.id,
+                records: manifest.records,
+                contentHashes: contents.mapValues(\.contentHash)
+            ),
             source: .cache
         )
     }
@@ -85,12 +90,12 @@ extension ProductVersionCache: ProductVersionCaching {
             do {
                 try storage.content.deleteContent(contentHash: content.contentHash)
             } catch {
-                logger.error("Failed to remove superseded product content: \(error)")
+                resolverFactory.logger.error("Failed to remove superseded product content: \(error)")
             }
         }
 
         if !superseded.isEmpty {
-            logger.debug("Removed \(superseded.count) superseded product archives")
+            resolverFactory.logger.debug("Removed \(superseded.count) superseded product archives")
         }
     }
 

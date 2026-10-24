@@ -351,6 +351,7 @@ extension ServiceCoordinator {
             contentLoader: spaFlowState.contentLoader,
             workerReloader: ProductWorkerReloader(
                 workerManager: productWorkerFacade.manager,
+                truapiWorkers: { [pocket] in pocket?.workers },
                 chatExtensions: chatExtensionsRegistry
             ),
             logger: logger

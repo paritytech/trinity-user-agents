@@ -127,9 +127,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let content = try await contentLoader.open(configuration.page.host.toDotDomain(), policy: .untilCancelled)
         try checkNotDisposed()
 
-        guard content.appContent != servedContent else { return }
+        let served = try content.served(for: configuration.executable)
 
-        _ = try await serve(content.appContent)
+        guard served != servedContent else { return }
+
+        _ = try await serve(served)
     }
 
     func servedBuild() -> DotNsResolvedContent? {
@@ -145,9 +147,11 @@ private extension SPARustRuntime {
         // is what permission grants and web storage are keyed by.
         let content = try await contentLoader.open(domain, policy: .untilCancelled)
 
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(content.appContent.localURL.path)")
+        let served = try content.served(for: configuration.executable)
 
-        let productURL = try await serve(content.appContent)
+        logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
+
+        let productURL = try await serve(served)
         return configuration.page.applied(to: productURL)
     }
 

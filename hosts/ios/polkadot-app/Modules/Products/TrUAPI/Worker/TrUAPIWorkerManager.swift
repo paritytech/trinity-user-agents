@@ -41,6 +41,8 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     /// Stops every worker this manager is running. Called when the session
     /// it was built for ends.
     func shutdown() async
+
+    func reload(productId: ProductId) async
 }
 
 /// Builds the pieces one product's worker needs: its archive, its execution and
@@ -174,6 +176,13 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for productId in Array(held.keys) {
             await stop(productId)
         }
+    }
+
+    func reload(productId: ProductId) async {
+        guard held[productId] != nil, !isShutDown else { return }
+
+        await stop(productId)
+        start(productId)
     }
 
     nonisolated func demandChanged(productId: ProductId, transition: WorkerTransition) {

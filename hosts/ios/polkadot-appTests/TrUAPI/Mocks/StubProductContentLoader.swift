@@ -21,7 +21,10 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let updateStream = AsyncStream<ProductUpdate>.makeStream()
 
-    init(pendingUpdates: [ProductUpdate] = []) {
+    private let product: ResolvedProduct?
+
+    init(pendingUpdates: [ProductUpdate] = [], product: ResolvedProduct? = nil) {
+        self.product = product
         state.withLock { $0.pendingUpdates = pendingUpdates }
     }
 
@@ -62,12 +65,16 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
             return state.contentHash
         }
 
+        let resolved = product ?? .legacy(id: productId)
+        let contentIds = Set(ExecutableKind.allCases.map(resolved.contentId(for:)))
+        let contents = Dictionary(uniqueKeysWithValues: contentIds.map { contentId in
+            (contentId, DotNsResolvedContent(contentHash: contentHash, localURL: contentURL.appendingPathComponent(contentId)))
+        })
+
         return ProductContent(
-            resolved: .legacy(id: productId),
-            appContent: DotNsResolvedContent(
-                contentHash: contentHash,
-                localURL: contentURL.appendingPathComponent(contentHash)
-            ),
+            resolved: resolved,
+            contents: contents,
+            appContent: contents[resolved.appContentId] ?? DotNsResolvedContent(contentHash: contentHash, localURL: contentURL),
             version: ProductVersion(productId: productId, records: [:], contentHashes: [:]),
             source: .cache
         )
