@@ -9,7 +9,10 @@ use core::{
 	mem,
 	pin::Pin,
 	task::{Context, Poll},
+	time::Duration,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
 	collections::HashMap,
 	sync::{
@@ -30,12 +33,24 @@ use subxt_rpcs::{
 	Error as RpcError, UserError,
 	client::{RawRpcFuture, RawRpcSubscription, RpcClientT},
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use crate::subscription::Spawner;
 
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
+
+/// How long a request may wait on a connection that delivers no frame at all.
+///
+/// The host notices a dead socket only when a ping goes unanswered, which can
+/// take most of a minute, and every request sent on it meanwhile hangs. One
+/// frame holds back every answer behind it, so the bound outlasts the largest
+/// frame on a slow link: the 1.3 MB runtime metadata of Asset Hub takes about
+/// 14 s at 780 kbps, and two such frames sharing that link take 27 s.
+const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
+const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 
 /// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
 pub struct HostRpcClient {
@@ -50,6 +65,8 @@ struct HostRpcClientInner {
 	stop_response_loop: Mutex<Option<oneshot::Sender<()>>>,
 	pending: Mutex<HashMap<String, PendingRequest>>,
 	subscriptions: Mutex<SubscriptionState>,
+	last_frame_at: Mutex<Instant>,
+	silence_deadline: Duration,
 }
 
 /// Where a subscription's notifications are delivered.
@@ -189,6 +206,7 @@ struct HostRpcClientLease {
 
 struct PendingRequest {
 	tx: oneshot::Sender<Result<Box<RawValue>, RpcError>>,
+	sent_at: Instant,
 }
 
 #[derive(Debug, derive_more::Display, derive_more::Error)]
@@ -219,7 +237,19 @@ where
 
 impl HostRpcClient {
 	/// Wrap `connection` and start the response pump on `spawner`.
+	///
+	/// The pump also closes the connection once a request has waited out a
+	/// silence deadline with no frame arriving, so the requests on a dead socket
+	/// fail and the next caller can open a new one.
 	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
+		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
+	}
+
+	fn with_silence_deadline(
+		connection: Arc<dyn JsonRpcConnection>,
+		spawner: Spawner,
+		silence_deadline: Duration,
+	) -> Self {
 		let (stop_response_tx, stop_response_rx) = oneshot::channel();
 		let client = Self {
 			inner: Arc::new(HostRpcClientInner {
@@ -230,6 +260,8 @@ impl HostRpcClient {
 				stop_response_loop: Mutex::new(Some(stop_response_tx)),
 				pending: Mutex::new(HashMap::new()),
 				subscriptions: Mutex::new(SubscriptionState::default()),
+				last_frame_at: Mutex::new(Instant::now()),
+				silence_deadline,
 			}),
 		};
 		client.spawn_response_loop(spawner, stop_response_rx);
@@ -262,12 +294,16 @@ impl HostRpcClient {
 		let fut = async move {
 			let mut responses = inner.connection.responses();
 			let stop = stop_rx.fuse();
-			pin_mut!(stop);
+			let check_every = inner.silence_deadline / SILENCE_CHECKS_PER_DEADLINE;
+			let silence_check = futures_timer::Delay::new(check_every).fuse();
+			pin_mut!(stop, silence_check);
 			loop {
-				futures::select! {
+				// Frames first, so an answer that has already arrived counts before the check.
+				futures::select_biased! {
 					_ = stop => return,
 					frame = responses.next().fuse() => match frame {
 						Some(frame) => {
+							*inner.last_frame_at.lock().unwrap() = Instant::now();
 							if let Err(error) = inner.handle_frame(&frame) {
 								inner.close_with_error(error);
 								return;
@@ -277,7 +313,17 @@ impl HostRpcClient {
 							inner.close_with_error(client_error("json-rpc response stream ended"));
 							return;
 						}
-					}
+					},
+					() = silence_check => {
+						if inner.silent_past_deadline(Instant::now()) {
+							let deadline = inner.silence_deadline;
+							let reason = format!("no frame for {deadline:?} while a request waited");
+							warn!("closing the json-rpc connection: {reason}");
+							inner.close_with_error(client_error(reason));
+							return;
+						}
+						silence_check.set(futures_timer::Delay::new(check_every).fuse());
+					},
 				}
 			}
 		};
@@ -350,7 +396,7 @@ impl HostRpcClientInner {
 			if self.closed.load(Ordering::Relaxed) {
 				return Err(client_error("json-rpc connection is closed"));
 			}
-			pending.insert(id.clone(), PendingRequest { tx });
+			pending.insert(id.clone(), PendingRequest { tx, sent_at: Instant::now() });
 		}
 
 		if let Err(error) = self.send_request(&id, method, params.as_deref()) {
@@ -461,6 +507,18 @@ impl HostRpcClientInner {
 		if let Some((tx, item)) = delivery {
 			let _ = tx.unbounded_send(Ok(item));
 		}
+	}
+
+	/// Whether a request has waited out the silence deadline with no frame
+	/// arriving since it was sent.
+	fn silent_past_deadline(&self, now: Instant) -> bool {
+		let oldest_sent_at =
+			self.pending.lock().unwrap().values().map(|request| request.sent_at).min();
+		let Some(oldest_sent_at) = oldest_sent_at else {
+			return false;
+		};
+		let silent_since = oldest_sent_at.max(*self.last_frame_at.lock().unwrap());
+		now.saturating_duration_since(silent_since) >= self.silence_deadline
 	}
 
 	fn close_with_error(&self, error: RpcError) {
@@ -1077,6 +1135,91 @@ mod tests {
 
 		assert!(request_failed, "a request on a closed client should fail");
 		assert!(subscribe_failed, "a subscribe on a closed client should fail");
+	}
+
+	fn waiting_request(client: &HostRpcClient, sent_at: Instant) {
+		let (tx, _rx) = oneshot::channel();
+		client
+			.inner
+			.pending
+			.lock()
+			.unwrap()
+			.insert("truapi:1".to_string(), PendingRequest { tx, sent_at });
+	}
+
+	/// A request with nothing at all arriving after it is what a dead socket
+	/// looks like, so the check trips once the request has waited the whole
+	/// deadline.
+	#[test]
+	fn a_request_waiting_out_the_deadline_in_silence_trips_the_check() {
+		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let sent_at = Instant::now();
+		*client.inner.last_frame_at.lock().unwrap() = sent_at;
+		waiting_request(&client, sent_at);
+
+		let tripped = [REQUEST_SILENCE_DEADLINE - Duration::from_secs(1), REQUEST_SILENCE_DEADLINE]
+			.map(|wait| client.inner.silent_past_deadline(sent_at + wait));
+
+		assert_eq!(tripped, [false, true]);
+	}
+
+	/// Any frame proves the socket alive, and a request waiting behind a slow
+	/// frame is not stuck, so the wait counts from the last frame.
+	#[test]
+	fn a_frame_after_the_request_restarts_the_wait() {
+		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let sent_at = Instant::now();
+		let frame_after = Duration::from_secs(20);
+		waiting_request(&client, sent_at);
+		*client.inner.last_frame_at.lock().unwrap() = sent_at + frame_after;
+
+		let tripped = [REQUEST_SILENCE_DEADLINE, frame_after + REQUEST_SILENCE_DEADLINE]
+			.map(|wait| client.inner.silent_past_deadline(sent_at + wait));
+
+		assert_eq!(tripped, [false, true]);
+	}
+
+	/// A quiet connection with nothing outstanding is idle rather than dead,
+	/// and closing it would only make the next caller wait for a new one.
+	#[test]
+	fn silence_with_no_request_waiting_never_trips_the_check() {
+		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let frame_at = Instant::now();
+		*client.inner.last_frame_at.lock().unwrap() = frame_at;
+
+		assert!(!client.inner.silent_past_deadline(frame_at + REQUEST_SILENCE_DEADLINE * 10));
+	}
+
+	/// The response loop runs the check on its own: a request on a socket that
+	/// went silent fails with that cause, and the host is told to close the
+	/// socket.
+	#[test]
+	fn a_request_on_a_silent_connection_fails_and_closes_it() {
+		let connection = TrackingConnection::new();
+		let client = HostRpcClient::with_silence_deadline(
+			connection.clone(),
+			thread_per_subscription_spawner(),
+			Duration::from_millis(100),
+		);
+		let rpc_client = RpcClient::new(client.clone());
+
+		let (done_tx, done_rx) = std::sync::mpsc::channel();
+		std::thread::spawn(move || {
+			let request =
+				block_on(rpc_client.request::<Value>("chainHead_v1_header", rpc_params![]));
+			let _ = done_tx.send(request.map_err(|error| error.to_string()));
+		});
+		let failure = done_rx
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("a request on a silent connection should fail rather than hang")
+			.expect_err("nothing answers the request");
+
+		assert!(
+			failure.contains("no frame for 100ms while a request waited"),
+			"unexpected failure: {failure}"
+		);
+		assert!(client.is_closed(), "the client should refuse further requests");
+		assert_eq!(connection.close_count(), 1, "the host should close the socket");
 	}
 
 	/// The cap counts subscriptions holding a buffer. Asserted against the map
