@@ -54,6 +54,9 @@ public struct GameReminderEvent: Sendable, Equatable {
         self.occurredAt = occurredAt
     }
 
+    /// Shared with the Android host, so both platforms' reminder events filter together.
+    public static let logger = "host.telemetry"
+
     public var name: String {
         "host.reminder.\(step.rawValue)"
     }

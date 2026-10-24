@@ -25,6 +25,7 @@ struct GameReminderEventTests {
         let fields = event.sentryFields(origin: origin)
 
         #expect(event.name == "host.reminder.product_opened")
+        #expect(GameReminderEvent.logger == "host.telemetry")
         #expect(fields.tags["reminder.product_id"] == "game.dot")
         #expect(fields.tags["reminder.open_source"] == "alarm")
         #expect(fields.tags["host.app_state"] == "inactive")

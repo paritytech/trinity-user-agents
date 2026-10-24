@@ -7,9 +7,18 @@ import SwiftUI
 import Individuality
 import IssueMonitoring
 
+/// The AlarmKit calls a game reminder makes, so the reminder can be exercised without the system alarm store.
+@available(iOS 26.1, *)
+protocol GameAlarmManaging {
+    var isAuthorized: Bool { get }
+    func alarmIds() throws -> [UUID]
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws
+    func cancel(id: UUID) throws
+}
+
 @available(iOS 26.1, *)
 final class AlarmKitGameReminder: GameStartReminderServicing {
-    private let alarmManger: AlarmManager
+    private let alarmManger: GameAlarmManaging
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
@@ -18,7 +27,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private var lastTask: Task<Void, Never>?
 
     init(
-        alarmManger: AlarmManager,
+        alarmManger: GameAlarmManaging,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared,
@@ -60,7 +69,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     }
 
     private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
-        guard alarmManger.authorizationState == .authorized else {
+        guard alarmManger.isAuthorized else {
             logger.debug("Not authorized, skipping schedule")
             recordNotScheduled(.notAuthorized, gameDate: fireDate, productId: productId)
             return
@@ -105,7 +114,6 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func recordNotScheduled(_ reason: GameReminderEvent.SkipReason, gameDate: Date, productId: ProductId) {
         var event = GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate)
-        event.delivery = .alarm
         event.skipReason = reason
         telemetry.record(event)
     }
@@ -131,8 +139,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func isAlarmScheduled(id: UUID) -> Bool {
         do {
-            let alarms = try alarmManger.alarms
-            return alarms.contains { $0.id == id }
+            return try alarmManger.alarmIds().contains(id)
         } catch {
             logger.error("Failed to fetch scheduled alarms: \(error)")
             return false
@@ -144,6 +151,26 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         at date: Date,
         productId: ProductId
     ) async throws {
+        let playIntent = GameAlarmPlayIntent()
+        playIntent.alarmID = newAlarmId.uuidString
+        playIntent.productId = productId
+        playIntent.startsAt = date
+
+        try await alarmManger.scheduleGameAlarm(id: newAlarmId, at: date, playIntent: playIntent)
+    }
+}
+
+@available(iOS 26.1, *)
+extension AlarmManager: GameAlarmManaging {
+    var isAuthorized: Bool {
+        authorizationState == .authorized
+    }
+
+    func alarmIds() throws -> [UUID] {
+        try alarms.map(\.id)
+    }
+
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
                 alert: .init(
@@ -160,13 +187,8 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             tintColor: Color.accentColor
         )
 
-        let playIntent = GameAlarmPlayIntent()
-        playIntent.alarmID = newAlarmId.uuidString
-        playIntent.productId = productId
-        playIntent.startsAt = date
-
-        _ = try await alarmManger.schedule(
-            id: newAlarmId,
+        _ = try await schedule(
+            id: id,
             configuration: AlarmManager.AlarmConfiguration(
                 countdownDuration: nil,
                 schedule: .fixed(date),

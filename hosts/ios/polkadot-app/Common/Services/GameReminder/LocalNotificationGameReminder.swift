@@ -89,7 +89,7 @@ private extension LocalNotificationGameReminder {
         skipReason: GameReminderEvent.SkipReason? = nil
     ) {
         var event = GameReminderEvent(step: step, productId: productId, startsAt: gameDate)
-        event.delivery = .notification
+        event.delivery = step == .scheduled ? .notification : nil
         event.skipReason = skipReason
         telemetry.record(event)
     }

@@ -304,6 +304,37 @@ struct ProductGameReminderCenterTests {
         #expect(events.first?.occurredAt == startsAt.addingTimeInterval(1))
     }
 
+    @Test("The Play tap drops the reminder first, so the start neither opens again nor counts as missed")
+    func playTapIsTheOpen() async throws {
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+        fakes.now = startsAt.addingTimeInterval(5)
+
+        center.openFromAlarm(productId: productId, startsAt: startsAt)
+        fakes.now = startsAt.addingTimeInterval(600)
+        center.refresh()
+
+        let events = fakes.telemetry.events
+        #expect(events.map(\.step) == [.tapped, .productOpened])
+        #expect(events.last?.openSource == .alarm)
+        #expect(events.last?.navigated == true)
+        #expect(events.allSatisfy { $0.startsAt == startsAt && $0.occurredAt == startsAt.addingTimeInterval(5) })
+        #expect(fakes.opened == [productId])
+        #expect(center.slots.isEmpty)
+        #expect(fakes.alarm(for: productId).cancelCount == 1)
+    }
+
+    @Test("A Play tap with no held reminder still opens the product and reports it")
+    func playTapWithoutReminder() throws {
+        let (center, fakes) = makeSUT(now: startsAt)
+
+        center.openFromAlarm(productId: productId, startsAt: nil)
+
+        #expect(fakes.telemetry.events.map(\.step) == [.tapped, .productOpened])
+        #expect(fakes.telemetry.events.first?.startsAt == nil)
+        #expect(fakes.opened == [productId])
+    }
+
     @Test("A cancel while calendar access is being asked adds no event")
     func cancelDuringCalendarAccessAddsNoEvent() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-7_200))
@@ -325,18 +356,6 @@ private extension ProductGameReminderCenter {
 /// The reminder call the center makes for a product's start, which rings at the start itself.
 private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGameReminder.Call {
     .init(gameDate: startsAt, productId: productId)
-}
-
-private struct WaitTimedOut: Error {}
-
-@MainActor
-private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
-    for _ in 0 ..< 200 where !condition() {
-        try await Task.sleep(for: .milliseconds(10))
-    }
-    guard condition() else {
-        throw WaitTimedOut()
-    }
 }
 
 // MARK: - Fakes

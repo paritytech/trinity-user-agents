@@ -25,7 +25,7 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
     func makeAlarm(for productId: ProductId) -> (any GameStartReminderServicing)? {
         if #available(iOS 26.1, *) {
             return AlarmKitGameReminder(
-                alarmManger: .shared,
+                alarmManger: AlarmManager.shared,
                 settingsManager: settingsManager,
                 keys: .product(productId),
                 telemetry: telemetry

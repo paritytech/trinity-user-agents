@@ -147,6 +147,22 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         refresh()
     }
 
+    /// The alarm's Play button. The tap is the open, so the held reminder goes first: the start can then
+    /// neither open the product a second time nor count as missed.
+    func openFromAlarm(productId: ProductId, startsAt: Date?) {
+        let startsAt = startsAt ?? slot(for: productId)?.startsAt
+        if slot(for: productId) != nil {
+            drop(productId)
+            refresh()
+        }
+        record(.tapped, productId: productId, startsAt: startsAt)
+        let navigated = productOpener.open(productId: productId)
+        record(.productOpened, productId: productId, startsAt: startsAt) { event in
+            event.openSource = .alarm
+            event.navigated = navigated
+        }
+    }
+
     func refresh() {
         wakeUp?.cancel()
         wakeUp = nil
@@ -334,12 +350,16 @@ private extension ProductGameReminderCenter {
         for slot: Slot,
         configure: (inout GameReminderEvent) -> Void = { _ in }
     ) {
-        var event = GameReminderEvent(
-            step: step,
-            productId: slot.productId,
-            startsAt: slot.startsAt,
-            occurredAt: dateProvider.now
-        )
+        record(step, productId: slot.productId, startsAt: slot.startsAt, configure: configure)
+    }
+
+    func record(
+        _ step: GameReminderEvent.Step,
+        productId: ProductId,
+        startsAt: Date?,
+        configure: (inout GameReminderEvent) -> Void = { _ in }
+    ) {
+        var event = GameReminderEvent(step: step, productId: productId, startsAt: startsAt, occurredAt: dateProvider.now)
         event.appState = GameReminderEvent.AppState(applicationState.applicationState)
         configure(&event)
         telemetry.record(event)
