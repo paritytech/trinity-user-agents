@@ -9,14 +9,27 @@ public final class ChainSocket: ChainSocketProtocol, @unchecked Sendable {
         public let connectionTimeout: TimeInterval
         public let pingInterval: TimeInterval
         public let pongTimeout: TimeInterval
+        public let viabilityTimeout: TimeInterval
 
-        public init(connectionTimeout: TimeInterval, pingInterval: TimeInterval, pongTimeout: TimeInterval) {
+        public init(
+            connectionTimeout: TimeInterval,
+            pingInterval: TimeInterval,
+            pongTimeout: TimeInterval,
+            viabilityTimeout: TimeInterval
+        ) {
             self.connectionTimeout = connectionTimeout
             self.pingInterval = pingInterval
             self.pongTimeout = pongTimeout
+            self.viabilityTimeout = viabilityTimeout
         }
 
-        public static let `default` = Configuration(connectionTimeout: 10, pingInterval: 30, pongTimeout: 15)
+        // The same 2 s the SubstrateSdk WebSocketEngine waits before it reconnects the wallet connections.
+        public static let `default` = Configuration(
+            connectionTimeout: 10,
+            pingInterval: 30,
+            pongTimeout: 15,
+            viabilityTimeout: 2
+        )
     }
 
     fileprivate enum Phase {
@@ -33,6 +46,7 @@ public final class ChainSocket: ChainSocketProtocol, @unchecked Sendable {
         var pingTick: DispatchWorkItem?
         var pongDeadline: DispatchWorkItem?
         var connectDeadline: DispatchWorkItem?
+        var viabilityDeadline: DispatchWorkItem?
     }
 
     public var delegate: ChainSocketDelegate? {
@@ -174,11 +188,10 @@ public final class ChainSocket: ChainSocketProtocol, @unchecked Sendable {
              .reconnectSuggested(true):
             shutDown(reason: .transport(nil))
         case .viabilityChanged(false):
-            // A socket rarely outlives its network path, and the periodic ping can be a whole interval away.
-            logger.info("[truapi.chain] chain socket \(host): network path not viable, pinging")
-            pingUnlessAwaitingPong()
+            closeUnlessViableAgain()
+        case .viabilityChanged(true):
+            state.withLockUnchecked { $0.cancelViabilityDeadline() }
         case .reconnectSuggested(false),
-             .viabilityChanged(true),
              .ping:
             break
         }
@@ -230,6 +243,24 @@ private extension ChainSocket {
         state.withLockUnchecked { $0.cancelPongDeadline() }
     }
 
+    // A ping cannot cross a path the system reports as gone, so the socket waits for the path instead.
+    func closeUnlessViableAgain() {
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.shutDown(reason: .pathLost)
+        }
+
+        let shouldWait = state.withLockUnchecked { state -> Bool in
+            guard state.phase == .open, state.viabilityDeadline == nil else { return false }
+            state.viabilityDeadline = deadline
+            return true
+        }
+
+        guard shouldWait else { return }
+
+        logger.debug("chain socket \(host): network path lost")
+        scheduler.schedule(after: configuration.viabilityTimeout, on: queue, execute: deadline)
+    }
+
     func makePingTick() -> DispatchWorkItem {
         let tick = DispatchWorkItem { [weak self] in
             self?.handlePingTick()
@@ -248,10 +279,10 @@ private extension ChainSocket {
 
         guard isOpen else { return }
 
-        pingUnlessAwaitingPong()
+        sendPeriodicPing()
     }
 
-    func pingUnlessAwaitingPong() {
+    func sendPeriodicPing() {
         let isAwaitingPong = state.withLockUnchecked { $0.pongDeadline != nil }
 
         guard !isAwaitingPong else { return }
@@ -298,10 +329,16 @@ private extension ChainSocket.State {
         connectDeadline = nil
     }
 
+    mutating func cancelViabilityDeadline() {
+        viabilityDeadline?.cancel()
+        viabilityDeadline = nil
+    }
+
     mutating func cancelLiveness() {
         pingTick?.cancel()
         pingTick = nil
         cancelPongDeadline()
         cancelConnectDeadline()
+        cancelViabilityDeadline()
     }
 }
