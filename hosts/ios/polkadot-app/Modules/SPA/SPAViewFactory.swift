@@ -41,7 +41,8 @@ enum SPAViewFactory {
         let allowanceSupport: AllowanceSupport? = dependencyLocator.getDependency()
         let accountManager = ProductsAccountManager(
             entropyManager: RootEntropyManager.shared,
-            allowanceSupport: allowanceSupport
+            allowanceSupport: allowanceSupport,
+            logger: Logger.shared
         )
 
         let wireframe = SPAWireframe()

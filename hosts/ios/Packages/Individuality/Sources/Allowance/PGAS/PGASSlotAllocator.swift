@@ -32,30 +32,34 @@ public final class PGASSlotAllocator: AllowanceSlotAllocating {
             }
 
             try await markStallRegion("Submitting") {
-                try await self.submitter.submit(
-                    call: PGASPallet.ClaimPgasCall(
-                        slotIndex: slot.slotIndex,
-                        target: accountId
-                    )(),
-                    makeOrigin: { [
-                        originFactory = self.originFactory,
-                        slot,
-                        originChainId = self.originChainId,
-                        submissionChainId = self.submissionChainId
-                    ] _ in
-                        try await originFactory.createPGASOrigin(
-                            personOrigin: slot.personOrigin,
-                            day: slot.day,
-                            slotIndex: slot.slotIndex,
-                            peopleChainId: originChainId,
-                            submissionChainId: submissionChainId
-                        )
-                    },
-                    chainId: self.submissionChainId
-                )
+                do {
+                    try await self.submit(slot: slot, accountId: accountId)
+                } catch is PGasOriginError {
+                    // Asset Hub never held the ring revision; prove against the current ring once more.
+                    try await self.submit(slot: slot, accountId: accountId)
+                }
             }
 
             return slot.day
         }
+    }
+
+    private func submit(slot: PGASSlotInfo, accountId: AccountId) async throws {
+        try await submitter.submit(
+            call: PGASPallet.ClaimPgasCall(
+                slotIndex: slot.slotIndex,
+                target: accountId
+            )(),
+            makeOrigin: { [originFactory, slot, originChainId, submissionChainId] _ in
+                try await originFactory.createPGASOrigin(
+                    personOrigin: slot.personOrigin,
+                    day: slot.day,
+                    slotIndex: slot.slotIndex,
+                    peopleChainId: originChainId,
+                    submissionChainId: submissionChainId
+                )
+            },
+            chainId: submissionChainId
+        )
     }
 }
