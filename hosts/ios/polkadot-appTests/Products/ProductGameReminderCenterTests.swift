@@ -1,5 +1,6 @@
 import Foundation
 import FoundationExt
+import IssueMonitoring
 import Testing
 import UIKit
 import Keystore_iOS
@@ -27,7 +28,8 @@ struct ProductGameReminderCenterTests {
                 applicationState: fakes,
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 productOpener: fakes,
-                dateProvider: fakes
+                dateProvider: fakes,
+                telemetry: fakes.telemetry
             )
         )
         center.start()
@@ -230,6 +232,78 @@ struct ProductGameReminderCenterTests {
         #expect(relaunched.pill == ProductGamePill(productId: productId, startsAt: startsAt))
     }
 
+    @Test("A product's cancel is reported with its start; a start it never held reports nothing")
+    func reportsCancel() async {
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+
+        center.cancel(productId: other)
+        center.cancel(productId: productId)
+
+        #expect(fakes.telemetry.events.map(\.step) == [.cancelled])
+        #expect(fakes.telemetry.events.first?.productId == productId)
+        #expect(fakes.telemetry.events.first?.startsAt == startsAt)
+    }
+
+    @Test("Opening at the start is reported as an auto-open with the app state and whether it navigated")
+    func reportsAutoOpen() async throws {
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+        fakes.openNavigates = false
+
+        fakes.applicationState = .inactive
+        fakes.now = startsAt.addingTimeInterval(2)
+        center.refresh()
+
+        let event = try #require(fakes.telemetry.events.last)
+        #expect(fakes.telemetry.events.map(\.step) == [.productOpened])
+        #expect(event.openSource == .autoOpen)
+        #expect(event.appState == .inactive)
+        #expect(event.navigated == false)
+        #expect(event.occurredAt == startsAt.addingTimeInterval(2))
+    }
+
+    @Test("A start reached past the grace is reported as missed, and nothing opens")
+    func reportsMissedStart() async throws {
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+
+        fakes.applicationState = .background
+        fakes.now = startsAt.addingTimeInterval(600)
+        center.refresh()
+
+        let event = try #require(fakes.telemetry.events.last)
+        #expect(fakes.telemetry.events.map(\.step) == [.missed])
+        #expect(event.appState == .background)
+        #expect(event.occurredAt == startsAt.addingTimeInterval(600))
+        #expect(fakes.opened.isEmpty)
+    }
+
+    @Test("A ringing alarm is reported once, for the product that holds it")
+    func reportsFiredAlarmOnce() async throws {
+        let settings = InMemorySettingsManager()
+        let alarmId = UUID()
+        let otherAlarmId = UUID()
+        settings.set(string: alarmId.uuidString, for: GameReminderStorageKeys.product(productId).alarmId)
+        settings.set(string: otherAlarmId.uuidString, for: GameReminderStorageKeys.product(other).alarmId)
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60), settings: settings)
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+        await center.schedule(productId: other, startsAt: startsAt.addingTimeInterval(60), addCalendarEvent: false)
+        fakes.now = startsAt.addingTimeInterval(1)
+
+        // The stream is read in order, so the last product's ring arriving proves the repeat was read first.
+        for alarmIds: Set<UUID> in [[UUID()], [alarmId], [alarmId], [otherAlarmId]] {
+            fakes.alarmAlerts.yield(alarmIds)
+        }
+        try await waitUntil { fakes.telemetry.events.count == 2 }
+
+        let events = fakes.telemetry.events
+        #expect(events.map(\.step) == [.fired, .fired])
+        #expect(events.map(\.productId) == [productId, other])
+        #expect(events.first?.delivery == .alarm)
+        #expect(events.first?.occurredAt == startsAt.addingTimeInterval(1))
+    }
+
     @Test("A cancel while calendar access is being asked adds no event")
     func cancelDuringCalendarAccessAddsNoEvent() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-7_200))
@@ -253,13 +327,29 @@ private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGam
     .init(gameDate: startsAt, productId: productId)
 }
 
+private struct WaitTimedOut: Error {}
+
+@MainActor
+private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
+    for _ in 0 ..< 200 where !condition() {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    guard condition() else {
+        throw WaitTimedOut()
+    }
+}
+
 // MARK: - Fakes
 
 private final class Fakes: @unchecked Sendable {
     var now: Date
     var applicationState: UIApplication.State = .active
     var opened: [String] = []
+    var openNavigates = true
     let calendar = RecordingCalendar()
+    let telemetry = RecordingGameReminderTelemetry()
+    let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
+    private let alarmAlertStream: AsyncStream<Set<UUID>>
     private let alarmAvailable: Bool
     private var alarms: [String: RecordingGameReminder] = [:]
     private var notifications: [String: RecordingGameReminder] = [:]
@@ -267,6 +357,7 @@ private final class Fakes: @unchecked Sendable {
     init(now: Date, alarmAvailable: Bool) {
         self.now = now
         self.alarmAvailable = alarmAvailable
+        (alarmAlertStream, alarmAlerts) = AsyncStream.makeStream()
     }
 
     func alarm(for productId: String) -> RecordingGameReminder {
@@ -303,8 +394,13 @@ extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, P
         calendar
     }
 
-    func open(productId: String) {
+    func alertingAlarms() -> AsyncStream<Set<UUID>> {
+        alarmAlertStream
+    }
+
+    func open(productId: String) -> Bool {
         opened.append(productId)
+        return openNavigates
     }
 }
 

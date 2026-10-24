@@ -5,6 +5,7 @@ import Keystore_iOS
 import Products
 import SwiftUI
 import Individuality
+import IssueMonitoring
 
 @available(iOS 26.1, *)
 final class AlarmKitGameReminder: GameStartReminderServicing {
@@ -12,6 +13,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
+    private let telemetry: GameReminderTelemetry
     private let taskLock = NSLock()
     private var lastTask: Task<Void, Never>?
 
@@ -19,12 +21,14 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         alarmManger: AlarmManager,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
-        logger: LoggerProtocol = Logger.shared
+        logger: LoggerProtocol = Logger.shared,
+        telemetry: GameReminderTelemetry = NoopGameReminderTelemetry()
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
+        self.telemetry = telemetry
     }
 
     func scheduleReminder(gameDate: Date, productId: ProductId) {
@@ -58,11 +62,13 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
         guard alarmManger.authorizationState == .authorized else {
             logger.debug("Not authorized, skipping schedule")
+            recordNotScheduled(.notAuthorized, gameDate: fireDate, productId: productId)
             return
         }
 
         guard fireDate > Date() else {
             logger.debug("Fire date is in the past, skipping")
+            recordNotScheduled(.startInPast, gameDate: fireDate, productId: productId)
             performCancelReminder(alarmId: nil)
             return
         }
@@ -88,9 +94,20 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
+            var event = GameReminderEvent(step: .scheduled, productId: productId, startsAt: fireDate)
+            event.delivery = .alarm
+            telemetry.record(event)
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
+            recordNotScheduled(.failed, gameDate: fireDate, productId: productId)
         }
+    }
+
+    private func recordNotScheduled(_ reason: GameReminderEvent.SkipReason, gameDate: Date, productId: ProductId) {
+        var event = GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate)
+        event.delivery = .alarm
+        event.skipReason = reason
+        telemetry.record(event)
     }
 
     private func performCancelReminder(alarmId: UUID?) {
@@ -146,6 +163,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
         playIntent.productId = productId
+        playIntent.startsAt = date
 
         _ = try await alarmManger.schedule(
             id: newAlarmId,

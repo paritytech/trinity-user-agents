@@ -1,6 +1,8 @@
 import Foundation
 import AlarmKit
 import AppIntents
+import IssueMonitoring
+import UIKit
 
 @available(iOS 26.1, *)
 struct GameAlarmPlayIntent: LiveActivityIntent {
@@ -13,10 +15,25 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @Parameter(title: "Product ID")
     var productId: String?
 
+    @Parameter(title: "Starts At")
+    var startsAt: Date?
+
     @MainActor
     func perform() async throws -> some IntentResult {
         if let productId {
-            ProductOpener().open(productId: productId)
+            let telemetry = IssueMonitoringFactory.createGameReminderTelemetry()
+            let appState = GameReminderEvent.AppState(UIApplication.shared.applicationState)
+
+            var tapped = GameReminderEvent(step: .tapped, productId: productId, startsAt: startsAt)
+            tapped.delivery = .alarm
+            tapped.appState = appState
+            telemetry.record(tapped)
+
+            var opened = GameReminderEvent(step: .productOpened, productId: productId, startsAt: startsAt)
+            opened.openSource = .alarm
+            opened.appState = appState
+            opened.navigated = ProductOpener().open(productId: productId)
+            telemetry.record(opened)
         }
 
         if let alarmIDString = alarmID,
