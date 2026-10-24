@@ -300,11 +300,16 @@ export function createTransport(
   }
 
   function interruptOperations(error: Error) {
-    const requests = [...pending.keys()].map(
-      (requestId) => takePending(requestId)!,
-    );
-    const streams = [...subscriptions.values()];
-    subscriptions.clear();
+    const closing = closedError !== null;
+    const requests = [...pending]
+      .filter(([, request]) => request.sent || closing)
+      .map(([requestId]) => takePending(requestId)!);
+    const streams = [...subscriptions]
+      .filter(([, stream]) => stream.sent || closing)
+      .map(([requestId, stream]) => {
+        subscriptions.delete(requestId);
+        return stream;
+      });
     const instances: { unsubscribe(): void }[] = [];
     for (const route of hostRoutes.values()) {
       route.buffered.length = 0;
@@ -326,7 +331,7 @@ export function createTransport(
     }
   }
 
-  /** Close permanently; a provider reset only interrupts current operations. */
+  /** Close permanently. A provider reset interrupts only the work the host may have started. */
   function closeWithError(error: unknown) {
     if (closedError) return;
     closedError = toError(error);

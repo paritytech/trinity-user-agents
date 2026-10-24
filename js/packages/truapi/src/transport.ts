@@ -28,7 +28,10 @@ export class UnsupportedMessageError extends Error {
   }
 }
 
-/** The host connection ended; interrupted operations are not retried. */
+/**
+ * The host connection ended after this operation was sent, before its frame
+ * could be written, or with no reconnect left to wait for.
+ */
 export class ConnectionResetError extends Error {
   constructor(options?: ErrorOptions) {
     super("TrUAPI host connection interrupted", options);
@@ -753,7 +756,8 @@ export function createMessagePortProvider(
 }
 
 /**
- * Wire provider over a binary WebSocket, one message per SCALE frame.
+ * Wire provider over a binary WebSocket at an absolute URL, one message per
+ * SCALE frame.
  *
  * This is the transport a host exposes on a loopback socket: the Rust core's
  * `ws-bridge`, and `truapi-host signing-host --frame-listen`. The frame bytes
@@ -789,9 +793,16 @@ export function createWebSocketProviderFactory(): (
     ArrayBuffer.prototype,
     "byteLength",
   )!.get!;
+  const NativeURL = URL;
+  const urlOrigin = Object.getOwnPropertyDescriptor(
+    NativeURL.prototype,
+    "origin",
+  )!.get!;
 
   return (url) => {
     const base = createBaseProvider();
+    // The query can hold a bridge token, so errors name only the origin.
+    const origin = apply(urlOrigin, new NativeURL(url), []);
     const socket = new NativeWebSocket(url);
     apply(setBinaryType, socket, ["arraybuffer"]);
     const pending: Uint8Array[] = [];
@@ -838,7 +849,7 @@ export function createWebSocketProviderFactory(): (
     apply(addEventListener, socket, [
       "error",
       () => {
-        const error = new Error(`websocket error (${url})`);
+        const error = new Error(`websocket error (${origin})`);
         rejectOpened(error);
         base.close(error);
       },
@@ -846,7 +857,7 @@ export function createWebSocketProviderFactory(): (
     apply(addEventListener, socket, [
       "close",
       () => {
-        const error = new Error(`websocket closed (${url})`);
+        const error = new Error(`websocket closed (${origin})`);
         rejectOpened(error);
         base.close(error);
       },
