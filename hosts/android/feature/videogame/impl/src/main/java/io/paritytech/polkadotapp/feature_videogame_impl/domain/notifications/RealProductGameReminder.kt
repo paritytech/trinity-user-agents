@@ -4,6 +4,9 @@ import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
@@ -35,6 +38,7 @@ class RealProductGameReminder @Inject constructor(
     private val calendar: ProductGameCalendar,
     private val osAccess: ProductGameOsAccess,
     private val timeProvider: TimeProvider,
+    private val telemetry: GameReminderTelemetry,
 ) : ProductGameReminder {
     private val lock = Mutex()
 
@@ -58,12 +62,17 @@ class RealProductGameReminder @Inject constructor(
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
-        }
+        }.onFailure { telemetry.report(GameReminderEvent.NotScheduled(productId, startsAtMillis, GameReminderSkipReason.NOT_AUTHORIZED)) }
     }
 
     override suspend fun cancel(productId: ProductId) {
         requestLock.withLock {
-            lock.withLock { scheduledFor(productId)?.let(::remove) }
+            lock.withLock {
+                scheduledFor(productId)?.let { game ->
+                    remove(game)
+                    telemetry.report(GameReminderEvent.Cancelled(productId, game.startsAtMillis))
+                }
+            }
         }
     }
 
@@ -76,9 +85,9 @@ class RealProductGameReminder @Inject constructor(
         }
     }
 
-    // Only if [game] is still scheduled, so a schedule made meanwhile survives.
-    suspend fun clear(game: ScheduledProductGame) {
-        lock.withLock { if (game in currentlyScheduled()) remove(game) }
+    // Only if [game] is still scheduled, so a schedule made meanwhile survives. True when it removed [game].
+    suspend fun clear(game: ScheduledProductGame): Boolean = lock.withLock {
+        (game in currentlyScheduled()).also { held -> if (held) remove(game) }
     }
 
     private fun add(game: ScheduledProductGame) {
