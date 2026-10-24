@@ -491,6 +491,7 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
+          notifications: "behind/idle",
         });
 
         await page.click('#dock [data-destination="browse"]');
@@ -506,6 +507,7 @@ describe("the dock", () => {
           chat: "front/idle",
           browse: "behind/running",
           pocket: "behind/idle",
+          notifications: "behind/idle",
         });
         expect(
           await page
@@ -522,6 +524,7 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/running",
           pocket: "front/idle",
+          notifications: "behind/idle",
         });
 
         await page.click('#dock [data-destination="browse"]');
@@ -570,6 +573,7 @@ describe("the dock", () => {
           chat: "front/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
+          notifications: "behind/idle",
         });
         // The screen follows the session change, which lands after the frame closes.
         await page
@@ -733,6 +737,7 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
+          notifications: "behind/idle",
         });
       } finally {
         await context.close();

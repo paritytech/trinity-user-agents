@@ -301,6 +301,12 @@
               aria-label="Pocket"
               hidden
             ></section>
+            <section
+              id="notifications-screen"
+              class="chat-screen notifications-screen"
+              aria-label="Notifications"
+              hidden
+            ></section>
           </div>
           <nav id="dock" class="dock" aria-label="Host navigation">
             <button type="button" data-destination="chat">
@@ -341,6 +347,22 @@
                 <path d="M3.5 10.5h17M16 14.5h1.5" />
               </svg>
               <span>Pocket</span>
+            </button>
+            <button type="button" data-destination="notifications" hidden>
+              <span class="dock-badge" data-badge hidden></span>
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                aria-hidden="true"
+              >
+                <path
+                  d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z"
+                  stroke-linejoin="round"
+                />
+                <path d="M10 20.5a2 2 0 0 0 4 0" />
+              </svg>
+              <span>Notifications</span>
             </button>
           </nav>
         </div>
