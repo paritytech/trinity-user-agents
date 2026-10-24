@@ -37,7 +37,7 @@ use super::{
 
 /// How long to wait for Asset Hub to import the ring revision a proof is built
 /// against before giving up.
-const RING_REVISION_WAIT: Duration = Duration::from_secs(60);
+const RING_REVISION_WAIT: Duration = Duration::from_secs(30);
 
 /// Longest a single poll sleeps while waiting for a revision to land.
 const RING_REVISION_POLL: Duration = Duration::from_secs(1);
@@ -81,6 +81,17 @@ pub enum PgasError {
 		/// Slot claimed.
 		slot_index: u32,
 	},
+}
+
+/// Whether `err` means Asset Hub cannot verify the ring revision the proof was
+/// built against, so a proof against a freshly located ring may still succeed.
+pub fn is_stale_ring_revision(err: &StatementAllowanceError) -> bool {
+	matches!(
+		err,
+		StatementAllowanceError::Pgas(
+			PgasError::RingRevisionPruned { .. } | PgasError::RingRevisionTimeout { .. }
+		)
+	)
 }
 
 /// One `MembersSubscriber.RingRoots` record, projected to the field that decides
@@ -681,5 +692,19 @@ mod tests {
 
 		assert!(pruned.to_string().contains("pruned"));
 		assert!(waiting.to_string().contains("has not imported"));
+	}
+
+	/// Both revision outcomes warrant a rebuilt proof; a dispatch failure does not.
+	#[test]
+	fn only_revision_failures_ask_for_a_fresh_ring() {
+		let stale = [
+			PgasError::RingRevisionPruned { ring_index: 2, revision: 100 },
+			PgasError::RingRevisionTimeout { ring_index: 2, revision: 100 },
+		];
+		assert!(stale.into_iter().all(|err| is_stale_ring_revision(&err.into())));
+
+		let not_recorded =
+			PgasError::ClaimNotRecorded { block_hash: "0x00".into(), day: 1, slot_index: 0 };
+		assert!(!is_stale_ring_revision(&not_recorded.into()));
 	}
 }

@@ -391,26 +391,40 @@ pub async fn allocate_smart_contract_allowance(
 	// A PGAS claim uses the strongest available membership.
 	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
 	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
-	let membership =
-		find_including_rings(people_rpc, &people.metadata, &signer, &collections, u32::MAX)
-			.await?
-			.into_iter()
-			.next()
-			.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
+	// Asset Hub may never hold the ring revision a proof was built against, so
+	// locate the ring again and rebuild the proof once.
+	let mut rebuilt = false;
+	let outcome = loop {
+		let membership =
+			find_including_rings(people_rpc, &people.metadata, &signer, &collections, u32::MAX)
+				.await?
+				.into_iter()
+				.next()
+				.ok_or(AllowanceAllocationError::MissingPersonhoodMembership {
+					resource: "PGAS",
+				})?;
 
-	signing_host.require_current_session(session)?;
-	let outcome = pgas::claim_pgas(pgas::PgasClaim {
-		asset_hub_rpc: asset_hub_client.rpc(),
-		asset_hub_metadata: &asset_hub.metadata,
-		asset_hub_target: asset_hub_client.extrinsic_target(&services.extrinsics),
-		people_rpc,
-		people_metadata: &people.metadata,
-		signer: &signer,
-		network_suffix: &network_suffix,
-		target: &target,
-		ring: &membership,
-	})
-	.await?;
+		signing_host.require_current_session(session)?;
+		match pgas::claim_pgas(pgas::PgasClaim {
+			asset_hub_rpc: asset_hub_client.rpc(),
+			asset_hub_metadata: &asset_hub.metadata,
+			asset_hub_target: asset_hub_client.extrinsic_target(&services.extrinsics),
+			people_rpc,
+			people_metadata: &people.metadata,
+			signer: &signer,
+			network_suffix: &network_suffix,
+			target: &target,
+			ring: &membership,
+		})
+		.await
+		{
+			Err(err) if !rebuilt && pgas::is_stale_ring_revision(&err) => {
+				warn!(%product_id, %err, "rebuilding the PGAS proof against the current ring");
+				rebuilt = true;
+			},
+			result => break result?,
+		}
+	};
 	debug!(
 		%product_id,
 		day = outcome.day,
