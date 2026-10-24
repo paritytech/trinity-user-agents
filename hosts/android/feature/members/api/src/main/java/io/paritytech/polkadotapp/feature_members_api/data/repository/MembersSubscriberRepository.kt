@@ -11,7 +11,9 @@ import io.paritytech.polkadotapp.feature_members_api.data.model.RingRevision
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import kotlin.time.Duration
 
 interface MembersSubscriberRepository {
     suspend fun getRingRoots(
@@ -29,32 +31,48 @@ interface MembersSubscriberRepository {
     ): Flow<Result<WithRawValue<List<RingCommitmentRecord>?>>>
 }
 
+/** The subscriber cannot verify a proof against [revision]; rebuild it against the current ring. */
+class RingRevisionUnavailableException(val revision: RingRevision, message: String) : IllegalStateException(message)
+
 suspend fun MembersSubscriberRepository.awaitRingRevision(
     chainId: ChainId,
     collectionId: RingCollectionId,
     ringIndex: RingIndex,
     revision: RingRevision,
+    wait: Duration = Duration.INFINITE,
 ): Result<Unit> = runCatching {
     Timber.i("awaitRingRevision: waiting for revision=$revision in collection=$collectionId ring=$ringIndex on chain=$chainId")
 
-    subscribeRingRoots(chainId, collectionId, ringIndex)
-        .map { it.getOrThrow() }
-        .first { withRaw ->
-            val records = withRaw.value.orEmpty()
-            val found = records.any { it.revision == revision }
+    withTimeoutOrNull(wait) {
+        subscribeRingRoots(chainId, collectionId, ringIndex)
+            .map { it.getOrThrow() }
+            .first { withRaw ->
+                val held = withRaw.value.orEmpty().map { it.revision }
+                when (ringRevisionStatus(held, revision)) {
+                    RingRevisionStatus.IMPORTED -> {
+                        Timber.i("awaitRingRevision: revision=$revision found at block=${withRaw.at}")
+                        true
+                    }
 
-            if (records.isNotEmpty()) {
-                val lowestAvailable = records.minOf { it.revision }
-                check(lowestAvailable <= revision) {
-                    "Revision $revision is no longer available on subscriber " +
-                        "(lowest in sliding window: $lowestAvailable)"
+                    RingRevisionStatus.PRUNED -> throw RingRevisionUnavailableException(
+                        revision,
+                        "Revision $revision is no longer available on subscriber (held: $held)"
+                    )
+
+                    RingRevisionStatus.PENDING -> false
                 }
             }
+    } ?: throw RingRevisionUnavailableException(revision, "Revision $revision not imported on subscriber within $wait")
+}
 
-            if (found) {
-                Timber.i("awaitRingRevision: revision=$revision found at block=${withRaw.at}")
-            }
+enum class RingRevisionStatus { IMPORTED, PRUNED, PENDING }
 
-            found
-        }
+/**
+ * The newest held root decides, not the oldest: the window drops revisions off the front but can also skip one,
+ * and a skipped revision is as unreachable as an evicted one.
+ */
+fun ringRevisionStatus(held: List<RingRevision>, revision: RingRevision): RingRevisionStatus = when {
+    revision in held -> RingRevisionStatus.IMPORTED
+    held.any { it > revision } -> RingRevisionStatus.PRUNED
+    else -> RingRevisionStatus.PENDING
 }

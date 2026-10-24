@@ -16,6 +16,10 @@ import io.paritytech.polkadotapp.feature_members_api.data.repository.getRingRoot
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleMembershipProver
 import io.paritytech.polkadotapp.feature_people_api.domain.toRingCollectionId
+import kotlin.time.Duration.Companion.seconds
+
+/** How long a claim waits for Asset Hub to import its ring revision before the proof is rebuilt. */
+private val RING_REVISION_WAIT = 30.seconds
 
 class AsPgas(
     private val period: UInt,
@@ -61,6 +65,7 @@ class AsPgas(
             collectionId = collection.toRingCollectionId(),
             ringIndex = proofResult.ringIndex,
             revision = revision,
+            wait = RING_REVISION_WAIT,
         ).getOrThrow()
 
         return AsPgasInfoScale.Claim(
