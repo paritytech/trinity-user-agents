@@ -359,7 +359,12 @@ private extension ProductGameReminderCenter {
         startsAt: Date?,
         configure: (inout GameReminderEvent) -> Void = { _ in }
     ) {
-        var event = GameReminderEvent(step: step, productId: productId, startsAt: startsAt, occurredAt: dateProvider.now)
+        var event = GameReminderEvent(
+            step: step,
+            productId: productId,
+            startsAt: startsAt,
+            occurredAt: dateProvider.now
+        )
         event.appState = GameReminderEvent.AppState(applicationState.applicationState)
         configure(&event)
         telemetry.record(event)
