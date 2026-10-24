@@ -3,6 +3,7 @@ import ChainRegistry
 import Individuality
 import KeyDerivation
 import Products
+import TrUAPIHost
 
 /// Creates per-caller Accounts Protocol handlers (RFC-0004, RFC-0023) with prompt routing baked in.
 protocol APPersonhoodHandlerMaking: Sendable {
@@ -63,6 +64,7 @@ extension APPersonhoodHandlerFactory: APPersonhoodHandlerMaking {
     func makeSignVrfHandler(callingProductId: ProductId?) -> APSignVrfHandling {
         APSignVrfHandler(
             callingProductId: callingProductId,
+            isBlessed: { hasTrustedRemotePermissions(productId: $0) },
             confirmationRequester: SignVrfConfirmationRequester(router: routers.productsRouter),
             walletFactory: { try DynamicDerivedWallet(derivationPath: $0.derivationPath()) },
             logger: logger
