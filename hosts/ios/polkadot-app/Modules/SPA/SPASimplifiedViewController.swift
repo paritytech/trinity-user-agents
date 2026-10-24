@@ -74,6 +74,14 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         setupWebViewLayout()
     }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
+    }
+
     override func updateContentUnavailableConfiguration(
         using _: UIContentUnavailableConfigurationState
     ) {
@@ -99,6 +107,11 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 private extension SPASimplifiedViewController {
     enum Constants {
         static let minimumLoadingDuration: TimeInterval = 0.5
+    }
+
+    var isEnteringScreen: Bool {
+        isMovingToParent || navigationController?.isMovingToParent == true
+            || isBeingPresented || navigationController?.isBeingPresented == true
     }
 
     func display(loadFailure content: ErrorContent) {

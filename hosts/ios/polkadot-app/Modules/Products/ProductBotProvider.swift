@@ -21,8 +21,7 @@ protocol ProductBotProviding {
 final class ProductBotProvider: ProductBotProviding {
     private let productProvider: StreamableProvider<Product>
     private let botFactory: ProductBotFactory
-    private let dotNsResolver: DotNsResolverProtocol
-    private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let tldProvider: DotNsTldProviding
     private let settingsManager: SettingsManagerProtocol
     private let logger: LoggerProtocol
@@ -33,16 +32,14 @@ final class ProductBotProvider: ProductBotProviding {
     init(
         productProvider: StreamableProvider<Product>,
         botFactory: ProductBotFactory,
-        dotNsResolver: DotNsResolverProtocol,
-        productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productProvider = productProvider
         self.botFactory = botFactory
-        self.dotNsResolver = dotNsResolver
-        self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.tldProvider = tldProvider
         self.settingsManager = settingsManager
         self.logger = logger
@@ -171,32 +168,13 @@ private extension ProductBotProvider {
     /// published product's bot needs its worker subname, so it needs a resolve that succeeded.
     func resolveForBot(_ product: Product) async -> ResolvedProduct? {
         do {
-            let resolved = try await productResolver.resolve(product.identifier)
-            await warmWorkerArchive(of: resolved)
-
-            return resolved
+            return try await contentLoader.open(product.identifier, policy: .attempts(3)).resolved
         } catch ProductResolutionError.malformedManifest {
             logger.error("Skipping the chat bot for \(product.identifier): its manifest is malformed")
             return nil
         } catch {
             logger.error("Falling back to the legacy chat worker for \(product.identifier): \(error)")
             return .legacy(id: product.identifier, displayName: product.name)
-        }
-    }
-
-    /// A manifest worker ships its own archive, which nothing else downloads. Legacy workers share
-    /// the base name's archive, warmed when the product itself was opened.
-    ///
-    /// A failed warm only fails this bot, at the point the engine asks for the files. It must not
-    /// turn a manifest product into a legacy one and serve the base archive as its worker.
-    func warmWorkerArchive(of resolved: ResolvedProduct) async {
-        // Chat is the only surface iOS runs a worker on, so anything else is a download nothing reads.
-        guard let worker = resolved.executables.worker, worker.serves(.chat) else { return }
-
-        do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: worker.identifier)
-        } catch {
-            logger.error("Failed to warm the chat worker archive \(worker.identifier): \(error)")
         }
     }
 }

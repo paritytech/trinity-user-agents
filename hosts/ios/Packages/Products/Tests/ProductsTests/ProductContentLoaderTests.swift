@@ -11,7 +11,9 @@ final class ProductContentLoaderTests {
     private struct Unreachable: Error {}
 
     private let contentHash: Data
+    private let updatedContentHash: Data
 
+    private let suiteName = "ProductContentLoaderTests.\(UUID().uuidString)"
     private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
     private let clock = ManualClock()
     private let contracts = StubDotNsContractApi()
@@ -20,10 +22,12 @@ final class ProductContentLoaderTests {
 
     init() throws {
         contentHash = try Data.randomOrError(of: 34)
+        updatedContentHash = try Data.randomOrError(of: 34)
         contracts.set(contentHash: contentHash, name: productId)
     }
 
     deinit {
+        UserDefaults().removePersistentDomain(forName: suiteName)
         contentHashCache.removeContentHash(name: productId)
     }
 
@@ -48,7 +52,7 @@ final class ProductContentLoaderTests {
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.appContent.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 2)
     }
 
@@ -87,7 +91,7 @@ final class ProductContentLoaderTests {
         await environment.path.waitForStreamRequests(2)
         environment.path.simulate(isSatisfied: true)
 
-        #expect(try await open.value.appContent.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 2)
     }
 
@@ -109,7 +113,7 @@ final class ProductContentLoaderTests {
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.appContent.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.source == .network)
         #expect(environment.fetcher.fetchCount == 1)
     }
 
@@ -158,6 +162,90 @@ final class ProductContentLoaderTests {
         #expect(phases.recorded.contains(.waitingForNetwork))
         #expect(phases.recorded.contains(.retrying(attempt: 1)))
     }
+
+    @Test func cachedOpenReportsNoPhases() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        let phases = PhaseRecorder()
+
+        let cached = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
+
+        #expect(cached.source == .cache)
+        #expect(phases.recorded.isEmpty)
+    }
+
+    @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
+        let environment = try Environment(self)
+        let first = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.failAllReads(with: Unreachable())
+        environment.path.simulate(isSatisfied: false)
+
+        let second = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        #expect(first.source == .network)
+        #expect(second.source == .cache)
+        #expect(second.appContent == first.appContent)
+        #expect(second.version == first.version)
+    }
+
+    @Test func refreshPublishesAnUpdateOnlyOnceTheNewVersionIsOnDisk() async throws {
+        let environment = try Environment(self)
+        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+        var updates = environment.loader.updates().makeAsyncIterator()
+
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+
+        #expect(update.previous == opened.version)
+        #expect(update.latest.appContent.contentHash == updatedContentHash.toHex())
+        #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
+        #expect(try await updates.next() == update)
+    }
+
+    @Test func refreshLeavesTheAppliedVersionServedUntilTheUpdateIsApplied() async throws {
+        let environment = try Environment(self)
+        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId))
+
+        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == opened.version)
+
+        await environment.loader.apply(update)
+
+        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == update.latest.version)
+    }
+
+    @Test func refreshPublishesNothingWhenTheProductIsUnchanged() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        #expect(await environment.loader.refresh(productId) == nil)
+    }
+
+    @Test func pendingUpdateIsNotPublishedAgain() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.set(contentHash: updatedContentHash, name: productId)
+
+        #expect(await environment.loader.refresh(productId) != nil)
+        #expect(await environment.loader.refresh(productId) == nil)
+    }
+
+    @Test func unpublishedProductIsDroppedFromTheCache() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+
+        contracts.removeContentHash(name: productId)
+
+        #expect(await environment.loader.refresh(productId) == nil)
+
+        await #expect(throws: DotNsContractError.self) {
+            try await environment.loader.open(self.productId, policy: .attempts(1))
+        }
+    }
 }
 
 private extension ProductContentLoaderTests {
@@ -180,6 +268,7 @@ private extension ProductContentLoaderTests {
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
 
             let localStorage = DotNsLocalStorage(content: suite.storage, contentHashes: suite.contentHashCache)
+            let snapshot = try DotNsRecordSnapshot(defaults: #require(UserDefaults(suiteName: suite.suiteName)))
 
             loader = ProductContentLoader(
                 fetcher: ProductUpdateFetcher(
@@ -189,12 +278,19 @@ private extension ProductContentLoaderTests {
                     hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
                     resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
                 ),
+                cache: ProductVersionCache(
+                    snapshot: snapshot,
+                    storage: localStorage,
+                    tldProvider: StubTldProvider(),
+                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
+                ),
                 environment: ProductContentLoader.Environment(
                     pathProvider: path,
                     backgroundExecutor: StubBackgroundExecutor(expiringRuns: expiringBackgroundRuns)
                 ),
                 timing: ProductContentLoader.Timing(
                     maxBackoff: .seconds(4),
+                    refreshPolicy: .attempts(1),
                     clock: suite.clock
                 ),
                 logger: SilentLogger()

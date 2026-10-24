@@ -1,16 +1,39 @@
 import Foundation
 import SDKLogger
 
+public struct FetchedProductVersion: Equatable, Sendable {
+    public let version: ProductVersion
+    public let resolved: ResolvedProduct
+    public let appContent: DotNsResolvedContent
+    public let contents: [ProductId: DotNsResolvedContent]
+
+    public init(
+        version: ProductVersion,
+        resolved: ResolvedProduct,
+        appContent: DotNsResolvedContent,
+        contents: [ProductId: DotNsResolvedContent]
+    ) {
+        self.version = version
+        self.resolved = resolved
+        self.appContent = appContent
+        self.contents = contents
+    }
+
+    public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
+        contents[resolved.contentId(for: kind)]
+    }
+}
+
 public enum ProductUpdateFetchError: Error, Equatable {
     case tldUnavailable
 }
 
 public protocol ProductUpdateFetching: Sendable {
-    func fetch(_ productId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> ProductContent
+    func fetch(_ productId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> FetchedProductVersion
 }
 
 public extension ProductUpdateFetching {
-    func fetch(_ productId: ProductId) async throws -> ProductContent {
+    func fetch(_ productId: ProductId) async throws -> FetchedProductVersion {
         try await fetch(productId, onPhase: { _ in })
     }
 }
@@ -41,7 +64,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
     public func fetch(
         _ productId: ProductId,
         onPhase: @escaping ProductLoadPhaseHandler
-    ) async throws -> ProductContent {
+    ) async throws -> FetchedProductVersion {
         do {
             _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
         } catch {
@@ -52,10 +75,11 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
 
         let dotNsResolver = makeDotNsResolver(carFetcher: carFetcher)
 
-        let resolved = try await resolverFactory.makeResolver(
+        let manifest = try await resolverFactory.makeResolver(
             metadataRepository: ProductMetadataRepository(contractApi: contractApi),
             hostProvider: hostProvider
-        ).resolve(productId)
+        ).resolveProductManifest(productId)
+        let resolved = manifest.product
 
         let appContent = try await makeDotNsResolver(
             carFetcher: ProgressReportingCarFetcher(carFetcher: carFetcher, onPhase: onPhase)
@@ -63,16 +87,21 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
         var contents = [resolved.appContentId: appContent]
 
         for contentId in optionalContentIds(of: resolved) where contents[contentId] == nil {
-            if let content = try await resolveOptional(contentId, of: resolved.id, using: dotNsResolver) {
+            if let content = try await stageOptional(contentId, of: resolved.id, using: dotNsResolver) {
                 contents[contentId] = content
             }
         }
 
-        for (contentId, content) in contents {
-            storage.contentHashes.putContentHash(name: contentId, hash: content.contentHash)
-        }
-
-        return ProductContent(resolved: resolved, contents: contents, appContent: appContent)
+        return FetchedProductVersion(
+            version: ProductVersion(
+                productId: resolved.id,
+                records: manifest.records,
+                contentHashes: contents.mapValues(\.contentHash)
+            ),
+            resolved: resolved,
+            appContent: appContent,
+            contents: contents
+        )
     }
 }
 
@@ -90,7 +119,7 @@ private extension ProductUpdateFetcher {
         [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier].compactMap { $0 }
     }
 
-    func resolveOptional(
+    func stageOptional(
         _ contentId: ProductId,
         of productId: ProductId,
         using dotNsResolver: DotNsResolver
