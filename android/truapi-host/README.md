@@ -176,7 +176,7 @@ TrUAPIProductExecution.startWsBridge()
   → Rust dispatcher
 ```
 
-The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Interrupted calls and subscriptions fail without replay. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
+The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
 
 Android intercepts HTTP requests natively, including scripts and images, and calls `execution.authorizeRemotePermission` on the same Rust permission service used by the SDK. This shares grants and consumes “Allow once” only once. Approval covers the initial URL and any redirects it follows; redirect destinations are intentionally not checked separately. The container uses `nativeHttp: true` to avoid checking fetch and XHR again in JavaScript. Both product pages and hidden worker WebViews use this path.
 
