@@ -1713,7 +1713,7 @@ under `.dot`.
 The dotNS addresses come from `deployments/polkadot/420420419.json` in
 paritytech/dotns, vendored as `deployments/polkadot-420420419.json`. Username
 reads discover the controller from `DotnsGateway.DispatcherAddress` as on the
-test presets; while Polkadot Asset Hub leaves that unset (referendum 1955 sets
+test presets; while Polkadot Asset Hub leaves that unset (referendum 1958 sets
 it), the CLI's own reads fall back to the manifest's controller. The gateway
 cannot issue names until the dispatcher is set.
 
