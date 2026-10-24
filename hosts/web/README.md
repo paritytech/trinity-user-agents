@@ -199,8 +199,9 @@ lacks them: open the host in the system browser.
 
 ### The dock
 
-A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does. Browse is
-an ordinary product opened the way the address bar opens it. Chat and Pocket are screens the host draws itself.
+A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does, and on a
+local dev server the [Notifications](#notifications-prototype) prototype. Browse is an ordinary product opened the way
+the address bar opens it. Chat and Pocket are screens the host draws itself.
 
 - **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
   its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
@@ -544,6 +545,31 @@ rooms (Ada, a group with Ada and Grace, and Lin) join the chat list.
 - **What it needs.** Nothing outside this host after sign-in. Signing in still starts the wallet's Nova chat and its
   network as usual; the demo adds no network traffic.
 
+### Notifications (prototype)
+
+**Prototype, with demo data only.** A **Notifications** entry in the dock lists requests that wait for the user's
+answer, the way a social app's notification list does: a persistent list, not a passing toast, and separate from the
+operating system's notification permission. It holds two kinds for now, chat invitations and profile sharing requests,
+not every chat message. Nothing delivers requests yet: no sharing, invitation or contact API feeds it, and an answer
+goes nowhere but this list.
+
+- **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the
+  [local demo](#local-demo); a build leaves it out with its dock entry. Sign in, then **Notifications** and **Add demo
+  notifications**. **Reset demo** puts the demo's requests back as new, and **Clear** removes them.
+- **The list.** Requests that wait come first, then **Earlier**: accepted, declined and expired ones. Each row names the
+  sender, what they ask, the product it comes through and when it expires. A dot marks a request not opened yet.
+- **The detail.** A request opens in a detail the host draws: the sender as the request names them (not checked), the
+  product, the purpose in the sender's words, when it came and when it expires, and **Accept** and **Decline**.
+- **Seen and answered are separate.** The dock badge counts requests not opened yet. Opening one marks that one seen,
+  and the list alone marks none. A request stays waiting until it is accepted, declined or expired. An answer is given
+  once: the same answer again changes nothing, and another is refused. A request expires on the clock and cannot be
+  accepted after; an expired request not opened yet still counts in the badge.
+- **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, written
+  only once the demo is used and removed when it is cleared. Waiting requests and history survive a reload. Signing out
+  or another wallet or network shows that session's list only. `src/notifications.ts` holds the list,
+  `src/notifications-screen.ts` the screen and `src/notifications-demo.ts` the made-up requests, from senders and
+  products ending in `.example`.
+
 ### Contacts
 
 The host serves TrUAPI Contacts (`src/contacts.ts`): `contacts.pick` opens a picker the host draws, and the core turns
@@ -843,6 +869,14 @@ opens, so the light client reaches no chain. It checks that:
   Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
   says why.
 
+`browser/notifications.spec.ts` checks the Notifications prototype with synthetic phrases, every socket closed and every
+request outside this host refused: nothing is stored until the demo is asked for; the badge counts the requests not
+opened and opening one clears only that one; seen is not answered; an accepted or declined request moves to Earlier and
+offers no answer again; a request expires on the clock, in the open detail, with no answer left; Clear removes the
+demo's requests and their stored list; a reload keeps waiting requests and history; another wallet sees none of it;
+signing out empties the screen and the badge; and on a phone the four dock entries fit, long names and purposes wrap,
+and nothing scrolls sideways.
+
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the inspector is docked under a Phone-sized product across
 the width the menu leaves, for both inspector views, that its top edge sets its height, and that a narrow window keeps
@@ -888,6 +922,7 @@ a project path, the inspector's rendering, and layout on narrow screens.
   decodes them, and `memory-rpc.ts` is the in-memory store tests use. `src/chat-screen.ts` draws the Chat screen,
   `src/chat-diagnostics-view.ts` the inspector's Chat tab and `src/chat-transport-view.ts` an event's payload layers.
 - `src/contacts.ts`: the contact picker and handle lookup.
+- `src/notifications.ts`, `src/notifications-screen.ts`, `src/notifications-demo.ts`: the Notifications prototype.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
   `src/product-room-provider.ts`: the Nova and product room providers.

@@ -85,6 +85,9 @@ import { bindProductCard } from "./pocket-card-view.js";
 import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
+import { NotificationStore, notificationsKey } from "./notifications.js";
+import { demoNotifications } from "./notifications-demo.js";
+import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
 import { accountProofs } from "./account-proofs.js";
@@ -295,6 +298,34 @@ const chatScreen = new ChatScreen(
         },
       },
 );
+/**
+ * The Notifications screen, a prototype the dev server offers on this machine
+ * only, with the local demo's made-up requests. A build reads
+ * `import.meta.env.DEV` as false and leaves it out, with its dock entry.
+ */
+const notifications =
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
+    ? (() => {
+        const store = new NotificationStore(localStorage);
+        const badge = document.querySelector<HTMLElement>(
+          '#dock [data-destination="notifications"] [data-badge]',
+        );
+        const screen = new NotificationsScreen(
+          element("notifications-screen"),
+          store,
+          (unseen) => {
+            if (badge === null) return;
+            badge.hidden = unseen === 0;
+            badge.textContent = String(unseen);
+          },
+          {
+            seed: () => store.seedDemo(demoNotifications(store.now())),
+            clear: () => store.clearDemo(),
+          },
+        );
+        return { store, screen };
+      })()
+    : null;
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
   button: document.querySelector<HTMLButtonElement>(
@@ -684,10 +715,13 @@ function renderDock(): void {
     button.disabled = !ready;
     if (!isProductDestination(id)) {
       button.dataset.live = "false";
+      button.hidden = id === "notifications" && notifications === null;
       button.title =
         id === "chat"
           ? "Chat: this wallet's conversations, kept by the host"
-          : "Pocket: this wallet's identity and balance";
+          : id === "notifications"
+            ? "Notifications: requests that wait for your answer (prototype, demo data)"
+            : "Pocket: this wallet's identity and balance";
       continue;
     }
     button.dataset.live = String(
@@ -720,7 +754,9 @@ function renderDock(): void {
  */
 function renderHostScreens(): void {
   const surface =
-    destination === "pocket" || destination === "chat"
+    destination === "pocket" ||
+    destination === "chat" ||
+    (destination === "notifications" && notifications !== null)
       ? destination
       : "product";
   document.body.dataset.surface = surface;
@@ -750,6 +786,7 @@ function renderHostScreens(): void {
     );
   pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
+  notifications?.screen.show(surface === "notifications");
 }
 
 /** Give the Chat screen the signed-in wallet's session, or none. */
@@ -760,6 +797,7 @@ function syncChatSession(): void {
     pocketFaces.setSession(null);
     productWorkers.setSession(null);
     productChat.setScope(null);
+    notifications?.store.setScope(null);
     localChatDemo?.stop();
     if (chatV2Scope !== null) chatV2.reset();
     chatV2Scope = null;
@@ -774,6 +812,7 @@ function syncChatSession(): void {
   }
   chatV2Scope = scope;
   productChat.setScope(scope);
+  notifications?.store.setScope(notificationsKey(activeNetwork.id, wallet.id));
   productWorkers.setSession({ walletId: wallet.id, network: activeNetwork });
   pocketFaces.setSession({
     walletId: wallet.id,

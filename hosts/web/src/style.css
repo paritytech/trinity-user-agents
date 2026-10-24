@@ -1072,7 +1072,8 @@ body[data-surface="pocket"] .stage-empty {
  * nested surface and outgoing on the inverted one. It shares Pocket's dark
  * tokens and bundled fonts.
  */
-body[data-surface="chat"] .stage-empty {
+body[data-surface="chat"] .stage-empty,
+body[data-surface="notifications"] .stage-empty {
   display: none;
 }
 
@@ -2070,7 +2071,7 @@ button.chat-reaction {
   color: transparent;
 }
 
-/* The count of chat requests waiting, over the Chat button. */
+/* A count over a dock button: chat requests waiting, or notifications not seen. */
 .dock-badge {
   position: absolute;
   top: 2px;
@@ -2099,7 +2100,8 @@ button.chat-reaction {
 .dock {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 2px;
   padding: 6px 8px max(6px, env(safe-area-inset-bottom));
   background: #1b1b1f;
@@ -2121,6 +2123,10 @@ button.chat-reaction {
   font-weight: 500;
   letter-spacing: 0.01em;
   cursor: pointer;
+}
+
+.dock button[hidden] {
+  display: none;
 }
 
 .dock button:hover:not(:disabled) {
@@ -2693,5 +2699,171 @@ body[data-product="open"] .stage-loading {
   .panel,
   button {
     transition: none !important;
+  }
+}
+
+/*
+ * The Notifications screen (prototype): the chat screen's list rows and
+ * pills, a dot on requests not opened yet, and a detail the host draws.
+ */
+.notification-demo {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--chat-line);
+  border-radius: 14px;
+}
+
+.notification-demo-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--chat-warning);
+}
+
+.notification-demo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.notification-row {
+  align-items: flex-start;
+}
+
+.notification-row[data-seen="false"] {
+  background: color-mix(in srgb, var(--chat-accent) 7%, transparent);
+}
+
+.notification-row:focus-visible {
+  outline: 2px solid var(--chat-primary);
+  outline-offset: -2px;
+}
+
+.notification-title {
+  font-weight: 400;
+}
+
+.notification-title strong {
+  font-weight: 700;
+}
+
+.notification-via {
+  font-size: 12px;
+}
+
+.notification-unseen {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--chat-accent);
+}
+
+.notification-status {
+  padding: 2px 8px;
+  border: 1px solid var(--chat-line);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--chat-secondary);
+  white-space: nowrap;
+}
+
+.notification-row[data-status="accepted"] .notification-status,
+.notification-detail[data-status="accepted"] .notification-status {
+  color: var(--chat-success);
+}
+
+.notification-row[data-status="expired"] .notification-status,
+.notification-detail[data-status="expired"] .notification-status {
+  color: var(--chat-warning);
+}
+
+.notification-heading:focus {
+  outline: none;
+}
+
+.notification-detail {
+  padding-top: 20px;
+}
+
+.notification-who {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.notification-names {
+  min-width: 0;
+}
+
+.notification-names p {
+  margin: 0;
+}
+
+.notification-sender {
+  font: 700 20px/26px var(--chat-title-font);
+  overflow-wrap: anywhere;
+}
+
+.notification-handle {
+  font-size: 13px;
+  color: var(--chat-secondary);
+  overflow-wrap: anywhere;
+}
+
+.notification-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 16px;
+  margin: 20px 0;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--chat-surface);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.notification-facts dt {
+  color: var(--chat-secondary);
+}
+
+.notification-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.notification-actions {
+  justify-content: stretch;
+  margin: 0;
+}
+
+.notification-actions .chat-pill {
+  flex: 1;
+  min-height: 44px;
+}
+
+.notification-status-large {
+  display: inline-block;
+  margin: 0;
+  padding: 6px 14px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.notification-caveat {
+  display: block;
+  margin: 16px 0;
+}
+
+@media (max-width: 420px) {
+  .notification-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .notification-facts dd + dt {
+    margin-top: 8px;
   }
 }
