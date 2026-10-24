@@ -8,6 +8,8 @@ import android.os.Build
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import javax.inject.Inject
 
 interface VideoGameReminderScheduler {
@@ -17,6 +19,7 @@ interface VideoGameReminderScheduler {
 
 class RealVideoGameReminderScheduler @Inject constructor(
     private val contextManager: ContextManager,
+    private val telemetry: GameReminderTelemetry,
 ) : VideoGameReminderScheduler {
     private companion object {
         const val PRODUCT_GAME_REQUEST_CODE_BASE = 1000
@@ -33,19 +36,21 @@ class RealVideoGameReminderScheduler @Inject constructor(
             return
         }
 
-        scheduleAlarm(notificationType, gameStartMillis)
+        val exact = scheduleAlarm(notificationType, gameStartMillis)
+        telemetry.report(GameReminderEvent.Scheduled(productId, gameStartMillis, exact = exact))
+        if (!exact) telemetry.report(GameReminderEvent.ExactAlarmDenied(productId, gameStartMillis))
     }
 
     override fun cancelProductGameStart(productId: ProductId) =
         cancelAlarm(VideoGameNotificationType.ProductGameStartsSoon(productId.value))
 
     private fun cancelAlarm(notificationType: VideoGameNotificationType) {
-        alarmManager.cancel(createPendingIntent(notificationType))
+        alarmManager.cancel(createPendingIntent(notificationType, gameStartMillis = null))
     }
 
     @SuppressLint("MissingPermission")
-    private fun scheduleAlarm(notificationType: VideoGameNotificationType, timestamp: Timestamp) {
-        val pendingIntent = createPendingIntent(notificationType)
+    private fun scheduleAlarm(notificationType: VideoGameNotificationType, timestamp: Timestamp): Boolean {
+        val pendingIntent = createPendingIntent(notificationType, timestamp)
 
         alarmManager.cancel(pendingIntent)
 
@@ -58,14 +63,17 @@ class RealVideoGameReminderScheduler @Inject constructor(
         } else {
             alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timestamp, pendingIntent)
         }
+        return canScheduleAlarms
     }
 
     private fun createPendingIntent(
         notificationType: VideoGameNotificationType,
+        gameStartMillis: Timestamp?,
     ): PendingIntent {
         val intent = Intent(contextManager.applicationContext, VideoGameReminderBroadcastReceiver::class.java).apply {
             action = VideoGameReminderBroadcastReceiver.ACTION_POST_NOTIFICATION
             putExtra(VideoGameReminderBroadcastReceiver.EXTRA_NOTIFICATION_TYPE, notificationType)
+            gameStartMillis?.let { putExtra(VideoGameReminderBroadcastReceiver.EXTRA_GAME_STARTS_AT, it) }
         }
 
         return PendingIntent.getBroadcast(

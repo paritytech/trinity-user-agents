@@ -11,6 +11,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.sentry.android)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
 

@@ -7,6 +7,9 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderOpenSource
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.isLiveAt
@@ -24,6 +27,7 @@ class ProductGameAutoOpener @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val router: VideoGameRouter,
     private val timeProvider: TimeProvider,
+    private val telemetry: GameReminderTelemetry,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
@@ -42,6 +46,7 @@ class ProductGameAutoOpener @Inject constructor(
     private suspend fun openAtStart(game: ScheduledProductGame) {
         delay(game.startsAtMillis - timeProvider.now().toEpochMilliseconds())
         router.openGameProduct(game.product())
+        telemetry.report(GameReminderEvent.ProductOpened(game.product(), game.startsAtMillis, GameReminderOpenSource.AUTO_OPEN))
         reminder.clear(game)
     }
 }

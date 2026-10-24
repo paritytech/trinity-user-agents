@@ -9,13 +9,17 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_POST_NOTIFICATION = "io.paritytech.polkadotapp.feature_videogame.domain.notifications.POST_NOTIFICATION"
+        const val ACTION_NOTIFICATION_DISMISSED = "io.paritytech.polkadotapp.feature_videogame.domain.notifications.NOTIFICATION_DISMISSED"
         const val EXTRA_NOTIFICATION_TYPE = "notification_type"
+        const val EXTRA_GAME_STARTS_AT = "game_starts_at"
     }
 
     @Inject
@@ -27,22 +31,39 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     @Inject
     lateinit var productGameReminder: RealProductGameReminder
 
+    @Inject
+    lateinit var telemetry: GameReminderTelemetry
+
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION_POST_NOTIFICATION) return
+        val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)
+        if (type !is VideoGameNotificationType.ProductGameStartsSoon) return
+        val productId = ProductId.fromStoredValue(type.productId)
+        val startsAtMillis = intent.getLongExtra(EXTRA_GAME_STARTS_AT, -1).takeIf { it >= 0 }
 
-        when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
-            is VideoGameNotificationType.ProductGameStartsSoon ->
-                publishProductGameStartsSoon(context, ProductId.fromStoredValue(type.productId))
-
-            null -> Unit
+        when (intent.action) {
+            ACTION_POST_NOTIFICATION -> publishProductGameStartsSoon(context, productId, startsAtMillis)
+            ACTION_NOTIFICATION_DISMISSED -> telemetry.report(GameReminderEvent.Dismissed(productId, startsAtMillis))
         }
     }
 
     // In the foreground the pill and the auto-open take over. An inexact alarm may fire late; a game still
     // scheduled wants its notification then.
-    private fun publishProductGameStartsSoon(context: Context, productId: ProductId) {
-        if (appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND) return
-        val game = productGameReminder.scheduledFor(productId) ?: return
-        notificationPublisher.publishProductGameStartsSoonNotification(game.product(), ringAlarm = context.canScheduleExactAlarms())
+    private fun publishProductGameStartsSoon(context: Context, productId: ProductId, startsAtMillis: Long?) {
+        val foreground = appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND
+        val game = productGameReminder.scheduledFor(productId)
+        telemetry.report(
+            GameReminderEvent.Fired(
+                productId,
+                startsAtMillis ?: game?.startsAtMillis,
+                foreground = foreground,
+                stillScheduled = game != null,
+            )
+        )
+        if (foreground || game == null) return
+        notificationPublisher.publishProductGameStartsSoonNotification(
+            game.product(),
+            game.startsAtMillis,
+            ringAlarm = context.canScheduleExactAlarms(),
+        )
     }
 }
