@@ -159,7 +159,6 @@ private struct StubResolver: DotNsResolverProtocol {
     let root: URL
 
     func resolveToLocalURL(dotNsName _: String) async throws -> URL { root }
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
@@ -172,7 +171,6 @@ private struct FailingResolver: DotNsResolverProtocol {
         throw DotNsResolverError.resolutionFailed(dotNsName)
     }
 
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
     func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }

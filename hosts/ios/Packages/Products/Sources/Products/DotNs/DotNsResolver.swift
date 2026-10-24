@@ -9,13 +9,20 @@ public enum DotNsResolverError: Error {
     case storageFailed(Error)
 }
 
+public struct DotNsResolvedContent: Equatable, Sendable {
+    public let contentHash: String
+    public let localURL: URL
+
+    public init(contentHash: String, localURL: URL) {
+        self.contentHash = contentHash
+        self.localURL = localURL
+    }
+}
+
 /// Protocol for resolving .dot domain names to local content directories.
 public protocol DotNsResolverProtocol {
     /// Resolve a .dot domain name to a local URL containing the extracted content files.
     func resolveToLocalURL(dotNsName: String) async throws -> URL
-
-    /// Fetch a metadata entry for a .dot domain (e.g., "url", "description").
-    func getMetadataEntry(dotNsName: String, key: String) async throws -> String?
 
     /// Observe load progress for a `.dot` domain. Emits `.idle` when nothing is in flight.
     func progressStream(dotNsName: String) -> AnyAsyncSequence<DotNsLoadProgress>
@@ -44,16 +51,19 @@ public final class DotNsResolver: DotNsResolverProtocol {
         progressRegistry = DotNsLoadProgressRegistry()
     }
 
-    // TODO: Current implementation always fetch content hash from contract.
-    // Target solution should warn a user if hash changed monitoring the cache
     public func resolveToLocalURL(dotNsName: String) async throws -> URL {
+        let content = try await stageContent(dotNsName: dotNsName)
+        contentHashCache.putContentHash(name: dotNsName, hash: content.contentHash)
+        return content.localURL
+    }
+
+    public func stageContent(dotNsName: String) async throws -> DotNsResolvedContent {
         let contentHashBytes = try await contractApi.resolveContentHash(dotNsName: dotNsName)
         let hexHash = contentHashBytes.toHex()
 
         if let cachedDir = contentStorage.getContentDirectory(contentHash: hexHash) {
-            contentHashCache.putContentHash(name: dotNsName, hash: hexHash)
             progressRegistry.markCompleted(domain: dotNsName)
-            return cachedDir
+            return DotNsResolvedContent(contentHash: hexHash, localURL: cachedDir)
         }
 
         do {
@@ -73,7 +83,7 @@ public final class DotNsResolver: DotNsResolverProtocol {
             )
 
             progressRegistry.markCompleted(domain: dotNsName)
-            return contentDir
+            return DotNsResolvedContent(contentHash: hexHash, localURL: contentDir)
         } catch {
             progressRegistry.markFailed(domain: dotNsName, error: error)
             throw error
@@ -82,10 +92,6 @@ public final class DotNsResolver: DotNsResolverProtocol {
 
     public func progressStream(dotNsName: String) -> AnyAsyncSequence<DotNsLoadProgress> {
         progressRegistry.observe(domain: dotNsName)
-    }
-
-    public func getMetadataEntry(dotNsName: String, key: String) async throws -> String? {
-        try await contractApi.getMetadata(dotNsName: dotNsName, key: key)
     }
 
     public func clearCache() throws {
@@ -111,8 +117,6 @@ extension DotNsResolver {
         } catch {
             throw DotNsResolverError.storageFailed(error)
         }
-
-        contentHashCache.putContentHash(name: dotNsName, hash: hexHash)
 
         guard let contentDir = contentStorage.getContentDirectory(contentHash: hexHash) else {
             throw DotNsResolverError.resolutionFailed("Failed to retrieve saved content for \(dotNsName)")

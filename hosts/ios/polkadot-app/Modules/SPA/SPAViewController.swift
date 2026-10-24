@@ -21,6 +21,10 @@ final class SPAViewController: UIViewController, ViewHolder {
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
     private var pendingFailureTask: Task<Void, Never>?
+    private lazy var loadIndicator = SPALoadIndicator(
+        progressView: rootView.loadProgressView,
+        statusLabel: rootView.loadStatusLabel
+    )
     private var chromeCollapser: BrowserChromeCollapser?
 
     init(
@@ -85,11 +89,8 @@ final class SPAViewController: UIViewController, ViewHolder {
 
         contentUnavailableConfiguration = UIContentUnavailableConfiguration.titleSubtitle(
             with: loadFailure.title,
-            subtitle: loadFailure.message,
-            actionTitle: String(localized: .Common.retry)
-        ) { [weak self] in
-            self?.presenter.didTapRetry()
-        }
+            subtitle: loadFailure.message
+        )
     }
 
     deinit {
@@ -107,6 +108,7 @@ private extension SPAViewController {
 
     func display(loadFailure content: ErrorContent) {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.stop()
 
         loadFailure = content
         setNeedsUpdateContentUnavailableConfiguration()
@@ -217,7 +219,7 @@ private extension SPAViewController {
             title: String(localized: .spaActionRefresh),
             image: UIImage(systemName: "arrow.clockwise")
         ) { [weak self] _ in
-            self?.reload()
+            self?.presenter.didTapRefresh()
         })
 
         elements.append(UIAction(
@@ -270,25 +272,6 @@ private extension SPAViewController {
         presenter.didTapMoreButton()
     }
 
-    func showProgressBar() {
-        rootView.loadProgressView.isHidden = false
-    }
-
-    func hideProgressBar(delay: TimeInterval = 0) {
-        let closure = { [rootView] in
-            rootView.loadProgressView.isHidden = true
-            rootView.loadProgressView.setProgress(0, animated: false)
-        }
-        guard delay > 0 else {
-            closure()
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            closure()
-        }
-    }
-
     @objc func onMinimizeTapped() {
         presenter.didTapMinimize()
     }
@@ -323,6 +306,7 @@ extension SPAViewController: SPAViewProtocol {
 
     func showLoading() {
         rootView.activityIndicatorView.startAnimating()
+        loadIndicator.start()
 
         pendingFailureTask?.cancel()
         pendingFailureTask = nil
@@ -336,6 +320,7 @@ extension SPAViewController: SPAViewProtocol {
 
     func hideLoading() {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.finish()
     }
 
     /// A failure arriving right after a retry would swap the error state out and back in the same
@@ -352,27 +337,8 @@ extension SPAViewController: SPAViewProtocol {
         }
     }
 
-    // Resolving: 0-10%
-    // Downloading: 10-90%
-    // Unpacking: 90-100%
-    func updateLoadProgress(_ progress: DotNsLoadProgress) {
-        switch progress {
-        case .resolved:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1, animated: true)
-        case let .downloading(fraction):
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1 + 0.8 * Float(fraction), animated: true)
-        case .unpacking:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.9, animated: true)
-        case .completed:
-            rootView.loadProgressView.setProgress(1.0, animated: true)
-            hideProgressBar(delay: 0.3)
-        case .idle,
-             .failed:
-            hideProgressBar()
-        }
+    func updateLoadPhase(_ phase: ProductLoadPhase) {
+        loadIndicator.update(phase)
     }
 }
 
