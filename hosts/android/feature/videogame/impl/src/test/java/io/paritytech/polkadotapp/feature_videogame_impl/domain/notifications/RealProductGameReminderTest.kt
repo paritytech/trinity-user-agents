@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -250,8 +251,7 @@ class RealProductGameReminderTest {
         withOsAllowing(notifications = true, calendar = false)
         reminder.schedule(game, START)
 
-        reminder.clear(ScheduledProductGame(game.value, START))
-
+        assertTrue(reminder.clear(ScheduledProductGame(game.value, START)))
         verifyNothingReported()
     }
 
@@ -262,8 +262,7 @@ class RealProductGameReminderTest {
         val opened = ScheduledProductGame(game.value, START)
         reminder.schedule(game, START + 1)
 
-        reminder.clear(opened)
-
+        assertFalse(reminder.clear(opened))
         assertEquals(listOf(ScheduledProductGame(game.value, START + 1)), reminder.currentlyScheduled())
     }
 

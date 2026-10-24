@@ -37,23 +37,30 @@ class VideoGameDeepLinkHandler @Inject constructor(
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(coroutineDispatchers.io) {
         runCancellableCatching {
+            val productId = data.pathSegments.getOrNull(1)?.let(ProductId::fromStoredValue)
+            val startsAtMillis = data.getQueryParameter(PRODUCT_GAME_STARTS_AT_PARAM)?.toLongOrNull()
+            productId?.let { tapReminder(it, startsAtMillis) }
+
             accountRepository.awaitAccountsInitialized()
 
-            val startsAtMillis = data.getQueryParameter(PRODUCT_GAME_STARTS_AT_PARAM)?.toLongOrNull()
-            data.pathSegments.getOrNull(1)?.let { openProductGame(ProductId.fromStoredValue(it), startsAtMillis) }
+            productId?.let { openProductGame(it, startsAtMillis) }
 
             DeeplinkProcessingOutcome.NoOp
         }
     }
 
-    // Only the game product holds a reminder, so a link naming any other product opens nothing.
-    // The reminder notification is this link's only producer.
-    private suspend fun openProductGame(productId: ProductId, startsAtMillis: Long?) {
+    // The reminder notification is this link's only producer. The reminder is dropped before the account wait,
+    // so the auto-opener cannot open the tapped game again or report it missed.
+    private suspend fun tapReminder(productId: ProductId, startsAtMillis: Long?) {
         telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
+        productGameReminder.cancel(productId)
+    }
+
+    // Only the game product holds a reminder, so a link naming any other product opens nothing.
+    private suspend fun openProductGame(productId: ProductId, startsAtMillis: Long?) {
         val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull() ?: return
         if (productId != ReservedProductIds.game(tld)) return
         videoGameRouter.openGameProduct(productId)
         telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
-        productGameReminder.cancel(productId)
     }
 }

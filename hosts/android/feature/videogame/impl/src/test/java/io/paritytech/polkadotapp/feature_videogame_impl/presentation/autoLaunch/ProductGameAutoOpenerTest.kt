@@ -82,21 +82,45 @@ class ProductGameAutoOpenerTest {
 
     @Test
     fun `reports and clears a game whose start passed beyond the grace as missed`() = runTest {
+        withHostTelemetry()
+        withClearRemoving(scheduledGame, removed = true)
         advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
 
         startOpener(scheduledGame)
 
         verify(reminder).clear(scheduledGame)
-        verify(telemetry).report(GameReminderEvent.Missed(game, scheduledGame.startsAtMillis))
+        verifyMissedReportedFor(scheduledGame)
+    }
+
+    @Test
+    fun `a late game a tap has already cleared is not missed`() = runTest {
+        withHostTelemetry()
+        withClearRemoving(scheduledGame, removed = false)
+        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
+
+        startOpener(scheduledGame)
+
+        verifyNoMissedReportFor(scheduledGame)
     }
 
     @Test
     fun `a game within the grace is not missed`() = runTest {
+        withHostTelemetry()
         advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
 
         startOpener(scheduledGame)
 
-        verify(telemetry, never()).report(GameReminderEvent.Missed(game, scheduledGame.startsAtMillis))
+        verifyNoMissedReportFor(scheduledGame)
+    }
+
+    @Test
+    fun `without host telemetry a late game is kept`() = runTest {
+        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
+
+        startOpener(scheduledGame)
+
+        verify(reminder, never()).clear(scheduledGame)
+        verifyNoMissedReportFor(scheduledGame)
     }
 
     @Test
@@ -127,6 +151,22 @@ class ProductGameAutoOpenerTest {
         verify(telemetry).report(
             GameReminderEvent.ProductOpened(ProductId.fromStoredValue(game.productId), game.startsAtMillis, GameReminderOpenSource.AUTO_OPEN)
         )
+    }
+
+    private fun withHostTelemetry() {
+        whenever(telemetry.isEnabled).thenReturn(true)
+    }
+
+    private suspend fun withClearRemoving(game: ScheduledProductGame, removed: Boolean) {
+        whenever(reminder.clear(game)).thenReturn(removed)
+    }
+
+    private fun verifyMissedReportedFor(game: ScheduledProductGame) {
+        verify(telemetry).report(GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis))
+    }
+
+    private fun verifyNoMissedReportFor(game: ScheduledProductGame) {
+        verify(telemetry, never()).report(GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis))
     }
 
     private fun verifyNothingReported() {

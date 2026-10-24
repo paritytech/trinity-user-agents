@@ -85,9 +85,9 @@ class RealProductGameReminder @Inject constructor(
         }
     }
 
-    // Only if [game] is still scheduled, so a schedule made meanwhile survives.
-    suspend fun clear(game: ScheduledProductGame) {
-        lock.withLock { if (game in currentlyScheduled()) remove(game) }
+    // Only if [game] is still scheduled, so a schedule made meanwhile survives. True when it removed [game].
+    suspend fun clear(game: ScheduledProductGame): Boolean = lock.withLock {
+        (game in currentlyScheduled()).also { held -> if (held) remove(game) }
     }
 
     private fun add(game: ScheduledProductGame) {

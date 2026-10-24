@@ -35,18 +35,19 @@ class ProductGameAutoOpener @Inject constructor(
             games.takeIf { foreground }.orEmpty()
         }
             .mapLatest { games ->
-                clearMissed(games)
+                if (telemetry.isEnabled) clearMissed(games)
                 nextLive(games)?.let { openAtStart(it) }
             }
             .launchIn(scope)
     }
 
-    // A game still held past its grace was never opened by the host. Clearing it first reports it once.
+    // A game still held past its grace was opened neither here nor from its notification, whose tap clears it
+    // first. Only the clear that removes it reports it, so it is reported once. Telemetry only: release keeps
+    // stale games, so a late inexact alarm still posts.
     private suspend fun clearMissed(games: List<ScheduledProductGame>) {
         val now = timeProvider.now().toEpochMilliseconds()
         games.filterNot { it.isLiveAt(now) }.forEach { game ->
-            reminder.clear(game)
-            telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
+            if (reminder.clear(game)) telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
         }
     }
 

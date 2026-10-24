@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
+import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
@@ -32,10 +33,11 @@ class VideoGameDeepLinkHandlerTest {
     private val router: VideoGameRouter = mock(VideoGameRouter::class.java)
     private val reminder: ProductGameReminder = mock(ProductGameReminder::class.java)
     private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
+    private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
 
     private val handler = VideoGameDeepLinkHandler(
         coroutineDispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
-        accountRepository = mock(AccountRepository::class.java),
+        accountRepository = accountRepository,
         videoGameRouter = router,
         productGameReminder = reminder,
         dotNsTldProvider = FixedTldProvider(tld),
@@ -50,6 +52,16 @@ class VideoGameDeepLinkHandlerTest {
         verify(router).openGameProduct(game)
         verifyReported(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
         verify(reminder).cancel(game)
+    }
+
+    @Test
+    fun `a tap drops the held reminder before waiting for the accounts`() = runBlocking<Unit> {
+        handle(reminderLink(game, START))
+
+        val order = inOrder(reminder, accountRepository, router)
+        order.verify(reminder).cancel(game)
+        order.verify(accountRepository).getWalletAccount()
+        order.verify(router).openGameProduct(game)
     }
 
     @Test
