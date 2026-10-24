@@ -17,9 +17,17 @@ sealed interface GameReminderEvent {
     val productId: ProductId
     val startsAtMillis: Long?
 
-    data class Scheduled(override val productId: ProductId, override val startsAtMillis: Long, val exact: Boolean) : GameReminderEvent
+    data class Scheduled(
+        override val productId: ProductId,
+        override val startsAtMillis: Long,
+        val delivery: GameReminderDelivery,
+    ) : GameReminderEvent
 
-    data class NotScheduled(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
+    data class NotScheduled(
+        override val productId: ProductId,
+        override val startsAtMillis: Long,
+        val reason: GameReminderSkipReason,
+    ) : GameReminderEvent
 
     data class ExactAlarmDenied(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
 
@@ -28,6 +36,7 @@ sealed interface GameReminderEvent {
         override val startsAtMillis: Long?,
         val foreground: Boolean,
         val stillScheduled: Boolean,
+        val delivery: GameReminderDelivery,
     ) : GameReminderEvent
 
     data class Dismissed(override val productId: ProductId, override val startsAtMillis: Long?) : GameReminderEvent
@@ -40,7 +49,21 @@ sealed interface GameReminderEvent {
         val source: GameReminderOpenSource,
     ) : GameReminderEvent
 
+    data class Missed(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
+
     data class Cancelled(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
+}
+
+// An alarm rings only with exact alarms allowed; otherwise the reminder is a plain notification.
+enum class GameReminderDelivery(val value: String) {
+    ALARM("alarm"),
+    NOTIFICATION("notification"),
+}
+
+enum class GameReminderSkipReason(val value: String) {
+    NOT_AUTHORIZED("not_authorized"),
+    START_IN_PAST("start_in_past"),
+    FAILED("failed"),
 }
 
 enum class GameReminderOpenSource(val value: String) {
@@ -59,6 +82,8 @@ class GameReminderTelemetry private constructor(
         nowMillis = { timeProvider.now().toEpochMilliseconds() },
         capture = { Sentry.captureEvent(it) },
     )
+
+    val isEnabled: Boolean get() = enabled()
 
     fun report(event: GameReminderEvent) {
         if (!enabled()) return
@@ -84,6 +109,7 @@ private fun GameReminderEvent.eventName() = when (this) {
     is GameReminderEvent.Dismissed -> "host.reminder.dismissed"
     is GameReminderEvent.Tapped -> "host.reminder.tapped"
     is GameReminderEvent.ProductOpened -> "host.reminder.product_opened"
+    is GameReminderEvent.Missed -> "host.reminder.missed"
     is GameReminderEvent.Cancelled -> "host.reminder.cancelled"
 }
 
@@ -100,16 +126,18 @@ private fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().app
         setExtra("reminder.delay_after_start_ms", nowMillis - startsAt)
     }
     when (event) {
-        is GameReminderEvent.Scheduled -> setTag("reminder.exact", event.exact.toString())
+        is GameReminderEvent.Scheduled -> setTag("reminder.delivery", event.delivery.value)
         is GameReminderEvent.Fired -> {
+            setTag("reminder.delivery", event.delivery.value)
             setTag("host.app_state", if (event.foreground) "active" else "background")
             setTag("reminder.still_scheduled", event.stillScheduled.toString())
         }
         is GameReminderEvent.ProductOpened -> setTag("reminder.open_source", event.source.value)
-        is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", "not_authorized")
+        is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", event.reason.value)
         is GameReminderEvent.ExactAlarmDenied,
         is GameReminderEvent.Dismissed,
         is GameReminderEvent.Tapped,
+        is GameReminderEvent.Missed,
         is GameReminderEvent.Cancelled -> Unit
     }
 }

@@ -34,8 +34,20 @@ class ProductGameAutoOpener @Inject constructor(
         combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground ->
             games.takeIf { foreground }.orEmpty()
         }
-            .mapLatest { games -> nextLive(games)?.let { openAtStart(it) } }
+            .mapLatest { games ->
+                clearMissed(games)
+                nextLive(games)?.let { openAtStart(it) }
+            }
             .launchIn(scope)
+    }
+
+    // A game still held past its grace was never opened by the host. Clearing it first reports it once.
+    private suspend fun clearMissed(games: List<ScheduledProductGame>) {
+        val now = timeProvider.now().toEpochMilliseconds()
+        games.filterNot { it.isLiveAt(now) }.forEach { game ->
+            reminder.clear(game)
+            telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
+        }
     }
 
     private fun nextLive(games: List<ScheduledProductGame>): ScheduledProductGame? {

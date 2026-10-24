@@ -21,7 +21,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 class RealVideoGameNotificationPublisher @Inject constructor(
     @ApplicationContext context: Context,
     intentProvider: ActivityIntentProvider,
-    private val videoGameDeeplinkMapper: VideoGameDeeplinkMapper
+    private val videoGameDeeplinkMapper: VideoGameDeeplinkMapper,
+    private val telemetry: GameReminderTelemetry,
 ) : NotificationPublisher(context, intentProvider), VideoGameNotificationPublisher {
     private companion object {
         const val PRODUCT_GAME_NOTIFICATION_ID = 129
@@ -35,9 +36,10 @@ class RealVideoGameNotificationPublisher @Inject constructor(
 
         val builder = NotificationCompat.Builder(appContext, channel.id)
             .setupDefaultNotification(deepLink = videoGameDeeplinkMapper.toProductGameDeeplink(productId, startsAtMillis))
-            .setDeleteIntent(dismissIntent(productId, startsAtMillis))
             .setContentTitle(appContext.getString(RCommon.string.video_game_start_reminder_title))
             .setContentText(appContext.getString(RCommon.string.video_game_start_reminder_message))
+        // Only for telemetry: without it a swipe would cold-start the process for nothing.
+        if (telemetry.isEnabled) builder.setDeleteIntent(dismissIntent(productId, startsAtMillis))
         val notification = if (ringAlarm) builder.buildAlarm(channel) else builder.build()
 
         publish(

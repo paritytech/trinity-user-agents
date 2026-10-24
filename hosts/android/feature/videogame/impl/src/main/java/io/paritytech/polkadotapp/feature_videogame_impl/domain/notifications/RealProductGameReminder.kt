@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameRem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
@@ -61,7 +62,7 @@ class RealProductGameReminder @Inject constructor(
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
-        }.onFailure { telemetry.report(GameReminderEvent.NotScheduled(productId, startsAtMillis)) }
+        }.onFailure { telemetry.report(GameReminderEvent.NotScheduled(productId, startsAtMillis, GameReminderSkipReason.NOT_AUTHORIZED)) }
     }
 
     override suspend fun cancel(productId: ProductId) {

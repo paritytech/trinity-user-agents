@@ -81,6 +81,25 @@ class ProductGameAutoOpenerTest {
     }
 
     @Test
+    fun `reports and clears a game whose start passed beyond the grace as missed`() = runTest {
+        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
+
+        startOpener(scheduledGame)
+
+        verify(reminder).clear(scheduledGame)
+        verify(telemetry).report(GameReminderEvent.Missed(game, scheduledGame.startsAtMillis))
+    }
+
+    @Test
+    fun `a game within the grace is not missed`() = runTest {
+        advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
+
+        startOpener(scheduledGame)
+
+        verify(telemetry, never()).report(GameReminderEvent.Missed(game, scheduledGame.startsAtMillis))
+    }
+
+    @Test
     fun `leaving the foreground mid-countdown neither opens nor clears the game`() = runTest {
         startOpener(scheduledGame)
 

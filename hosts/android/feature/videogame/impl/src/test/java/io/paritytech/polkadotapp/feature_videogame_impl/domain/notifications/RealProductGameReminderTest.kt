@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
@@ -84,7 +85,7 @@ class RealProductGameReminderTest {
 
         assertTrue(result.isFailure)
         assertTrue(reminder.currentlyScheduled().isEmpty())
-        verifyReported(GameReminderEvent.NotScheduled(game, START))
+        verifyReported(GameReminderEvent.NotScheduled(game, START, GameReminderSkipReason.NOT_AUTHORIZED))
         coVerifySequence { osAccess.requestNotifications() }
         verify(exactly = 0) { scheduler.scheduleProductGameStart(game, START) }
         coVerify(exactly = 0) { calendar.addGame(any()) }
