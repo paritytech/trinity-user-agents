@@ -13,10 +13,17 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @Parameter(title: "Product ID")
     var productId: String?
 
+    @Parameter(title: "Starts At")
+    var startsAt: Date?
+
     @MainActor
     func perform() async throws -> some IntentResult {
         if let productId {
-            ProductOpener().open(productId: productId)
+            // A tap that launches the app can come before the services are up; the center then works on the
+            // same stored reminders.
+            let registered: ProductGameReminderScheduling? = RootDependencyLocator.getDependency()
+            let reminders = registered as? ProductGameReminderCenter ?? ProductGameReminderCenter.makeDefault()
+            reminders.openFromAlarm(productId: productId, startsAt: startsAt)
         }
 
         if let alarmIDString = alarmID,

@@ -1,6 +1,7 @@
 import AsyncExtensions
 import Foundation
 import FoundationExt
+import IssueMonitoring
 import Keystore_iOS
 import Products
 import UIKit
@@ -29,20 +30,24 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         let applicationStateStreams: ApplicationStateStreamFactory
         let productOpener: ProductOpening
         let dateProvider: CurrentDateProviding
+        let telemetry: GameReminderTelemetry
     }
 
     static func makeDefault() -> ProductGameReminderCenter {
-        ProductGameReminderCenter(
+        let telemetry = IssueMonitoringFactory.createGameReminderTelemetry()
+        return ProductGameReminderCenter(
             dependencies: Dependencies(
                 services: ProductGameReminderServicesFactory(
                     settingsManager: SettingsManager.shared,
-                    localNotificationService: UserNotificationService.shared
+                    localNotificationService: UserNotificationService.shared,
+                    telemetry: telemetry
                 ),
                 settingsManager: SettingsManager.shared,
                 applicationState: UIApplication.shared,
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 productOpener: ProductOpener(),
-                dateProvider: NowDateProvider()
+                dateProvider: NowDateProvider(),
+                telemetry: telemetry
             )
         )
     }
@@ -66,12 +71,15 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     private let applicationStateStreams: ApplicationStateStreamFactory
     private let productOpener: ProductOpening
     private let dateProvider: CurrentDateProviding
+    private let telemetry: GameReminderTelemetry
 
     /// One pair per product: AlarmKit serialises its calls per instance.
     private var reminders: [ProductId: Reminders] = [:]
     private let pillSubject = AsyncCurrentValueSubject<ProductGamePill?>(nil)
     private var wakeUp: Task<Void, Never>?
     private var becameActive: Task<Void, Never>?
+    private var alarmAlerts: Task<Void, Never>?
+    private var firedAlarmIds: Set<UUID> = []
 
     init(dependencies: Dependencies) {
         services = dependencies.services
@@ -80,6 +88,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         applicationStateStreams = dependencies.applicationStateStreams
         productOpener = dependencies.productOpener
         dateProvider = dependencies.dateProvider
+        telemetry = dependencies.telemetry
     }
 
     /// Held reminders, soonest first.
@@ -101,6 +110,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
 
     func start() {
         observeBecomingActive()
+        observeAlarmAlerts()
         refresh()
     }
 
@@ -129,11 +139,28 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     }
 
     func cancel(productId: ProductId) {
-        guard slot(for: productId) != nil else {
+        guard let slot = slot(for: productId) else {
             return
         }
         drop(productId)
+        record(.cancelled, for: slot)
         refresh()
+    }
+
+    /// The alarm's Play button. The tap is the open, so the held reminder goes first: the start can then
+    /// neither open the product a second time nor count as missed.
+    func openFromAlarm(productId: ProductId, startsAt: Date?) {
+        let startsAt = startsAt ?? slot(for: productId)?.startsAt
+        if slot(for: productId) != nil {
+            drop(productId)
+            refresh()
+        }
+        record(.tapped, productId: productId, startsAt: startsAt)
+        let navigated = productOpener.open(productId: productId)
+        record(.productOpened, productId: productId, startsAt: startsAt) { event in
+            event.openSource = .alarm
+            event.navigated = navigated
+        }
     }
 
     func refresh() {
@@ -154,9 +181,11 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                     continue
                 }
                 drop(slot.productId)
-                if !isLate, !opened {
+                if isLate {
+                    record(.missed, for: slot)
+                } else if !opened {
                     opened = true
-                    productOpener.open(productId: slot.productId)
+                    recordAutoOpen(slot, navigated: productOpener.open(productId: slot.productId))
                 }
                 continue
             }
@@ -282,6 +311,63 @@ private extension ProductGameReminderCenter {
                 refresh()
             }
         }
+    }
+
+    /// AlarmKit rings outside the app, so a ring is seen only while the app runs, and only once per alarm.
+    func observeAlarmAlerts() {
+        guard alarmAlerts == nil else {
+            return
+        }
+        let alerts = services.alertingAlarms()
+        alarmAlerts = Task { [weak self] in
+            for await alarmIds in alerts {
+                self?.recordFired(alarmIds)
+            }
+        }
+    }
+
+    func recordFired(_ alarmIds: Set<UUID>) {
+        for slot in slots {
+            guard let alarmId = settingsManager.string(for: GameReminderStorageKeys.product(slot.productId).alarmId)
+                .flatMap(UUID.init(uuidString:)),
+                alarmIds.contains(alarmId),
+                firedAlarmIds.insert(alarmId).inserted else {
+                continue
+            }
+            record(.fired, for: slot) { $0.delivery = .alarm }
+        }
+    }
+
+    func recordAutoOpen(_ slot: Slot, navigated: Bool) {
+        record(.productOpened, for: slot) { event in
+            event.openSource = .autoOpen
+            event.navigated = navigated
+        }
+    }
+
+    func record(
+        _ step: GameReminderEvent.Step,
+        for slot: Slot,
+        configure: (inout GameReminderEvent) -> Void = { _ in }
+    ) {
+        record(step, productId: slot.productId, startsAt: slot.startsAt, configure: configure)
+    }
+
+    func record(
+        _ step: GameReminderEvent.Step,
+        productId: ProductId,
+        startsAt: Date?,
+        configure: (inout GameReminderEvent) -> Void = { _ in }
+    ) {
+        var event = GameReminderEvent(
+            step: step,
+            productId: productId,
+            startsAt: startsAt,
+            occurredAt: dateProvider.now
+        )
+        event.appState = GameReminderEvent.AppState(applicationState.applicationState)
+        configure(&event)
+        telemetry.record(event)
     }
 
     func wake(at date: Date, from now: Date) {
