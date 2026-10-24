@@ -1946,8 +1946,8 @@ impl ProductRuntimeControl {
 	}
 
 	/// Give the product something the user opened from an entry point of the
-	/// host, such as a contact link or a username. The core asks for any room
-	/// of the product.
+	/// host, such as a contact link or a username. The core asks without a
+	/// declaration and without reading the room, which need not exist yet.
 	pub fn chat_open_link(
 		&self,
 		request: truapi::latest::ProductChatOpenLinkRequest,
@@ -1955,7 +1955,7 @@ impl ProductRuntimeControl {
 		let request = crate::platform::validate_chat_open_link(request);
 		self.chat_query(
 			request.as_ref().map(|request| request.room_id.clone()).map_err(Clone::clone),
-			crate::runtime::ChatHandler::Config(|_| true),
+			crate::runtime::ChatHandler::Undeclared,
 			move |subscriptions, transport| {
 				Ok(crate::generated::dispatcher::chat_open_link(
 					subscriptions,
@@ -4409,10 +4409,11 @@ mod tests {
 		assert!(unconfigured.connects.is_empty(), "and does not dial any chain at all");
 	}
 
-	/// A chat host that reports one configuration for every room.
+	/// A chat host that reports one configuration for every room, or knows
+	/// no room at all when `config` is `None`.
 	#[derive(Default)]
 	struct ConfiguredChat {
-		config: truapi::latest::ChatRoomConfig,
+		config: Option<truapi::latest::ChatRoomConfig>,
 	}
 
 	#[crate::platform::async_trait]
@@ -4475,9 +4476,11 @@ mod tests {
 		async fn read_chat_room_config(
 			&self,
 			_product: &ProductContext,
-			_room_id: String,
+			room_id: String,
 		) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
-			Ok(self.config.clone())
+			self.config
+				.clone()
+				.ok_or_else(|| v01::GenericError { reason: format!("no chat room {room_id}") })
 		}
 	}
 
@@ -4486,7 +4489,15 @@ mod tests {
 	fn chat_query_runtime(
 		config: truapi::latest::ChatRoomConfig,
 	) -> (ProductRuntime, Arc<RecordingSink>) {
-		let chat = ConfiguredChat { config };
+		chat_query_runtime_with(ConfiguredChat { config: Some(config) })
+	}
+
+	/// A signed-in Worker runtime whose host knows no room of the product.
+	fn roomless_chat_query_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
+		chat_query_runtime_with(ConfiguredChat { config: None })
+	}
+
+	fn chat_query_runtime_with(chat: ConfiguredChat) -> (ProductRuntime, Arc<RecordingSink>) {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
@@ -4838,6 +4849,44 @@ mod tests {
 			truapi::versioned::chat::ProductChatOpenLinkItem::V1(answer.clone()).encode(),
 		);
 		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(answer)));
+	}
+
+	// The person chat product has no room of its own: a fresh account's first
+	// contact link names a room the host keeps no declarations for, and must
+	// still reach the product.
+	#[test]
+	fn an_opened_link_reaches_a_product_that_has_no_room_yet() {
+		let (runtime, sink) = roomless_chat_query_runtime();
+		let mut query = runtime
+			.control()
+			.chat_open_link(open_link_request("contact:0001"))
+			.expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+		let start = sent_frames(&sink).remove(0);
+		let answer = truapi::latest::ProductChatOpenLinkItem { room_id: Some("dm-7".to_string()) };
+		deliver_chat_frame(
+			&runtime,
+			&start,
+			truapi::versioned::chat::ProductChatOpenLinkItem::V1(answer.clone()).encode(),
+		);
+		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(answer)));
+	}
+
+	// A room query still needs the room: without its declarations the core
+	// refuses before the product is asked.
+	#[test]
+	fn a_messages_query_for_an_unknown_room_never_reaches_the_product() {
+		let (runtime, sink) = roomless_chat_query_runtime();
+		let mut query = runtime
+			.control()
+			.chat_messages_query(messages_request(20))
+			.expect("may be asked");
+		assert!(matches!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::HostFailure { .. }))
+		));
+		assert!(sent_frames(&sink).is_empty());
 	}
 
 	#[test]

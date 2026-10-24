@@ -107,18 +107,6 @@ Walk through each applicable section. For each rule violated, note the severity 
 
 **Ref:** architecture/data-transport.md
 
-## Device Sync
-
-- [ ] Device sync owns exactly one peer engine per supported remote device; membership removal disposes it and re-addition creates a fresh engine
-- [ ] Disposed device-sync engines/contexts are terminal and cannot schedule retries or create another connection generation
-- [ ] WebRTC connection generations are sequential per peer; exchange and flow shutdown are awaited before replacement starts
-- [ ] Device-sync exchange iterators are created before the flow starts publishing update, ACK, or state events
-- [ ] Accepted reconnect identity is persisted before its signaling offer/answer is exposed to WebRTC
-- [ ] Service throttle cancels and awaits device reconciliation, removes owned engines, and awaits every engine disposal
-- [ ] Retry and ACK-timeout tests inject manual sleepers or event gates; they never depend on wall-clock sleeps or exact timeouts
-
-**Ref:** architecture/device-sync.md
-
 ## Coinage
 
 - [ ] Key derivation via CoinKeypairDerivation (never hand-rolled)

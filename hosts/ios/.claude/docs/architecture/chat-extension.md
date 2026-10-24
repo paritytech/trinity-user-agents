@@ -2,38 +2,43 @@
 
 ## Overview
 
-Chat has two kinds of room. A person chat is end-to-end encrypted and goes over the statement store.
-A product room belongs to a chat product (Chat Extension v2): the product's Worker owns the room's
-data, and the host owns the screen. Both kinds open the same room screen (`Modules/Chat/`). The
+Every chat room belongs to a chat product (Chat Extension v2): the product's Worker owns the room's data, and the
+host owns the screen. The person-to-person chat is one of them: the chat product `chat.<tld>`, a TypeScript worker
+that the app bundles (repository `chat-product`, built on the Product SDK's chat packages). The app has no chat
+engine of its own. Every room opens the same room screen (`Modules/Chat/`). The
 design is the Chat Extension v2 plan, `HOST-CHAT-EXTENSION-V2/02-DESIGN.md` (outside this repository).
 Its §15 and §19 to §24 record what changed while building and win over §8. The wire contract is
 `docs/rfcs/chat-extension-v2.md` at the repository root; `ios/truapi-host/README.md` documents the bridge.
 
 ## Person chats
 
-- Modules: `Chat`, `ChatCall`, `ChatRequestList`, `ChatAttachments` (see `architecture/chat-attachments.md`),
-  `IncomingChatRequest`, `ContactsList`, `SearchContact`.
-- Packages: `MessageExchangeKit` (encrypted messaging), `StatementStore`. Persistence is Core Data in the
-  app (`CDChatMessage`, `CDChat`); there is no separate storage package.
-- Services on `ServiceCoordinator`: `chatCoordinator`, `callCoordinator`, `attachmentUploadService`,
-  `attachmentDownloadService`. Sign-in lives outside chat (`architecture/sso.md`).
-- Message flow: compose → encrypt with `MessageExchangeKit` → publish a statement → the peer's
-  subscription receives it → decrypt → store in `CDChatMessage` → the room screen reads it.
-- Calls: PushKit (VoIP) wakes the device, WebRTC carries audio and video, `callCoordinator` owns the call
-  lifecycle (`architecture/data-transport.md`).
+The person chat is the chat product's rooms: one room per contact, declared with a contact
+(`set_room_contact`), drawn as the native person chat. The worker runs the chat-spec protocol: sessions,
+encryption, chat requests, devices, compaction, call signalling and its own store (in TrUAPI product storage).
+The app keeps the screens and gives the worker what only the host may do. The core serves those to the chat
+product only, through TrUAPI `PersonChat` (`docs/rfcs/person-chat.md` at the repository root).
 
-**Push payload.** After the statement is posted, the sender also pushes the message through the relay
-(`POST /api/v1/notify`), so the recipient's Notification Service Extension renders it without a
-statement-store connection. `message` is `hex(ChaCha20-Poly1305(SCALE(payload)))`. Hex doubles the size,
-so an APNs alert (4 KB) leaves under 2 KB of plaintext. The payload is `Chat.NotificationPayload`:
-`messageId ‖ timestamp ‖ version u8 = 0 ‖ kind u8 ‖ content`. Kind `1` (Full) carries
-`RemoteMessageContentV1` unchanged. Kind `0` (Stripped, `Chat.StrippedContentV1`) is used when the full
-content exceeds 1,800 bytes (`ChatNotificationPayloadBuilder`).
-
-**Attachment thumbnails.** The optional `thumbnail: Data` of image and video metadata is a BlurHash
-string in UTF-8: 4×3 components, from an image of at most 128 points on its longest side. Receivers parse
-it through the typed `BlurHash` boundary. Invalid UTF-8, a malformed hash or legacy binary bytes read as
-"no preview"; the full download continues.
+- **Shipping.** `Products/BundledChat/BundledChatProduct.swift` installs `person-chat-worker.js` and
+  `person-chat-manifest.json` for `chat.<tld>` when their SHA-256 matches `BundledChatProduct+Digest.swift`.
+  Both are written by `chat-product/scripts/install-host-bundles.mjs`; never edit them by hand.
+  `BundledChatProductResolver` serves that copy whatever dotNS publishes, because the core grants `PersonChat` to
+  the bare `chat` label.
+- **Keys and proofs.** The core's `PersonChat` capability holds the identity keys. It gives the worker the X25519
+  chat secrets and proves statements, chat requests and deliveries; the sr25519 keys never leave the core.
+- **Host callbacks.** `AppPersonChatHostBridge` (HOP nodes, paired devices, contacts, history export, payments
+  received), `AppPushHostBridge` (APNs and VoIP tokens, push routes, the relay `POST /api/v1/notify` with the
+  app's own token), `AppCallMediaHostBridge` (TrUAPI `callMedia` over the native `CallEngine`).
+- **Attachments.** HOP upload, download and ack run in the core (`hop_client.rs`). `TrUAPIChatHopFiles` opens
+  files through the core; `ProductOutbox` and `ProductMediaDownloads` keep the progress the screens draw.
+- **Push.** The worker builds and encrypts the push; the relay carries it; the Notification Service Extension
+  asks the core to open it (`ProductPushHandler`, `decodeChatPush`) and words it as the native chat did.
+- **Contacts.** The worker publishes its contacts (`publishContacts`); `ProductChatContacts` keeps a copy for the
+  "+" panel, contact search, wallet send, caller names and other products' contact pickers.
+- **Migration.** `ProductChatMigration` moves the native chat history once: it stages a SCALE `HistoryExport::V1`
+  file that the worker reads in chunks, imports the old device key into the core, and hands native payments to
+  `ProductChatPayments`. The native Core Data entities stay, read only by this migration.
+- `MessageExchangeKit` and `StatementStore` remain for sign-in and device pairing (`architecture/sso.md`), not for
+  chat.
 
 **Persisted key ids.** `signKeyId` is a substrate derivation path. Product-account ids use the hex index
 segment; build them with `WalletDerivationPath` / `ProductDerivationPath`, never by hand.
@@ -42,14 +47,16 @@ segment; build them with `WalletDerivationPath` / `ProductDerivationPath`, never
 ## Chat extensions
 
 `ChatExtensionsRegistry` (`ChatExtension/ChatExtensionRegistring.swift`) is built by
-`ChatExtensionsRegistry.createDefault(productBotProvider:)`. It holds one static extension,
-`ChatReactionExtension`, and one `ProductBot` (a `ChatExtensionBot`) per chat product, which
-`ChatExtensionStore` adds and removes as products resolve. There is no payment extension. Coinage
-transfer bubbles render the `coinageSend` content from the transfer state row (`architecture/coinage.md`).
+`ChatExtensionsRegistry.createDefault(productBotProvider:)`. It holds no static extension (reactions of the chat
+product's rooms come with its messages) and one `ProductBot` (a `ChatExtensionBot`) per chat product, which
+`ChatExtensionStore` adds and removes as products resolve. Payments in a contact room are
+`ProductChatPayments` records (`CDProductChatPayment`, Model 58): the coins stay in the app and
+`CoinageTransferMonitor` follows them (`architecture/coinage.md`).
 
 `ProductBotFactory.create(resolved:)` gives the bot its runtime (a `ChatRuntimeProtocol`):
-`TrUAPIChatHandler` when `isTrUAPIRuntimeEnabled` is on, else `ManagedChatRuntime`. Release builds use
-`ManagedChatRuntime`. It serves no v2 query, so a product-source room shows "unavailable" there.
+`TrUAPIChatHandler` for the chat product always, and for other products when `isTrUAPIRuntimeEnabled` is on;
+otherwise `ManagedChatRuntime`. `ManagedChatRuntime` serves no v2 query, so a product-source room of another
+product shows "unavailable" there.
 
 ## Chat Extension v2: product rooms
 
@@ -91,7 +98,11 @@ mute, archive, read aloud, personas, custom bodies or footers, room links, delet
 | Room screen parts | `ProductRoom/ChatProductRoomPresenter.swift` | Call buttons, who reacted, edit history, background close |
 | Outbox | `ProductRoom/ProductOutbox.swift` (+`App`, `ProductOutboxStore.swift`) | Every text, photo and video of the user, under a UUID that the host chose (`NewMessage.messageId`), kept in files until the product has it and sent again under the same id |
 | Photos and videos | `ProductRoom/ProductMediaDownloads.swift`, `ProductMediaProgress.swift` | HOP download of `hop_attachments` with the progress that the core reports, and the progress of uploads, for the native media grid |
-| Contacts | `Service/ProductContactSearch.swift`, `URLHandling/ProductContactChatOpener.swift` | The "+" panel and the blocked users from the contacts of the rooms; opening a contact through `open_link` |
+| Contacts | `Service/ProductContactSearch.swift`, `URLHandling/ProductContactChatOpener.swift`, `Products/TrUAPI/ProductChatContacts.swift` | The "+" panel and the blocked users from the contacts of the rooms; opening a contact through `open_link` on the link room `chats`, which need not exist (the core reads no room for `open_link`); block and unblock as user actions (`ProductContactBlocking`) |
+| Bundled worker | `Products/BundledChat/` | The chat product's worker, its manifest and pinned digest, and the resolver that serves them for `chat.<tld>` |
+| PersonChat | `Products/TrUAPI/AppPersonChatHostBridge.swift`, `AppPushHostBridge.swift`, `TrUAPIChatHopFiles.swift` | The host callbacks of the core's `PersonChat` capability |
+| Migration | `Products/TrUAPI/ProductChatMigration.swift` | The one-time move of the native history, device key and payments |
+| Room events | `Products/TrUAPI/TrUAPIChatRoomEventPublisher.swift` | Call buttons and answers to the core as `ChatRoomEvent`s |
 | Calls | `Products/TrUAPI/AppCallMediaHostBridge.swift`, `ChatCall/VoIP/ProductVoIPCalls.swift` | The native call screens over TrUAPI `callMedia`; the CallKit ring of a VoIP push |
 | Push | `NotificationServiceExtension/ProductPushHandler.swift` | The core opens the push (`decodeChatPush`) and gives its kind (`ChatPushContent`); the extension words it as `NewMessageHandler` does, counts it in the room badge, and a tap opens the room (`ProductRoomPushRouteHandler`). A push with nothing to show shows nothing |
 
@@ -132,7 +143,10 @@ mute, archive, read aloud, personas, custom bodies or footers, room links, delet
 Every product but the chat product keeps its worker from the start of its bot to its dispose, and keeps it after
 an uncaught error, as at the merge base. The rest of this section is the chat product.
 
-The worker of the chat product runs only while something holds it (D10). `TrUAPIChatHandler` asks `TrUAPIWorkerManager` with
+The worker of the chat product runs only while something holds it (D10). Its manifest declares
+`keepAlive: "foreground"`, so the core also holds it while the app is in the foreground
+(`TrUAPIChatHandler+Foreground`, `TrUAPIForegroundReporter`): the worker keeps its statement subscriptions while
+the app is open. `TrUAPIChatHandler` asks `TrUAPIWorkerManager` with
 `ensureWorker(for:)` and gives each request back with `releaseWorker(for:)`. The core counts the
 requests and starts or stops the one Worker execution of the product.
 
@@ -149,14 +163,12 @@ requests and starts or stops the one Worker execution of the product.
   `ProductFeedListeners.productStopped(for:)`; the next open holds the next worker for those rooms.
   An unhandled promise rejection does not end the worker.
 
-A room of the person chat product (`contact_rooms`, `RoomDeclarations.contact`) draws as the native person
-chat with that contact, and nothing more: the native header, menu, input, request rows, bubbles, list row,
-"+" panel, blocked users, call screens and notification texts. Product messages map to native message
-contents (`Service/ProductChatMessage+Local.swift`), so the native view model factory draws them. A product
-room has no feature that the native person chat lacks: no description, avatar, participants, menus, search,
-mute, archive, read aloud, personas, custom bodies or footers, room links, delete or retry.
-- **Notification wake.** iOS has no hold for a message in flight (O3). A product-source room's badge and
-  preview are as fresh as the product's last run.
+- **Message wake.** Each user message, user action and room event wakes the worker for 30 s
+  (`TrUAPIChatHandler+Wake`), also while a room screen holds it, because the screen can close before the product
+  answers. `TrUAPIWakeBackgroundTasks` asks UIKit for background time for each wake hold.
+- **Push wake.** A VoIP push of a call rings CallKit and wakes the worker (`ProductVoIPCalls`). A message push is
+  shown from the extension without the worker; the room's badge and preview are as fresh as the product's last
+  run.
 
 **Core runtime start.** `TrUAPIHostRuntime.init` blocks on `Db::open`. `ServiceCoordinator` calls
 `TrUAPIHostRuntimeProvider.prepareInBackground()` at start, which builds the shared runtime on a
@@ -203,7 +215,11 @@ Swift Testing suites live in `polkadot-appTests/Chat` (`ProductMessageSourceTest
    core from a task.
 10. **A product room draws only what the native person chat draws.** A feature that the native chat lacks
     stays out of the product room too.
-11. **Encryption is mandatory for person chats.** Every person message goes through `MessageExchangeKit`.
+11. **The app holds no chat keys and runs no chat protocol.** Person messages are encrypted in the chat product's
+    worker with keys the core gives it, and pushes and attachments open in the core. Do not add chat crypto,
+    statement-store sessions or chat-request handling to the app; add what the worker needs to `PersonChat`.
+12. **Never edit the bundled worker or its digest by hand.** Install them with
+    `chat-product/scripts/install-host-bundles.mjs`, which pins the digest the app checks.
 
 ## Anti-Patterns
 

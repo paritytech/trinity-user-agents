@@ -2,7 +2,7 @@
 
 ## Overview
 
-Off-chain peer messaging via Substrate statement store. Statements carry encrypted payloads between peers, enabling chat messages, session negotiation, and feature-specific data exchange.
+Off-chain peer messaging via Substrate statement store, used by the app for sign-in and device pairing (`architecture/sso.md`). Person chat messages do not use this code: the chat product worker reaches the statement store through the TrUAPI core (`architecture/chat-extension.md`).
 
 ## Key Components
 
@@ -11,7 +11,6 @@ Off-chain peer messaging via Substrate statement store. Statements carry encrypt
 
 ### Related
 - **MessageExchangeKit** — encrypted message protocol built on top of statement store
-- **ChatStorage** — persistence for received messages
 
 ## Encryption
 
@@ -65,4 +64,3 @@ Bidirectional communication sessions between peers:
 | Statement models         | `Packages/StatementStore/`       | Statement structure changes        |
 | Slot allocation          | `Packages/StatementStore/`       | Allocation strategy changes        |
 | Message protocol         | `Packages/MessageExchangeKit/`   | Messaging protocol changes         |
-| Chat integration         | `Packages/ChatStorage/`          | Chat message persistence           |

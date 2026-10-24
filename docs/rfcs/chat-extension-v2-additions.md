@@ -61,7 +61,8 @@ The design has these parts:
    ignored, a live request for it is refused with `Unknown`, and an unserved query is never asked.
 5. **The host does all network work.** Uploading a file, receiving a notification and carrying a call go through the
    core and the host's own services. Nothing here gives a product a connection to a node, a statement store or a
-   chain, and no product holds an allowance or chain key.
+   chain, and no product holds an allowance or chain key. [PersonChat](person-chat.md) keeps this for the chat product:
+   the core proves, signs and uploads for it, and hands it only the X25519 chat secrets.
 6. **The core screens, hosts render.** The core enforces every bound of [Limits](#limits) before a host sees a value,
    as for the base.
 
@@ -466,8 +467,9 @@ a contact link, a scanned code, a shared link or a username typed in the add-con
   answers another, and holds the worker until the answer. The host does not read, show or store the payload.
 - The product answers the room the host shows next, or `None` to keep the room of the request. A product without a
   handler answers `Unsupported`.
-- The core asks for any room of the product and needs no declaration. It refuses an empty payload or one above the bound
-  with `Unknown`, and refuses an answer that names an invalid room.
+- The core needs no declaration and does not read the room, which need not exist yet: the person chat product has no
+  room of its own, so a fresh account's first contact link names the host's link room `chats`. It refuses an empty
+  payload or one above the bound with `Unknown`, and refuses an answer that names an invalid room.
 - The payload can come from anyone. A product treats it as untrusted input, and asks the user before it acts on it with
   an effect the user did not ask for, such as a connection.
 

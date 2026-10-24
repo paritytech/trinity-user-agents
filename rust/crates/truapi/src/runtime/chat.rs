@@ -29,6 +29,10 @@ pub fn chat_platform_for(
 pub enum ChatHandler {
 	/// A flag of the room configuration.
 	Config(fn(&latest::ChatRoomConfig) -> bool),
+	/// No declaration. The core does not read the room, which need not exist:
+	/// the person chat product has no room of its own when a fresh account
+	/// opens its first contact link.
+	Undeclared,
 }
 
 /// Call budgets the core holds each product room to, shared by every

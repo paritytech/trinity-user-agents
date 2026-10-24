@@ -57,7 +57,7 @@ package tests.
 
 1. **Per-domain key derivation** — each requesting origin gets its own deterministic keypair via `SharedSecretDerivationDomain`. Never reuse a domain across features.
 2. **Explicit user consent** — every sign-in response requires a UI confirmation; no silent signing. Exception: product-subtree public key requests are consent-free by spec — the response carries only a public key; secret-material allocation (`AutoSigning`) still requires consent.
-3. **SSO is not chat** — `signInHostCoordinator` does not depend on chat session state and must not be wired through `chatCoordinator`. Keep its services and module boundaries separate even when both surface in the same tab.
+3. **SSO is not chat** — `signInHostCoordinator` does not depend on chat session state and must not be wired through the chat product. Keep its services and module boundaries separate even when both surface in the same tab.
 
 ## Seams
 

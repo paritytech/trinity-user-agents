@@ -2,7 +2,7 @@
 
 ## Overview
 
-Peer-to-peer data transport using WebRTC for voice/video calls and real-time data channels. Used by chat calls and device sync.
+Peer-to-peer transport using WebRTC for voice and video calls. The chat product carries the call signals in its own encrypted channel and drives the app's `CallEngine` through TrUAPI `callMedia` (`AppCallMediaHostBridge`, `architecture/chat-extension.md`).
 
 ## Key Components
 
@@ -13,7 +13,7 @@ Peer-to-peer data transport using WebRTC for voice/video calls and real-time dat
 - **ChatCall** — voice/video call UI and management
 
 ### Services
-- `callCoordinator` (ServiceCoordinator) — call lifecycle management
+- `AppCallMediaHostBridge`, `ProductVoIPCalls` — call media for the chat product, and the CallKit ring of a VoIP push
 - `audioSessionManager` — audio routing
 
 ### Related
@@ -43,7 +43,7 @@ UseCaseId multiplexing (multiple concerns per connection)
 ## Connection Lifecycle
 
 1. PushKit/APNs notification for incoming call
-2. Signaling exchange via statement store
+2. Signaling exchange through the chat product worker (`callMedia.signal`)
 3. WebRTC connection established (ICE/DTLS)
 4. Media streams or data channels active
 5. Connection teardown on call end

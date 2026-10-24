@@ -14,8 +14,7 @@
 | EventCenter, observer events, visitor extensions | architecture/event-center.md                             |
 | Using ChainRegistry from a feature             | architecture/chain-integration.md (Using ChainRegistry…)   |
 | Chat, messaging, chat extensions               | architecture/chat-extension.md                             |
-| Chat attachments, HOP file transfer, bitswap   | architecture/chat-attachments.md                           |
-| Message compaction, compacted batches, expansion | architecture/message-compaction.md                       |
+| Chat attachments, HOP files, message compaction (in the chat product) | architecture/chat-extension.md (Person chats) |
 | Tab bar, bottom bar visibility, tab safe area  | architecture/tab-bar-container.md                          |
 | SSO, sign-in host, dApp authentication         | architecture/sso.md                                        |
 | Products, WebView, JS bridge, HostApi          | architecture/host-api-products.md                          |

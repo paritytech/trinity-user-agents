@@ -15,9 +15,8 @@ Central hub managing the app's long-lived services. Created in MainTabBar module
 
 ### Managed Services
 - `balancesUpdatingService` — asset balance syncing
-- `chatCoordinator`, `callCoordinator` — messaging & calls
+- `productWorkerFacade` — product workers, the chat product `chat.<tld>` among them (`architecture/chat-extension.md`)
 - `signInHostCoordinator` — authentication
-- `attachmentUploadService`, `attachmentDownloadService` — file handling
 - `depositService` — deposit operations
 - `fiatOnrampService`, `fiatOnrampTrackingService`, `fiatOnrampStorage` — fiat integration
 - `polkadotHandshakeService` — protocol handshake
