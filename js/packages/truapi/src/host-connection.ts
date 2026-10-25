@@ -74,9 +74,11 @@ export function createHostConnection(
   function retire(connection: Connection, cause?: unknown): void {
     if (current !== connection) return;
     current = undefined;
-    const oldLegacy = legacy;
-    legacy = undefined;
-    oldLegacy?.close();
+    // The legacy bridge outlives the connection it was created on. A product
+    // adopts `__HOST_API_PORT__` once at startup and never re-reads it, so
+    // closing the bridge here would strand it for the life of the page, while
+    // its own port reports nothing: a port whose peer closed raises no event.
+    // The bridge resolves `current` per frame, so it recovers on its own.
     try {
       reset?.(new ConnectionResetError({ cause }));
     } catch {
@@ -161,6 +163,10 @@ export function createHostConnection(
   function stop(): void {
     page?.removeEventListener("visibilitychange", onVisibilityChange);
     stopped = true;
+    // Teardown is where the bridge really does end, rather than on each retire.
+    const oldLegacy = legacy;
+    legacy = undefined;
+    oldLegacy?.close();
     if (current) retire(current);
   }
 

@@ -280,6 +280,38 @@ describe("shared SDK host connection", () => {
         expect(connection.legacyPort).toBe(port);
     });
 
+    it("keeps the legacy bridge usable after the socket it was created on is replaced", async () => {
+        const { connection, sockets } = host();
+        const port = connection.legacyPort;
+        const transport = createTransport(createMessagePortProvider(port));
+        cleanup.push(() => transport.dispose());
+        const legacy = createClient(transport);
+
+        // The bridge answers on the connection it was created on.
+        expect((await legacy.permissions.requestRemotePermission(permission)).isOk()).toBe(true);
+
+        // An ordinary socket loss, the mobile case, not a teardown. The host
+        // connection replaces it on its own.
+        sockets[0]!.close();
+        await until(() => sockets.length === 2);
+        expect(
+            (await connection.client.permissions.requestRemotePermission(permission)).isOk(),
+        ).toBe(true);
+
+        // A product that adopted this port at startup cannot re-read
+        // `__HOST_API_PORT__`, so the port it already holds is its only route to
+        // the host. Answering it with a failure would at least let the product
+        // react; the state worth failing on is silence.
+        const answered = await Promise.race([
+            Promise.resolve(legacy.permissions.requestRemotePermission(permission)).then(
+                () => true,
+                () => true,
+            ),
+            Bun.sleep(250).then(() => false),
+        ]);
+        expect(answered).toBe(true);
+    });
+
     it("closes the physical socket and permanently rejects work on explicit disposal", async () => {
         const fixture = host();
         const statuses: string[] = [];
