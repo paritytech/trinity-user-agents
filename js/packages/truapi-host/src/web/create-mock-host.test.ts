@@ -86,16 +86,29 @@ describe("createMockHost callbacks", () => {
     const storage = host.callbacks.coreStorage;
     const key: CoreStorageKey = { tag: "AuthSession" };
     const empty = new Uint8Array();
-    expect(await storage.compareExchangeCoreStorage(key, empty, empty, true)).toBe(false);
-    expect(await storage.compareExchangeCoreStorage(key, undefined, empty, false)).toBe(true);
-    expect(await storage.compareExchangeCoreStorage(key, undefined, empty, true)).toBe(false);
+    expect(
+      await storage.compareExchangeCoreStorage(key, empty, empty, true),
+    ).toBe(false);
+    expect(
+      await storage.compareExchangeCoreStorage(key, undefined, empty, false),
+    ).toBe(true);
+    expect(
+      await storage.compareExchangeCoreStorage(key, undefined, empty, true),
+    ).toBe(false);
     expect(host.coreStorageChanges()).toEqual([]);
 
     const replacement = new Uint8Array([1, 2]);
-    expect(await Promise.all([
-      storage.compareExchangeCoreStorage(key, empty, replacement, true),
-      storage.compareExchangeCoreStorage(key, empty, new Uint8Array([3]), true),
-    ])).toEqual([true, false]);
+    expect(
+      await Promise.all([
+        storage.compareExchangeCoreStorage(key, empty, replacement, true),
+        storage.compareExchangeCoreStorage(
+          key,
+          empty,
+          new Uint8Array([3]),
+          true,
+        ),
+      ]),
+    ).toEqual([true, false]);
     replacement[0] = 9;
     const observed = (await storage.readCoreStorage(key))!;
     observed[0] = 8;

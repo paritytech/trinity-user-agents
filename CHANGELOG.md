@@ -56,6 +56,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
 - Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
 - Swift's unsupported receiving callbacks use the generated native rejection case.
+- Restore release builds for the consolidated 0.26 host across browser, Android,
+  iOS, and CLI artifacts; pin the browser WASM artifact tools to the lockfile,
+  emit the Android host `cdylib` explicitly, and sync only the generated Swift
+  namespace that the unified core produces.
 
 - persist typed Statement Store allowance approvals and denials per product and
   account selector for implicit, idempotent provisioning; explicit requests for

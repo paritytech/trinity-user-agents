@@ -127,6 +127,9 @@ sealed interface ProductPermission {
 
         companion object {
             const val TYPE_NAME = "statement_store_allowance"
+        }
+    }
+
     /** Reading the NFT purses of another owner: a product, or the user's own account when `null`. */
     data class NftPurseRead(
         val ownerProductId: String?,

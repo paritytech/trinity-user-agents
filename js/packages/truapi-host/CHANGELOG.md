@@ -11,6 +11,8 @@
   Mobile Safari can open calls and render host-composited video without
   `getDisplayMedia`; requesting screen capture still fails closed when the API
   is unavailable.
+- Build browser host WASM with the lockfile's `wasm-bindgen` version and the
+  pinned Binaryen release used for published artifacts.
 
 ## 0.11.0
 

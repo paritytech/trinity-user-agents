@@ -142,7 +142,9 @@ export async function handleRefreshPermissionAuthorization(
 ): Promise<void> {
   try {
     if (!runtime) {
-      throw new Error("refreshPermissionAuthorization received before runtime is ready");
+      throw new Error(
+        "refreshPermissionAuthorization received before runtime is ready",
+      );
     }
     await runtime.refreshPermissionAuthorization(productId, request);
     postToMain({

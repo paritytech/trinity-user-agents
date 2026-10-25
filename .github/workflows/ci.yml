@@ -934,8 +934,10 @@ jobs:
 
       - uses: ./.github/actions/rust-cache
 
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+      - name: Install WASM artifact tools
+        run: |
+          cargo install wasm-pack --version 0.14.0 --locked
+          ./scripts/install-wasm-artifact-tools.sh
 
       - name: Download codegen output
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1071,10 +1073,11 @@ jobs:
           shared-key: host-wasm
           save: "false"
 
-      # The version release.yml builds the published bundles with, since
-      # wasm-pack also picks the wasm-opt that shapes their size.
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.14.0 --locked
+      # Match the release workflow's artifact toolchain.
+      - name: Install WASM artifact tools
+        run: |
+          cargo install wasm-pack --version 0.14.0 --locked
+          ./scripts/install-wasm-artifact-tools.sh
 
       - name: Download codegen output
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

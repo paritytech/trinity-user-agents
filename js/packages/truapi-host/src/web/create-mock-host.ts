@@ -1137,14 +1137,22 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
       },
-      async compareExchangeCoreStorage(key, expected, replacement, notifyOnSuccess) {
+      async compareExchangeCoreStorage(
+        key,
+        expected,
+        replacement,
+        notifyOnSuccess,
+      ) {
         if (faults.storageError) throw new Error(faults.storageError);
         const slot = coreKey(key);
         const current = storage.get(slot);
-        if (current === undefined ? expected !== undefined : (
-          expected === undefined || current.length !== expected.length ||
-          current.some((byte, index) => byte !== expected[index])
-        )) {
+        if (
+          current === undefined
+            ? expected !== undefined
+            : expected === undefined ||
+              current.length !== expected.length ||
+              current.some((byte, index) => byte !== expected[index])
+        ) {
           return false;
         }
         // No await between the byte comparison, commit and notification.

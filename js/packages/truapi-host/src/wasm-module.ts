@@ -7,7 +7,10 @@ import type { PermissionAuthorizationRuntime } from "./worker-permission-authori
 import type { LocalIdentity } from "./worker-protocol.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type { NativeChatContactsSnapshot } from "./runtime.js";
-import type { RawNotificationReceiver, RawReceivingRuntime } from "./runtime.js";
+import type {
+  RawNotificationReceiver,
+  RawReceivingRuntime,
+} from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -50,7 +53,8 @@ export interface WorkerProductRuntime {
 export type WorkerTransition = "Start" | "Stop";
 
 /** Runtime operations shared by paired and browser-local signing hosts. */
-export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawReceivingRuntime {
+export interface WorkerHostRuntime
+  extends PermissionAuthorizationRuntime, RawReceivingRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
@@ -99,7 +103,6 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
-
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /** Only on a core built with the non-production `test-host` feature. */
   setGrantAllowancesUnchecked?(granted: boolean): void;

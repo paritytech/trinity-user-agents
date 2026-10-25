@@ -9,7 +9,9 @@ bindgen_version=$(node -e '
   const metadata = JSON.parse(execFileSync("cargo", ["metadata", "--locked", "--format-version", "1"], { maxBuffer: 32 * 1024 * 1024 }));
   console.log(metadata.packages.find(pkg => pkg.name === "wasm-bindgen").version);
 ')
-cargo install wasm-bindgen-cli --version "$bindgen_version" --locked
+if [[ "$(wasm-bindgen --version 2>/dev/null || true)" != "wasm-bindgen $bindgen_version" ]]; then
+  cargo install wasm-bindgen-cli --version "$bindgen_version" --locked --force
+fi
 
 # Match wasm-pack 0.14.0, which builds the other published WASM modules.
 version=117
@@ -23,14 +25,19 @@ esac
 archive="binaryen-version_${version}-${platform}.tar.gz"
 url="https://github.com/WebAssembly/binaryen/releases/download/version_${version}"
 destination="${HOME}/.local/share/truapi-wasm-tools"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-curl --fail --location --silent --show-error "$url/$archive" -o "$tmp/$archive"
-curl --fail --location --silent --show-error "$url/$archive.sha256" -o "$tmp/$archive.sha256"
-(cd "$tmp" && shasum -a 256 --check "$archive.sha256")
-mkdir -p "$destination"
-tar -xzf "$tmp/$archive" -C "$destination"
 bin="$destination/binaryen-version_${version}/bin"
+expected_version="wasm-opt version ${version} (version_${version})"
+if [[ "$("$bin/wasm-opt" --version 2>/dev/null || true)" != "$expected_version" ]]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  curl --fail --location --silent --show-error "$url/$archive" -o "$tmp/$archive"
+  curl --fail --location --silent --show-error "$url/$archive.sha256" -o "$tmp/$archive.sha256"
+  (cd "$tmp" && shasum -a 256 --check "$archive.sha256")
+  tar -xzf "$tmp/$archive" -C "$tmp"
+  mkdir -p "$destination"
+  rm -rf "$destination/binaryen-version_${version}"
+  mv "$tmp/binaryen-version_${version}" "$destination/"
+fi
 if [[ -n "${GITHUB_PATH:-}" ]]; then
   printf '%s\n' "$bin" >> "$GITHUB_PATH"
 fi

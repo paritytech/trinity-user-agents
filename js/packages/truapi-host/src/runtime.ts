@@ -66,9 +66,14 @@ const receivingWatchesCodec = Vector(ReceivingWatch);
 /** Minimal host-owned callbacks for a wallet-free service-worker receiver. */
 export interface NotificationReceiverCallbacks {
   /** Resolve current verified artifact/account state, never product message claims. */
-  receiverAuthority?(productId: string): Awaitable<ReceivingAuthority | undefined>;
+  receiverAuthority?(
+    productId: string,
+  ): Awaitable<ReceivingAuthority | undefined>;
   /** Separate receiving consent, not an OS permission or relay acknowledgement. */
-  receiverConsent?(authority: ReceivingAuthority, watches: ReceivingWatch[]): Awaitable<boolean>;
+  receiverConsent?(
+    authority: ReceivingAuthority,
+    watches: ReceivingWatch[],
+  ): Awaitable<boolean>;
   /** Wake asynchronous transport work; never await remote synchronization. */
   receiverChanged?(): Awaitable<void>;
   readReceivingState(): Awaitable<Uint8Array | undefined>;
@@ -77,22 +82,32 @@ export interface NotificationReceiverCallbacks {
 }
 
 /** Encode only the canonical domain records at the standalone WASM boundary. */
-export function createNotificationReceiverCallbacks(callbacks: NotificationReceiverCallbacks) {
+export function createNotificationReceiverCallbacks(
+  callbacks: NotificationReceiverCallbacks,
+) {
   return {
     receiverAuthority: async (productId: string) => {
       const authority = await callbacks.receiverAuthority?.(productId);
-      return authority === undefined ? undefined : ReceivingAuthority.enc(authority);
+      return authority === undefined
+        ? undefined
+        : ReceivingAuthority.enc(authority);
     },
     receiverConsent: async (authority: Uint8Array, watches: Uint8Array) => {
-      if (!callbacks.receiverConsent) throw new Error("background receiving unsupported");
-      return callbacks.receiverConsent(ReceivingAuthority.dec(authority), receivingWatchesCodec.dec(watches));
+      if (!callbacks.receiverConsent)
+        throw new Error("background receiving unsupported");
+      return callbacks.receiverConsent(
+        ReceivingAuthority.dec(authority),
+        receivingWatchesCodec.dec(watches),
+      );
     },
     receiverChanged: async () => {
-      if (!callbacks.receiverChanged) throw new Error("background receiving unsupported");
+      if (!callbacks.receiverChanged)
+        throw new Error("background receiving unsupported");
       return callbacks.receiverChanged();
     },
     readReceivingState: async () => callbacks.readReceivingState(),
-    writeReceivingState: async (bytes: Uint8Array) => callbacks.writeReceivingState(bytes),
+    writeReceivingState: async (bytes: Uint8Array) =>
+      callbacks.writeReceivingState(bytes),
   };
 }
 
@@ -103,19 +118,47 @@ export interface RawReceivingRuntime {
   receivingPending(): Promise<Uint8Array>;
   receivingSynchronized(productId: string, revision: bigint): Promise<boolean>;
   receivingIngest(
-    productId: string, revision: bigint, watchId: string,
-    actualGenesis: string, actualChannel: string, actualTopics: string[], frame: Uint8Array,
+    productId: string,
+    revision: bigint,
+    watchId: string,
+    actualGenesis: string,
+    actualChannel: string,
+    actualTopics: string[],
+    frame: Uint8Array,
   ): Promise<Uint8Array>;
   receivingIngestStatement(
-    productId: string, revision: bigint, watchId: string,
-    actualGenesis: string, statement: Uint8Array,
+    productId: string,
+    revision: bigint,
+    watchId: string,
+    actualGenesis: string,
+    statement: Uint8Array,
   ): Promise<Uint8Array>;
-  receivingPrepareDisplay(productId: string, revision: bigint, eventId: string): Promise<Uint8Array>;
-  receivingConfirmDisplay(productId: string, revision: bigint, eventId: string): Promise<void>;
+  receivingPrepareDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
+  receivingConfirmDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<void>;
   /** Clear a reservation after explicit display failure, never after an unknown outcome. */
-  receivingCancelDisplay(productId: string, revision: bigint, eventId: string): Promise<void>;
-  receivingValidateActivation(productId: string, revision: bigint, eventId: string): Promise<Uint8Array>;
-  receivingActivate(productId: string, revision: bigint, eventId: string): Promise<Uint8Array>;
+  receivingCancelDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<void>;
+  receivingValidateActivation(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
+  receivingActivate(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
   receivingRevoke(productId: string): Promise<void>;
   receivingMarkTransportChanged(productId: string): Promise<void>;
 }
@@ -124,7 +167,11 @@ export interface RawReceivingRuntime {
  * Authority bytes encode ReceivingAuthority; response is Result<latest response,HostNotificationReceivingError>.
  */
 export interface RawNotificationReceiver extends RawReceivingRuntime {
-  commandForExecution(authority: Uint8Array, action: number, payload: Uint8Array): Promise<Uint8Array>;
+  commandForExecution(
+    authority: Uint8Array,
+    action: number,
+    payload: Uint8Array,
+  ): Promise<Uint8Array>;
   free(): void;
 }
 

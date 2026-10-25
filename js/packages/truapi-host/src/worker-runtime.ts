@@ -881,7 +881,6 @@ function handleLocalIdentity(
   void operation.finally(() => identityOperations.delete(operation));
 }
 
-
 (async () => {
   try {
     wasm = await wasmModulePromise;
@@ -941,16 +940,16 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           host = {
             role: "signing",
             runtime: new SigningRuntime(
-            buildRawCallbacks(msg.capabilities),
-            msg.hostConfig,
+              buildRawCallbacks(msg.capabilities),
+              msg.hostConfig,
             ),
           };
         } else {
           host = {
             role: "pairing",
             runtime: new wasm.WasmPairingHostRuntime(
-            buildRawCallbacks(msg.capabilities),
-            msg.hostConfig,
+              buildRawCallbacks(msg.capabilities),
+              msg.hostConfig,
             ),
           };
         }
@@ -1163,8 +1162,10 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.requestId,
         "activateLocalSessionWithIdentity",
         (booted) =>
-          signingRuntime(booted, "activateLocalSessionWithIdentity")
-            .activateLocalSessionWithIdentity(secret, liteUsername),
+          signingRuntime(
+            booted,
+            "activateLocalSessionWithIdentity",
+          ).activateLocalSessionWithIdentity(secret, liteUsername),
       );
       break;
     }
