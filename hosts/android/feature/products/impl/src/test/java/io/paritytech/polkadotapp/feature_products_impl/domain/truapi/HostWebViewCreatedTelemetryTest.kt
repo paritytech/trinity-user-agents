@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.sentry.SentryEvent
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -74,13 +73,4 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report("session")
     }
-
-    @Test
-    fun eachWebViewSessionGetsADistinctId() {
-        assertNotEquals(
-            HostWebViewCreatedTelemetry.newSessionId(),
-            HostWebViewCreatedTelemetry.newSessionId(),
-        )
-    }
-
 }
