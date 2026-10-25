@@ -60,6 +60,7 @@ class RealGameReminderAlarms @Inject constructor(
         )
     }
 
+    // One pending intent per product. The hash is masked non-negative and small enough not to overflow.
     private fun VideoGameNotificationType.requestCode(): Int = when (this) {
         is VideoGameNotificationType.ProductGameStartsSoon ->
             PRODUCT_GAME_REQUEST_CODE_BASE + (productId.hashCode() and PRODUCT_GAME_REQUEST_CODE_MASK)

@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOpeningTracker
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -35,6 +36,7 @@ class VideoGameDeepLinkHandlerTest {
     private val reminder: ProductGameReminder = mock(ProductGameReminder::class.java)
     private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
     private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
+    private val openingTracker = ProductGameOpeningTracker()
 
     private val handler = VideoGameDeepLinkHandler(
         coroutineDispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
@@ -43,6 +45,7 @@ class VideoGameDeepLinkHandlerTest {
         productGameReminder = reminder,
         dotNsTldProvider = FixedTldProvider(tld),
         telemetry = telemetry,
+        openingTracker = openingTracker,
     )
 
     @Test
@@ -90,6 +93,7 @@ class VideoGameDeepLinkHandlerTest {
         val result = handle(reminderLink(game))
 
         assertTrue(result.isFailure)
+        assertTrue(openingTracker.openingProducts.value.isEmpty())
         verify(reminder, never()).cancel(game)
         verify(telemetry, never()).report(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
     }

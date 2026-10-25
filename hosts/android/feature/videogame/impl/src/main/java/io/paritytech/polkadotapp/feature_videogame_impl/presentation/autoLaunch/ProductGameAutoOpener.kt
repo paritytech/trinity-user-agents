@@ -6,10 +6,12 @@ import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOpeningTracker
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.isLiveAt
@@ -28,24 +30,26 @@ class ProductGameAutoOpener @Inject constructor(
     private val router: VideoGameRouter,
     private val timeProvider: TimeProvider,
     private val telemetry: GameReminderTelemetry,
+    private val openingTracker: ProductGameOpeningTracker,
 ) : AppInitializer {
     private val pendingGames = mutableSetOf<ScheduledProductGame>()
 
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
-        combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground -> games to foreground }
-            .mapLatest { (games, foreground) ->
-                if (!foreground) return@mapLatest
-                reportMissed(games)
-                nextLive(games)?.let { openAtStart(it) }
-            }
+        combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground(), openingTracker.openingProducts) { games, foreground, opening ->
+            Triple(games, foreground, opening.keys)
+        }.mapLatest { (games, foreground, opening) ->
+            if (!foreground) return@mapLatest
+            reportMissed(games, opening)
+            nextLive(games)?.let { openAtStart(it) }
+        }
             .launchIn(scope)
     }
 
-    private fun reportMissed(games: List<ScheduledProductGame>) {
+    private fun reportMissed(games: List<ScheduledProductGame>, opening: Set<ProductId>) {
         val now = timeProvider.now().toEpochMilliseconds()
         pendingGames.retainAll(games.toSet())
-        games.filterNot { it.isLiveAt(now) }.filter { pendingGames.remove(it) }.forEach { game ->
+        games.filterNot { it.isLiveAt(now) }.filterNot { it.product() in opening }.filter { pendingGames.remove(it) }.forEach { game ->
             telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
         }
         pendingGames += games.filter { it.isLiveAt(now) }

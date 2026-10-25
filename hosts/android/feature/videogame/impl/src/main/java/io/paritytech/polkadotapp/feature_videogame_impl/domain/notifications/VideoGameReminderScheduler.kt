@@ -16,6 +16,7 @@ class RealVideoGameReminderScheduler @Inject constructor(
     private val telemetry: GameReminderTelemetry,
 ) : VideoGameReminderScheduler {
     override fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp) {
+        // Rings at the start itself.
         if (gameStartMillis <= timeProvider.now().toEpochMilliseconds()) {
             alarms.cancel(productId)
             telemetry.report(GameReminderEvent.NotScheduled(productId, gameStartMillis, GameReminderSkipReason.START_IN_PAST))
