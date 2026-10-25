@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
@@ -18,7 +19,6 @@ import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.isProductGameLi
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -26,7 +26,7 @@ class VideoGameDeepLinkHandler @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
     private val accountRepository: AccountRepository,
     private val videoGameRouter: VideoGameRouter,
-    private val productGameReminder: RealProductGameReminder,
+    private val productGameReminder: ProductGameReminder,
     private val dotNsTldProvider: DotNsTldProvider,
     private val telemetry: GameReminderTelemetry,
 ) : DeepLinkHandler {
@@ -41,14 +41,13 @@ class VideoGameDeepLinkHandler @Inject constructor(
             val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull()
                 ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
             if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
-            val startsAtMillis = productGameReminder.scheduledFor(productId)?.startsAtMillis
+            val startsAtMillis = productGameReminder.scheduledStartFor(productId)
 
             telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
-            productGameReminder.cancel(productId)
-
             accountRepository.awaitAccountsInitialized()
 
             videoGameRouter.openGameProduct(productId)
+            productGameReminder.cancel(productId)
             telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
 
             DeeplinkProcessingOutcome.NoOp

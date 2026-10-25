@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -10,17 +8,9 @@ import org.junit.Test
 
 class GameReminderTelemetryTest {
     private val game = ProductId.fromStoredValue("game.dot")
-    private val captured = mutableListOf<SentryEvent>()
-    private val telemetry = GameReminderTelemetry(
-        timeProvider = FakeTimeProvider { NOW },
-        capture = GameReminderEventCapture { captured += it },
-    )
-
     @Test
     fun `scheduled carries the product, the start and a negative fire delay as numbers`() {
-        telemetry.report(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
-
-        val event = singleEvent()
+        val event = GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM).toSentryEvent(NOW)
         assertEquals("host.reminder.scheduled", event.message?.formatted)
         assertEquals(SentryLevel.INFO, event.level)
         assertEquals("host.telemetry", event.logger)
@@ -33,20 +23,20 @@ class GameReminderTelemetryTest {
 
     @Test
     fun `not scheduled carries the skip reason`() {
-        telemetry.report(GameReminderEvent.NotScheduled(game, START, GameReminderSkipReason.START_IN_PAST))
-
-        val event = singleEvent()
+        val event = GameReminderEvent.NotScheduled(game, START, GameReminderSkipReason.START_IN_PAST).toSentryEvent(NOW)
         assertEquals("host.reminder.not_scheduled", event.message?.formatted)
         assertEquals("start_in_past", event.getTag("reminder.skip_reason"))
     }
 
     @Test
     fun `fired carries the lateness, the delivery and whether the app was in the foreground`() {
-        telemetry.report(
-            GameReminderEvent.Fired(game, NOW - 1_500, foreground = false, stillScheduled = true, delivery = GameReminderDelivery.NOTIFICATION)
-        )
-
-        val event = singleEvent()
+        val event = GameReminderEvent.Fired(
+            game,
+            NOW - 1_500,
+            foreground = false,
+            stillScheduled = true,
+            delivery = GameReminderDelivery.NOTIFICATION,
+        ).toSentryEvent(NOW)
         assertEquals("host.reminder.fired", event.message?.formatted)
         assertEquals(1_500L, event.getExtra("reminder.delay_after_start_ms"))
         assertEquals("background", event.getTag("host.app_state"))
@@ -56,18 +46,14 @@ class GameReminderTelemetryTest {
 
     @Test
     fun `product opened carries its source`() {
-        telemetry.report(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
-
-        val event = singleEvent()
+        val event = GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM).toSentryEvent(NOW)
         assertEquals("host.reminder.product_opened", event.message?.formatted)
         assertEquals("alarm", event.getTag("reminder.open_source"))
     }
 
     @Test
     fun `an event without a known start carries no start and no fire delay`() {
-        telemetry.report(GameReminderEvent.Tapped(game, startsAtMillis = null))
-
-        val event = singleEvent()
+        val event = GameReminderEvent.Tapped(game, startsAtMillis = null).toSentryEvent(NOW)
         assertEquals("host.reminder.tapped", event.message?.formatted)
         assertNull(event.getExtra("reminder.starts_at_unix_ms"))
         assertNull(event.getExtra("reminder.delay_after_start_ms"))
@@ -75,18 +61,11 @@ class GameReminderTelemetryTest {
 
     @Test
     fun `missed and cancelled are named for what happened`() {
-        telemetry.report(GameReminderEvent.Missed(game, START))
-        telemetry.report(GameReminderEvent.Cancelled(game, START))
-
         assertEquals(
             listOf("host.reminder.missed", "host.reminder.cancelled"),
-            captured.map { it.message?.formatted },
+            listOf(GameReminderEvent.Missed(game, START), GameReminderEvent.Cancelled(game, START))
+                .map { it.toSentryEvent(NOW).message?.formatted },
         )
-    }
-
-    private fun singleEvent(): SentryEvent {
-        assertEquals(1, captured.size)
-        return captured.single()
     }
 
     private companion object {

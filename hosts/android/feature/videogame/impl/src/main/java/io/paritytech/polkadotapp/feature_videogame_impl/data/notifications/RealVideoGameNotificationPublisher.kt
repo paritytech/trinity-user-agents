@@ -17,7 +17,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 class RealVideoGameNotificationPublisher @Inject constructor(
     @ApplicationContext context: Context,
     intentProvider: ActivityIntentProvider,
-    private val videoGameDeeplinkMapper: VideoGameDeeplinkMapper,
+    private val videoGameDeeplinkMapper: VideoGameDeeplinkMapper
 ) : NotificationPublisher(context, intentProvider), VideoGameNotificationPublisher {
     private companion object {
         const val PRODUCT_GAME_NOTIFICATION_ID = 129

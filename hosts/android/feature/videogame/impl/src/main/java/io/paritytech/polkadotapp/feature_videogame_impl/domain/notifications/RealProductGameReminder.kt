@@ -50,6 +50,8 @@ class RealProductGameReminder @Inject constructor(
     fun scheduledFor(productId: ProductId): ScheduledProductGame? =
         currentlyScheduled().firstOrNull { it.productId == productId.value }
 
+    override fun scheduledStartFor(productId: ProductId): Long? = scheduledFor(productId)?.startsAtMillis
+
     // An alarm needs both notifications and exact alarms; without exact alarms a notification still reminds.
     override suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit> = requestLock.withLock {
         val leadMillis = startsAtMillis - now()
@@ -63,13 +65,18 @@ class RealProductGameReminder @Inject constructor(
     }
 
     override suspend fun cancel(productId: ProductId) {
-        requestLock.withLock {
-            lock.withLock {
-                scheduledFor(productId)?.let { game ->
-                    remove(game)
-                    telemetry.report(GameReminderEvent.Cancelled(productId, game.startsAtMillis))
-                }
-            }
+        cancelHeld(productId)
+    }
+
+    override suspend fun cancelByProduct(productId: ProductId) {
+        cancelHeld(productId)?.let { game ->
+            telemetry.report(GameReminderEvent.Cancelled(productId, game.startsAtMillis))
+        }
+    }
+
+    private suspend fun cancelHeld(productId: ProductId): ScheduledProductGame? = requestLock.withLock {
+        lock.withLock {
+            scheduledFor(productId)?.also(::remove)
         }
     }
 
@@ -82,8 +89,9 @@ class RealProductGameReminder @Inject constructor(
         }
     }
 
-    suspend fun clear(game: ScheduledProductGame) = lock.withLock {
-        if (game in currentlyScheduled()) remove(game)
+    // Only if [game] is still scheduled, so a schedule made meanwhile survives.
+    suspend fun clear(game: ScheduledProductGame) {
+        lock.withLock { if (game in currentlyScheduled()) remove(game) }
     }
 
     private fun add(game: ScheduledProductGame) {

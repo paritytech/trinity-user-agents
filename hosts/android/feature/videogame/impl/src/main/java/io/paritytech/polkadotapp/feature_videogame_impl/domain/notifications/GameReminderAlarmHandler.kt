@@ -12,13 +12,13 @@ class GameReminderAlarmHandler @Inject constructor(
     private val productGameReminder: RealProductGameReminder,
     private val telemetry: GameReminderTelemetry,
 ) {
-    fun onAlarm(productId: ProductId, startsAtMillis: Long?, ringAlarm: Boolean) {
+    fun onAlarm(productId: ProductId, ringAlarm: Boolean) {
         val foreground = appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND
         val game = productGameReminder.scheduledFor(productId)
         telemetry.report(
             GameReminderEvent.Fired(
                 productId,
-                startsAtMillis ?: game?.startsAtMillis,
+                game?.startsAtMillis,
                 foreground = foreground,
                 stillScheduled = game != null,
                 delivery = if (ringAlarm) GameReminderDelivery.ALARM else GameReminderDelivery.NOTIFICATION,

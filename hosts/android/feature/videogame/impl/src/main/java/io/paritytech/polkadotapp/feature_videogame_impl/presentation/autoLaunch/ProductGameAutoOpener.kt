@@ -29,14 +29,13 @@ class ProductGameAutoOpener @Inject constructor(
     private val timeProvider: TimeProvider,
     private val telemetry: GameReminderTelemetry,
 ) : AppInitializer {
-    private val reportedMissedGames = mutableSetOf<ScheduledProductGame>()
+    private val pendingGames = mutableSetOf<ScheduledProductGame>()
 
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
-        combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground ->
-            games.takeIf { foreground }.orEmpty()
-        }
-            .mapLatest { games ->
+        combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground -> games to foreground }
+            .mapLatest { (games, foreground) ->
+                if (!foreground) return@mapLatest
                 reportMissed(games)
                 nextLive(games)?.let { openAtStart(it) }
             }
@@ -45,10 +44,11 @@ class ProductGameAutoOpener @Inject constructor(
 
     private fun reportMissed(games: List<ScheduledProductGame>) {
         val now = timeProvider.now().toEpochMilliseconds()
-        games.filterNot { it.isLiveAt(now) || it in reportedMissedGames }.forEach { game ->
+        pendingGames.retainAll(games.toSet())
+        games.filterNot { it.isLiveAt(now) }.filter { pendingGames.remove(it) }.forEach { game ->
             telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
-            reportedMissedGames += game
         }
+        pendingGames += games.filter { it.isLiveAt(now) }
     }
 
     private fun nextLive(games: List<ScheduledProductGame>): ScheduledProductGame? {

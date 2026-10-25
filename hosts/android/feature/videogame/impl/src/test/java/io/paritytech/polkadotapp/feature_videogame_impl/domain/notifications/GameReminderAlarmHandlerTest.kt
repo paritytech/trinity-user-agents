@@ -27,7 +27,7 @@ class GameReminderAlarmHandlerTest {
         withAppIn(AppLifecycleState.BACKGROUND)
         withScheduledGame()
 
-        handler.onAlarm(game, START, ringAlarm = true)
+        handler.onAlarm(game, ringAlarm = true)
 
         verifyReported(
             GameReminderEvent.Fired(game, START, foreground = false, stillScheduled = true, delivery = GameReminderDelivery.ALARM)
@@ -40,7 +40,7 @@ class GameReminderAlarmHandlerTest {
         withAppIn(AppLifecycleState.FOREGROUND)
         withScheduledGame()
 
-        handler.onAlarm(game, START, ringAlarm = false)
+        handler.onAlarm(game, ringAlarm = false)
 
         verifyReported(
             GameReminderEvent.Fired(game, START, foreground = true, stillScheduled = true, delivery = GameReminderDelivery.NOTIFICATION)
@@ -49,13 +49,13 @@ class GameReminderAlarmHandlerTest {
     }
 
     @Test
-    fun `an alarm for a game no longer held keeps the start from the intent and posts nothing`() {
+    fun `an alarm for a game no longer held has no start and posts nothing`() {
         withAppIn(AppLifecycleState.BACKGROUND)
 
-        handler.onAlarm(game, START, ringAlarm = true)
+        handler.onAlarm(game, ringAlarm = true)
 
         verifyReported(
-            GameReminderEvent.Fired(game, START, foreground = false, stillScheduled = false, delivery = GameReminderDelivery.ALARM)
+            GameReminderEvent.Fired(game, null, foreground = false, stillScheduled = false, delivery = GameReminderDelivery.ALARM)
         )
         verifyNothingPosted()
     }

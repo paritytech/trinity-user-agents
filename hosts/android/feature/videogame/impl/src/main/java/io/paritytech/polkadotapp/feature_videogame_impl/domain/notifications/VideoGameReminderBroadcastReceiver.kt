@@ -13,7 +13,6 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_POST_NOTIFICATION = "io.paritytech.polkadotapp.feature_videogame.domain.notifications.POST_NOTIFICATION"
         const val EXTRA_NOTIFICATION_TYPE = "notification_type"
-        const val EXTRA_GAME_STARTS_AT = "game_starts_at"
     }
 
     @Inject
@@ -23,10 +22,8 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
         val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)
         if (type !is VideoGameNotificationType.ProductGameStartsSoon) return
         val productId = ProductId.fromStoredValue(type.productId)
-        val startsAtMillis = intent.getLongExtra(EXTRA_GAME_STARTS_AT, -1).takeIf { it >= 0 }
-
         if (intent.action == ACTION_POST_NOTIFICATION) {
-            alarmHandler.onAlarm(productId, startsAtMillis, ringAlarm = context.canScheduleExactAlarms())
+            alarmHandler.onAlarm(productId, ringAlarm = context.canScheduleExactAlarms())
         }
     }
 }

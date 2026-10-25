@@ -30,7 +30,7 @@ class RealGameReminderAlarms @Inject constructor(
 
     @SuppressLint("MissingPermission")
     override fun set(productId: ProductId, atMillis: Timestamp, exact: Boolean) {
-        val pendingIntent = createPendingIntent(productId, atMillis)
+        val pendingIntent = createPendingIntent(productId)
 
         alarmManager.cancel(pendingIntent)
 
@@ -42,15 +42,14 @@ class RealGameReminderAlarms @Inject constructor(
     }
 
     override fun cancel(productId: ProductId) {
-        alarmManager.cancel(createPendingIntent(productId, gameStartMillis = null))
+        alarmManager.cancel(createPendingIntent(productId))
     }
 
-    private fun createPendingIntent(productId: ProductId, gameStartMillis: Timestamp?): PendingIntent {
+    private fun createPendingIntent(productId: ProductId): PendingIntent {
         val notificationType = VideoGameNotificationType.ProductGameStartsSoon(productId.value)
         val intent = Intent(contextManager.applicationContext, VideoGameReminderBroadcastReceiver::class.java).apply {
             action = VideoGameReminderBroadcastReceiver.ACTION_POST_NOTIFICATION
             putExtra(VideoGameReminderBroadcastReceiver.EXTRA_NOTIFICATION_TYPE, notificationType)
-            gameStartMillis?.let { putExtra(VideoGameReminderBroadcastReceiver.EXTRA_GAME_STARTS_AT, it) }
         }
 
         return PendingIntent.getBroadcast(
