@@ -19,7 +19,6 @@ import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.isProductGameLi
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOpeningTracker
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -30,7 +29,6 @@ class VideoGameDeepLinkHandler @Inject constructor(
     private val productGameReminder: ProductGameReminder,
     private val dotNsTldProvider: DotNsTldProvider,
     private val telemetry: GameReminderTelemetry,
-    private val openingTracker: ProductGameOpeningTracker,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean =
         data.scheme == DeepLinkHandler.APP_SCHEME && data.host == WEEKLY_GAME_HOST && data.isProductGameLink()
@@ -45,14 +43,12 @@ class VideoGameDeepLinkHandler @Inject constructor(
             if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
             val startsAtMillis = productGameReminder.scheduledStartFor(productId)
 
-            openingTracker.track(productId) {
-                telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
-                accountRepository.awaitAccountsInitialized()
+            telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
+            accountRepository.awaitAccountsInitialized()
 
-                videoGameRouter.openGameProduct(productId)
-                productGameReminder.cancel(productId)
-                telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
-            }
+            videoGameRouter.openGameProduct(productId)
+            productGameReminder.cancel(productId)
+            telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
 
             DeeplinkProcessingOutcome.NoOp
         }

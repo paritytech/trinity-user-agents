@@ -41,8 +41,6 @@ sealed interface GameReminderEvent {
         val source: GameReminderOpenSource,
     ) : GameReminderEvent
 
-    data class Missed(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
-
     data class Cancelled(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
 }
 
@@ -58,7 +56,6 @@ enum class GameReminderSkipReason(val value: String) {
 }
 
 enum class GameReminderOpenSource(val value: String) {
-    AUTO_OPEN("auto_open"),
     ALARM("alarm"),
 }
 
@@ -77,7 +74,6 @@ private fun GameReminderEvent.eventName() = when (this) {
     is GameReminderEvent.Fired -> "host.reminder.fired"
     is GameReminderEvent.Tapped -> "host.reminder.tapped"
     is GameReminderEvent.ProductOpened -> "host.reminder.product_opened"
-    is GameReminderEvent.Missed -> "host.reminder.missed"
     is GameReminderEvent.Cancelled -> "host.reminder.cancelled"
 }
 
@@ -102,7 +98,6 @@ internal fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().ap
         is GameReminderEvent.ProductOpened -> setTag("reminder.open_source", event.source.value)
         is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", event.reason.value)
         is GameReminderEvent.Tapped,
-        is GameReminderEvent.Missed,
         is GameReminderEvent.Cancelled -> Unit
     }
 }

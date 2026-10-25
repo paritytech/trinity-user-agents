@@ -60,12 +60,9 @@ class GameReminderTelemetryTest {
     }
 
     @Test
-    fun `missed and cancelled are named for what happened`() {
-        assertEquals(
-            listOf("host.reminder.missed", "host.reminder.cancelled"),
-            listOf(GameReminderEvent.Missed(game, START), GameReminderEvent.Cancelled(game, START))
-                .map { it.toSentryEvent(NOW).message?.formatted },
-        )
+    fun `cancelled is named for what happened`() {
+        val event = GameReminderEvent.Cancelled(game, START).toSentryEvent(NOW)
+        assertEquals("host.reminder.cancelled", event.message?.formatted)
     }
 
     private companion object {

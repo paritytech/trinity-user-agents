@@ -5,14 +5,9 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOpeningTracker
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +18,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
-import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -31,8 +25,6 @@ class ProductGameAutoOpenerTest {
     private val reminder: RealProductGameReminder = mock()
     private val router: VideoGameRouter = mock()
     private val lifecycle: AppLifecycleObserver = mock()
-    private val telemetry: GameReminderTelemetry = mock()
-    private val openingTracker = ProductGameOpeningTracker()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
     private val game = ProductId.fromStoredValue("game.dot")
@@ -56,16 +48,6 @@ class ProductGameAutoOpenerTest {
     }
 
     @Test
-    fun `reports the auto-open with the game's start`() = runTest {
-        startOpener(scheduledGame)
-
-        advanceTimeBy(scheduledGame.startsAtMillis)
-        runCurrent()
-
-        verifyAutoOpenReportedFor(scheduledGame)
-    }
-
-    @Test
     fun `opens a game whose start passed within the grace`() = runTest {
         advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
 
@@ -84,95 +66,6 @@ class ProductGameAutoOpenerTest {
     }
 
     @Test
-    fun `reports an unopened pending game as missed once after its grace passes in the background`() = runTest {
-        startOpener(scheduledGame)
-        lifecycleState.value = AppLifecycleState.BACKGROUND
-        runCurrent()
-        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
-        lifecycleState.value = AppLifecycleState.FOREGROUND
-        runCurrent()
-
-        verify(reminder, never()).clear(scheduledGame)
-        verifyMissedReportedOnceFor(scheduledGame)
-    }
-
-    @Test
-    fun `does not report an already stale game as missed on cold start`() = runTest {
-        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
-
-        startOpener(scheduledGame)
-        lifecycleState.value = AppLifecycleState.BACKGROUND
-        runCurrent()
-        lifecycleState.value = AppLifecycleState.FOREGROUND
-        runCurrent()
-
-        verifyNoMissedReportFor(scheduledGame)
-    }
-
-    @Test
-    fun `cancelling a pending reminder before its start prevents the automatic open`() = runTest {
-        val scheduled = MutableStateFlow(listOf(scheduledGame))
-        whenever(reminder.scheduled).thenReturn(scheduled)
-        whenever(lifecycle.subscribe()).thenReturn(lifecycleState)
-        val opener = ProductGameAutoOpener(
-            reminder,
-            lifecycle,
-            router,
-            FakeTimeProvider { testScheduler.currentTime },
-            telemetry,
-            openingTracker,
-        )
-        with(ComputationalScope(backgroundScope)) { opener.initialize() }
-        runCurrent()
-
-        advanceTimeBy(scheduledGame.startsAtMillis - 1)
-        scheduled.value = emptyList()
-        runCurrent()
-        advanceTimeBy(1)
-        runCurrent()
-
-        verify(router, never()).openGameProduct(game)
-    }
-
-    @Test
-    fun `does not report a stale game as missed while its notification tap is opening it`() = runTest {
-        val scheduled = MutableStateFlow(listOf(scheduledGame))
-        lifecycleState.value = AppLifecycleState.BACKGROUND
-        whenever(reminder.scheduled).thenReturn(scheduled)
-        whenever(lifecycle.subscribe()).thenReturn(lifecycleState)
-        val opener = ProductGameAutoOpener(
-            reminder,
-            lifecycle,
-            router,
-            FakeTimeProvider { testScheduler.currentTime },
-            telemetry,
-            openingTracker,
-        )
-        with(ComputationalScope(backgroundScope)) { opener.initialize() }
-        runCurrent()
-        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
-
-        openingTracker.track(game) {
-            lifecycleState.value = AppLifecycleState.FOREGROUND
-            runCurrent()
-            verifyNoMissedReportFor(scheduledGame)
-            scheduled.value = emptyList()
-            runCurrent()
-        }
-
-        verifyNoMissedReportFor(scheduledGame)
-    }
-
-    @Test
-    fun `a game within the grace is not missed`() = runTest {
-        advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
-
-        startOpener(scheduledGame)
-
-        verifyNoMissedReportFor(scheduledGame)
-    }
-
-    @Test
     fun `leaving the foreground mid-countdown neither opens nor clears the game`() = runTest {
         startOpener(scheduledGame)
 
@@ -184,42 +77,14 @@ class ProductGameAutoOpenerTest {
 
         verify(router, never()).openGameProduct(game)
         verify(reminder, never()).clear(scheduledGame)
-        verifyNothingReported()
     }
 
     private fun TestScope.startOpener(vararg games: ScheduledProductGame) {
         whenever(reminder.scheduled).thenReturn(MutableStateFlow(games.toList()))
         whenever(lifecycle.subscribe()).thenReturn(lifecycleState)
-        val opener = ProductGameAutoOpener(
-            reminder,
-            lifecycle,
-            router,
-            FakeTimeProvider { testScheduler.currentTime },
-            telemetry,
-            openingTracker,
-        )
+        val opener = ProductGameAutoOpener(reminder, lifecycle, router, FakeTimeProvider { testScheduler.currentTime })
 
         with(ComputationalScope(backgroundScope)) { opener.initialize() }
         runCurrent()
-    }
-
-    private fun verifyAutoOpenReportedFor(game: ScheduledProductGame) {
-        verify(telemetry).report(
-            GameReminderEvent.ProductOpened(ProductId.fromStoredValue(game.productId), game.startsAtMillis, GameReminderOpenSource.AUTO_OPEN)
-        )
-    }
-
-    private fun verifyMissedReportedOnceFor(game: ScheduledProductGame) {
-        verify(telemetry, times(1)).report(
-            GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis)
-        )
-    }
-
-    private fun verifyNoMissedReportFor(game: ScheduledProductGame) {
-        verify(telemetry, never()).report(GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis))
-    }
-
-    private fun verifyNothingReported() {
-        verify(telemetry, never()).report(any())
     }
 }

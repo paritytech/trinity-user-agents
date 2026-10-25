@@ -23,7 +23,6 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
         if (type !is VideoGameNotificationType.ProductGameStartsSoon) return
         val productId = ProductId.fromStoredValue(type.productId)
         if (intent.action == ACTION_POST_NOTIFICATION) {
-            // In the foreground the pill and auto-open take over. An inexact alarm still reports when it eventually fires.
             alarmHandler.onAlarm(productId, ringAlarm = context.canScheduleExactAlarms())
         }
     }

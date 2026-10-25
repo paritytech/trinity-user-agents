@@ -391,8 +391,7 @@ roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures. Android hosts with Sentry enabled report the reminder lifecycle through
-`host.reminder.*` Sentry events. A notification open suppresses missed reporting while
-navigation is in flight, without changing reminder delivery or cleanup.
+`host.reminder.*` Sentry events without changing reminder delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer

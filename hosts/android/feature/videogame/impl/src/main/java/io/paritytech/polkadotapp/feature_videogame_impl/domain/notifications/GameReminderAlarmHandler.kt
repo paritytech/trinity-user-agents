@@ -24,6 +24,7 @@ class GameReminderAlarmHandler @Inject constructor(
                 delivery = if (ringAlarm) GameReminderDelivery.ALARM else GameReminderDelivery.NOTIFICATION,
             )
         )
+        // An inexact alarm may fire late; a game still scheduled wants its notification then.
         if (foreground || game == null) return
         notificationPublisher.publishProductGameStartsSoonNotification(game.product(), ringAlarm = ringAlarm)
     }
