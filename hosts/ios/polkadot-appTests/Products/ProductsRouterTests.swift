@@ -50,30 +50,10 @@ struct ProductsRouterTests {
     }
 
     @Test
-    func anAnchorOffScreenCannotPresentWithoutAFallback() {
+    func anAnchorOffScreenCannotPresent() {
         let anchor = StubView()
         let router = ProductsRouter()
         router.setPresentationView(anchor)
-
-        #expect(!router.present(view: StubView()))
-    }
-
-    @Test
-    func anAnchorOffScreenPresentsOnTheFallback() throws {
-        let fallback = StubView()
-        let window = try showing(fallback)
-        let router = ProductsRouter(fallback: { fallback })
-        router.setPresentationView(StubView())
-        let presented = StubView()
-
-        #expect(router.present(view: presented))
-        #expect(fallback.presentedViewController === presented)
-        withExtendedLifetime(window) {}
-    }
-
-    @Test
-    func aFallbackWithNothingToOfferCannotPresent() {
-        let router = ProductsRouter(fallback: { nil })
 
         #expect(!router.present(view: StubView()))
     }

@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 import Products
 import UIKitExt
 
@@ -44,10 +43,7 @@ extension ProductRoutersFacade {
     /// Worker context: navigation opens the target product page in the main tab
     /// bar (or an external URL), mirroring the SPA context.
     static func worker() -> ProductRoutersFacade {
-        ProductRoutersFacade(
-            productsRouter: ProductsRouter(fallback: topScreenWhileActive),
-            navigationRouter: ProductsNavigationRouter()
-        )
+        make(navigationRouter: ProductsNavigationRouter())
     }
 
     /// SSO context: prompts anchor to the view the sign-in host receives via
@@ -65,13 +61,6 @@ extension ProductRoutersFacade {
 }
 
 private extension ProductRoutersFacade {
-    @MainActor
-    static func topScreenWhileActive() -> UIViewController? {
-        guard UIApplication.shared.applicationState == .active else { return nil }
-
-        return UIWindow.keyWindow?.topmostViewController
-    }
-
     static func make(navigationRouter: ProductsNavigationRouting) -> ProductRoutersFacade {
         ProductRoutersFacade(
             productsRouter: ProductsRouter(),

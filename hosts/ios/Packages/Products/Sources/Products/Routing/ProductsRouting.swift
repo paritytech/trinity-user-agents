@@ -18,14 +18,9 @@ public protocol ProductsRouting: AnyObject {
 /// extensions co-located with each flow's view factory.
 @MainActor
 public final class ProductsRouter: ProductsRouting {
-    public typealias FallbackPresenter = @MainActor () -> UIViewController?
-
     public private(set) weak var presentationView: ControllerBackedProtocol?
-    private let fallback: FallbackPresenter?
 
-    public nonisolated init(fallback: FallbackPresenter? = nil) {
-        self.fallback = fallback
-    }
+    public nonisolated init() {}
 
     public func setPresentationView(_ view: ControllerBackedProtocol) {
         presentationView = view
@@ -37,20 +32,11 @@ public final class ProductsRouter: ProductsRouting {
 
     @discardableResult
     public func present(view: ControllerBackedProtocol) -> Bool {
-        guard let presenter else {
+        guard let anchor = presentationView?.controller, anchor.viewIfLoaded?.window != nil else {
             return false
         }
 
-        presenter.topmostPresented.present(view.controller, animated: true)
+        anchor.topmostPresented.present(view.controller, animated: true)
         return true
-    }
-}
-
-private extension ProductsRouter {
-    var presenter: UIViewController? {
-        if let anchor = presentationView?.controller, anchor.viewIfLoaded?.window != nil {
-            return anchor
-        }
-        return fallback?()
     }
 }

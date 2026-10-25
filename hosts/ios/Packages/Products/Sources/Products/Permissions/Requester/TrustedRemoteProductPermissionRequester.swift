@@ -59,8 +59,16 @@ private extension TrustedRemoteProductPermissionRequester {
     /// hand over the camera on the strength of a network grant. An empty batch
     /// asks for nothing and is not something to grant.
     func grantsWithoutPrompting(productId: String, permissions: [ProductPermission]) -> Bool {
-        guard !permissions.isEmpty, permissions.allSatisfy(\.isRemoteAccess) else { return false }
+        guard !permissions.isEmpty, permissions.allSatisfy(\.isGrantedToTrustedProducts) else { return false }
 
         return isTrustedForRemoteAccess(productId)
+    }
+}
+
+private extension ProductPermission {
+    var isGrantedToTrustedProducts: Bool {
+        if case .deviceCapability = self { return true }
+
+        return isRemoteAccess
     }
 }

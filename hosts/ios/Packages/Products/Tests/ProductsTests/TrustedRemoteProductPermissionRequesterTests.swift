@@ -42,12 +42,23 @@ struct TrustedRemoteProductPermissionRequesterTests {
         }
     }
 
+    @Test("A trusted product gets device capabilities without reaching the user")
+    func trustedProductSkipsDevicePrompts() async throws {
+        for capability in [DeviceCapabilityType.notifications, .camera] {
+            let (sut, wrapped) = makeSUT()
+
+            let decision = try await sut.prompt(productId: trusted, permission: .deviceCapability(capability))
+
+            #expect(decision == .allowAlways)
+            #expect(wrapped.promptCalls.isEmpty, "\(capability) must not reach the user")
+        }
+    }
+
     /// The whole point of the narrower wrapper: trust for outbound access is not
-    /// trust for the camera, another product's account, or the user's identity.
-    @Test("A trusted product still prompts for everything that is not remote access")
+    /// trust for another product's account or the user's identity.
+    @Test("A trusted product still prompts for everything that is not remote or device access")
     func trustedProductStillPromptsForTheRest() async throws {
         for permission: ProductPermission in [
-            .deviceCapability(.camera),
             .accountAccess(targetProductId: "other.dot"),
             .balanceAccess,
             .userIdentityAccess
@@ -96,7 +107,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
 
         let decision = try await sut.promptBatched(
             productId: trusted,
-            permissions: [.networkAccess(domain: "example.com"), .deviceCapability(.camera)]
+            permissions: [.networkAccess(domain: "example.com"), .accountAccess(targetProductId: "other.dot")]
         )
 
         #expect(decision == .deny)
