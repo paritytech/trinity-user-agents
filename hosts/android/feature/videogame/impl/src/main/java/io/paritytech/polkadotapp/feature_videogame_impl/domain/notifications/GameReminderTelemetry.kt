@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_videogame_impl.data.notifications
+package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -11,8 +11,6 @@ import io.sentry.SentryLevel
 import io.sentry.protocol.Message
 import javax.inject.Inject
 
-// Names and fields match the iOS host's host.reminder.* events. The alarm rings at the game's start, so the
-// start is also the scheduled fire time.
 sealed interface GameReminderEvent {
     val productId: ProductId
     val startsAtMillis: Long?
@@ -29,8 +27,6 @@ sealed interface GameReminderEvent {
         val reason: GameReminderSkipReason,
     ) : GameReminderEvent
 
-    data class ExactAlarmDenied(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
-
     data class Fired(
         override val productId: ProductId,
         override val startsAtMillis: Long?,
@@ -38,8 +34,6 @@ sealed interface GameReminderEvent {
         val stillScheduled: Boolean,
         val delivery: GameReminderDelivery,
     ) : GameReminderEvent
-
-    data class Dismissed(override val productId: ProductId, override val startsAtMillis: Long?) : GameReminderEvent
 
     data class Tapped(override val productId: ProductId, override val startsAtMillis: Long?) : GameReminderEvent
 
@@ -54,7 +48,6 @@ sealed interface GameReminderEvent {
     data class Cancelled(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
 }
 
-// An alarm rings only with exact alarms allowed; otherwise the reminder is a plain notification.
 enum class GameReminderDelivery(val value: String) {
     ALARM("alarm"),
     NOTIFICATION("notification"),
@@ -71,42 +64,32 @@ enum class GameReminderOpenSource(val value: String) {
     ALARM("alarm"),
 }
 
-class GameReminderTelemetry private constructor(
-    private val enabled: () -> Boolean,
-    private val nowMillis: () -> Long,
-    private val capture: (SentryEvent) -> Unit,
-) {
-    @Inject
-    constructor(timeProvider: TimeProvider) : this(
-        enabled = { FeatureOption.HOST_TELEMETRY.isEnabled },
-        nowMillis = { timeProvider.now().toEpochMilliseconds() },
-        capture = { Sentry.captureEvent(it) },
-    )
+fun interface GameReminderEventCapture {
+    fun capture(event: SentryEvent)
+}
 
-    val isEnabled: Boolean get() = enabled()
+class SentryGameReminderEventCapture @Inject constructor() : GameReminderEventCapture {
+    override fun capture(event: SentryEvent) {
+        if (!FeatureOption.HOST_TELEMETRY.isEnabled) return
 
-    fun report(event: GameReminderEvent) {
-        if (!enabled()) return
-
-        runCatching { capture(event.toSentryEvent(nowMillis())) }
-            .logFailure("Failed to capture game reminder event")
+        Sentry.captureEvent(event)
     }
+}
 
-    companion object {
-        internal fun createForTest(
-            enabled: () -> Boolean,
-            nowMillis: () -> Long,
-            capture: (SentryEvent) -> Unit,
-        ) = GameReminderTelemetry(enabled, nowMillis, capture)
+class GameReminderTelemetry @Inject constructor(
+    private val timeProvider: TimeProvider,
+    private val capture: GameReminderEventCapture,
+) {
+    fun report(event: GameReminderEvent) {
+        runCatching { capture.capture(event.toSentryEvent(timeProvider.now().toEpochMilliseconds())) }
+            .logFailure("Failed to capture game reminder event")
     }
 }
 
 private fun GameReminderEvent.eventName() = when (this) {
     is GameReminderEvent.Scheduled -> "host.reminder.scheduled"
     is GameReminderEvent.NotScheduled -> "host.reminder.not_scheduled"
-    is GameReminderEvent.ExactAlarmDenied -> "host.reminder.exact_alarm_denied"
     is GameReminderEvent.Fired -> "host.reminder.fired"
-    is GameReminderEvent.Dismissed -> "host.reminder.dismissed"
     is GameReminderEvent.Tapped -> "host.reminder.tapped"
     is GameReminderEvent.ProductOpened -> "host.reminder.product_opened"
     is GameReminderEvent.Missed -> "host.reminder.missed"
@@ -122,7 +105,6 @@ private fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().app
     setTag("reminder.product_id", event.productId.value)
     event.startsAtMillis?.let { startsAt ->
         setExtra("reminder.starts_at_unix_ms", startsAt)
-        // Wall clock: negative while the alarm is still ahead, the lateness once it has fired.
         setExtra("reminder.delay_after_start_ms", nowMillis - startsAt)
     }
     when (event) {
@@ -134,8 +116,6 @@ private fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().app
         }
         is GameReminderEvent.ProductOpened -> setTag("reminder.open_source", event.source.value)
         is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", event.reason.value)
-        is GameReminderEvent.ExactAlarmDenied,
-        is GameReminderEvent.Dismissed,
         is GameReminderEvent.Tapped,
         is GameReminderEvent.Missed,
         is GameReminderEvent.Cancelled -> Unit

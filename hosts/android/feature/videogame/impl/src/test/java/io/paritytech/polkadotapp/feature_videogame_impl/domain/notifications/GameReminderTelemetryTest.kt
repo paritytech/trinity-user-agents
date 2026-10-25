@@ -1,23 +1,19 @@
-package io.paritytech.polkadotapp.feature_videogame_impl.data.notifications
+package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameReminderTelemetryTest {
     private val game = ProductId.fromStoredValue("game.dot")
     private val captured = mutableListOf<SentryEvent>()
-    private var enabled = true
-
-    private val telemetry = GameReminderTelemetry.createForTest(
-        enabled = { enabled },
-        nowMillis = { NOW },
-        capture = { captured += it },
+    private val telemetry = GameReminderTelemetry(
+        timeProvider = FakeTimeProvider { NOW },
+        capture = GameReminderEventCapture { captured += it },
     )
 
     @Test
@@ -42,13 +38,6 @@ class GameReminderTelemetryTest {
         val event = singleEvent()
         assertEquals("host.reminder.not_scheduled", event.message?.formatted)
         assertEquals("start_in_past", event.getTag("reminder.skip_reason"))
-    }
-
-    @Test
-    fun `exact alarm denied is its own event`() {
-        telemetry.report(GameReminderEvent.ExactAlarmDenied(game, START))
-
-        assertEquals("host.reminder.exact_alarm_denied", singleEvent().message?.formatted)
     }
 
     @Test
@@ -85,25 +74,14 @@ class GameReminderTelemetryTest {
     }
 
     @Test
-    fun `dismissed, missed and cancelled are named for what happened`() {
-        telemetry.report(GameReminderEvent.Dismissed(game, START))
+    fun `missed and cancelled are named for what happened`() {
         telemetry.report(GameReminderEvent.Missed(game, START))
         telemetry.report(GameReminderEvent.Cancelled(game, START))
 
         assertEquals(
-            listOf("host.reminder.dismissed", "host.reminder.missed", "host.reminder.cancelled"),
+            listOf("host.reminder.missed", "host.reminder.cancelled"),
             captured.map { it.message?.formatted },
         )
-    }
-
-    @Test
-    fun `captures nothing when host telemetry is off`() {
-        enabled = false
-
-        telemetry.report(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
-
-        assertTrue(captured.isEmpty())
-        assertFalse(telemetry.isEnabled)
     }
 
     private fun singleEvent(): SentryEvent {

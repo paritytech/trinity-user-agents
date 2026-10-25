@@ -1,10 +1,6 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderDelivery
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -33,18 +29,16 @@ class RealVideoGameReminderSchedulerTest {
 
         verify(alarms).set(game, START, exact = true)
         verifyReported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
-        verifyNotReported(GameReminderEvent.ExactAlarmDenied(game, START))
     }
 
     @Test
-    fun `without exact alarms the reminder is scheduled as a notification and the denial is reported`() {
+    fun `without exact alarms the reminder is reported as scheduled for notification delivery`() {
         withExactAlarms(allowed = false)
 
         scheduler.scheduleProductGameStart(game, START)
 
         verify(alarms).set(game, START, exact = false)
         verifyReported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.NOTIFICATION))
-        verifyReported(GameReminderEvent.ExactAlarmDenied(game, START))
     }
 
     @Test

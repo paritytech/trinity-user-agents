@@ -11,30 +11,22 @@ import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.any as mockitoAny
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify as mockitoVerify
 import kotlin.time.Duration.Companion.hours
 
 class RealProductGameReminderTest {
     private val scheduler: VideoGameReminderScheduler = mockk(relaxUnitFun = true)
     private val publisher: VideoGameNotificationPublisher = mockk(relaxUnitFun = true)
     private val calendar: ProductGameCalendar = mockk(relaxUnitFun = true)
-    private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
+    private val telemetry: GameReminderTelemetry = mockk(relaxUnitFun = true)
 
     private var notificationsAllowed = false
     private var calendarAllowed = false
@@ -251,7 +243,9 @@ class RealProductGameReminderTest {
         withOsAllowing(notifications = true, calendar = false)
         reminder.schedule(game, START)
 
-        assertTrue(reminder.clear(ScheduledProductGame(game.value, START)))
+        reminder.clear(ScheduledProductGame(game.value, START))
+
+        assertTrue(reminder.currentlyScheduled().isEmpty())
         verifyNothingReported()
     }
 
@@ -262,7 +256,8 @@ class RealProductGameReminderTest {
         val opened = ScheduledProductGame(game.value, START)
         reminder.schedule(game, START + 1)
 
-        assertFalse(reminder.clear(opened))
+        reminder.clear(opened)
+
         assertEquals(listOf(ScheduledProductGame(game.value, START + 1)), reminder.currentlyScheduled())
     }
 
@@ -296,11 +291,11 @@ class RealProductGameReminderTest {
         CompletableDeferred<Boolean>().also { pendingNotificationsAnswer = it }
 
     private fun verifyReported(event: GameReminderEvent) {
-        mockitoVerify(telemetry).report(event)
+        verify { telemetry.report(event) }
     }
 
     private fun verifyNothingReported() {
-        mockitoVerify(telemetry, never()).report(mockitoAny())
+        verify(exactly = 0) { telemetry.report(any()) }
     }
 
     private fun assertSuccess(result: Result<*>) {

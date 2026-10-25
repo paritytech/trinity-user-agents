@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import javax.inject.Inject
 
-// The AlarmManager side of the reminder, apart so the scheduler's decisions run in unit tests.
 interface GameReminderAlarms {
     fun canRingExactly(): Boolean
     fun set(productId: ProductId, atMillis: Timestamp, exact: Boolean)
@@ -62,7 +61,6 @@ class RealGameReminderAlarms @Inject constructor(
         )
     }
 
-    // One pending intent per product. The hash is masked non-negative and small enough not to overflow.
     private fun VideoGameNotificationType.requestCode(): Int = when (this) {
         is VideoGameNotificationType.ProductGameStartsSoon ->
             PRODUCT_GAME_REQUEST_CODE_BASE + (productId.hashCode() and PRODUCT_GAME_REQUEST_CODE_MASK)

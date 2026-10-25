@@ -4,9 +4,6 @@ import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
@@ -85,9 +82,8 @@ class RealProductGameReminder @Inject constructor(
         }
     }
 
-    // Only if [game] is still scheduled, so a schedule made meanwhile survives. True when it removed [game].
-    suspend fun clear(game: ScheduledProductGame): Boolean = lock.withLock {
-        (game in currentlyScheduled()).also { held -> if (held) remove(game) }
+    suspend fun clear(game: ScheduledProductGame) = lock.withLock {
+        if (game in currentlyScheduled()) remove(game)
     }
 
     private fun add(game: ScheduledProductGame) {

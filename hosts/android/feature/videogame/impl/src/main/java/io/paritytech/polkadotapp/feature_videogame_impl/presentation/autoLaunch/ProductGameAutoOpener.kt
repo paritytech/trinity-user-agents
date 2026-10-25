@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderOpenSource
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.isLiveAt
@@ -29,25 +29,25 @@ class ProductGameAutoOpener @Inject constructor(
     private val timeProvider: TimeProvider,
     private val telemetry: GameReminderTelemetry,
 ) : AppInitializer {
+    private val reportedMissedGames = mutableSetOf<ScheduledProductGame>()
+
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCancellableCatching {
         combine(reminder.scheduled, appLifecycleObserver.subscribeIsForeground()) { games, foreground ->
             games.takeIf { foreground }.orEmpty()
         }
             .mapLatest { games ->
-                if (telemetry.isEnabled) clearMissed(games)
+                reportMissed(games)
                 nextLive(games)?.let { openAtStart(it) }
             }
             .launchIn(scope)
     }
 
-    // A game still held past its grace was opened neither here nor from its notification, whose tap clears it
-    // first. Only the clear that removes it reports it, so it is reported once. Telemetry only: release keeps
-    // stale games, so a late inexact alarm still posts.
-    private suspend fun clearMissed(games: List<ScheduledProductGame>) {
+    private fun reportMissed(games: List<ScheduledProductGame>) {
         val now = timeProvider.now().toEpochMilliseconds()
-        games.filterNot { it.isLiveAt(now) }.forEach { game ->
-            if (reminder.clear(game)) telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
+        games.filterNot { it.isLiveAt(now) || it in reportedMissedGames }.forEach { game ->
+            telemetry.report(GameReminderEvent.Missed(game.product(), game.startsAtMillis))
+            reportedMissedGames += game
         }
     }
 

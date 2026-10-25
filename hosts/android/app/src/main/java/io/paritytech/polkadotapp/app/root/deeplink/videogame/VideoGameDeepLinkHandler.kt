@@ -10,16 +10,15 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderOpenSource
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
-import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.PRODUCT_GAME_STARTS_AT_PARAM
 import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.WEEKLY_GAME_HOST
 import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.isProductGameLink
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -27,7 +26,7 @@ class VideoGameDeepLinkHandler @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
     private val accountRepository: AccountRepository,
     private val videoGameRouter: VideoGameRouter,
-    private val productGameReminder: ProductGameReminder,
+    private val productGameReminder: RealProductGameReminder,
     private val dotNsTldProvider: DotNsTldProvider,
     private val telemetry: GameReminderTelemetry,
 ) : DeepLinkHandler {
@@ -38,29 +37,21 @@ class VideoGameDeepLinkHandler @Inject constructor(
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(coroutineDispatchers.io) {
         runCancellableCatching {
             val productId = data.pathSegments.getOrNull(1)?.let(ProductId::fromStoredValue)
-            val startsAtMillis = data.getQueryParameter(PRODUCT_GAME_STARTS_AT_PARAM)?.toLongOrNull()
-            productId?.let { tapReminder(it, startsAtMillis) }
+                ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull()
+                ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            val startsAtMillis = productGameReminder.scheduledFor(productId)?.startsAtMillis
+
+            telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
+            productGameReminder.cancel(productId)
 
             accountRepository.awaitAccountsInitialized()
 
-            productId?.let { openProductGame(it, startsAtMillis) }
+            videoGameRouter.openGameProduct(productId)
+            telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
 
             DeeplinkProcessingOutcome.NoOp
         }
-    }
-
-    // The reminder notification is this link's only producer. The reminder is dropped before the account wait,
-    // so the auto-opener cannot open the tapped game again or report it missed.
-    private suspend fun tapReminder(productId: ProductId, startsAtMillis: Long?) {
-        telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
-        productGameReminder.cancel(productId)
-    }
-
-    // Only the game product holds a reminder, so a link naming any other product opens nothing.
-    private suspend fun openProductGame(productId: ProductId, startsAtMillis: Long?) {
-        val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull() ?: return
-        if (productId != ReservedProductIds.game(tld)) return
-        videoGameRouter.openGameProduct(productId)
-        telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
     }
 }

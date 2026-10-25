@@ -3,10 +3,6 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderDelivery
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderSkipReason
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
 import javax.inject.Inject
 
 interface VideoGameReminderScheduler {
@@ -20,7 +16,6 @@ class RealVideoGameReminderScheduler @Inject constructor(
     private val telemetry: GameReminderTelemetry,
 ) : VideoGameReminderScheduler {
     override fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp) {
-        // Rings at the start itself.
         if (gameStartMillis <= timeProvider.now().toEpochMilliseconds()) {
             alarms.cancel(productId)
             telemetry.report(GameReminderEvent.NotScheduled(productId, gameStartMillis, GameReminderSkipReason.START_IN_PAST))
@@ -36,7 +31,6 @@ class RealVideoGameReminderScheduler @Inject constructor(
         }
         val delivery = if (exact) GameReminderDelivery.ALARM else GameReminderDelivery.NOTIFICATION
         telemetry.report(GameReminderEvent.Scheduled(productId, gameStartMillis, delivery))
-        if (!exact) telemetry.report(GameReminderEvent.ExactAlarmDenied(productId, gameStartMillis))
     }
 
     override fun cancelProductGameStart(productId: ProductId) = alarms.cancel(productId)

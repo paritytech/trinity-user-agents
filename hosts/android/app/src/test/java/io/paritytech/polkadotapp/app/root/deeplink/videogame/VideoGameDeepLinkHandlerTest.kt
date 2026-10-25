@@ -5,14 +5,14 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderOpenSource
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
-import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.PRODUCT_GAME_STARTS_AT_PARAM
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -31,7 +31,7 @@ class VideoGameDeepLinkHandlerTest {
     private val other = ProductId.fromStoredValue("acme.dot")
 
     private val router: VideoGameRouter = mock(VideoGameRouter::class.java)
-    private val reminder: ProductGameReminder = mock(ProductGameReminder::class.java)
+    private val reminder: RealProductGameReminder = mock(RealProductGameReminder::class.java)
     private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
     private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
 
@@ -46,7 +46,9 @@ class VideoGameDeepLinkHandlerTest {
 
     @Test
     fun `a tap on the reminder is reported, then the game product's open from the alarm`() = runBlocking<Unit> {
-        handle(reminderLink(game, START))
+        withScheduledGame()
+
+        handle(reminderLink(game))
 
         verifyReported(GameReminderEvent.Tapped(game, START))
         verify(router).openGameProduct(game)
@@ -55,29 +57,38 @@ class VideoGameDeepLinkHandlerTest {
     }
 
     @Test
-    fun `a tap drops the held reminder before waiting for the accounts`() = runBlocking<Unit> {
-        handle(reminderLink(game, START))
+    fun `a valid reminder link reads its start and cancels before waiting for accounts`() = runBlocking<Unit> {
+        withScheduledGame()
 
-        val order = inOrder(reminder, accountRepository, router)
+        handle(reminderLink(game))
+
+        val order = inOrder(reminder, telemetry, accountRepository, router)
+        order.verify(reminder).scheduledFor(game)
+        order.verify(telemetry).report(GameReminderEvent.Tapped(game, START))
         order.verify(reminder).cancel(game)
         order.verify(accountRepository).getWalletAccount()
         order.verify(router).openGameProduct(game)
+        order.verify(telemetry).report(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
     }
 
     @Test
-    fun `a link naming another product is reported as tapped and opens nothing`() = runBlocking<Unit> {
-        handle(reminderLink(other, START))
+    fun `a link naming another product reports nothing and opens nothing`() = runBlocking<Unit> {
+        handle(reminderLink(other))
 
-        verifyReported(GameReminderEvent.Tapped(other, START))
+        verify(telemetry, never()).report(any())
+        verify(reminder, never()).cancel(any())
+        verify(accountRepository, never()).getWalletAccount()
         verify(router, never()).openGameProduct(any())
-        verify(telemetry, never()).report(GameReminderEvent.ProductOpened(other, START, GameReminderOpenSource.ALARM))
     }
 
     private suspend fun handle(link: Uri) = coroutineScope { with(ComputationalScope(this)) { handler.handle(link) } }
 
-    private fun reminderLink(productId: ProductId, startsAtMillis: Long): Uri = mock(Uri::class.java).also {
+    private fun reminderLink(productId: ProductId): Uri = mock(Uri::class.java).also {
         whenever(it.pathSegments).thenReturn(listOf("product", productId.value))
-        whenever(it.getQueryParameter(PRODUCT_GAME_STARTS_AT_PARAM)).thenReturn(startsAtMillis.toString())
+    }
+
+    private fun withScheduledGame() {
+        whenever(reminder.scheduledFor(game)).thenReturn(ScheduledProductGame(game.value, START))
     }
 
     private fun verifyReported(event: GameReminderEvent) {

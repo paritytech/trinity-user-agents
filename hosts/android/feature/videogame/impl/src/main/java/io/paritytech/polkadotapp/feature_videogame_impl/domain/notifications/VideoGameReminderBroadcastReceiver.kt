@@ -12,7 +12,6 @@ import javax.inject.Inject
 class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_POST_NOTIFICATION = "io.paritytech.polkadotapp.feature_videogame.domain.notifications.POST_NOTIFICATION"
-        const val ACTION_NOTIFICATION_DISMISSED = "io.paritytech.polkadotapp.feature_videogame.domain.notifications.NOTIFICATION_DISMISSED"
         const val EXTRA_NOTIFICATION_TYPE = "notification_type"
         const val EXTRA_GAME_STARTS_AT = "game_starts_at"
     }
@@ -26,9 +25,8 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
         val productId = ProductId.fromStoredValue(type.productId)
         val startsAtMillis = intent.getLongExtra(EXTRA_GAME_STARTS_AT, -1).takeIf { it >= 0 }
 
-        when (intent.action) {
-            ACTION_POST_NOTIFICATION -> alarmHandler.onAlarm(productId, startsAtMillis, ringAlarm = context.canScheduleExactAlarms())
-            ACTION_NOTIFICATION_DISMISSED -> alarmHandler.onDismissed(productId, startsAtMillis)
+        if (intent.action == ACTION_POST_NOTIFICATION) {
+            alarmHandler.onAlarm(productId, startsAtMillis, ringAlarm = context.canScheduleExactAlarms())
         }
     }
 }

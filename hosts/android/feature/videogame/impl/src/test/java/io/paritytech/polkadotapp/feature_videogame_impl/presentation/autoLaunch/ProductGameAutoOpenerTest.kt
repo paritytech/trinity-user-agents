@@ -5,9 +5,9 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderOpenSource
-import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.GameReminderTelemetry
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -81,45 +82,25 @@ class ProductGameAutoOpenerTest {
     }
 
     @Test
-    fun `reports and clears a game whose start passed beyond the grace as missed`() = runTest {
-        withHostTelemetry()
-        withClearRemoving(scheduledGame, removed = true)
+    fun `reports a game whose start passed beyond the grace as missed once without clearing it`() = runTest {
         advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
 
         startOpener(scheduledGame)
+        lifecycleState.value = AppLifecycleState.BACKGROUND
+        runCurrent()
+        lifecycleState.value = AppLifecycleState.FOREGROUND
+        runCurrent()
 
-        verify(reminder).clear(scheduledGame)
-        verifyMissedReportedFor(scheduledGame)
-    }
-
-    @Test
-    fun `a late game a tap has already cleared is not missed`() = runTest {
-        withHostTelemetry()
-        withClearRemoving(scheduledGame, removed = false)
-        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
-
-        startOpener(scheduledGame)
-
-        verifyNoMissedReportFor(scheduledGame)
+        verify(reminder, never()).clear(scheduledGame)
+        verifyMissedReportedOnceFor(scheduledGame)
     }
 
     @Test
     fun `a game within the grace is not missed`() = runTest {
-        withHostTelemetry()
         advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
 
         startOpener(scheduledGame)
 
-        verifyNoMissedReportFor(scheduledGame)
-    }
-
-    @Test
-    fun `without host telemetry a late game is kept`() = runTest {
-        advanceTimeBy(scheduledGame.startsAtMillis + 30_000)
-
-        startOpener(scheduledGame)
-
-        verify(reminder, never()).clear(scheduledGame)
         verifyNoMissedReportFor(scheduledGame)
     }
 
@@ -153,16 +134,10 @@ class ProductGameAutoOpenerTest {
         )
     }
 
-    private fun withHostTelemetry() {
-        whenever(telemetry.isEnabled).thenReturn(true)
-    }
-
-    private suspend fun withClearRemoving(game: ScheduledProductGame, removed: Boolean) {
-        whenever(reminder.clear(game)).thenReturn(removed)
-    }
-
-    private fun verifyMissedReportedFor(game: ScheduledProductGame) {
-        verify(telemetry).report(GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis))
+    private fun verifyMissedReportedOnceFor(game: ScheduledProductGame) {
+        verify(telemetry, times(1)).report(
+            GameReminderEvent.Missed(ProductId.fromStoredValue(game.productId), game.startsAtMillis)
+        )
     }
 
     private fun verifyNoMissedReportFor(game: ScheduledProductGame) {
