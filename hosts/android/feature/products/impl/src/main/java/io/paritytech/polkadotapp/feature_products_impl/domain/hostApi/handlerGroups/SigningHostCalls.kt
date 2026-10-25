@@ -147,7 +147,7 @@ private data class SignRawLegacyParams(
     fun toSignRawPayload(): RawPayloadContent = rawPayloadContentOf(data, payload)
 }
 
-private fun String.parseSigner(): AccountId {
+internal fun String.parseSigner(): AccountId {
     return runCatching { toAccountId().intoAccountId() }
         .recover { fromHex().intoAccountId() }
         .getOrThrow()

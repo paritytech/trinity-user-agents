@@ -1,22 +1,12 @@
-// `preimage.submit` under a `PreimageSubmit` grant, against a real
-// signing-host CLI. The end-to-end check for paritytech/platform-bugs#54.
-//
-// The permission is the only gate on an upload: an "Allow always" grant
-// covers every upload that follows, with no per-upload confirmation. Before
-// the fix the host asked the user to approve each upload as well, so a
-// background backup prompted on every run.
-//
-// `scripts/preimage-submit-prompt-e2e.sh` runs the host with `--auto-accept`
-// and `TRUAPI_APPROVALS_LOG`, so every prompt the host raised is a line in that
-// file by the time the call that raised it resolves.
-//
-// Reading the result: the transcript holds the one permission prompt and
-// nothing else. Before the fix it also held one `submit preimage` line per
-// upload.
+// `preimage.submit` under a `PreimageSubmit` grant against a real signing-host CLI.
+// The remote permission does not grant bounded automatic-upload consent.
+// Noninteractive `--auto-accept` must refuse every upload instead of silently
+// granting that consent. The approvals transcript records each denied review.
 import { existsSync, readFileSync } from "node:fs";
 
 const UPLOADS = 3;
 const PERMISSION_PROMPT = "approved remote permission";
+const UPLOAD_PROMPT = "denied submit preimage";
 
 const log = process.env.TRUAPI_APPROVALS_LOG;
 assert(
@@ -43,17 +33,23 @@ for (let upload = 1; upload <= UPLOADS; upload++) {
     `0x${crypto.getRandomValues(new Uint8Array(1024)).toHex()}` as `0x${string}`;
   const submitted = await truapi.preimage.submit(value);
   assert(
-    submitted.isOk(),
-    `upload ${upload} failed: ${JSON.stringify(submitted.isOk() ? null : submitted.error)}`,
+    submitted.isErr() &&
+      submitted.error.tag === "Domain" &&
+      submitted.error.value.tag === "V1" &&
+      submitted.error.value.value.tag === "Unknown" &&
+      submitted.error.value.value.value.reason === "User rejected preimage submission",
+    `upload ${upload} did not require explicit consent: ${JSON.stringify(submitted.isErr() ? submitted.error : submitted.value)}`,
   );
-  console.log(`upload ${upload}: ${submitted.value}`);
+  console.log(`upload ${upload}: explicit consent required`);
 }
 
 const prompts = transcript();
 assert(
-  prompts.length === 1 && prompts[0] === PERMISSION_PROMPT,
-  `expected only the permission prompt across ${UPLOADS} uploads, got: ${JSON.stringify(prompts)}`,
+  prompts.length === UPLOADS + 1 &&
+    prompts[0] === PERMISSION_PROMPT &&
+    prompts.slice(1).every((prompt) => prompt === UPLOAD_PROMPT),
+  `expected one permission prompt and ${UPLOADS} upload reviews, got: ${JSON.stringify(prompts)}`,
 );
 console.log(
-  `${UPLOADS} uploads after one permission prompt, no per-upload confirmation`,
+  `${UPLOADS} uploads refused without explicit consent after one capability grant`,
 );

@@ -5,45 +5,79 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [0.26.0] - 2026-10-21
-
-### Added
-
-- build scheduled durable transactions through submission policies (#1470)
-- fork endpoint overrides and an attest command for e2e suites (#1454)
-- let trusted products sign watermarked bytes with the user's account without a prompt (#1548)
-- serve top-ups, payments and balance to the core (#1337)
-- serve top-ups, payments and balance to the core (#1338)
-- resolve local-session usernames from dotNS (#1536)
-- funding sessions, host overlay, native bridge and test host (#1315)
-- add truapi-host stack commands (#1463)
-- add @parity/trinity-stack (#1461)
-- draw images in the Pocket face preview (#1445)
-- add the stack descriptor crate (#1455)
-- host-place Jollity in the chat list (#1417)
-- give each product runtime its own chain connection (#1418)
-- let a Pocket card's page hide or show the face above it (#1347)
-- Hot Reload, open a product from a dev server on the Mac (#1361)
-- username dotns lookup (#1289)
-- opt-in navigation transcript (TRUAPI_NAVIGATIONS_LOG) (#1162)
+## [Unreleased]
 
 ### Changed
 
-- centralize runtime version conversion (#1421)
-- use a ProductId newtype for product identifiers (#1448)
-- SSO session and responder services (#1515)
-- give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
-- recheck balance access on each pushed balance and keep payment errors append-only (#1464)
-- account fixes  (#1488)
-- split ProductRuntimeHost into ProductConnection and HostSession (#1440)
-- sign personhood through PersonhoodSigner (#1435)
-- add a Motion device permission (#1002)
-- payments by id and balance through host platforms (#1314)
-- remove the raw proof context escape hatch (#554)
-- normalize runtime API versioned handlers (#1403)
-- remove dead-code suppressions (#1401)
-- let a granted PreimageSubmit cover each upload without a second prompt (#1093)
-- resolve usernames from DotNS on Asset Hub (#1390)
+- refresh the integrated JAM peer transport, native Chat/Seity, Media, and
+  browser-receiving host stack to the TrUAPI 0.26 protocol, including validated
+  product identifiers, Funding, and caller-scoped payment operation IDs
+
+- isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
+  server and browser asset distribution independent, and pin cooperative update
+  deadlines, multi-touch input, and image clipboard output (#540)
+- let browser signing hosts request personhood-backed Statement Store
+  allowances for products instead of reporting the allocator as native-only
+- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 3;
+  the handshake requires an exact codec match, so product guests built against
+  an earlier codec must be rebuilt
+- Code-generation verification checks deterministic protocol and host output instead of pinning implementation-text snapshots; generated bindings are compiled and exercised against the runtime.
+
+### Added
+
+- Add shared native and browser Chat main-purse payment authority, explicit
+  payment review and durable receipt state; keep Chat cryptography inside the
+  Host rather than product or platform adapters (#709).
+
+- Add `account.deviceChat` for host-private Chat v2 identity binding and
+  identity-route sealing/opening through local or paired account authorities,
+  guarded by a dedicated, product-scoped Chat-authority permission.
+- report local-wallet registration stages and retryable chain-read errors through
+  a request-scoped browser callback without resubmitting accepted claims
+- expose local signing-wallet username registration and chain-verified identity
+  refresh through the browser worker, with native UID proofs and RFC-0004
+  X25519 identifier keys
+- Generate a transport-neutral `no_std` Rust client with typed request responses,
+  subscription interrupts, and host-initiated Renderer subscription codecs.
+- Generate complete App, Widget, Worker, and Worker-only method catalogs from
+  the canonical protocol schema.
+- Host-owned background notification receiving on Notifications actions 2 through 7, with durable consent, revision-fenced watches and receipts, authenticated delivery and activation, and resident native/WASM transport hooks. Receipt results distinguish confirmed OS display from an outstanding display claim; explicit display failures release the claim. Hosts without an adapter explicitly report unsupported.
+- Generic Ed25519 notification assertions in bounded standard Gordian envelopes, with opaque byte-leaf digest witnesses and exact chain/channel plus authenticated topic filtering, exposed through `@parity/truapi/notification-envelope`.
+- A wallet-free, single-writer browser receiving runtime and immutable execution-scope dispatch. Receiving consent lasts only through its approved watch expiry (at most 30 days); transport leases may renew within that bound without product UI. Native/provider adapters and real-device qualification remain host responsibilities; resident hooks do not imply delivery after a desktop host fully quits.
+- Browser host account selection fences all persisted product authorities, including closed products. Explicit logout durably revokes every authority before identity removal; ordinary client closure retains consent. Receiving storage uses reserved key 20 without colliding with the PolkaVM runtime's existing keys.
+- Foreground receipts distinguish confirmed OS display from an unresolved durable display reservation. Hosts confirm successful presentation or cancel a known failure; an unknown outcome after restart remains pending until event expiry and must not trigger a competing OS alert. Provider-rendered APNs alerts remain advisory until authenticated local processing.
+
+### Fixed
+
+- Resolve paired usernames from already-minted pending dotNS claims regardless of reservation age, while requiring current forward-registry ownership and rejecting conflicting atomic/subnode owners during lookup. Read-only Rust probes resolve the public `session.14`, `session.18`, and `session.42` accounts; legacy names without PoP provenance remain unresolved. Actual mobile-pairing qualification remains outstanding.
+- Continue dotNS identity enumeration past conflicting or zero-owner candidates without accepting them, and fall back to the root account when the preferred account has no usable owned username. Preserve first-owned-name precedence by skipping filled slots before further views; transport and ABI failures remain errors, and explicit Chat forward-owner lookups still reject unusable records.
+- Browser receiving synchronizes and revokes each authority scope independently, so account or verified-artifact replacement cannot leave the current enrollment in a revoke/register loop.
+- Message catch-up receipts preserve an already queued notification activation until the product explicitly acknowledges its sequence.
+- Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
+- Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
+- Swift's unsupported receiving callbacks use the generated native rejection case.
+- Restore release builds for the consolidated 0.26 host across browser, Android,
+  iOS, and CLI artifacts; pin the browser WASM artifact tools to the lockfile,
+  emit the Android host `cdylib` explicitly, and sync only the generated Swift
+  namespace that the unified core produces.
+
+- persist typed Statement Store allowance approvals and denials per product and
+  account selector for implicit, idempotent provisioning; explicit requests for
+  additional quota retain per-operation confirmation and increase semantics.
+  Stop unscoped product background renewal, including previously recorded
+  targets, so artifact-scoped revocation cannot be bypassed.
+- require separate Chat-authority consent on the local product API as well as
+  SSO; existing username-disclosure grants do not authorize Chat operations,
+  and denial or revocation blocks subsequent binding, sealing, and opening (#709)
+- move the secret-bearing SSO pairing result instead of cloning it (#709)
+- keep host-backed allowance helpers available on Wasm with browser-compatible
+  polling clocks, while excluding the native-only renewal driver (#540)
+- report the immutable PolkaVM runtime revision actually pinned by the optional
+  composition crate (#540)
+- return a decode error instead of trapping when subscription helpers receive a
+  request descriptor
+
+## [0.13.1] - 2026-09-02
 
 ### Fixed
 

@@ -7,6 +7,8 @@ final class MockChainConnections: TrUAPIChainConnecting, @unchecked Sendable {
     private(set) var closeAllCallCount = 0
 
     func connect(genesisHash _: Data) -> UInt32? { nil }
+    func allowedHopEndpoints(bulletinGenesisHash _: Data) -> [String] { [] }
+    func hopConnect(bulletinGenesisHash _: Data, endpoint _: String) throws -> UInt32? { nil }
     func send(connectionId _: UInt32, request _: String) throws {}
     func close(connectionId _: UInt32) {}
 

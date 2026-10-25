@@ -11,10 +11,11 @@ status: draft
 _How the implemented pieces fit together is in
 [Contacts Pick, End to End](../design/contacts-pick-end-to-end.md)._
 
-A product asks the Host to let the user pick a contact. The Host renders an overlay from its Chat
-workers' chat lists, the user selects one person, and the product receives one opaque handle — never
-the list, a name, or an account. The handle is not an address: the core resolves it when building a
-transaction.
+A product asks the Host to let the user pick one or more contacts. The Host renders the
+picker from its contact directory and returns opaque handles, never the list, names or
+accounts. The handle is not an address: the core resolves it when building a transaction.
+Host-owned name labels let users recognize selected handles without sharing the names
+or requiring a Profile photo.
 
 ## Motivation
 
@@ -49,12 +50,34 @@ names it as the recipient and the core substitutes the account when it builds th
 product-scoped address is not derivable at all, which is why the handle is resolvable rather than
 directly usable.
 
+### Multi-select audiences
+
+Trait 20 method 0 remains `pick`. Method 1, `pickMany({ selected })`, edits a complete
+selection of at most 256 handles. The core deduplicates and resolves the initial
+selection before opening the picker; any unresolved handle rejects the whole request.
+The host callback `pickContacts(product, ContactSelection { selected })` receives
+accounts only inside the trusted host boundary. Confirming an empty selection returns
+`Picked { handles: [] }`; closing the picker returns `Dismissed`. Session or directory
+invalidation during resolution or confirmation cancels the change.
+
+### Host-owned contact labels
+
+Method 2, `placeLabels({ surfaceWidth, surfaceHeight, slots })`, replaces at most 256
+name rectangles. Each slot supplies `{ slot, handle, rect, clip }`, reusing `AvatarRect`.
+The host resolves handles and draws directory usernames, or account fallbacks, on its
+own layer. Names do not depend on Profile disclosure. Missing contacts leave no label
+and produce the same success response; products never receive names or availability.
+Surfaces and rectangle sides are bounded to 16384 units, clip sides may be zero, and
+slot ids must be unique. Empty slots, connection teardown and session changes clear
+the layer. On same-wallet directory invalidation, the host clears stale names and
+refreshes the latest live placement without another product request.
+
+
 ## Trade-offs
 
 - A host that serves no picker answers `Unsupported`, which a product cannot retry its way out of.
 - `NoContacts` reveals whether the user has any contacts — zero-or-not, never a count.
-- No product-rendered contact UI, every selection is a user interaction, one contact per call,
-  read-only.
+- No product-rendered contact directory: every selection is a host-owned user interaction.
 - Dropped: returning the list scoped per product (`display_name` was a correlator no scoping fixed,
   and it needed a permission over the whole social graph); per-product handles (forfeit a durable
   shared id, break under contact sync); returning the chat account (transactable, but a global
@@ -67,11 +90,9 @@ A product declares the handles its call names, on the transaction payload, and t
 
 Substitution happens before the confirmation, so the signing overlay is drawn from a call that names an account the Host can put a name to. That is what closes the display gap for the flow that matters: a product renders a neutral chip, and the user sees who they are paying in trusted UI at the moment of consent.
 
-## Open questions
+## Recognition outside signing
 
-How a product shows the user which contact they picked outside a signature. A product holds 32 bytes and no name, so it
-renders a neutral chip. Two parts close that, and neither is specified here: the Host redraws the name
-in its own signing confirmation, which knows the account and is where consent is given, so a product
-never needs the name for the flow to be safe; and a product labels the handle itself, letting the user
-name those 32 bytes once. A user-supplied label keeps the Host from handing back the correlator that
-ruled out `display_name`.
+A product holds only handles and reserves rectangles for `placeLabels`. The host
+draws names in those rectangles without returning a global correlator. Profile avatar
+slots remain separate and photo-only, so users can recognize a contact even when that
+contact has never shared a profile.

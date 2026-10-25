@@ -11,22 +11,18 @@ public protocol CoinageTxServicing: Sendable {
     @discardableResult
     func submitTransactions(
         _ requests: [CoinageTxRequest],
-        groupId: CoinageTxGroupId?
+        groupId: CoinageTxGroupId?,
+        custody: NativeTransferCustody?,
+        authorization: (@Sendable () throws -> Void)?
     ) async throws -> [CoinageTxId]
 
-    /// Registers transactions that their policies build and submit afterwards, atomically under one
-    /// `groupId`. Their inputs are locked from the moment this commits, so nothing else can select them
-    /// while they wait to be built.
-    ///
-    /// `scope` joins a transaction the caller already opened — the transport writing whatever carries
-    /// the payment — so the payment's row and these commit together. Synchronous for the same reason
-    /// that caller is.
-    @discardableResult
-    func scheduleTransactions(
-        _ requests: [CoinageScheduledTxRequest],
-        groupId: CoinageTxGroupId,
-        joining scope: any DurableTxRegistrationScope
-    ) throws -> [CoinageTxId]
+    func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> any CoinageHandoffCommit
+
+    func retainedNativeTransfer(
+        custodyId: String
+    ) async throws -> (custody: NativeTransferCustody, handoffCommit: any CoinageHandoffCommit)?
 
     /// A stream of a submitted entry's status: the current value, then every change. Lets a caller that
     /// must not report success until the chain has — offboarding an external payment — await a terminal
@@ -51,6 +47,14 @@ public protocol CoinageTxServicing: Sendable {
 }
 
 public extension CoinageTxServicing {
+    @discardableResult
+    func submitTransactions(
+        _ requests: [CoinageTxRequest],
+        groupId: CoinageTxGroupId?
+    ) async throws -> [CoinageTxId] {
+        try await submitTransactions(requests, groupId: groupId, custody: nil, authorization: nil)
+    }
+
     /// Registers one transaction and starts tracking its extrinsic in the background, returning the
     /// entry's id as soon as it is committed — so the inputs are claimed before this returns, but the
     /// caller does not wait for inclusion. `groupId` labels the operation that registered it (e.g. a
@@ -79,18 +83,28 @@ public final class CoinageTxService: CoinageTxServicing {
     private let engine: any DurableTxServicing
     private let ledger: any CoinageAssetLedgerProtocol
     private let logger: SDKLoggerProtocol?
+    private let lifecycle: CoinageLifecycle?
 
-    public init(engine: any DurableTxServicing, ledger: any CoinageAssetLedgerProtocol, logger: SDKLoggerProtocol?) {
+    public init(
+        engine: any DurableTxServicing,
+        ledger: any CoinageAssetLedgerProtocol,
+        logger: SDKLoggerProtocol?,
+        lifecycle: CoinageLifecycle? = nil
+    ) {
         self.engine = engine
         self.ledger = ledger
         self.logger = logger
+        self.lifecycle = lifecycle
     }
 
     @discardableResult
     public func submitTransactions(
         _ requests: [CoinageTxRequest],
-        groupId: CoinageTxGroupId?
+        groupId: CoinageTxGroupId?,
+        custody: NativeTransferCustody?,
+        authorization: (@Sendable () throws -> Void)?
     ) async throws -> [CoinageTxId] {
+        let operation = try lifecycle?.captureOperation()
         let assets = requests.map { CoinageAssetRegistration(inputs: $0.inputs, outputs: $0.outputs) }
         guard assets.allSatisfy({ !$0.isEmpty }) else {
             throw CoinageTxError.emptyEntry
@@ -99,44 +113,49 @@ public final class CoinageTxService: CoinageTxServicing {
         logger?.debug("Submitting \(requests.count) coinage request(s) groupId: \(String(describing: groupId))")
 
         do {
+            if custody != nil { try Task.checkCancellation() }
             return try await engine.submitTransactions(
                 domain: .coinage,
                 requests: requests.map { DurableTxRequest(builder: $0.builder, origin: $0.origin) },
-                groupId: groupId,
-                policies: requests.map(\.policy)
-            ) { [ledger] scope, ids in
-                try ledger.registerAssets(assets, for: ids, in: scope)
+                groupId: groupId
+            ) { [ledger, lifecycle] scope, ids in
+                let register = {
+                    if custody != nil { try Task.checkCancellation() }
+                    try ledger.registerAssets(assets, for: ids, custody: custody, authorization: authorization, in: scope)
+                }
+                if let lifecycle, let operation {
+                    try lifecycle.withEffect(operation, register)
+                } else {
+                    try register()
+                }
             }
         } catch let error as DurableTxError {
             throw CoinageTxError(durableTxError: error) ?? error
         }
     }
 
-    @discardableResult
-    public func scheduleTransactions(
-        _ requests: [CoinageScheduledTxRequest],
-        groupId: CoinageTxGroupId,
-        joining scope: any DurableTxRegistrationScope
-    ) throws -> [CoinageTxId] {
-        let assets = requests.map { CoinageAssetRegistration(inputs: $0.inputs, outputs: $0.outputs) }
-        guard assets.allSatisfy({ !$0.isEmpty }) else {
-            throw CoinageTxError.emptyEntry
-        }
-
-        logger?.debug("Scheduling \(requests.count) coinage request(s) groupId: \(groupId)")
-
-        do {
-            return try engine.schedule(
-                domain: .coinage,
-                groupId: groupId,
-                policies: requests.map(\.policy),
-                joining: scope
-            ) { [ledger] scope, ids in
-                try ledger.registerAssets(assets, for: ids, in: scope)
+    public func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> any CoinageHandoffCommit {
+        let operation = try lifecycle?.captureOperation()
+        try Task.checkCancellation()
+        try await ledger.retainNativeTransfer(custody) { [lifecycle] in
+            if let lifecycle, let operation {
+                try lifecycle.withEffect(operation, authorization)
+            } else {
+                try authorization()
             }
-        } catch let error as DurableTxError {
-            throw CoinageTxError(durableTxError: error) ?? error
         }
+        return StoreHandoffCommit(assets: custody.assets, ledger: ledger)
+    }
+
+    public func retainedNativeTransfer(
+        custodyId: String
+    ) async throws -> (custody: NativeTransferCustody, handoffCommit: any CoinageHandoffCommit)? {
+        let operation = try lifecycle?.captureOperation()
+        guard let custody = try await ledger.retainedNativeTransfer(custodyId: custodyId) else { return nil }
+        if let lifecycle, let operation { try lifecycle.check(operation) }
+        return (custody, StoreHandoffCommit(assets: custody.assets, ledger: ledger))
     }
 
     public func subscribeTransactionStatus(_ id: CoinageTxId) -> AnyAsyncSequence<CoinageTxStatus> {
@@ -153,14 +172,16 @@ public final class CoinageTxService: CoinageTxServicing {
         ledger.subscribeOperationGroupStatuses(groupId)
     }
 
-    /// Reserves `assets` against being spent again, rejecting any a live entry still claims — the mirror
-    /// of the blocked-handoff invariant, run in the same transaction as the mark.
+    /// Rejects live claims and already-reserved recipients inside the same transaction as the mark.
     public func preCommitHandoff(_ assets: [OwnAsset]) async throws -> any CoinageHandoffCommit {
+        let operation = try lifecycle?.captureOperation()
         let keys = Set(assets.map(\.publicKey))
-        try await ledger.precommitHandOff(assets) { context in
-            let claimed = try context.filterClaimed(keys)
-            if let key = claimed.first {
-                throw CoinageTxError.handoffOfClaimedAsset(key.toHex())
+        try await ledger.precommitHandOff(assets) { [lifecycle] context in
+            let validate = { try CoinageTxRegistrationValidator().validateHandoff(keys, transaction: context) }
+            if let lifecycle, let operation {
+                try lifecycle.withEffect(operation, validate)
+            } else {
+                try validate()
             }
 
             let handedOff = try context.filterHandedOff(keys)

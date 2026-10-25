@@ -42,6 +42,10 @@ struct Cli {
 	client_version: Option<ProtocolVersionArg>,
 
 	/// Wire codec version for generated handshake calls.
+	///
+	/// Defaults to the Host's authoritative `truapi::WIRE_CODEC_VERSION`.
+	/// Override only for intentional historical generation; normal client and
+	/// Host generation must use the same constant.
 	#[arg(long, default_value_t = truapi::WIRE_CODEC_VERSION)]
 	codec_version: u8,
 
@@ -59,6 +63,10 @@ struct Cli {
 	/// `truapi` crate to include.
 	#[arg(long)]
 	rust_output: Option<PathBuf>,
+
+	/// Output file for the generated no-std Rust client catalog (optional).
+	#[arg(long)]
+	rust_client_output: Option<PathBuf>,
 
 	/// Path to rustdoc JSON for a crate with a `platform` module; repeat for
 	/// each such crate (`truapi`, `truapi-provider`).
@@ -166,6 +174,20 @@ fn main() -> Result<()> {
 		rust::generate(&api, path, &schema_hash)
 			.with_context(|| format!("writing Rust dispatcher to {}", path.display()))?;
 		println!("Wrote Rust dispatcher to {}", path.display());
+	}
+	if let Some(path) = &cli.rust_client_output {
+		let schema_hash =
+			ts::wire_schema_hash(&api, ts::latest_wire_version(&api), cli.codec_version)
+				.context("computing Rust client wire schema hash")?;
+		if let Some(parent) = path.parent() {
+			std::fs::create_dir_all(parent)
+				.with_context(|| format!("creating {}", parent.display()))?;
+		}
+		let client = rust::generate_client(&api, &schema_hash)
+			.context("generating no-std Rust client catalog")?;
+		std::fs::write(path, client)
+			.with_context(|| format!("writing Rust client catalog to {}", path.display()))?;
+		println!("Wrote Rust client catalog to {}", path.display());
 	}
 	if !cli.platform_input.is_empty() {
 		if cli.platform_wasm_adapter_output.is_some() && cli.platform_ts_output.is_none() {

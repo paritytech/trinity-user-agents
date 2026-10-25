@@ -11,6 +11,8 @@
 //! product's storage for a write, and there is nothing for those requests to
 //! address.
 
+use alloc::string::ToString;
+
 use crate::{
 	v01, v02,
 	versioned::{FromLatest, IntoLatest},

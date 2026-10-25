@@ -5,13 +5,13 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.Derivatio
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
+import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfirm.toUiState
+import io.paritytech.polkadotapp.common.R as RCommon
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
-import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.AllocatableResource
-import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostAccountSignVrfRequest
 import uniffi.truapi.HostSignPayloadData
@@ -19,19 +19,23 @@ import uniffi.truapi.HostSignPayloadRequest
 import uniffi.truapi.HostSignPayloadWithLegacyAccountRequest
 import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
-import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
 import uniffi.truapi.ProductAccountTxPayload
-import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.RawPayload
+import uniffi.truapi.TxPayloadExtension
+import uniffi.truapi.VrfTranscriptItem
+import uniffi.truapi.AccountAccessReview
+import uniffi.truapi.CreateTransactionReview
+import uniffi.truapi.IdentityDisclosureReview
+import uniffi.truapi.PreimageSubmitReview
+import uniffi.truapi.ProductSubtreeReview
+import uniffi.truapi.ProfileDisclosureReview
 import uniffi.truapi.ResourceAllocationReview
 import uniffi.truapi.SignPayloadReview
 import uniffi.truapi.SignRawReview
 import uniffi.truapi.SignVrfReview
 import uniffi.truapi.StatementStoreProductSignReview
-import uniffi.truapi.TxPayloadExtension
 import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.VrfTranscriptItem
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 
 private const val ALICE_SS58 = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
@@ -305,6 +309,15 @@ class ConfirmationReviewMappingTest {
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
 
         assertEquals("discloser.dot", confirmation.requesterProductId)
+    }
+
+    @Test
+    fun `preimage submit carries its size`() {
+        val review = UserConfirmationReview.PreimageSubmit(PreimageSubmitReview(size = 4096uL))
+
+        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.PreimageSubmit
+
+        assertEquals(4096L, confirmation.sizeBytes)
     }
 
     @Test

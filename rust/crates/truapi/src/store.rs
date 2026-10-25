@@ -17,7 +17,6 @@ use async_sqlite::{JournalMode, Pool, PoolBuilder};
 use rusqlite::{OpenFlags, TransactionBehavior};
 use rusqlite_migration::Migrations;
 
-pub use migration::core_migrations;
 pub use observe::ObservedStatement;
 use observe::{Invalidation, authorize_for_change_tracking, track_changes};
 
@@ -48,6 +47,8 @@ pub const CORE_DB_FILE: &str = "core.sqlite3";
 
 /// Read-only connections opened for the core database.
 const CORE_DB_READERS: usize = 2;
+
+pub use migration::core_migrations;
 
 /// The core database configuration for a host-provided directory.
 pub fn core_db_config(directory: &Path) -> DbConfig {

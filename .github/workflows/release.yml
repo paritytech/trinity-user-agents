@@ -233,6 +233,7 @@ jobs:
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
+          targets: wasm32-unknown-unknown
 
       - if: steps.version.outputs.proceed == 'true'
         uses: ./.github/actions/rust-cache
@@ -246,6 +247,10 @@ jobs:
       - name: Install wasm-pack
         if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|') || contains(steps.version.outputs.packages, '@parity/trinity-stack|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Install host WASM artifact tools
+        if: steps.version.outputs.proceed == 'true' && contains(steps.version.outputs.packages, '@parity/truapi-host|')
+        run: ./scripts/install-wasm-artifact-tools.sh
 
       - name: Build packages
         if: steps.version.outputs.proceed == 'true'

@@ -12,16 +12,40 @@ use crate::{nft::PurseId, store::open_temporary_core_db};
 
 const PRODUCT: &str = "tickets.dot";
 
+fn nft_runtime(
+	platform: Arc<StubPlatform>,
+	with_session: bool,
+) -> (Arc<RuntimeServices>, ProductRuntimeHost) {
+	let (host_config, product) = runtime_config(PRODUCT);
+	let services = RuntimeServices::with_chat_platform(
+		platform as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		test_spawner(),
+		None,
+		None,
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(services.clone(), adapters, pairing_host, product);
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	(services, host)
+}
+
 /// A product host over a fresh core database, with the directory that keeps
 /// the database alive.
 fn nft_host(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
 ) -> (tempfile::TempDir, ProductRuntimeHost) {
-	let services = payment_services_over(platform);
+	let (services, host) = nft_runtime(platform, with_session);
 	let (dir, db) = open_temporary_core_db();
 	assert!(services.install_core_db(db));
-	(dir, payment_host(&services, PRODUCT, with_session))
+	(dir, host)
 }
 
 fn create(
@@ -159,7 +183,7 @@ fn an_empty_product_owner_is_refused_without_a_prompt() {
 // A host that configured no core database has nowhere to keep purses.
 #[test]
 fn a_host_without_a_core_database_does_not_serve_purses() {
-	let host = payment_host(&payment_services(), PRODUCT, true);
+	let (_, host) = nft_runtime(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Unsupported));
 }

@@ -629,12 +629,14 @@ async fn attest_record(
 	reserved_username: Option<&str>,
 ) -> Result<String> {
 	let entropy = mnemonic_entropy(&record.mnemonic)?;
-	let lite_username = attestation::attest(&attest_config(
-		network,
+	let lite_username = attestation::attest(&attestation::AttestConfig {
+		backend_base: network.identity_backend()?.to_string(),
+		asset_hub_ws: network.asset_hub_ws.to_string(),
+		network_suffix: network.network_suffix.to_string(),
 		entropy,
-		record.lite_username.clone(),
-		reserved_username,
-	)?)
+		username_base: record.lite_username.clone(),
+		reserved_username: reserved_username.map(str::to_string),
+	})
 	.await
 	.with_context(|| format!("attest account {}", record.name))?;
 	debug!(
@@ -661,7 +663,6 @@ fn attest_config(
 		reserved_username: reserved_username.map(str::to_string),
 	})
 }
-
 fn resolved_lite_username(username: &str) -> bool {
 	username
 		.rsplit_once('.')
@@ -694,7 +695,6 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 
 	let people_ws = network.people_ws;
 	let candidates = collection_candidates(entropy, network.network_suffix);
-	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 	let mut metadata = None;
 	for attempt in 1..=MAX_ATTEMPTS {
 		crate::terminal_ui::update_activity(
@@ -735,19 +735,11 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 		}
 		let metadata_ref = metadata.as_ref().expect("metadata is initialized");
 		// Every ring back to index 0: the signer may sit in an older one.
-		match alloc::find_including_rings(
-			&rpc,
-			metadata_ref,
-			&signer,
-			&PersonhoodCollection::ALL,
-			u32::MAX,
-		)
-		.await
-		{
+		match alloc::find_including_rings(&rpc, metadata_ref, &candidates, u32::MAX).await {
 			Ok(memberships) if !memberships.is_empty() => {
 				let held = memberships
 					.iter()
-					.map(|membership| membership.collection.to_string())
+					.map(|membership| membership.collection().to_string())
 					.collect::<Vec<_>>()
 					.join(", ");
 				crate::terminal_ui::update_activity(
@@ -825,7 +817,6 @@ pub async fn attest_mnemonic(
 		lite_username,
 	})
 }
-
 struct SignerIdentity {
 	entropy: Vec<u8>,
 	public_key: [u8; 32],

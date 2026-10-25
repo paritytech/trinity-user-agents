@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -51,10 +52,27 @@ class WebViewProviderTest {
         )
     }
 
+    @Test
+    fun `permission revocation destroys capture resources without renderer recovery`() = runTest {
+        val first = webView("first")
+        val provider = FakeWebViewProvider(testDispatchers(), listOf(first).iterator())
+        val other = FakeWebViewProvider(testDispatchers(), listOf(webView("other")).iterator())
+        provider.addOnWebViewDestroyedListener { error("Revocation must not trigger renderer reboot") }
+        provider.getWebView()
+        val otherView = other.getWebView()
+
+        provider.disposeRevokedExecution()
+
+        assertEquals(listOf("stop first", "detach first", "destroy first"), events)
+        assertTrue(runCatching { provider.getWebView() }.isFailure)
+        assertEquals(otherView, other.getWebView())
+    }
+
     private fun webView(name: String): WebView = mockk<WebView> {
         every { parent } returns host
         every { url } returns ROUTE
         every { destroy() } answers { events += "destroy $name" }
+        every { stopLoading() } answers { events += "stop $name" }
         every { loadUrl(any<String>()) } answers { events += "load $name ${firstArg<String>()}" }
     }.also { view ->
         every { host.removeView(view) } answers { events += "detach $name" }

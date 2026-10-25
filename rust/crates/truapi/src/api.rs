@@ -9,14 +9,17 @@ pub mod entropy;
 pub mod expanded_card;
 pub mod funding;
 pub mod game;
+pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
 pub mod pocket;
 pub mod preimage;
+pub mod profile;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;
@@ -35,14 +38,17 @@ pub use entropy::Entropy;
 pub use expanded_card::ExpandedCard;
 pub use funding::Funding;
 pub use game::Game;
+pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use media::Media;
 pub use nft_purse::NftPurse;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
 pub use pocket::Pocket;
 pub use preimage::Preimage;
+pub use profile::Profile;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
 pub use scanner::Scanner;
@@ -60,17 +66,20 @@ pub trait TrUApi:
 	+ CoinPayment
 	+ Contacts
 	+ Entropy
+	+ JamPeerTransport
 	+ ExpandedCard
 	+ Funding
 	+ Game
 	+ LocalStorage
 	+ Locale
+	+ Media
 	+ NftPurse
 	+ Notifications
 	+ Payment
 	+ Permissions
 	+ Pocket
 	+ Preimage
+	+ Profile
 	+ Renderer
 	+ ResourceAllocation
 	+ Scanner
@@ -91,17 +100,20 @@ impl<T> TrUApi for T where
 		+ CoinPayment
 		+ Contacts
 		+ Entropy
+		+ JamPeerTransport
 		+ ExpandedCard
 		+ Funding
 		+ Game
 		+ LocalStorage
 		+ Locale
+		+ Media
 		+ NftPurse
 		+ Notifications
 		+ Payment
 		+ Permissions
 		+ Pocket
 		+ Preimage
+		+ Profile
 		+ Renderer
 		+ ResourceAllocation
 		+ Scanner

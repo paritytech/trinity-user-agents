@@ -64,8 +64,11 @@ final class StubGroupTxService: CoinageTxServicing, @unchecked Sendable {
     @discardableResult
     func submitTransactions(
         _ requests: [CoinageTxRequest],
-        groupId: CoinageTxGroupId?
+        groupId: CoinageTxGroupId?,
+        custody: NativeTransferCustody?,
+        authorization _: (@Sendable () throws -> Void)?
     ) async throws -> [CoinageTxId] {
+        guard custody == nil else { throw Failure() }
         let (error, outcome) = state.withLock { state -> (Error?, Outcome) in
             let next = state.outcomeQueue.isEmpty ? state.outcome : state.outcomeQueue.removeFirst()
             return (state.submitError, next)
@@ -115,6 +118,18 @@ final class StubGroupTxService: CoinageTxServicing, @unchecked Sendable {
     }
 
     func preCommitHandoff(_: [OwnAsset]) async throws -> any CoinageHandoffCommit {
+        throw Failure()
+    }
+
+    func retainNativeTransfer(
+        _: NativeTransferCustody, authorization _: @escaping @Sendable () throws -> Void
+    ) async throws -> any CoinageHandoffCommit {
+        throw Failure()
+    }
+
+    func retainedNativeTransfer(
+        custodyId _: String
+    ) async throws -> (custody: NativeTransferCustody, handoffCommit: any CoinageHandoffCommit)? {
         throw Failure()
     }
 

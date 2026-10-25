@@ -1,4 +1,5 @@
 //! Versioned wrappers for [`Preimage`](crate::api::Preimage) methods.
+use alloc::vec::Vec;
 
 use crate::v01;
 

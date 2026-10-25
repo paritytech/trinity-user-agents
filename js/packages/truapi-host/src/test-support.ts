@@ -1,13 +1,21 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import {
+  unavailableHopProvider,
+  unavailableNativeChatFilesHost,
+} from "./adapter-support.js";
+import { CoreStorageKey } from "./generated/host-callbacks.js";
+import { localizeTimestamps } from "./locale.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
 
 type HostCallbackOverrides = {
-  [K in keyof RequiredHostCallbacks]?: Partial<RequiredHostCallbacks[K]>;
+  [K in keyof RequiredHostCallbacks]?: K extends "coinageWallet" | "media"
+    ? RequiredHostCallbacks[K]
+    : Partial<RequiredHostCallbacks[K]>;
 };
 
-/** Default no-op host callbacks with optional per-test overrides. */
+/** In-memory core storage and default host callbacks with per-test overrides. */
 export function makeHostCallbacks(
   overrides: HostCallbackOverrides = {},
 ): CompleteHostCallbacks {
@@ -15,11 +23,29 @@ export function makeHostCallbacks(
   // per call rather than a constant: the core keys the worker reference it
   // holds by that id, and a shared id loses all but the first.
   let nextOperationId = 1;
+  const coreValues = new Map<string, Uint8Array>();
+  const storageChanges: CoreStorageKey[] = [];
+  const storageKey = (key: CoreStorageKey): string =>
+    CoreStorageKey.enc(key).toString();
   const defaults: CompleteHostCallbacks = {
     navigation: { navigateTo: async () => {} },
     notifications: {
       pushNotification: async () => ({ id: 0 }),
       cancelNotification: async () => {},
+      receiverAuthority: async () => undefined,
+      receiverConsent: async () => {
+        throw new Error("background receiving unsupported");
+      },
+      receiverChanged: async () => {
+        throw new Error("background receiving unsupported");
+      },
+      receiverCommand: async () => undefined,
+      activationEvents: async () => {
+        throw new Error("notification activation is unsupported");
+      },
+      acknowledgeActivation: async () => {
+        throw new Error("notification activation is unsupported");
+      },
     },
     permissions: {
       devicePermission: async () => "Deny",
@@ -40,9 +66,42 @@ export function makeHostCallbacks(
       endOperation: async () => {},
     },
     coreStorage: {
-      readCoreStorage: async () => undefined,
-      writeCoreStorage: async () => {},
-      clearCoreStorage: async () => {},
+      readCoreStorage: async (key) => coreValues.get(storageKey(key))?.slice(),
+      writeCoreStorage: async (key, value) => {
+        coreValues.set(storageKey(key), value.slice());
+      },
+      clearCoreStorage: async (key) => {
+        coreValues.delete(storageKey(key));
+      },
+      compareExchangeCoreStorage: async (
+        key,
+        expected,
+        replacement,
+        notifyOnSuccess,
+      ) => {
+        const slot = storageKey(key);
+        const current = coreValues.get(slot);
+        if (
+          current === undefined
+            ? expected !== undefined
+            : expected === undefined ||
+              current.length !== expected.length ||
+              current.some((byte, index) => byte !== expected[index])
+        ) {
+          return false;
+        }
+        coreValues.set(slot, replacement.slice());
+        if (notifyOnSuccess) {
+          (
+            overrides.coreStorage?.coreStorageChanged ??
+            defaults.coreStorage.coreStorageChanged
+          )(key);
+        }
+        return true;
+      },
+      coreStorageChanged: (key) => {
+        storageChanges.push(key);
+      },
     },
     auth: { authStateChanged: () => {} },
     userConfirmation: {
@@ -53,7 +112,7 @@ export function makeHostCallbacks(
       async *lookupPreimage() {},
     },
     theme: { async *subscribeTheme() {} },
-    locale: { async *subscribeLocale() {} },
+    locale: { async *subscribeLocale() {}, localizeTimestamps },
     chain: {
       connect: async () => ({
         send() {},
@@ -95,6 +154,21 @@ export function makeHostCallbacks(
     theme: { ...defaults.theme, ...overrides.theme },
     locale: { ...defaults.locale, ...overrides.locale },
     chain: { ...defaults.chain, ...overrides.chain },
+    ...(overrides.hop
+      ? { hop: { ...unavailableHopProvider, ...overrides.hop } }
+      : {}),
+    ...(overrides.coinageWallet === undefined
+      ? {}
+      : { coinageWallet: overrides.coinageWallet }),
+    ...(overrides.media === undefined ? {} : { media: overrides.media }),
+    ...(overrides.nativeChatFiles
+      ? {
+          nativeChatFiles: {
+            ...unavailableNativeChatFilesHost,
+            ...overrides.nativeChatFiles,
+          },
+        }
+      : {}),
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.
     ...(overrides.chat
@@ -127,6 +201,29 @@ export function makeHostCallbacks(
             async *subscribePocketCards() {},
             removePocketCard: async () => {},
             ...overrides.pocket,
+          },
+        }
+      : {}),
+    // And for profiles: the default fixture is a host that renders none, so
+    // Profile calls are answered `Unsupported`.
+    ...(overrides.profile
+      ? {
+          profile: {
+            presentProfile: async () => {},
+            presentContactProfile: async () => {},
+            placeContactAvatars: async () => {},
+            ...overrides.profile,
+          },
+        }
+      : {}),
+    // An unavailable authenticated search must not look like an empty result.
+    ...(overrides.identityBackend
+      ? {
+          identityBackend: {
+            identityUsernameCandidates: async (): Promise<Uint8Array[]> => {
+              throw new Error("identity backend unavailable");
+            },
+            ...overrides.identityBackend,
           },
         }
       : {}),

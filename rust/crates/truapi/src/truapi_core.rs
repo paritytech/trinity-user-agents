@@ -15,9 +15,7 @@ use crate::{
 	frame::ProtocolMessage,
 	generated::dispatcher,
 	host_logic::session::SessionState,
-	runtime::{
-		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
-	},
+	runtime::{PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices},
 	subscription::Spawner,
 	transport::Transport,
 };
@@ -65,9 +63,8 @@ impl TrUApiCore {
 			spawner.clone(),
 		);
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
-		pairing_host.session().clone().start_session_store_sync(spawner);
-		let session = pairing_host.session().clone();
-		Self::from_runtime_parts(services, pairing_host, session, product)
+		pairing_host.clone().start_session_store_sync(spawner);
+		Self::from_runtime_parts(services, pairing_host, product)
 	}
 
 	/// Build a product-facing core from shared services and authority.
@@ -75,18 +72,15 @@ impl TrUApiCore {
 	fn from_runtime_parts(
 		services: Arc<RuntimeServices>,
 		authority: Arc<dyn ProductAuthority>,
-		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 	) -> Self {
-		let session_state = host_session.session_state();
 		let runtime = Arc::new(ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
-			authority,
-			host_session,
+			authority.clone(),
 			product,
 		));
-		Self::from_product_runtime(runtime, services.spawner.clone(), session_state)
+		Self::from_product_runtime(runtime, services.spawner.clone(), authority.session_state())
 	}
 
 	/// Build a dispatcher core around an already-created product runtime.
@@ -96,7 +90,7 @@ impl TrUApiCore {
 		spawner: Spawner,
 		session_state: Arc<SessionState>,
 	) -> Self {
-		let execution_kind = runtime.connection().execution_kind();
+		let execution_kind = runtime.execution_kind();
 		let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
 		dispatcher::register(&mut dispatcher, runtime);
 		Self { dispatcher, session_state }
@@ -188,6 +182,65 @@ mod tests {
 		frame::{Payload, request_ids, subscription_ids},
 		test_support::{StubPlatform, runtime_config, test_spawner},
 	};
+
+	/// A dial needs the user's `JamPeers` grant for its genesis, so a refusal
+	/// answers `NotGranted` before anything connects. The browser core never
+	/// asks: its JavaScript session serves trait 111 before frames reach it.
+	#[test]
+	fn a_dial_the_user_refuses_is_not_granted() {
+		let genesis = [0x35; 32];
+		let platform =
+			Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+		let asked = platform.remote_permission_requests.clone();
+		let (host_config, product) = runtime_config("dotli.dot");
+		let core =
+			TrUApiCore::from_platform_with_config(platform, host_config, product, test_spawner());
+		let ids = request_ids("jam_peer_transport_dial").expect("registered peer transport");
+		let frame = ProtocolMessage {
+			request_id: "p:peer".into(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+				value: truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest::V1(
+					truapi::latest::HostJamPeerTransportDialRequest {
+						genesis,
+						ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
+						port: 43000,
+						ed25519: [0; 32],
+						p256: None,
+					},
+				)
+				.encode(),
+			},
+		};
+		let response = futures::executor::block_on(core.receive_from_product(&frame.encode()))
+			.expect("registered method must answer explicitly");
+		let prompted = if cfg!(target_arch = "wasm32") {
+			vec![]
+		} else {
+			vec![v01::RemotePermissionRequest {
+				permission: v01::RemotePermission::JamPeers { genesis },
+			}]
+		};
+		assert_eq!(
+			(
+				ProtocolMessage::decode(&mut &response[..]).unwrap().payload.value,
+				asked.lock().unwrap().clone(),
+			),
+			(
+				Err::<truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse, _>(
+					truapi::CallError::Domain(
+						truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError::V1(
+							truapi::latest::HostJamPeerTransportDialError::NotGranted,
+						),
+					),
+				)
+				.encode(),
+				prompted,
+			),
+		);
+	}
 
 	/// A request payload must consume exactly its own bytes. Trailing bytes
 	/// mean the sender and this build disagree about the shape, so running the

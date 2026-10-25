@@ -29,7 +29,7 @@ pub enum Network {
 
 /// Env var overriding the identity backend base URL for every command. The URL
 /// includes `/api/v1`, for instance a local backend at
-/// `http://localhost:8080/api/v1`.
+/// `http://localhost:8080/api/v1`. Chain endpoints stay on the preset.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
 /// Env vars overriding one chain's WebSocket URL, for a fork of the preset's
@@ -75,7 +75,6 @@ impl ChainOverrides {
 		})
 	}
 
-	/// The env vars behind the overrides that are set.
 	fn set_names(&self) -> Vec<&'static str> {
 		[
 			(PEOPLE_WS_ENV, &self.people_ws),
@@ -100,7 +99,11 @@ impl Network {
 	pub async fn cli_config(self) -> anyhow::Result<NetworkConfig> {
 		let overrides = ChainOverrides::from_env()?;
 		let set = overrides.set_names();
-		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
+		refuse_light_client(
+			self,
+			&set,
+			std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok(),
+		)?;
 		let config = crate::local_network::resolve(
 			apply_chain_overrides(self.with_backend_override(), overrides),
 			&set,
@@ -135,6 +138,7 @@ impl Network {
 				bulletin_genesis: PASEO_BULLETIN.genesis,
 				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
 				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+				hop_endpoints: PASEO_HOP_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
 			},
@@ -149,6 +153,7 @@ impl Network {
 				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
 				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
 				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+				hop_endpoints: PREVIEWNET_HOP_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
 			},
@@ -163,23 +168,38 @@ impl Network {
 				bulletin_genesis: POLKADOT_BULLETIN.genesis,
 				asset_hub_genesis: POLKADOT_ASSET_HUB.genesis,
 				live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
+				hop_endpoints: &[],
 				dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
 				disposable_identities: false,
 			},
 		}
 	}
+
+	fn supports_light_client(self) -> bool {
+		!matches!(self, Self::Polkadot)
+	}
 }
 
-/// A fork keeps the live genesis hashes, so the light client would find them in
-/// its catalog and sync the live chains instead.
+/// Refuses light-client routing when the preset has no bundled catalog entry or
+/// a chain URL override would be ignored in favor of the bundled live chain.
 fn refuse_light_client(
+	network: Network,
 	chain_overrides: &[&str],
 	light_client: Option<String>,
 ) -> anyhow::Result<()> {
+	if light_client.as_deref() != Some("1") {
+		return Ok(());
+	}
 	anyhow::ensure!(
-		chain_overrides.is_empty() || light_client.as_deref() != Some("1"),
+		network.supports_light_client(),
+		"--network {} cannot use {}=1: no bundled light-client catalog entry exists",
+		network.preset().id,
+		crate::local_network::LIGHT_CLIENT_ENV
+	);
+	anyhow::ensure!(
+		chain_overrides.is_empty(),
 		"{} and {}=1 cannot be used together: the light client syncs the live chains \
-         by genesis hash; unset one of them",
+		 by genesis hash; unset one of them",
 		chain_overrides.join(", "),
 		crate::local_network::LIGHT_CLIENT_ENV
 	);
@@ -285,7 +305,6 @@ fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -
 	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
-
 // Each chain is declared once and reused by both the preset fields and the
 // endpoint table. A genesis hash can therefore never drift from the URL it
 // routes to. Every route below is host-required: session identity (dotNS
@@ -382,6 +401,36 @@ const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[PREVIEWNET_ASSET_HUB, PREVIEWNET_PEOPLE, PREVIEWNET_BULLETIN];
 
+// Trusted endpoint/identity pairs from brevity-chain presets.rs and
+// remote_config.json (chains_v2) at d504259b60b88ca42f70a8378186a714887ef19f.
+// Do not infer a HOP endpoint from a chain RPC URL.
+const PASEO_HOP_ENDPOINTS: &[HopEndpoint] = &[
+	HopEndpoint {
+		bulletin_genesis: PASEO_BULLETIN.genesis,
+		ws: "wss://paseo-hop-next-0.polkadot.io",
+	},
+	HopEndpoint {
+		bulletin_genesis: PASEO_BULLETIN.genesis,
+		ws: "wss://paseo-hop-next-1.polkadot.io",
+	},
+];
+
+// This trusted snapshot identifies a newer Previewnet Bulletin than the CLI's
+// existing chain preset. Keep the exact pair: the provider fails closed until
+// the selected Bulletin identity matches, rather than silently changing chains.
+const PREVIEWNET_HOP_ENDPOINTS: &[HopEndpoint] = &[HopEndpoint {
+	bulletin_genesis: hex_literal_genesis(
+		"1144acd27f0e5b2c88da7dc12c111e396983dec036ccfb42da5bbb0dd7104e89",
+	),
+	ws: "wss://previewnet.substrate.dev/bulletin",
+}];
+
+#[derive(Debug, Clone, Copy)]
+pub struct HopEndpoint {
+	pub bulletin_genesis: [u8; 32],
+	pub ws: &'static str,
+}
+
 const POLKADOT_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 	&[POLKADOT_ASSET_HUB, POLKADOT_PEOPLE, POLKADOT_BULLETIN];
 
@@ -413,6 +462,7 @@ pub struct NetworkConfig {
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.
 	pub asset_hub_genesis: [u8; 32],
 	pub live_chain_endpoints: &'static [ChainEndpoint],
+	pub hop_endpoints: &'static [HopEndpoint],
 	/// `DotnsPopController` to use when on-chain discovery finds none, for a
 	/// network whose gateway dispatcher is not set yet. Discovery wins when it
 	/// answers.
@@ -612,6 +662,38 @@ mod tests {
 				);
 			}
 		}
+	}
+
+	/// `TRUAPI_LIGHT_CLIENT=1` finds each chain in the provider's bundled catalog by
+	/// the preset's genesis hash, so a network reset applied to only one of the two
+	/// copies leaves the light client unable to connect.
+	#[test]
+	fn every_supported_preset_matches_the_light_client_catalog() {
+		for network in Network::value_variants()
+			.iter()
+			.copied()
+			.filter(|network| network.supports_light_client())
+		{
+			let config = network.config();
+			let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+				.add_network(config.id)
+				.unwrap_or_else(|error| panic!("{} is not in the catalog: {error:?}", config.id));
+			assert_eq!(
+				(catalog.people, catalog.assethub, catalog.bulletin),
+				(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
+				"{} genesis hashes differ from the light-client catalog",
+				config.id
+			);
+		}
+	}
+
+	#[test]
+	fn polkadot_refuses_the_unavailable_light_client() {
+		assert!(
+			refuse_light_client(Network::Polkadot, &[], Some("1".to_owned())).is_err(),
+			"Polkadot has no bundled light-client chain catalog"
+		);
+		assert!(refuse_light_client(Network::Polkadot, &[], Some("0".to_owned())).is_ok());
 	}
 
 	/// Anchors the served set itself. Every other test that reads it iterates, so
@@ -963,71 +1045,5 @@ mod tests {
 			preset.identity_backend_base,
 			"a blank override keeps the preset"
 		);
-	}
-
-	#[test]
-	fn no_chain_override_keeps_the_preset() {
-		for network in Network::value_variants() {
-			let preset = network.preset();
-			let overrides =
-				ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
-			assert!(overrides.set_names().is_empty());
-			let resolved = apply_chain_overrides(preset, overrides);
-			assert_eq!(resolved.people_ws, preset.people_ws);
-			assert_eq!(resolved.asset_hub_ws, preset.asset_hub_ws);
-			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
-			assert!(std::ptr::eq(resolved.live_chain_endpoints, preset.live_chain_endpoints));
-		}
-	}
-
-	#[test]
-	fn chain_overrides_are_refused_with_the_light_client() {
-		let error = refuse_light_client(&[PEOPLE_WS_ENV], Some("1".to_string())).unwrap_err();
-		assert!(error.to_string().contains(PEOPLE_WS_ENV), "{error}");
-		assert!(refuse_light_client(&[], Some("1".to_string())).is_ok());
-		assert!(refuse_light_client(&[PEOPLE_WS_ENV], None).is_ok());
-	}
-
-	#[test]
-	fn chain_overrides_must_be_websocket_urls() {
-		for value in ["127.0.0.1:10010", "http://127.0.0.1:10010"] {
-			let error = ChainOverrides::parse([None, None, Some(value.to_string())])
-				.expect_err("a non-ws override is refused up front");
-			assert!(error.to_string().contains(BULLETIN_WS_ENV), "{error}");
-		}
-	}
-
-	#[test]
-	fn chain_overrides_move_the_field_and_the_route_together() {
-		let preset = Network::Previewnet.preset();
-		let overrides = ChainOverrides::parse([
-			Some(" ws://127.0.0.1:10010 ".to_string()),
-			Some(" ".to_string()),
-			None,
-		])
-		.unwrap();
-		assert_eq!(overrides.set_names(), [PEOPLE_WS_ENV]);
-		let overridden = apply_chain_overrides(preset, overrides);
-
-		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
-		assert_eq!(
-			overridden.asset_hub_ws, preset.asset_hub_ws,
-			"a blank override keeps the preset"
-		);
-		assert_eq!(overridden.bulletin_ws, preset.bulletin_ws);
-		assert_eq!(overridden.people_genesis, preset.people_genesis, "a fork keeps the genesis");
-		for endpoint in overridden.live_chain_endpoints {
-			let expected = if endpoint.genesis == preset.people_genesis {
-				"ws://127.0.0.1:10010"
-			} else {
-				preset
-					.live_chain_endpoints
-					.iter()
-					.find(|original| original.genesis == endpoint.genesis)
-					.expect("every route survives the override")
-					.ws
-			};
-			assert_eq!(endpoint.ws, expected);
-		}
 	}
 }

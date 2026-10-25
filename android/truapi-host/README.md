@@ -1,12 +1,17 @@
 # TrUAPI Android host adapter
 
-*Kotlin wrapper around the TrUAPI Rust core (UniFFI). Wire decoding, request routing, and subscription lifecycle stay in the Rust core; products connect through the localhost WebSocket bridge.*
+_Kotlin wrapper around the TrUAPI Rust core (UniFFI). Wire decoding, request routing, and subscription lifecycle stay in
+the Rust core; products connect through the localhost WebSocket bridge._
 
-Distribution: a Maven AAR published to GitHub Packages by the `release-android` workflow. Each release bundles, built from the same source tree: `libtruapi.so` for arm64-v8a, armeabi-v7a and x86_64, the UniFFI Kotlin bindings (`uniffi.truapi.*`), the Kotlin host adapter (`io.parity.truapi.*`), and the browser container asset. Consumers need no Rust toolchain or NDK.
+Distribution: a Maven AAR published to GitHub Packages by the `release-android` workflow. Each release bundles, built
+from the same source tree: `libtruapi_server.so` for arm64-v8a, armeabi-v7a and x86_64 (built with the `ws-bridge`
+feature), the UniFFI Kotlin bindings (`uniffi.truapi_server.*`), and the Kotlin host adapter (`io.parity.truapi.*`).
+Consumers need no Rust toolchain or NDK.
 
 ## Consume
 
-Add the GitHub Packages repository and the artifact to your app's Gradle build (GitHub Packages requires authentication even for public repos — any GitHub account token with `read:packages` works):
+Add the GitHub Packages repository and the artifact to your app's Gradle build (GitHub Packages requires authentication
+even for public repos — any GitHub account token with `read:packages` works):
 
 ```kotlin
 // settings.gradle.kts
@@ -32,51 +37,73 @@ dependencies {
 }
 ```
 
-The package is public, so any authenticated GitHub identity can read it. In GitHub Actions that means the built-in `GITHUB_TOKEN` with a `permissions: packages: read` block, no secret to create or rotate. Locally it means a personal access token with `read:packages`, set once as `gpr.user` / `gpr.key` in `~/.gradle/gradle.properties`. A token without that scope fails with 401 even though the package is public, which is how GitHub Packages treats Maven.
+The package is public, so any authenticated GitHub identity can read it. In GitHub Actions that means the built-in
+`GITHUB_TOKEN` with a `permissions: packages: read` block, no secret to create or rotate. Locally it means a personal
+access token with `read:packages`, set once as `gpr.user` / `gpr.key` in `~/.gradle/gradle.properties`. A token without
+that scope fails with 401 even though the package is public, which is how GitHub Packages treats Maven.
 
-The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP socket, which requires it even for loopback.
+The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP
+socket, which requires it even for loopback.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
+`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`, `paseo`, or `testnet`) from the same network
+configuration used by onboarding and the People/Bulletin genesis hashes. It must match the People chain's
+`NetworkSuffix.NetworkSuffix`. Include this configuration update in the embedding app's package upgrade.
+
+`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub genesis hash from the same network
+configuration, as 32 bytes. Product manifests are read from the dotNS contracts deployed there, so it is what makes a
+`trustedProducts` grant resolvable: without a usable value no manifest resolves, so every cross-product grant not
+already cached is refused, and the refusal is indistinguishable from the other product having granted nothing. Pass 32
+zero bytes only to declare deliberately that this host has no Asset Hub. Include this configuration update in the
 embedding app's package upgrade.
-
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
 
 ### Compatibility
 
 - **minSdk**: 29 (Android 10). Aligns with the polkadot-app-android-v2 floor.
 - **AGP**: built with 8.5.2; AGP 8.5+ consumers are fine. AAR is forward-compatible with newer AGPs.
 - **Kotlin**: built with 1.9.24. Newer Kotlin compilers (2.x) read 1.9 metadata fine.
-- **Transitive dependencies**: `net.java.dev.jna:jna:5.14.0` (UniFFI's runtime, ~1.5MB for consumers that don't already use it), `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0` and `org.jetbrains.kotlin:kotlin-stdlib:1.9.24`.
-- **Size**: the AAR is ~20MB, one `libtruapi.so` per ABI. An app bundle ships only the ABI the device needs, so the installed cost is ~9MB on arm64.
+- **Transitive dependencies**: `net.java.dev.jna:jna:5.14.0` (UniFFI's runtime, ~1.5MB for consumers that don't already
+  use it), `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0` and `org.jetbrains.kotlin:kotlin-stdlib:1.9.24`.
+- **Size**: the AAR is ~20MB, one `libtruapi_server.so` per ABI. An app bundle ships only the ABI the device needs, so
+  the installed cost is ~9MB on arm64.
 
 ## Public surface
 
-The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
+The public surface lives in
+[`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 
-- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
-- `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
-- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
-- `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
-- `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
-- `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
-- `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
-- `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
-- `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
-- `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It asks `topUpStatus` or `paymentStatus` once for an operation's current status and expects each later one through `notifyTopUpStatus` or `notifyPaymentStatus` until a terminal one; `notifyBalance` pushes each balance change. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
+- `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions,
+  navigation, push, feature support, a single `confirmUserAction`, and both storage backends.
+- `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence.
+- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission
+  decisions (`key` is a SCALE-encoded `CoreStorageKey`).
+- `LocalhostBridgeBootstrap` - JS snippet that publishes the WS bridge endpoint (`window.__truapi_localhost`) to the
+  product page so it can dial back in.
+- `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a
+  connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` carrying that
+  connection's own WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
+- `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to
+  `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
+- `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as
+  `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` decides and
+  removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned
+  between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session,
+  so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket
+  calls answer unsupported.
+
+Pass an existing native wallet as `nativeWallet` when constructing `TrUAPIHostRuntime`. The separate `NativeCoinageHost`
+interface contains only `nativeCoinage(request)`; it is not part of `HostBridge` or product callbacks. Omitting this
+optional dependency selects built-in Rust custody. A registered native service owns inventory, durable preparation,
+claims and recovery even while locked, unavailable or failing: it never falls back to Rust, and product executions
+cannot replace it. The callback is Host-private; outgoing memo material must not reach products or logs. The SDK
+supplies this contract, not an Android native Coinage service implementation. Regenerate Kotlin and native binaries
+together when updating it.
+
+`HostBridge.currentLocale` includes the system BCP 47 language tag and actual time-zone identifier. Its default `localizeTimestamps` implementation uses `java.time` to format each instant in the requested language and zone, including daylight-saving transitions; grouping keys are Gregorian `YYYY-MM-DD`. The SDK has no application `Context`, so embeddings must observe app-language and `ACTION_TIMEZONE_CHANGED` updates and call `execution.notifyLocaleChanged`, unregistering observers on teardown. The in-repository product host does this for each execution. Custom language selectors must also override `currentLocale`. Direct users of generated callbacks must implement `localizeTimestamps`, either supplying a formatter or throwing `HostRejection.Rejected` when conversion is unavailable.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)
+and opens the execution with `ProductExecutionKind.CHAT`:
 
 ```kotlin
 import io.parity.truapi.*
@@ -134,33 +161,25 @@ val endpoint = execution.startWsBridge()
 val bootstrap = LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token)
 ```
 
-Install `bootstrap` and `ContainerScriptBundle` at document start before loading the product, as in the example below.
+Chat requires an active session: `openProductExecution` succeeds without one, but every Chat call then answers `Denied`
+until `activateLocalSession` or SSO pairing completes.
 
-Chat requires an active session: `openProductExecution` succeeds without one,
-but every Chat call then answers `Denied` until `activateLocalSession` or SSO
-pairing completes.
+The core bounds and screens the product-supplied fields it forwards — ids, names, icons, message bodies, URLs, and the
+action and media counts. Ids and names are also normalized; a message body is bounded and screened but passed through
+byte-for-byte, and `ChatFile.size_bytes` is product-asserted and unverified. Contextual output escaping is the host's
+job.
 
-The core bounds and screens the product-supplied fields it forwards — ids,
-names, icons, message bodies, URLs, and the action and media counts. Ids and
-names are also normalized; a message body is bounded and screened but passed
-through byte-for-byte, and `ChatFile.size_bytes` is product-asserted and
-unverified. Contextual output escaping is the host's job.
+`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it
+returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the
+host stores it.
 
-`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
-
-The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation` and `notifyPairingFailed` are the two notices a peer gets before the answer, `establishPairing` is the answer, `resumePairing` serves the session for its whole life and belongs in its own coroutine, and `disconnectPairedHost` ends it. Only `ResponderExit.PEER_DISCONNECTED` from `resumePairing` authorises dropping the stored pairing. The host persists the peer between answering and serving, which is why those are separate calls.
-
-Two steps around them are the host's. `establishPairing` signs its answer with this host's own SSO statement identity, so `WalletSso` has to be allocated before it runs, and the peer's device statement account has to be tracked alongside it for the peer to author into the session: `parsePairingDeeplink` reads that account out of the deeplink before any notice goes out, and a pairing that then fails untracks it again unless the device was already paired. `disconnectPairedHost` submits the notice and nothing more, so ending a pairing also means cancelling that peer's `resumePairing` coroutine and untracking its renewal account; dropping the stored pairing alone leaves both running. Which undo a failure owes is the thrown case, not the message: `Rejected` means the peer may already have been reached and its target tracked, while `UndecodableDeeplink` is refused before either happens and leaves nothing to undo.
-
-The core prompts for nothing along the way, so asking the user is the host's too. `parsePairingDeeplink` returns the peer's `metadata` alongside it for that prompt: the host name, version, icon and platform the peer put in its QR, trimmed and stripped of the control characters and bidirectional overrides that would otherwise rewrite the prompt's own text around them, capped at 512 characters, and null where nothing renderable was sent. Safe to render is not verified: nothing signs that metadata, so a prompt built from it says what the peer calls itself, never who it is.
-
-The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns holds the responder statement secret its notice was signed with, and nothing consumes it, so `destroy()` it once the pairing settles, on the succeeding path as well as the failing one; wrapping the whole pairing in `use { }` covers both.
-
-`devicePaired` on the runtime bridge reports a device that finished pairing with this signing host, carrying the `PairedSsoPeer` the pairing produced. The core has no chat of its own, so announcing the new device to the user's existing contacts is the host's to do. It fires at least once per pairing, so a device that pairs again reports again; a resumed pairing reports nothing, so the host keeps its own record of which devices it has already seen. It arrives on the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a host that answers no pairing.
-
-`durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
-
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes),
+`notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render
+context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the
+session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's
+behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two
+rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest
+`includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -176,38 +195,50 @@ TrUAPIProductExecution.startWsBridge()
   → Rust dispatcher
 ```
 
-The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Interrupted calls and subscriptions fail without replay. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
-
-Android intercepts HTTP requests natively, including scripts and images, and calls `execution.authorizeRemotePermission` on the same Rust permission service used by the SDK. This shares grants and consumes “Allow once” only once. Approval covers the initial URL and any redirects it follows; redirect destinations are intentionally not checked separately. The container uses `nativeHttp: true` to avoid checking fetch and XHR again in JavaScript. Both product pages and hidden worker WebViews use this path.
-
-The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
-
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
+The product running in the `WebView` opens a `WebSocket` to the localhost port + token returned by `startWsBridge`. From
+there the Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks
+(`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`,
+core storage, chain JSON-RPC, `confirmUserAction`, preimage lookup, theme, `featureSupported`, `storage`) reach the
+embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves
+`lookupPreimage`.
 
 ## Permissions split
 
 The core's `Permissions` platform trait has two methods, and so does the bridge:
 
-- `devicePermission(product, request)` - OS-scoped grants (camera, mic, location, push). `request` is a typed `HostDevicePermissionRequest`.
-- `remotePermission(product, request)` - per-product capabilities. `request` is a typed `RemotePermission`.
+- `devicePermission(request)` - OS-scoped grants (camera, mic, location, push). `request` is a typed
+  `HostDevicePermissionRequest`.
+- `remotePermission(request)` - per-product capabilities. `request` is a typed `RemotePermission`.
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
+Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. `TrUAPIProductExecution.permissionAuthorizationStatus` resolves the current execution's authorization (including the OS gate); settings instead use the process-wide `TrUAPIHostRuntime.permissionAuthorizations(productId)` and suspending `setPermissionAuthorizationStatus(productId, request, status)`. Settings work without opening an execution and preserve product+request, account-neutral authority.
 
 The browser container checks product consent before opening WebSockets or requesting camera and microphone access. After installing it, the WebChromeClient media callback should check only the Android OS permission, so it does not consume product consent twice.
 
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `WebRtc` request and `DENIED` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
+To disable WebRTC, await `runtime.setPermissionAuthorizationStatus(productId, request, DENIED)` with a remote `WebRtc` request **before opening** the product execution. Deny/reset invalidates pending prompts and one-use grants and closes the product's existing executions; reopen a fresh execution when the user launches it again. Other products remain open. An explicit `AUTHORIZED` settings choice updates the same authority.
 
 The vendored Android host retains its native HTTP checks for fetch, XHR and subresources. Its installer adds `nativeHttp: true` to the private bootstrap configuration in every frame before the container runs, disabling duplicate JavaScript HTTP checks. Embedders without native HTTP enforcement must leave this flag unset.
 
 Identity and account access reviews use `confirmPermission(review)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `ALLOW_ALWAYS`; signing and other single-action reviews continue to use that Boolean callback.
 
+### Native permission settings and legacy migration
+
+Implement `HostCoreStorage.keys()` by enumerating the existing core namespace in the real persistent backend, not a separate grant index. The default throws unsupported. Implement `HostBridge.permissionAuthorizationsChanged(productId)` on the process bridge and notify settings observers; every core write, including decisions from native prompts, reaches this callback. After invalidation, check `execution.isClosed()` and dispose that execution's WebView/media resources without automatic renderer recovery. A socket disconnect alone does not stop capture.
+
+The Android application's permission repository imports Room rows through `importPermissionAuthorizations` before opening an execution or reading settings. Import only fills absent canonical decisions; a stored deny or reset tombstone cannot be resurrected by an old Room grant. Supported legacy reads and both settings toggle directions use canonical records. Legacy-only balance access stays in Room. Historical multi-domain records retain their bundle identity rather than turning a bundle denial into per-domain denials. Malformed or unmappable supported records fail visibly instead of disappearing from settings.
+
+Legacy prompts capture `permissionAuthorizationRevision` before waiting for the user and persist through `setPermissionAuthorizationStatusIfCurrent`; a false result rejects a late answer. One-use legacy grants are invalidated on process notifications. Revocation errors propagate to settings and leave the displayed persistent decision unchanged; there is no optimistic success. These are native host administration APIs, not new guest wire methods.
+
 ## Statement-store allowance renewal
 
-Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The core owns the ledger and the registration; the app owns only the schedule.
+Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing.
+They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances
+active until cleanup catches up, 48 hours on `paseo-next-v2`. The core owns the ledger and the registration; the app
+owns only the schedule.
 
-Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after pairing, not at construction:
+Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after
+pairing, not at construction:
 
 ```kotlin
 runtime.trackStatementRenewalTargets(
@@ -218,15 +249,32 @@ runtime.trackStatementRenewalTargets(
 )
 ```
 
-The ledger persists across launches, and an entry is dropped when the identity that promised it changes. `WalletSso` and `ProductStatementAllowance` are derivation recipes and survive that; `Account` carries a fixed account id and does not. A dropped target is listed in `report.pruned`, which is how a host learns to re-track one and keep renewal covering it. Re-tracking is idempotent, so the safe habit is to re-track the full set after every identity change rather than trying to reason about what survived.
+The ledger persists across launches, and an entry is dropped when the identity that promised it changes. `WalletSso` and
+`ProductStatementAllowance` are derivation recipes and survive that; `Account` carries a fixed account id and does not.
+A dropped target is listed in `report.pruned`, which is how a host learns to re-track one and keep renewal covering it.
+Re-tracking is idempotent, so the safe habit is to re-track the full set after every identity change rather than trying
+to reason about what survived.
 
-`statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a `WorkManager` worker can read it on a cold start before deciding whether the pass is worth running. Each entry carries an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
+`statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a
+`WorkManager` worker can read it on a cold start before deciding whether the pass is worth running. Each entry carries
+an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root
+key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An
+entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
 
-`untrackStatementRenewalAccount(accountId)` drops one fixed account and reports whether the ledger held it. It is scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is full, but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it saves.
+`untrackStatementRenewalAccount(accountId)` drops one fixed account and reports whether the ledger held it. It is scoped
+to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry
+does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is full,
+but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it
+saves.
 
-Only `Account` can be untracked. `WalletSso` and `ProductStatementAllowance` are recipes with no removal path, so a product you no longer run keeps being resolved and renewed until the promising identity changes.
+Only `Account` can be untracked. `WalletSso` and `ProductStatementAllowance` are recipes with no removal path, so a
+product you no longer run keeps being resolved and renewed until the promising identity changes.
 
-Then run a pass from a `WorkManager` worker. It submits extrinsics and blocks until they are included, so keep it off the main thread. It needs an active session too, which is the whole difficulty here: a worker on a cold start has none until you restore one, and the pass then fails with the bare reason `Disconnected`. Restore the session first, and read that reason as "not ready" rather than as a renewal failure. `startStatementAllowanceRenewal()` does not need this care, since its loop skips a tick with no session and retries.
+Then run a pass from a `WorkManager` worker. It submits extrinsics and blocks until they are included, so keep it off
+the main thread. It needs an active session too, which is the whole difficulty here: a worker on a cold start has none
+until you restore one, and the pass then fails with the bare reason `Disconnected`. Restore the session first, and read
+that reason as "not ready" rather than as a renewal failure. `startStatementAllowanceRenewal()` does not need this care,
+since its loop skips a tick with no session and retries.
 
 ```kotlin
 val report = runtime.renewStatementAllowances()
@@ -240,42 +288,55 @@ if (report.slotsExhausted) {
 }
 ```
 
-One scheduled pass per period is enough, with room to spare: an allowance stays usable for `Resources.StmtStoreGraceWindow` past its boundary, which is 48 hours on `paseo-next-v2`, so a missed run is recoverable rather than fatal. `nextStatementRenewalDelay()` reports the in-process loop's retry cadence, capped at an hour; a worker scheduling one run per period should read a value under an hour as the boundary approaching rather than waking hourly.
+One scheduled pass per period is enough, with room to spare: an allowance stays usable for
+`Resources.StmtStoreGraceWindow` past its boundary, which is 48 hours on `paseo-next-v2`, so a missed run is recoverable
+rather than fatal. `nextStatementRenewalDelay()` reports the in-process loop's retry cadence, capped at an hour; a
+worker scheduling one run per period should read a value under an hour as the boundary approaching rather than waking
+hourly.
 
 ### Answering the scheduler
 
-A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the absence of an exception:
+A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the
+absence of an exception:
 
 - every status `Registered` or `AlreadyAllocated`: `Result.success()`.
-- any status `Failed`: `Result.retry()`. The grace window means the retry can wait for the worker's own backoff rather than a tight loop.
-- any status `SkippedExhausted`, or `report.slotsExhausted`: `Result.success()`. Retrying cannot free a slot, only time or a replacement can, so a retry here only burns the worker's budget. It does mean an allowance went unrenewed, so tell the person rather than only logging it.
-- an exception carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and let the next run take it.
+- any status `Failed`: `Result.retry()`. The grace window means the retry can wait for the worker's own backoff rather
+  than a tight loop.
+- any status `SkippedExhausted`, or `report.slotsExhausted`: `Result.success()`. Retrying cannot free a slot, only time
+  or a replacement can, so a retry here only burns the worker's budget. It does mean an allowance went unrenewed, so
+  tell the person rather than only logging it.
+- an exception carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and
+  let the next run take it.
 
 Scheduling is one of three layers, and only the first needs the OS:
 
 1. a `WorkManager` run, which is the only one that covers an app nobody opens.
 2. a pass on session activation, which covers an app somebody does.
-3. on-demand allocation, which registers a product's own account for the current period when that product asks for a statement-store allowance and none is held. That covers the asking product, not the rest of the ledger, so it narrows the window rather than closing it.
+3. on-demand allocation, which registers a product's own account for the current period when that product asks for a
+   statement-store allowance and none is held. That covers the asking product, not the rest of the ledger, so it narrows
+   the window rather than closing it.
 
-`lastStatementRenewalReport()` returns the most recent pass the in-process loop ran, or `null` if none has, which is "not yet" rather than healthy. The loop returns nothing to its caller, so this is where a host driving it reads what it achieved; checking on resume is enough to catch an exhausted period. A direct `renewStatementAllowances()` hands back its own report and does not write here.
+`lastStatementRenewalReport()` returns the most recent pass the in-process loop ran, or `null` if none has, which is
+"not yet" rather than healthy. The loop returns nothing to its caller, so this is where a host driving it reads what it
+achieved; checking on resume is enough to catch an exhausted period. A direct `renewStatementAllowances()` hands back
+its own report and does not write here.
 
-`startStatementAllowanceRenewal()` runs the same pass on an in-process loop instead, for a host that stays resident. A pass has no cancellation, so several targets can outlast a constrained worker budget; targets registered before the process is killed are not lost and read back as already allocated.
+`startStatementAllowanceRenewal()` runs the same pass on an in-process loop instead, for a host that stays resident. A
+pass has no cancellation, so several targets can outlast a constrained worker budget; targets registered before the
+process is killed are not lost and read back as already allocated.
 
-An account id must be exactly 32 bytes. Anything else is rejected where the bindings convert it, before any chain work happens.
+An account id must be exactly 32 bytes. Anything else throws `NativeRenewalTargetException.InvalidAccountId` before any
+chain work happens.
 
 ## Example
 
-> **Threading:** the Rust core invokes every `HostBridge` callback on a
-> background thread it owns, never the UI thread. Marshal any UI work
-> (navigation, prompts, notifications, touching the `WebView`) onto the main
-> thread with `Handler(Looper.getMainLooper())` or a `Dispatchers.Main`
-> `CoroutineScope`. The `suspend` callbacks (`navigateTo`, `pushNotification`,
-> `devicePermission`, `remotePermission`, `featureSupported`,
-> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an
-> implementation may suspend for as long as the user takes to decide (e.g.
-> `withContext(Dispatchers.Main)` around a prompt); other TrUAPI traffic keeps
-> flowing while you wait. The remaining callbacks (auth state, storage, core
-> storage, chain, theme, and `cancelNotification`) run inline on the dispatcher
+> **Threading:** the Rust core invokes every `HostBridge` callback on a background thread it owns, never the UI thread.
+> Marshal any UI work (navigation, prompts, notifications, touching the `WebView`) onto the main thread with
+> `Handler(Looper.getMainLooper())` or a `Dispatchers.Main` `CoroutineScope`. The `suspend` callbacks (`navigateTo`,
+> `pushNotification`, `devicePermission`, `remotePermission`, `featureSupported`, `confirmUserAction`, `lookupPreimage`)
+> are awaited by the core, so an implementation may suspend for as long as the user takes to decide (e.g.
+> `withContext(Dispatchers.Main)` around a prompt); other TrUAPI traffic keeps flowing while you wait. The remaining
+> callbacks (auth state, storage, core storage, chain, theme, and `cancelNotification`) run inline on the dispatcher
 > thread and must return promptly without blocking.
 
 ```kt
@@ -313,11 +374,16 @@ class MyStorage : HostStorage {
     override suspend fun clear(key: String) { map.remove(key) }
 }
 
-// Core-owned storage: keyed by SCALE-encoded CoreStorageKey bytes. Back it with
-// real persistence (e.g. EncryptedSharedPreferences); an in-memory map is shown
-// for brevity.
+// Core-owned storage: the bytes remain opaque. Back it with real persistence;
+// writes/clears must finish durably before returning. The SDK serializes all
+// callbacks and implements cancellation-safe CAS plus cross-core refreshes.
+// Every adapter sharing a physical store/prefix MUST use the same identifier.
+// This process-wide in-memory store is shown only for brevity.
 class MyCoreStorage : HostCoreStorage {
-    private val map = HashMap<String, ByteArray>()
+    override val storageIdentifier = "example-process-memory"
+    private companion object {
+        val map = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    }
     private fun k(key: ByteArray) = key.joinToString("") { "%02x".format(it) }
     override suspend fun read(key: ByteArray) = map[k(key)]
     override suspend fun write(key: ByteArray, value: ByteArray) { map[k(key)] = value }
@@ -450,23 +516,32 @@ runtime.disconnect()
 
 ## The cdylib
 
-The released AAR bundles `libtruapi.so` for all three ABIs under its `jni/` directory; JNA loads it from there without any consumer setup.
+The released AAR bundles `libtruapi_server.so` for all three ABIs under its `jni/` directory; JNA loads it from there
+without any consumer setup.
 
-When iterating on the core from a source checkout instead of the published artifact, cross-compile into this module's `jniLibs` with:
+When iterating on the core from a source checkout instead of the published artifact, cross-compile into this module's
+`jniLibs` with:
 
 ```bash
 make android-jni    # needs cargo-ndk, the NDK, and the three Android rust targets
 ```
 
-or point the `mozilla-rust-android-gradle` plugin at `rust/crates/truapi` from the host app's own build (polkadot-app-android-v2 does this while it still builds from a checkout).
+or point the `mozilla-rust-android-gradle` plugin at `rust/crates/truapi` from the host app's own build
+(polkadot-app-android-v2 does this while it still builds from a checkout).
 
 ## Maintainers: cutting a release
 
-Include `@parity/android-host <version>` in the `release:` PR title, the same flow the npm packages and the iOS host use. On merge, `release.yml` calls `release-android.yml` for the release commit, which cross-compiles the cdylib for all three ABIs, regenerates the Kotlin bindings via the `codegen` cargo profile, and publishes `io.parity:truapi-host-android:<version>` to GitHub Packages.
+Include `@parity/android-host <version>` in the `release:` PR title, the same flow the npm packages and the iOS host
+use. On merge, `release.yml` calls `release-android.yml` for the release commit, which cross-compiles the cdylib for all
+three ABIs, regenerates the Kotlin bindings via the `codegen` cargo profile, and publishes
+`io.parity:truapi-host-android:<version>` to GitHub Packages.
 
-A manual `release-android` run with a version input reaches the same workflow, as an escape hatch. There is deliberately no tag trigger: a tag push cannot use `release.yml`'s gate on green CI, so it would be an unverified path to the registry.
+A manual `release-android` run with a version input reaches the same workflow, as an escape hatch. There is deliberately
+no tag trigger: a tag push cannot use `release.yml`'s gate on green CI, so it would be an unverified path to the
+registry.
 
-The version lives only in the release subject. Nothing in the tree records it, so there is no committed version to keep in sync.
+The version lives only in the release subject. Nothing in the tree records it, so there is no committed version to keep
+in sync.
 
 For local development, publish into `~/.m2`:
 
@@ -475,22 +550,22 @@ make android-jni            # optional: bundle the cdylibs into the local AAR
 make android-publish-local
 ```
 
-The artifact lands under `~/.m2/repository/io/parity/truapi-host-android/0.0.0-local/`; consumers pointing at `mavenLocal()` resolve it as `io.parity:truapi-host-android:0.0.0-local`.
+The artifact lands under `~/.m2/repository/io/parity/truapi-host-android/0.0.0-local/`; consumers pointing at
+`mavenLocal()` resolve it as `io.parity:truapi-host-android:0.0.0-local`.
 
 ## Regenerating the UniFFI bindings
 
-The ignored Kotlin bindings under `src/main/kotlin/generated/uniffi/` are produced from the workspace `uniffi-bindgen-cli`. Regenerate them before building or publishing the Android host package:
+The ignored Kotlin bindings under `src/main/kotlin/generated/uniffi/` are produced from the workspace
+`uniffi-bindgen-cli`. Regenerate them before building or publishing the Android host package:
 
 ```bash
 make uniffi-kotlin
 ```
 
-`make uniffi-kotlin` builds the host cdylib with the `codegen` profile and runs
-the generator. The `codegen` profile is required because uniffi-bindgen scans
-the cdylib's exported metadata symbols, which the `release` profile strips — a
-plain `--release` build produces a stripped library and no bindings. (`make
-uniffi` regenerates the Swift bindings; use `make uniffi-kotlin` for Android.)
+`make uniffi-kotlin` builds the host cdylib with the `codegen` profile and runs the generator. The `codegen` profile is
+required because uniffi-bindgen scans the cdylib's exported metadata symbols, which the `release` profile strips — a
+plain `--release` build produces a stripped library and no bindings. (`make uniffi` regenerates the Swift bindings; use
+`make uniffi-kotlin` for Android.)
 
-No CI job compiles this package. After changing `TrUAPIHost.kt` or the UniFFI
-surface it wraps, run `make android-check` locally — it regenerates the Kotlin
-bindings and compiles the module against them.
+No CI job compiles this package. After changing `TrUAPIHost.kt` or the UniFFI surface it wraps, run `make android-check`
+locally — it regenerates the Kotlin bindings and compiles the module against them.

@@ -4,6 +4,9 @@ import UIKit
 import Keystore_iOS
 import PolkadotUI
 import Products
+import ChainRegistry
+import BulletinChain
+import DesignSystem
 
 /// Creates ``ProductBot`` instances for a given product.
 ///
@@ -77,13 +80,56 @@ private extension ProductBotFactory {
     /// gets none. That is a valid background-only worker, and a bot for it
     /// would take a reference on a modality the product never declared.
     ///
-    /// A script installed by hand through debug settings stands in for a product
-    /// that has published no worker at all.
-    func servesChat(_ resolved: ResolvedProduct) -> Bool {
-        if ProductWorkerSource.published(for: resolved, serving: .chat) != nil { return true }
+    /// A worker declaring `includes.chat: false` is driven by ProductWorkerManager
+    /// as a plain Rust worker, never adapted to the Chat protocol.
+    func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
+        if let worker = resolved.executables.worker {
+            guard worker.includesChat else { return nil }
 
-        return ProductWorkerSource.installedByHand(for: resolved) {
-            productFileProvider.manualScriptEntryPath(productId: $0)
-        } != nil
+            return ProductWorkerSource(contentId: worker.identifier, entryRelativePath: worker.entrypoint)
+        }
+
+        return productFileProvider.manualScriptEntryPath(productId: resolved.id).map {
+            ProductWorkerSource(contentId: resolved.id, entryRelativePath: $0)
+        }
+    }
+
+    /// Builds one rust chat runtime (product execution + localhost ws-bridge)
+    /// off the shared runtime. The local session lives on the shared runtime;
+    /// a transient provider failure only fails this create.
+    func createRustRuntime(product: Product, source: ProductWorkerSource) throws -> ChatRuntimeProtocol {
+        let runtime = try runtimeProvider.sharedRuntime()
+
+        let engineContext = try ChatProductEngineFactory.makeContext(
+            source: source,
+            productFileProvider: productFileProvider,
+            logger: logger
+        )
+
+        let routers = ProductRoutersFacade.worker()
+        let productId = product.identifier
+
+        return ChatRustRuntime(
+            productUrl: engineContext.productUrl,
+            makeExecutionModel: { [hostProvider, chainRegistry, logger] chatMessaging in
+                let rustEnvironment = RustRuntimeEnvironment(
+                    runtime: runtime,
+                    chainRegistry: chainRegistry,
+                    notificationScheduler: ProductNotificationScheduler.shared,
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    hostProvider: hostProvider,
+                    themeManager: ThemeManager.shared,
+                    logger: logger
+                )
+                return try rustEnvironment.makeChatExecution(
+                    productId: productId,
+                    routers: routers,
+                    chatMessaging: chatMessaging
+                )
+            },
+            routers: routers,
+            engineFactory: engineContext.engineFactory,
+            logger: logger
+        )
     }
 }

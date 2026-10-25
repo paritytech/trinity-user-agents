@@ -17,8 +17,17 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
-> **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
-> Products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
+> **NOTE (2026-10-06): trusted native products skip only notification app consent.**
+> The iOS and Android TrUAPI notification permission callbacks reuse the canonical
+> `hasTrustedRemotePermissions` classifier for the application-consent step only.
+> The core still reads product-scoped decisions before invoking the callback:
+> stored denial, one-use consumption and storage errors retain their existing
+> behavior. The native callback still checks/requests the host application's OS
+> notification permission; OS refusal never returns an authorization or reaches
+> notification scheduling. Camera, microphone and other device capabilities do
+> not inherit this exception. Browser hosts must make the same separation in
+> their concrete permission callback, not bypass that callback in Rust: the
+> shared callback can own both application consent and browser/OS authorization.
 
 ## Summary
 
@@ -27,7 +36,50 @@ One-use grants stay in memory for the product execution and are consumed by
 the operation that needs them. Requesting permission upfront does not consume
 the grant. Product-facing permission responses remain boolean.
 
+Native host settings read the canonical core store, not a second permission
+repository. The host-internal native runtime enumerates existing encoded core
+keys, so decisions saved before this integration remain visible. Legacy host
+records are imported only where no canonical record exists; import check and
+write share the same mutation fence as prompts and settings. A reset still
+means “ask again”, but retains a tombstone that prevents an obsolete legacy
+grant from being imported after revocation or restart. Permission scope remains
+product plus request, independent of the active wallet account.
+
+A native settings edit supersedes pending prompt results across executions of
+the affected product. Revocation/reset also clears their one-use grants and
+closes their live native executions; shells dispose the associated WebViews and
+device resources rather than automatically reconnecting the old execution.
+Unrelated products keep running, and a deliberate fresh execution observes the
+new decision. Enumeration and persistence failures are errors shown in settings,
+not an empty grant list or a successful revocation. Multi-domain denials remain
+bundle-specific and are not flattened into stronger per-domain denials.
+
 The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies lasting and one-use permission decisions, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
+
+## Bounded automatic preimage uploads
+
+`RemotePermission::PreimageSubmit` permits the capability, not an unattended upload.
+The core separately requests upload consent, including the product id, active root
+public key, configured Bulletin genesis hash and byte count. `AllowOnce` approves
+only that attempt. `AllowAlways` explicitly enables automatic uploads for that
+product/account/network, limited to **262,144 bytes per upload and four attempts
+per rolling 3,600 seconds**. Larger uploads and an exhausted budget still require
+per-upload review. Trusted products and unrelated automatic-signing grants do not
+bypass this consent.
+
+The host-owned `AutomaticPreimageSubmit { rootPublicKey }` authorization request
+reads or changes this separate setting. The core verifies the root against the
+active session; products cannot administer it. `NotDetermined` and `Denied`
+revoke automatic approval without disabling individually reviewed uploads.
+Revocation or an account change invalidates a pending consent sheet, and the core
+rechecks approval after allowance acquisition. Revocation cannot withdraw a
+transaction already handed to the chain backend.
+
+The core serializes reservations across product connections in its runtime and
+persists usage before contacting the backend. Failed or cancelled attempts remain
+charged; the existing internal allowance retry is the same attempt. Restarting,
+revoking or regranting does not reset the rolling budget. Legacy boolean host
+confirmation callbacks mean `AllowOnce`, never a durable grant.
 
 ## Motivation
 
@@ -139,7 +191,12 @@ enum RemotePermission {
   PreimageSubmit,
   // Submit statements to the statement store via
   // remote_statement_store_submit.
-  StatementSubmit
+  StatementSubmit,
+  // Bidirectional JAMNP-S QUIC/WebTransport peer messaging via
+  // jam_peer_transport_dial. The product names endpoints and peer keys;
+  // every byte received is untrusted. Decided per product and full genesis,
+  // without granting account access or signing authority.
+  JamPeers { genesis: [u8; 32] }
 }
 ```
 
@@ -238,6 +295,7 @@ The following business methods gate on a specific permission and MUST internally
 | `remote_chain_transaction_broadcast` | `RemotePermission::ChainSubmit`           |
 | `remote_preimage_submit`             | `RemotePermission::PreimageSubmit`        |
 | `remote_statement_store_submit`      | `RemotePermission::StatementSubmit`       |
+| `jam_peer_transport_dial`            | `RemotePermission::JamPeers { genesis }`  |
 | `host_navigate_to`                   | `DevicePermission::OpenUrl`               |
 | `send_push_notification`             | `DevicePermission::Notifications`         |
 
@@ -281,7 +339,8 @@ enum RemotePermission {
   WebRTC,
   ChainSubmit,
   PreimageSubmit,
-  StatementSubmit
+  StatementSubmit,
+  JamPeers { genesis: [u8; 32] }
 }
 
 // Single-permission device request (unchanged semantics, updated type name)
@@ -328,7 +387,7 @@ This RFC introduces breaking changes:
 
 3. **New `DevicePermission` variants**: `NFC`, `Clipboard`, `OpenUrl`, and `Biometrics` are new enum variants appended after the existing four. Older hosts that receive an unrecognized variant SHOULD return `false` (permission not granted) rather than an error, to allow graceful degradation.
 
-4. **New `RemotePermission` variants**: `PreimageSubmit` and `StatementSubmit` are new variants. Older hosts that receive an unrecognized variant in a batch SHOULD treat it as denied and return `false`.
+4. **New `RemotePermission` variants**: `PreimageSubmit`, `StatementSubmit` and `JamPeers` are new variants, appended so earlier indices are unchanged. Older hosts that receive an unrecognized variant in a batch SHOULD treat it as denied and return `false`.
 
 Migration is straightforward for implementors following semantic versioning: bump the major version, update type names, and wrap single-permission calls in a `vec![...]`.
 

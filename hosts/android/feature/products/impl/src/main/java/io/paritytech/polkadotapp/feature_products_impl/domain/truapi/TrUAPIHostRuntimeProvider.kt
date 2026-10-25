@@ -20,7 +20,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -31,7 +31,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -74,8 +73,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
-    private val paymentPlatforms: TrUAPIPaymentPlatforms,
-    private val scannerBridge: TrUAPIProductScans,
+    private val permissionChanges: PermissionAuthorizationChanges,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -83,11 +81,22 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
     private val bootMutex = Mutex()
     private var boot: Deferred<Result<TrUAPIHostRuntime>>? = null
+    private val sessionMutation = Mutex()
+    private val revision = MutableStateFlow(0L)
+    val sessionRevision: StateFlow<Long> = revision.asStateFlow()
+    @Volatile internal var sessionOwner: Long? = null
+        private set
+
+    internal suspend fun <T> withSessionMutation(block: suspend () -> T): T =
+        sessionMutation.withLock { block() }
 
     private val authState = MutableStateFlow<AuthState>(AuthState.Disconnected)
 
-    /** Core-owned session state. Nothing consumes it yet; see [HostBridge.authStateChanged]. */
+    /** Core-owned session state, also invalidated while the wallet account changes. */
     val sessionState: StateFlow<AuthState> = authState.asStateFlow()
+
+    var bulletinGenesisHash: ByteArray? = null
+        private set
 
     // Resolved once when the runtime boots: the core asks for chains on its
     // dispatcher thread, where a suspending registry lookup is not allowed.
@@ -115,8 +124,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private suspend fun build(): Result<TrUAPIHostRuntime> = runCatching {
+        val owner = accountRepository.getWalletAccount().id
         val config = buildRuntimeConfig()
+        bulletinGenesisHash = config.bulletinChainGenesisHash
         cachedChains.set(chainDirectory.resolve())
+        check(accountRepository.getWalletAccount().id == owner) { "Wallet changed while booting runtime" }
+        sessionOwner = owner
         TrUAPIHostRuntime(HostRuntimeBridge(), config)
     }
 
@@ -189,6 +202,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect {
+                    authState.value = AuthState.Disconnected
                     localSessionSource.resolve()
                         .mapCatching { session -> runtime.activateLocalSession(session.secret, session.liteUsername) }
                         .logFailure("TrUAPI local session could not follow the wallet switch")
@@ -216,6 +230,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override val storage: HostStorage = HostLevelStorage
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+
+        override fun permissionAuthorizationsChanged(productId: String) {
+            permissionChanges.changed(productId)
+        }
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)
@@ -252,7 +270,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             PermissionDecision.DENY
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
+            confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER) != PermissionDecision.DENY
+
+        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
+
+        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
+            confirmationLauncher.decidePermission(review, requesterFallback = HOST_REQUESTER)
 
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
@@ -268,14 +292,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
 
-        /**
-         * Observed, not acted on. Rendering [AuthState.Pairing] as a pairing
-         * sheet needs a core-driven session, and `PairingHostRuntime` is not
-         * reachable from a native host yet (truapi#334, "Move SSO to the shared
-         * Rust core"), so the core never reaches a state worth showing. iOS
-         * stubs this the same way. Surfaced as state rather than a log line so
-         * wiring the UI later is a subscription, not a rewrite.
-         */
+        /** Settings observe these account transitions; no app-supplied scope is used. */
         override fun authStateChanged(state: AuthState) {
             authState.value = state
             Timber.tag("truapi.auth").d("%s", state.marker())

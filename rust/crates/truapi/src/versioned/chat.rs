@@ -85,6 +85,7 @@ impl FromLatest for HostChatPostMessageError {
 mod tests {
 	use super::*;
 	use crate::versioned::Versioned;
+	use alloc::string::String;
 	use parity_scale_codec::{Decode, Encode};
 
 	#[test]

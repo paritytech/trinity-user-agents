@@ -6,28 +6,35 @@
 //! the active session and runs the chain-pure pass in
 //! `statement_allowance::renewal`, either once (`renew_now`) or on a periodic
 //! tick (`start_renewal_loop`).
+//!
+//! Only host-owned wallet/paired-device targets are renewed in the background.
+//! Product allowance decisions belong to product connection storage, which may
+//! be artifact-scoped and is unavailable here. They are ensured on demand by an
+//! authorized product request; old unscoped product ledger entries are pruned.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod driver;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use driver::{
-	active_owner_key, list, renew_now, start_renewal_loop, untrack_account_for_signing_host,
+	active_owner_key, list, renew_now, start_renewal_loop, track, untrack_account_for_signing_host,
 };
 
 use crate::{
-	host_logic::product_account::{ProductAccountError, derive_root_keypair_from_entropy},
-	platform::{CoreStorage, CoreStorageKey, ProductId},
+	host_logic::product_account::{
+		ProductAccountError, derive_identity_keypair, derive_sr25519_hard_path,
+	},
+	platform::CoreStorageKey,
 	runtime::{
-		authority::AuthorityError, statement_allowance::StatementAllowanceError,
+		authority::AuthorityError,
+		statement_allowance::{StatementAllowanceError, renewal::ResolvedRenewalTarget},
 		statement_store_rpc::StatementStoreRpcClientError,
 	},
 };
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
-use tracing::warn;
 
-use super::{SigningHost, allowance::AllowanceAllocationError};
+use super::{SigningHost, sso_responder::AllowanceAllocationError};
 use truapi::latest::GenericError;
 
 /// Failure reading renewal targets or preparing a statement-store renewal pass.
@@ -60,6 +67,11 @@ pub enum StatementRenewalError {
 	/// Bytes after a complete target list make the ledger invalid.
 	#[error("invalid persisted renewal targets: trailing bytes")]
 	TrailingLedgerBytes,
+	/// Product authorization is artifact-scoped and unavailable to background renewal.
+	#[error(
+		"Product statement allowances require an authorized product request; background renewal cannot access artifact-scoped permissions"
+	)]
+	ProductTargetRequiresAuthorizedRequest,
 	/// The session ended before ring membership could be resolved.
 	#[error("no active session for statement-store renewal")]
 	NoActiveSession,
@@ -83,7 +95,7 @@ pub enum StatementRenewalTarget {
 	/// `//allowance//statement-store//{product_id}` from the active root entropy.
 	ProductStatementAllowance {
 		/// Product the allowance account belongs to.
-		product_id: ProductId,
+		product_id: String,
 	},
 	/// `//wallet//sso` from the active root entropy.
 	WalletSso,
@@ -105,24 +117,6 @@ pub struct TrackedStatementRenewalTarget {
 	/// Root public key that promised a raw account id. A recipe carries none
 	/// and resolves under whichever identity is active.
 	pub owner: Option<[u8; 32]>,
-}
-
-impl TrackedStatementRenewalTarget {
-	/// Record `target` under `owner`, which only raw account ids retain.
-	fn new(target: StatementRenewalTarget, owner: [u8; 32]) -> Self {
-		let owner = match &target {
-			StatementRenewalTarget::Account { .. } => Some(owner),
-			StatementRenewalTarget::ProductStatementAllowance { .. } |
-			StatementRenewalTarget::WalletSso => None,
-		};
-		Self { target, owner }
-	}
-}
-
-/// Root public key of the identity rooted at `entropy`, used to own raw ledger
-/// entries.
-fn owner_key(entropy: &[u8]) -> Result<[u8; 32], StatementRenewalError> {
-	Ok(derive_root_keypair_from_entropy(entropy)?.public.to_bytes())
 }
 
 /// Renewal coordination state owned by [`SigningHost`].
@@ -149,60 +143,6 @@ impl RenewalState {
 	}
 }
 
-/// Discard unreadable entries; later allocations rebuild the ledger.
-async fn read_entries(
-	storage: &(impl CoreStorage + ?Sized),
-) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
-	let Some(blob) = storage
-		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
-		.await
-		.map_err(StatementRenewalError::ReadLedger)?
-	else {
-		return Ok(Vec::new());
-	};
-	match decode_entries(&blob) {
-		Ok(entries) => Ok(entries),
-		Err(reason) => {
-			warn!(%reason, "discarding an undecodable renewal ledger");
-			Ok(Vec::new())
-		},
-	}
-}
-
-/// Append `new_targets` to the ledger, preserving order and skipping entries
-/// already present.
-async fn track_targets(
-	storage: &(impl CoreStorage + ?Sized),
-	ledger_lock: &Mutex<()>,
-	owner: [u8; 32],
-	new_targets: Vec<StatementRenewalTarget>,
-) -> Result<(), StatementRenewalError> {
-	let _guard = ledger_lock.lock().await;
-	let mut entries = read_entries(storage).await?;
-	let mut changed = false;
-	for target in new_targets {
-		let entry = TrackedStatementRenewalTarget::new(target, owner);
-		if !entries.contains(&entry) {
-			entries.push(entry);
-			changed = true;
-		}
-	}
-	if !changed {
-		return Ok(());
-	}
-	write_entries(storage, &entries).await
-}
-
-async fn write_entries(
-	storage: &(impl CoreStorage + ?Sized),
-	entries: &[TrackedStatementRenewalTarget],
-) -> Result<(), StatementRenewalError> {
-	storage
-		.write_core_storage(CoreStorageKey::StatementRenewalTargets, entries.encode())
-		.await
-		.map_err(StatementRenewalError::WriteLedger)
-}
-
 fn decode_entries(
 	blob: &[u8],
 ) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
@@ -214,17 +154,72 @@ fn decode_entries(
 	Ok(entries)
 }
 
-/// Record `targets` in the ledger under the active identity.
-pub async fn track(
+/// Stable labels identify pruned entries even without an active wallet.
+fn target_label(target: &StatementRenewalTarget) -> String {
+	match target {
+		StatementRenewalTarget::ProductStatementAllowance { product_id } => {
+			format!("product:{product_id}")
+		},
+		StatementRenewalTarget::WalletSso => "wallet-sso".to_string(),
+		StatementRenewalTarget::Account { label, .. } => label.clone(),
+	}
+}
+
+fn resolve_target(
+	entropy: &[u8],
+	network_suffix: &str,
+	target: &StatementRenewalTarget,
+) -> Result<ResolvedRenewalTarget, String> {
+	let label = target_label(target);
+	match target {
+		StatementRenewalTarget::ProductStatementAllowance { product_id } => {
+			let pair = derive_sr25519_hard_path(
+				entropy,
+				&["allowance", "statement-store", product_id.as_str()],
+			)
+			.map_err(|err| err.to_string())?;
+			Ok(ResolvedRenewalTarget { label, account_id: pair.public.to_bytes() })
+		},
+		StatementRenewalTarget::WalletSso => {
+			let pair =
+				derive_identity_keypair(entropy, network_suffix).map_err(|err| err.to_string())?;
+			Ok(ResolvedRenewalTarget { label, account_id: pair.public.to_bytes() })
+		},
+		StatementRenewalTarget::Account { account_id, .. } => {
+			Ok(ResolvedRenewalTarget { label, account_id: *account_id })
+		},
+	}
+}
+
+/// Resolve attribution without refreshing, pruning, or rewriting the ledger.
+pub async fn inspection_labels(
 	signing_host: &SigningHost,
-	targets: Vec<StatementRenewalTarget>,
-) -> Result<(), StatementRenewalError> {
-	let entropy = signing_host.root_entropy()?;
-	track_targets(
-		signing_host.platform.as_ref(),
-		signing_host.renewal.ledger_lock(),
-		owner_key(&entropy)?,
-		targets,
-	)
-	.await
+	entropy: &[u8],
+	owner: [u8; 32],
+) -> Result<crate::runtime::statement_allowance::inspection::AccountLabels, String> {
+	let _guard = signing_host.renewal.ledger_lock().lock().await;
+	let bytes = signing_host
+		.platform
+		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
+		.await
+		.map_err(|err| format!("renewal ledger read failed: {}", err.reason))?;
+	let entries = bytes
+		.as_deref()
+		.map(decode_entries)
+		.transpose()
+		.map_err(|error| error.to_string())?
+		.unwrap_or_default();
+	let mut labels = crate::runtime::statement_allowance::inspection::AccountLabels::new();
+	for entry in entries {
+		if entry.owner.is_some_and(|recorded| recorded != owner) {
+			continue;
+		}
+		let resolved = resolve_target(entropy, &signing_host.network_suffix, &entry.target)?;
+		let product = match entry.target {
+			StatementRenewalTarget::ProductStatementAllowance { product_id } => Some(product_id),
+			_ => None,
+		};
+		labels.insert(resolved.account_id, (product, resolved.label));
+	}
+	Ok(labels)
 }

@@ -39,7 +39,7 @@ final class HostTransactionSponsorFactory: TransactionSponsorMaking {
         )
 
         let peopleTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.peopleChain,
+            chainId: AppConfig.Chains.usernameChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )

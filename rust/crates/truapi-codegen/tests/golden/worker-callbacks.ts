@@ -8,7 +8,7 @@
 import type { RawCallbacks } from "./host-callbacks-adapter.js";
 import type { GenericError } from "@parity/truapi";
 
-import type { ChainConnect } from "../runtime.js";
+import type { ChainConnect, HopConnect } from "../runtime.js";
 
 export const CALLBACK_NAMES = [
   "authStateChanged",
@@ -16,18 +16,41 @@ export const CALLBACK_NAMES = [
   "registerChatBot",
   "postChatMessage",
   "setChatRoomFooter",
+  "nativeCoinage",
   "contacts",
   "pickContact",
+  "pickContacts",
+  "placeContactLabels",
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
+  "compareExchangeCoreStorage",
+  "coreStorageChanged",
   "featureSupported",
   "supportedChains",
   "scheduleGameReminder",
   "cancelGameReminder",
+  "allowedHopEndpoints",
+  "identityUsernameCandidates",
+  "localizeTimestamps",
+  "mediaBackendCapabilities",
+  "mediaBackendCommand",
+  "pickChatFiles",
+  "readChatFile",
+  "releaseChatFile",
+  "beginChatFileExport",
+  "writeChatFileExport",
+  "finishChatFileExport",
+  "cancelChatFileExport",
   "navigateTo",
   "pushNotification",
   "cancelNotification",
+  "receiverAuthority",
+  "receiverConsent",
+  "receiverChanged",
+  "receiverCommand",
+  "activationEvents",
+  "acknowledgeActivation",
   "devicePermissionStatus",
   "devicePermission",
   "remotePermission",
@@ -37,6 +60,9 @@ export const CALLBACK_NAMES = [
   "read",
   "write",
   "clear",
+  "presentProfile",
+  "presentContactProfile",
+  "placeContactAvatars",
   "scanCode",
   "confirmPermission",
   "confirmUserAction",
@@ -46,6 +72,7 @@ export type CallbackName = (typeof CALLBACK_NAMES)[number];
 export const SUBSCRIPTION_NAMES = [
   "subscribeChatRooms",
   "subscribeLocale",
+  "mediaBackendEvents",
   "subscribePocketCards",
   "lookupPreimage",
   "subscribeStorage",
@@ -60,11 +87,12 @@ export interface WorkerCallbackBridge {
   ): Promise<unknown>;
   startSubscription<T>(
     name: SubscriptionName,
-    payload: Uint8Array | string | null,
+    args: readonly unknown[],
     sendItem: (value: T) => void,
     sendError: (error: GenericError) => void,
   ): () => void;
   chainConnect: ChainConnect;
+  hopConnect: HopConnect;
 }
 
 function rawCallbacks(
@@ -76,11 +104,28 @@ function rawCallbacks(
     | "readCoreStorage"
     | "writeCoreStorage"
     | "clearCoreStorage"
+    | "compareExchangeCoreStorage"
+    | "coreStorageChanged"
     | "featureSupported"
     | "supportedChains"
+    | "allowedHopEndpoints"
+    | "localizeTimestamps"
+    | "pickChatFiles"
+    | "readChatFile"
+    | "releaseChatFile"
+    | "beginChatFileExport"
+    | "writeChatFileExport"
+    | "finishChatFileExport"
+    | "cancelChatFileExport"
     | "navigateTo"
     | "pushNotification"
     | "cancelNotification"
+    | "receiverAuthority"
+    | "receiverConsent"
+    | "receiverChanged"
+    | "receiverCommand"
+    | "activationEvents"
+    | "acknowledgeActivation"
     | "devicePermission"
     | "remotePermission"
     | "beginOperation"
@@ -107,6 +152,15 @@ function rawCallbacks(
       bridge.callbackRequest("clearCoreStorage", [key]) as ReturnType<
         Required<RawCallbacks>["clearCoreStorage"]
       >,
+    compareExchangeCoreStorage: (key, expected, replacement, notifyOnSuccess) =>
+      bridge.callbackRequest("compareExchangeCoreStorage", [
+        key,
+        expected,
+        replacement,
+        notifyOnSuccess,
+      ]) as ReturnType<Required<RawCallbacks>["compareExchangeCoreStorage"]>,
+    coreStorageChanged: (key) =>
+      void bridge.callbackRequest("coreStorageChanged", [key]).catch(() => {}),
     featureSupported: (request) =>
       bridge.callbackRequest("featureSupported", [request]) as ReturnType<
         Required<RawCallbacks>["featureSupported"]
@@ -114,6 +168,46 @@ function rawCallbacks(
     supportedChains: () =>
       bridge.callbackRequest("supportedChains", []) as ReturnType<
         Required<RawCallbacks>["supportedChains"]
+      >,
+    allowedHopEndpoints: (bulletinGenesisHash) =>
+      bridge.callbackRequest("allowedHopEndpoints", [
+        bulletinGenesisHash,
+      ]) as ReturnType<Required<RawCallbacks>["allowedHopEndpoints"]>,
+    localizeTimestamps: (request) =>
+      bridge.callbackRequest("localizeTimestamps", [request]) as ReturnType<
+        Required<RawCallbacks>["localizeTimestamps"]
+      >,
+    pickChatFiles: (request) =>
+      bridge.callbackRequest("pickChatFiles", [request]) as ReturnType<
+        Required<RawCallbacks>["pickChatFiles"]
+      >,
+    readChatFile: (sourceId, offset, length) =>
+      bridge.callbackRequest("readChatFile", [
+        sourceId,
+        offset,
+        length,
+      ]) as ReturnType<Required<RawCallbacks>["readChatFile"]>,
+    releaseChatFile: (sourceId) =>
+      bridge.callbackRequest("releaseChatFile", [sourceId]) as ReturnType<
+        Required<RawCallbacks>["releaseChatFile"]
+      >,
+    beginChatFileExport: (request) =>
+      bridge.callbackRequest("beginChatFileExport", [request]) as ReturnType<
+        Required<RawCallbacks>["beginChatFileExport"]
+      >,
+    writeChatFileExport: (exportId, offset, data) =>
+      bridge.callbackRequest("writeChatFileExport", [
+        exportId,
+        offset,
+        data,
+      ]) as ReturnType<Required<RawCallbacks>["writeChatFileExport"]>,
+    finishChatFileExport: (exportId) =>
+      bridge.callbackRequest("finishChatFileExport", [exportId]) as ReturnType<
+        Required<RawCallbacks>["finishChatFileExport"]
+      >,
+    cancelChatFileExport: (exportId) =>
+      bridge.callbackRequest("cancelChatFileExport", [exportId]) as ReturnType<
+        Required<RawCallbacks>["cancelChatFileExport"]
       >,
     navigateTo: (url) =>
       bridge.callbackRequest("navigateTo", [url]) as ReturnType<
@@ -126,6 +220,33 @@ function rawCallbacks(
     cancelNotification: (id) =>
       bridge.callbackRequest("cancelNotification", [id]) as ReturnType<
         Required<RawCallbacks>["cancelNotification"]
+      >,
+    receiverAuthority: (productId) =>
+      bridge.callbackRequest("receiverAuthority", [productId]) as ReturnType<
+        Required<RawCallbacks>["receiverAuthority"]
+      >,
+    receiverConsent: (authority, watches) =>
+      bridge.callbackRequest("receiverConsent", [
+        authority,
+        watches,
+      ]) as ReturnType<Required<RawCallbacks>["receiverConsent"]>,
+    receiverChanged: () =>
+      bridge.callbackRequest("receiverChanged", []) as ReturnType<
+        Required<RawCallbacks>["receiverChanged"]
+      >,
+    receiverCommand: (productId, action, payload) =>
+      bridge.callbackRequest("receiverCommand", [
+        productId,
+        action,
+        payload,
+      ]) as ReturnType<Required<RawCallbacks>["receiverCommand"]>,
+    activationEvents: () =>
+      bridge.callbackRequest("activationEvents", []) as ReturnType<
+        Required<RawCallbacks>["activationEvents"]
+      >,
+    acknowledgeActivation: (request) =>
+      bridge.callbackRequest("acknowledgeActivation", [request]) as ReturnType<
+        Required<RawCallbacks>["acknowledgeActivation"]
       >,
     devicePermission: (product, request) =>
       bridge.callbackRequest("devicePermission", [
@@ -178,13 +299,13 @@ function subscriptionRawCallbacks(
 > {
   return {
     subscribeLocale: (sendItem, sendError) =>
-      bridge.startSubscription("subscribeLocale", null, sendItem, sendError),
+      bridge.startSubscription("subscribeLocale", [], sendItem, sendError),
     lookupPreimage: (key, sendItem, sendError) =>
-      bridge.startSubscription("lookupPreimage", key, sendItem, sendError),
+      bridge.startSubscription("lookupPreimage", [key], sendItem, sendError),
     subscribeStorage: (key, sendItem, sendError) =>
-      bridge.startSubscription("subscribeStorage", key, sendItem, sendError),
+      bridge.startSubscription("subscribeStorage", [key], sendItem, sendError),
     subscribeTheme: (sendItem, sendError) =>
-      bridge.startSubscription("subscribeTheme", null, sendItem, sendError),
+      bridge.startSubscription("subscribeTheme", [], sendItem, sendError),
   };
 }
 
@@ -224,16 +345,32 @@ function chatRawCallbacks(
     subscribeChatRooms: (product, sendItem, sendError) =>
       bridge.startSubscription(
         "subscribeChatRooms",
-        product,
+        [product],
         sendItem,
         sendError,
       ),
   };
 }
 
+function coinageWalletRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "nativeCoinage">> {
+  return {
+    nativeCoinage: (request) =>
+      bridge.callbackRequest("nativeCoinage", [request]) as ReturnType<
+        Required<RawCallbacks>["nativeCoinage"]
+      >,
+  };
+}
+
 function contactsRawCallbacks(
   bridge: WorkerCallbackBridge,
-): Required<Pick<RawCallbacks, "contacts" | "pickContact">> {
+): Required<
+  Pick<
+    RawCallbacks,
+    "contacts" | "pickContact" | "pickContacts" | "placeContactLabels"
+  >
+> {
   return {
     contacts: (lookup) =>
       bridge.callbackRequest("contacts", [lookup]) as ReturnType<
@@ -243,6 +380,16 @@ function contactsRawCallbacks(
       bridge.callbackRequest("pickContact", [product]) as ReturnType<
         Required<RawCallbacks>["pickContact"]
       >,
+    pickContacts: (product, selection) =>
+      bridge.callbackRequest("pickContacts", [
+        product,
+        selection,
+      ]) as ReturnType<Required<RawCallbacks>["pickContacts"]>,
+    placeContactLabels: (product, placed) =>
+      bridge.callbackRequest("placeContactLabels", [
+        product,
+        placed,
+      ]) as ReturnType<Required<RawCallbacks>["placeContactLabels"]>,
   };
 }
 
@@ -259,6 +406,47 @@ function gameRawCallbacks(
       bridge.callbackRequest("cancelGameReminder", [product]) as ReturnType<
         Required<RawCallbacks>["cancelGameReminder"]
       >,
+  };
+}
+
+function identityBackendRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "identityUsernameCandidates">> {
+  return {
+    identityUsernameCandidates: (username, peopleChainGenesisHash) =>
+      bridge.callbackRequest("identityUsernameCandidates", [
+        username,
+        peopleChainGenesisHash,
+      ]) as ReturnType<Required<RawCallbacks>["identityUsernameCandidates"]>,
+  };
+}
+
+function mediaRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<
+  Pick<
+    RawCallbacks,
+    "mediaBackendCapabilities" | "mediaBackendEvents" | "mediaBackendCommand"
+  >
+> {
+  return {
+    mediaBackendCapabilities: (product) =>
+      bridge.callbackRequest("mediaBackendCapabilities", [
+        product,
+      ]) as ReturnType<Required<RawCallbacks>["mediaBackendCapabilities"]>,
+    mediaBackendEvents: (product, runtimeId, sendItem, sendError) =>
+      bridge.startSubscription(
+        "mediaBackendEvents",
+        [product, runtimeId],
+        sendItem,
+        sendError,
+      ),
+    mediaBackendCommand: (product, runtimeId, command) =>
+      bridge.callbackRequest("mediaBackendCommand", [
+        product,
+        runtimeId,
+        command,
+      ]) as ReturnType<Required<RawCallbacks>["mediaBackendCommand"]>,
   };
 }
 
@@ -280,7 +468,7 @@ function pocketRawCallbacks(
     subscribePocketCards: (product, sendItem, sendError) =>
       bridge.startSubscription(
         "subscribePocketCards",
-        product,
+        [product],
         sendItem,
         sendError,
       ),
@@ -289,6 +477,33 @@ function pocketRawCallbacks(
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["removePocketCard"]>,
+  };
+}
+
+function profileRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<
+  Pick<
+    RawCallbacks,
+    "presentProfile" | "presentContactProfile" | "placeContactAvatars"
+  >
+> {
+  return {
+    presentProfile: (product, request) =>
+      bridge.callbackRequest("presentProfile", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["presentProfile"]>,
+    presentContactProfile: (product, presented) =>
+      bridge.callbackRequest("presentContactProfile", [
+        product,
+        presented,
+      ]) as ReturnType<Required<RawCallbacks>["presentContactProfile"]>,
+    placeContactAvatars: (product, placed) =>
+      bridge.callbackRequest("placeContactAvatars", [
+        product,
+        placed,
+      ]) as ReturnType<Required<RawCallbacks>["placeContactAvatars"]>,
   };
 }
 
@@ -306,19 +521,27 @@ function scannerRawCallbacks(
 /**
  * Optional capabilities the main-thread host actually serves. A
  * capability left out here is not proxied into the worker, so the
- * core answers its product calls with `Unsupported`.
+ * core applies that capability's absence behavior.
  */
 export interface OptionalCapabilities {
   /** Whether the host serves this capability. */
   chat?: boolean;
   /** Whether the host serves this capability. */
+  coinageWallet?: boolean;
+  /** Whether the host serves this capability. */
   contacts?: boolean;
   /** Whether the host serves this capability. */
   game?: boolean;
   /** Whether the host serves this capability. */
+  identityBackend?: boolean;
+  /** Whether the host serves this capability. */
+  media?: boolean;
+  /** Whether the host serves this capability. */
   permissionStatus?: boolean;
   /** Whether the host serves this capability. */
   pocket?: boolean;
+  /** Whether the host serves this capability. */
+  profile?: boolean;
   /** Whether the host serves this capability. */
   scanner?: boolean;
 }
@@ -331,14 +554,22 @@ export function createWorkerRawCallbacks(
     ...rawCallbacks(bridge),
     ...subscriptionRawCallbacks(bridge),
     chainConnect: bridge.chainConnect,
+    hopConnect: bridge.hopConnect,
   };
   if (capabilities.chat) Object.assign(callbacks, chatRawCallbacks(bridge));
+  if (capabilities.coinageWallet)
+    Object.assign(callbacks, coinageWalletRawCallbacks(bridge));
   if (capabilities.contacts)
     Object.assign(callbacks, contactsRawCallbacks(bridge));
   if (capabilities.game) Object.assign(callbacks, gameRawCallbacks(bridge));
+  if (capabilities.identityBackend)
+    Object.assign(callbacks, identityBackendRawCallbacks(bridge));
+  if (capabilities.media) Object.assign(callbacks, mediaRawCallbacks(bridge));
   if (capabilities.permissionStatus)
     Object.assign(callbacks, permissionStatusRawCallbacks(bridge));
   if (capabilities.pocket) Object.assign(callbacks, pocketRawCallbacks(bridge));
+  if (capabilities.profile)
+    Object.assign(callbacks, profileRawCallbacks(bridge));
   if (capabilities.scanner)
     Object.assign(callbacks, scannerRawCallbacks(bridge));
   return callbacks;
@@ -347,38 +578,79 @@ export function createWorkerRawCallbacks(
 export function startRawSubscription(
   callbacks: RawCallbacks,
   name: SubscriptionName,
-  payload: Uint8Array | string | null,
+  args: readonly unknown[],
   sendItem: (value?: unknown) => void,
   sendError: (error: GenericError) => void,
 ): (() => void) | void {
   switch (name) {
     case "subscribeChatRooms":
-      if (!(payload instanceof Uint8Array)) {
-        console.warn(`[truapi worker] ${name} requires payload`);
+      if (args.length !== 1 || !(args[0] instanceof Uint8Array)) {
+        sendError({ reason: "invalid subscription arguments" });
         return undefined;
       }
-      return callbacks.subscribeChatRooms?.(payload, sendItem, sendError);
+      return callbacks.subscribeChatRooms?.(
+        args[0] as Parameters<Required<RawCallbacks>["subscribeChatRooms"]>[0],
+        sendItem,
+        sendError,
+      );
     case "subscribeLocale":
+      if (args.length !== 0) {
+        sendError({ reason: "invalid subscription arguments" });
+        return undefined;
+      }
       return callbacks.subscribeLocale(sendItem, sendError);
+    case "mediaBackendEvents":
+      if (
+        args.length !== 2 ||
+        !(args[0] instanceof Uint8Array) ||
+        typeof args[1] !== "bigint"
+      ) {
+        sendError({ reason: "invalid subscription arguments" });
+        return undefined;
+      }
+      return callbacks.mediaBackendEvents?.(
+        args[0] as Parameters<Required<RawCallbacks>["mediaBackendEvents"]>[0],
+        args[1] as Parameters<Required<RawCallbacks>["mediaBackendEvents"]>[1],
+        sendItem,
+        sendError,
+      );
     case "subscribePocketCards":
-      if (!(payload instanceof Uint8Array)) {
-        console.warn(`[truapi worker] ${name} requires payload`);
+      if (args.length !== 1 || !(args[0] instanceof Uint8Array)) {
+        sendError({ reason: "invalid subscription arguments" });
         return undefined;
       }
-      return callbacks.subscribePocketCards?.(payload, sendItem, sendError);
+      return callbacks.subscribePocketCards?.(
+        args[0] as Parameters<
+          Required<RawCallbacks>["subscribePocketCards"]
+        >[0],
+        sendItem,
+        sendError,
+      );
     case "lookupPreimage":
-      if (!(payload instanceof Uint8Array)) {
-        console.warn(`[truapi worker] ${name} requires payload`);
+      if (args.length !== 1 || !(args[0] instanceof Uint8Array)) {
+        sendError({ reason: "invalid subscription arguments" });
         return undefined;
       }
-      return callbacks.lookupPreimage(payload, sendItem, sendError);
+      return callbacks.lookupPreimage(
+        args[0] as Parameters<Required<RawCallbacks>["lookupPreimage"]>[0],
+        sendItem,
+        sendError,
+      );
     case "subscribeStorage":
-      if (typeof payload !== "string") {
-        console.warn(`[truapi worker] ${name} requires payload`);
+      if (args.length !== 1 || typeof args[0] !== "string") {
+        sendError({ reason: "invalid subscription arguments" });
         return undefined;
       }
-      return callbacks.subscribeStorage(payload, sendItem, sendError);
+      return callbacks.subscribeStorage(
+        args[0] as Parameters<Required<RawCallbacks>["subscribeStorage"]>[0],
+        sendItem,
+        sendError,
+      );
     case "subscribeTheme":
+      if (args.length !== 0) {
+        sendError({ reason: "invalid subscription arguments" });
+        return undefined;
+      }
       return callbacks.subscribeTheme(sendItem, sendError);
   }
 }

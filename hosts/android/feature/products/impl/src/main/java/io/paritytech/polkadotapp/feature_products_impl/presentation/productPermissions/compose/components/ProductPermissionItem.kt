@@ -10,17 +10,38 @@ import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
 import io.paritytech.polkadotapp.common.R as RCommon
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.PermissionAuthorizationRequest
 
 @Composable
-internal fun ProductPermissionItem(
-    permissionStatus: ProductPermissionStatus,
-    onToggle: () -> Unit
-) {
+internal fun ProductPermissionItem(permissionStatus: ProductPermissionStatus, onToggle: () -> Unit) {
+    PermissionItem(permissionStatus.permission.displayName(), permissionStatus.permission.displayDescription(), permissionStatus.granted, onToggle)
+}
+
+@Composable
+internal fun NativeMediaPermissionItem(permission: NativeMediaPermissionStatus, onToggle: () -> Unit) {
+    fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
+    val (title, description) = when (val request = permission.request) {
+        is PermissionAuthorizationRequest.Calling -> "Calling" to
+            "Product: ${permission.productId}\nNetwork: ${request.network.hex()}\nAccount (sr25519): ${request.account.hex()}"
+        is PermissionAuthorizationRequest.Device -> {
+            val title = if (request.v1 == HostDevicePermissionRequest.CAMERA) "Camera" else "Microphone"
+            title to "Product: ${permission.productId}\nHost-owned calling capture. No raw browser capture access."
+        }
+        else -> error("Not a Media permission")
+    }
+    PermissionItem(title, description, permission.granted, onToggle)
+}
+
+@Composable
+private fun PermissionItem(title: String, description: String, granted: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -34,22 +55,17 @@ internal fun ProductPermissionItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             NovaText(
-                text = permissionStatus.permission.displayName(),
+                text = title,
                 style = PolkadotTheme.typography.title.large,
                 color = PolkadotTheme.colors.fg.primary
             )
-
             NovaText(
-                text = permissionStatus.permission.displayDescription(),
+                text = description,
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.tertiary
             )
         }
-
-        NovaSwitch(
-            checked = permissionStatus.granted,
-            onCheckedChange = { onToggle() }
-        )
+        NovaSwitch(checked = granted, onCheckedChange = { onToggle() })
     }
 }
 
@@ -60,18 +76,35 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.AccountAccess -> targetProductId
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
+        ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_type_chat_authority)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_type_profile_disclosure)
+        is ProductPermission.StatementStoreAllowance -> {
+            val account = when (val selector = derivationIndex) {
+                null -> stringResource(RCommon.string.product_permission_allowance_legacy_account)
+                is AllowanceAccountSelector.Index -> stringResource(RCommon.string.product_permission_allowance_index_account, selector.value.toString())
+                is AllowanceAccountSelector.Raw -> stringResource(RCommon.string.product_permission_allowance_raw_account, selector.value.toString())
+            }
+            stringResource(RCommon.string.product_permission_type_allowance, account)
+        }
         is ProductPermission.NftPurseRead -> ownerName()
         is ProductPermission.RemotePermission.NetworkAccess -> domain
+        is ProductPermission.RemotePermission.NetworkAccessSet -> domains.joinToString(", ")
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_type_chain_submit)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_type_statement_submit)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_type_preimage_submit)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, shortGenesis)
     }
 }
 
 @Composable
 private fun ProductPermission.displayDescription(): String {
-    return stringResource(descriptionRes())
+    val description = stringResource(descriptionRes())
+    return if (this is ProductPermission.RemotePermission.JamPeersAccess) {
+        "$description\n$genesis"
+    } else {
+        description
+    }
 }
 
 @StringRes
@@ -94,8 +127,12 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.AccountAccess -> RCommon.string.product_permission_type_account_access
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
+    ProductPermission.ChatAuthority -> RCommon.string.product_permission_chat_authority_description
+    ProductPermission.ProfileDisclosure -> RCommon.string.product_permission_profile_disclosure_description
+    is ProductPermission.StatementStoreAllowance -> RCommon.string.product_permission_allowance_description
     is ProductPermission.NftPurseRead -> RCommon.string.product_permission_type_nft_purse_read_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
+    is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,
     ProductPermission.RemotePermission.ChainSubmitAccess,
     ProductPermission.RemotePermission.StatementSubmitAccess,

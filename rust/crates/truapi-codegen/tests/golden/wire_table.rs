@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "9afae8af27c8cee3";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4d759be92c9a692a";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -138,6 +138,12 @@ pub const ACCOUNT_LIST_RING_VRF_KEYS: MethodIds = MethodIds {
 pub const ACCOUNT_RING_VRF_SIGN: MethodIds = MethodIds {
     trait_id: 2,
     method_id: 10,
+};
+
+/// Wire discriminants for `account_product_device_chat`.
+pub const ACCOUNT_PRODUCT_DEVICE_CHAT: MethodIds = MethodIds {
+    trait_id: 2,
+    method_id: 12,
 };
 
 /// Wire discriminants for `chain_follow_head_subscribe`.
@@ -356,6 +362,54 @@ pub const NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `notifications_receiver_status`.
+pub const NOTIFICATIONS_RECEIVER_STATUS: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 2,
+};
+
+/// Wire discriminants for `notifications_replace_receiver`.
+pub const NOTIFICATIONS_REPLACE_RECEIVER: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 3,
+};
+
+/// Wire discriminants for `notifications_disable_receiver`.
+pub const NOTIFICATIONS_DISABLE_RECEIVER: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 4,
+};
+
+/// Wire discriminants for `notifications_record_receipt`.
+pub const NOTIFICATIONS_RECORD_RECEIPT: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 5,
+};
+
+/// Wire discriminants for `notifications_receiver_events`.
+pub const NOTIFICATIONS_RECEIVER_EVENTS: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 6,
+};
+
+/// Wire discriminants for `notifications_acknowledge_receiver_event`.
+pub const NOTIFICATIONS_ACKNOWLEDGE_RECEIVER_EVENT: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 7,
+};
+
+/// Wire discriminants for `notifications_activation_events`.
+pub const NOTIFICATIONS_ACTIVATION_EVENTS: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 8,
+};
+
+/// Wire discriminants for `notifications_acknowledge_activation`.
+pub const NOTIFICATIONS_ACKNOWLEDGE_ACTIVATION: MethodIds = MethodIds {
+    trait_id: 8,
+    method_id: 9,
+};
+
 /// Wire discriminants for `payment_balance_subscribe`.
 pub const PAYMENT_BALANCE_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 9,
@@ -512,6 +566,12 @@ pub const LOCALE_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `locale_localize_timestamps`.
+pub const LOCALE_LOCALIZE_TIMESTAMPS: MethodIds = MethodIds {
+    trait_id: 16,
+    method_id: 1,
+};
+
 /// Wire discriminants for `renderer_render`.
 pub const RENDERER_RENDER: MethodIds = MethodIds {
     trait_id: 17,
@@ -552,6 +612,18 @@ pub const WORKER_END_OPERATION: MethodIds = MethodIds {
 pub const CONTACTS_PICK: MethodIds = MethodIds {
     trait_id: 20,
     method_id: 0,
+};
+
+/// Wire discriminants for `contacts_pick_many`.
+pub const CONTACTS_PICK_MANY: MethodIds = MethodIds {
+    trait_id: 20,
+    method_id: 1,
+};
+
+/// Wire discriminants for `contacts_place_labels`.
+pub const CONTACTS_PLACE_LABELS: MethodIds = MethodIds {
+    trait_id: 20,
+    method_id: 2,
 };
 
 /// Wire discriminants for `game_remind_next_game`.
@@ -662,6 +734,156 @@ pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
     method_id: 11,
 };
 
+/// Wire discriminants for `profile_present`.
+pub const PROFILE_PRESENT: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 0,
+};
+
+/// Wire discriminants for `profile_disclose`.
+pub const PROFILE_DISCLOSE: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 1,
+};
+
+/// Wire discriminants for `profile_retract`.
+pub const PROFILE_RETRACT: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 2,
+};
+
+/// Wire discriminants for `profile_present_contact`.
+pub const PROFILE_PRESENT_CONTACT: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 3,
+};
+
+/// Wire discriminants for `profile_place_contact_avatars`.
+pub const PROFILE_PLACE_CONTACT_AVATARS: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 4,
+};
+
+/// Wire discriminants for `profile_own_status`.
+pub const PROFILE_OWN_STATUS: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 5,
+};
+
+/// Wire discriminants for `profile_present_own`.
+pub const PROFILE_PRESENT_OWN: MethodIds = MethodIds {
+    trait_id: 69,
+    method_id: 6,
+};
+
+/// Wire discriminants for `jam_peer_transport_dial`.
+pub const JAM_PEER_TRANSPORT_DIAL: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 0,
+};
+
+/// Wire discriminants for `jam_peer_transport_open`.
+pub const JAM_PEER_TRANSPORT_OPEN: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 1,
+};
+
+/// Wire discriminants for `jam_peer_transport_send`.
+pub const JAM_PEER_TRANSPORT_SEND: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 2,
+};
+
+/// Wire discriminants for `jam_peer_transport_recv`.
+pub const JAM_PEER_TRANSPORT_RECV: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 3,
+};
+
+/// Wire discriminants for `jam_peer_transport_reset`.
+pub const JAM_PEER_TRANSPORT_RESET: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 4,
+};
+
+/// Wire discriminants for `jam_peer_transport_close`.
+pub const JAM_PEER_TRANSPORT_CLOSE: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 5,
+};
+
+/// Wire discriminants for `jam_peer_transport_events`.
+pub const JAM_PEER_TRANSPORT_EVENTS: MethodIds = MethodIds {
+    trait_id: 111,
+    method_id: 6,
+};
+
+/// Wire discriminants for `media_get_capabilities`.
+pub const MEDIA_GET_CAPABILITIES: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 0,
+};
+
+/// Wire discriminants for `media_session_subscribe`.
+pub const MEDIA_SESSION_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 1,
+};
+
+/// Wire discriminants for `media_create_session`.
+pub const MEDIA_CREATE_SESSION: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 2,
+};
+
+/// Wire discriminants for `media_add_participant`.
+pub const MEDIA_ADD_PARTICIPANT: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 3,
+};
+
+/// Wire discriminants for `media_respond_incoming`.
+pub const MEDIA_RESPOND_INCOMING: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 4,
+};
+
+/// Wire discriminants for `media_remove_participant`.
+pub const MEDIA_REMOVE_PARTICIPANT: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 5,
+};
+
+/// Wire discriminants for `media_set_local_tracks`.
+pub const MEDIA_SET_LOCAL_TRACKS: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 6,
+};
+
+/// Wire discriminants for `media_set_surfaces`.
+pub const MEDIA_SET_SURFACES: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 7,
+};
+
+/// Wire discriminants for `media_end_session`.
+pub const MEDIA_END_SESSION: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 8,
+};
+
+/// Wire discriminants for `media_get_operation`.
+pub const MEDIA_GET_OPERATION: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 9,
+};
+
+/// Wire discriminants for `media_cancel_operation`.
+pub const MEDIA_CANCEL_OPERATION: MethodIds = MethodIds {
+    trait_id: 218,
+    method_id: 10,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -729,6 +951,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "account_ring_vrf_sign",
         kind: WireKind::Request(ACCOUNT_RING_VRF_SIGN),
+    },
+    WireEntry {
+        method: "account_product_device_chat",
+        kind: WireKind::Request(ACCOUNT_PRODUCT_DEVICE_CHAT),
     },
     WireEntry {
         method: "chain_follow_head_subscribe",
@@ -875,6 +1101,38 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION),
     },
     WireEntry {
+        method: "notifications_receiver_status",
+        kind: WireKind::Request(NOTIFICATIONS_RECEIVER_STATUS),
+    },
+    WireEntry {
+        method: "notifications_replace_receiver",
+        kind: WireKind::Request(NOTIFICATIONS_REPLACE_RECEIVER),
+    },
+    WireEntry {
+        method: "notifications_disable_receiver",
+        kind: WireKind::Request(NOTIFICATIONS_DISABLE_RECEIVER),
+    },
+    WireEntry {
+        method: "notifications_record_receipt",
+        kind: WireKind::Request(NOTIFICATIONS_RECORD_RECEIPT),
+    },
+    WireEntry {
+        method: "notifications_receiver_events",
+        kind: WireKind::Request(NOTIFICATIONS_RECEIVER_EVENTS),
+    },
+    WireEntry {
+        method: "notifications_acknowledge_receiver_event",
+        kind: WireKind::Request(NOTIFICATIONS_ACKNOWLEDGE_RECEIVER_EVENT),
+    },
+    WireEntry {
+        method: "notifications_activation_events",
+        kind: WireKind::Request(NOTIFICATIONS_ACTIVATION_EVENTS),
+    },
+    WireEntry {
+        method: "notifications_acknowledge_activation",
+        kind: WireKind::Request(NOTIFICATIONS_ACKNOWLEDGE_ACTIVATION),
+    },
+    WireEntry {
         method: "payment_balance_subscribe",
         kind: WireKind::Subscription(PAYMENT_BALANCE_SUBSCRIBE),
     },
@@ -979,6 +1237,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(LOCALE_SUBSCRIBE),
     },
     WireEntry {
+        method: "locale_localize_timestamps",
+        kind: WireKind::Request(LOCALE_LOCALIZE_TIMESTAMPS),
+    },
+    WireEntry {
         method: "renderer_render",
         kind: WireKind::Subscription(RENDERER_RENDER),
     },
@@ -1005,6 +1267,14 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "contacts_pick",
         kind: WireKind::Request(CONTACTS_PICK),
+    },
+    WireEntry {
+        method: "contacts_pick_many",
+        kind: WireKind::Request(CONTACTS_PICK_MANY),
+    },
+    WireEntry {
+        method: "contacts_place_labels",
+        kind: WireKind::Request(CONTACTS_PLACE_LABELS),
     },
     WireEntry {
         method: "game_remind_next_game",
@@ -1077,5 +1347,105 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_transfer_item",
         kind: WireKind::Subscription(NFT_PURSE_TRANSFER_ITEM),
+    },
+    WireEntry {
+        method: "profile_present",
+        kind: WireKind::Request(PROFILE_PRESENT),
+    },
+    WireEntry {
+        method: "profile_disclose",
+        kind: WireKind::Request(PROFILE_DISCLOSE),
+    },
+    WireEntry {
+        method: "profile_retract",
+        kind: WireKind::Request(PROFILE_RETRACT),
+    },
+    WireEntry {
+        method: "profile_present_contact",
+        kind: WireKind::Request(PROFILE_PRESENT_CONTACT),
+    },
+    WireEntry {
+        method: "profile_place_contact_avatars",
+        kind: WireKind::Request(PROFILE_PLACE_CONTACT_AVATARS),
+    },
+    WireEntry {
+        method: "profile_own_status",
+        kind: WireKind::Request(PROFILE_OWN_STATUS),
+    },
+    WireEntry {
+        method: "profile_present_own",
+        kind: WireKind::Request(PROFILE_PRESENT_OWN),
+    },
+    WireEntry {
+        method: "jam_peer_transport_dial",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_DIAL),
+    },
+    WireEntry {
+        method: "jam_peer_transport_open",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_OPEN),
+    },
+    WireEntry {
+        method: "jam_peer_transport_send",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_SEND),
+    },
+    WireEntry {
+        method: "jam_peer_transport_recv",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_RECV),
+    },
+    WireEntry {
+        method: "jam_peer_transport_reset",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_RESET),
+    },
+    WireEntry {
+        method: "jam_peer_transport_close",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_CLOSE),
+    },
+    WireEntry {
+        method: "jam_peer_transport_events",
+        kind: WireKind::Request(JAM_PEER_TRANSPORT_EVENTS),
+    },
+    WireEntry {
+        method: "media_get_capabilities",
+        kind: WireKind::Request(MEDIA_GET_CAPABILITIES),
+    },
+    WireEntry {
+        method: "media_session_subscribe",
+        kind: WireKind::Subscription(MEDIA_SESSION_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "media_create_session",
+        kind: WireKind::Request(MEDIA_CREATE_SESSION),
+    },
+    WireEntry {
+        method: "media_add_participant",
+        kind: WireKind::Request(MEDIA_ADD_PARTICIPANT),
+    },
+    WireEntry {
+        method: "media_respond_incoming",
+        kind: WireKind::Request(MEDIA_RESPOND_INCOMING),
+    },
+    WireEntry {
+        method: "media_remove_participant",
+        kind: WireKind::Request(MEDIA_REMOVE_PARTICIPANT),
+    },
+    WireEntry {
+        method: "media_set_local_tracks",
+        kind: WireKind::Request(MEDIA_SET_LOCAL_TRACKS),
+    },
+    WireEntry {
+        method: "media_set_surfaces",
+        kind: WireKind::Request(MEDIA_SET_SURFACES),
+    },
+    WireEntry {
+        method: "media_end_session",
+        kind: WireKind::Request(MEDIA_END_SESSION),
+    },
+    WireEntry {
+        method: "media_get_operation",
+        kind: WireKind::Request(MEDIA_GET_OPERATION),
+    },
+    WireEntry {
+        method: "media_cancel_operation",
+        kind: WireKind::Request(MEDIA_CANCEL_OPERATION),
     },
 ];

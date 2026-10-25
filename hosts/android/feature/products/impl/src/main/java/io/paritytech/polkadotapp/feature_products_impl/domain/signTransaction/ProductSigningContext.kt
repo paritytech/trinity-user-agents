@@ -14,9 +14,13 @@ class ProductSigningContext(
     override val signingAccount: SigningAccount,
 ) : SigningContext {
     private val result = CompletableDeferred<Result<SignedTransaction>>()
+    override val signsOnApproval = true
 
-    override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> =
-        sign().map { signed -> result.complete(Result.success(signed)) }
+    override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> {
+        val signed = sign()
+        signed.onSuccess { result.complete(Result.success(it)) }
+        return signed.map { Unit }
+    }
 
     override suspend fun deliverRejection(): Result<Unit> {
         result.complete(Result.failure(CancellationException("User rejected")))
@@ -25,3 +29,4 @@ class ProductSigningContext(
 
     suspend fun awaitResult(): Result<SignedTransaction> = result.await()
 }
+

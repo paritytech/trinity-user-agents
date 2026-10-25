@@ -2,11 +2,11 @@
 name = "truapi"
 version = "0.26.0"
 edition.workspace = true
-license.workspace = true
+license = "MIT AND AGPL-3.0-only"
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
 
 [lib]
-crate-type = ["rlib", "cdylib", "staticlib"]
+crate-type = ["rlib"]
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = [
@@ -29,14 +29,25 @@ dwarf-debug-info = false
 
 [features]
 default = ["runtime", "wasm-signing-host"]
+# Async API traits and their std-backed call and subscription primitives.
+# Codegen enables this without compiling the host implementation.
+host-api = [
+    "dep:async-trait",
+    "dep:futures",
+    "derive_more/std",
+    "hex/std",
+    "parity-scale-codec/std",
+]
 # The host runtime: dispatcher, frames, host logic, native and WASM surfaces.
-# Without it the crate is the protocol definitions alone, which is what
-# codegen reads and builds against.
+# With no features the crate contains only no_std protocol payloads and envelopes.
 runtime = [
+    "host-api",
     # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
     # only with codec's own serde support.
     "parity-scale-codec/serde",
     "dep:truapi-provider",
+    "dep:truapi-coinage",
+    "dep:truapi-chat-v2",
     "dep:futures-timer",
     "dep:scale-decode",
     "dep:frame-metadata",
@@ -50,10 +61,12 @@ runtime = [
     "dep:blake2b_simd",
     "dep:sp-crypto-hashing",
     "dep:schnorrkel",
+    "dep:ed25519-dalek",
     "dep:substrate-bip39",
-    "dep:zeroize",
     "dep:getrandom",
     "dep:hkdf",
+    "dep:hpke",
+    "dep:rand_core",
     "dep:chacha20poly1305",
     "dep:x25519-dalek",
     "dep:sha2",
@@ -78,6 +91,11 @@ runtime = [
     "dep:base64",
     "dep:rand",
     "dep:libc",
+    "dep:quinn",
+    "dep:rcgen",
+    "dep:ring",
+    "dep:rustls",
+    "dep:x509-parser",
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
@@ -92,14 +110,16 @@ mock = ["runtime", "dep:strum"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
+async-trait = { workspace = true, optional = true }
+derive_more = { workspace = true, default-features = false, features = ["debug", "display", "error", "from"] }
+futures = { workspace = true, optional = true }
+hex = { workspace = true, default-features = false, features = ["alloc"] }
+parity-scale-codec = { workspace = true, default-features = false, features = ["derive"] }
 strum = { workspace = true, optional = true }
-async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
-futures = { workspace = true }
-hex = { workspace = true }
-parity-scale-codec = { workspace = true, features = ["derive"] }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
+truapi-coinage = { path = "../truapi-coinage", optional = true }
+truapi-chat-v2 = { path = "../truapi-chat-v2", default-features = false, optional = true }
 futures-timer = { workspace = true, optional = true }
 scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
@@ -115,12 +135,15 @@ nanoid = { workspace = true, optional = true }
 blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
+ed25519-dalek = { workspace = true, optional = true }
 substrate-bip39 = { workspace = true, optional = true }
-zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
+zeroize = { workspace = true, default-features = false, features = ["alloc", "derive"] }
 getrandom = { workspace = true, features = ["js"], optional = true }
 hkdf = { workspace = true, optional = true }
+hpke = { workspace = true, features = ["alloc", "x25519"], optional = true }
+rand_core = { workspace = true, features = ["getrandom"], optional = true }
 chacha20poly1305 = { workspace = true, features = ["alloc"], optional = true }
-x25519-dalek = { workspace = true, features = ["static_secrets"], optional = true }
+x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"], optional = true }
 sha2 = { workspace = true, optional = true }
 merlin = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
@@ -131,6 +154,7 @@ tracing-subscriber = { workspace = true, features = ["registry", "std"], optiona
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
+futures = { workspace = true, features = ["thread-pool"], optional = true }
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }
 rand = { workspace = true, optional = true }
@@ -141,6 +165,12 @@ uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
 base64 = { workspace = true, optional = true }
+# JAMNP-S QUIC is native-only; browsers dial WebTransport in JavaScript.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"], optional = true }
+ring = { version = "0.17", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
+x509-parser = { version = "0.17", optional = true }
 rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
@@ -184,6 +214,14 @@ required-features = ["runtime"]
 
 [[test]]
 name = "signing_host_mock_platform"
+required-features = ["mock"]
+
+[[test]]
+name = "jam_peer_transport_contract"
+required-features = ["runtime"]
+
+[[test]]
+name = "live_jam_test_instance"
 required-features = ["mock"]
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

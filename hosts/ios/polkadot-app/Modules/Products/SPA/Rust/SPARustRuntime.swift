@@ -6,9 +6,8 @@ import UIKitExt
 /// Rust SPA runtime: resolves the product content, publishes the scheme
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
-/// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) and WebKit's motion request are answered by a
-/// `JSDeviceCapabilityHandler` registered on the engine.
+/// localhost ws-bridge. Capture and RTC belong exclusively to the native Media
+/// backend; the product webview cannot acquire its own media objects.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -24,6 +23,7 @@ actor SPARustRuntime {
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
+    private var revocationObserver: ProductExecutionRevocationObserver?
     private var started = false
     private var disposed = false
 
@@ -59,6 +59,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // matching teardown; a post-dispose start must not run at all.
         guard !started, !disposed else { throw CancellationError() }
         started = true
+        revocationObserver = ProductExecutionRevocationObserver(execution: executionModel.execution) { [weak self] in
+            await self?.dispose()
+        }
 
         let initialURL: URL =
             switch configuration.contentSource {
@@ -76,16 +79,31 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let bootstrapScript = try executionModel.startBridge()
         let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
 
-        await engine.registerJSDeviceCapabilityHandler(
-            executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
-                execution: executionModel.execution
-            )
-        )
+        await engine.registerJSDeviceCapabilityHandler { _ in .denied }
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
+        guard !disposed else {
+            await engine.destroy()
+            throw CancellationError()
+        }
+        await MainActor.run {
+            if let spaEngine = engine as? SPAJSEngine {
+                executionModel.media.attach(spaEngine.webView)
+                spaEngine.onProcessTerminated = { [weak media = executionModel.media, weak execution = executionModel.execution] in
+                    media?.authorityLost()
+                    execution?.close()
+                }
+            }
+        }
+        await executionModel.media.watchEngine {
+            switch await engine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
         guard !disposed else {
             await engine.destroy()
             throw CancellationError()
@@ -106,17 +124,17 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+        revocationObserver = nil
 
         engineMonitor?.stop()
         engineMonitor = nil
 
         let engine = engine
+        await executionModel.media.close()
         self.engine = nil
         await engine?.destroy()
 
-        executionModel.execution.stopWsBridge()
-        executionModel.execution.close()
-        executionModel.chainConnections.closeAll()
+        await executionModel.close()
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
@@ -151,6 +169,6 @@ private extension SPARustRuntime {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, !executionModel.execution.isClosed() else { throw CancellationError() }
     }
 }

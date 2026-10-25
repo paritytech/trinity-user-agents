@@ -343,10 +343,13 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 			labels.len()
 		);
 	}
-	let identity = classify_labels(&mut transport, &controller, &labels)
+	let identity = classify_labels(&mut transport, &controller, &account, &labels)
 		.await
 		.expect("classify labels");
-	assert!(identity.is_some(), "labels classify into a username");
+	assert!(
+		identity.lite_username.is_some() || identity.full_username.is_some(),
+		"labels classify into a username"
+	);
 }
 
 /// A reservation or registration for a name the registrar already minted can

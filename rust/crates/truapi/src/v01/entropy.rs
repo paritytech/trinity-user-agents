@@ -1,3 +1,4 @@
+use alloc::{string::String, vec::Vec};
 use parity_scale_codec::{Decode, Encode};
 
 /// Error from [`crate::api::Entropy::derive`] (RFC 0007).

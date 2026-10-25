@@ -25,6 +25,7 @@ use schnorrkel::{ExpansionMode, MiniSecretKey, SignatureError};
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::host_logic::session::SsoSessionInfo;
 
@@ -145,6 +146,14 @@ pub enum SsoStatementData {
 		/// `SsoResponseCode` discriminant; zero means accepted.
 		response_code: u8,
 	},
+}
+
+impl Zeroize for SsoStatementData {
+	fn zeroize(&mut self) {
+		if let Self::Request { data, .. } = self {
+			data.zeroize();
+		}
+	}
 }
 
 /// Decode a pairing deeplink (or its bare handshake hex) into the advertised
@@ -347,9 +356,10 @@ pub fn encrypt_session_statement_data_with_nonce(
 	data: &SsoStatementData,
 	nonce: [u8; AEAD_NONCE_LEN],
 ) -> Result<Vec<u8>, String> {
+	let plaintext = Zeroizing::new(data.encode());
 	encrypt_chacha20_poly1305_with_nonce(
 		session_aead_key(session)?,
-		&data.encode(),
+		&plaintext,
 		nonce,
 		"statement data",
 	)
@@ -360,11 +370,12 @@ pub fn decrypt_session_statement_data(
 	session: &SsoSessionInfo,
 	encrypted_message: &[u8],
 ) -> Result<SsoStatementData, String> {
-	let plaintext = decrypt_session_message(session, encrypted_message)?;
+	let plaintext = Zeroizing::new(decrypt_session_message(session, encrypted_message)?);
 	let mut input = plaintext.as_slice();
-	let data = SsoStatementData::decode(&mut input)
+	let mut data = SsoStatementData::decode(&mut input)
 		.map_err(|err| format!("invalid SSO statement data: {err}"))?;
 	if !input.is_empty() {
+		data.zeroize();
 		return Err("invalid SSO statement data: trailing bytes".to_string());
 	}
 	Ok(data)

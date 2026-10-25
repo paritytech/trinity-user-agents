@@ -222,6 +222,66 @@ proof contexts. Configuration keeps local activation and key derivation
 available offline. The core validates supported suffixes but does not
 automatically check that the configured suffix matches the chain.
 
+The signing runtime persists initialized Chat products in the wallet/network-owned `CoreStorageKey::NativeChatProducts`
+slot (index 16) for the trusted contacts directory. Directory reads restore existing devices only when current
+`ChatAuthority` permits access; they never prompt or generate replacements for missing device state.
+`clear_product_state` forgets the indexed product without deleting wallet custody or received history.
+Unlock resumes accepted wallet commitments independently of Chat grants, not ordinary Chat subscriptions. Products own
+ordinary reception and acknowledgments; the Host recovery worker is not an OS background scheduler.
+
+Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
+111) themselves over JAMNP-S QUIC, with one endpoint per product connection.
+Every `dial` first requires `RemotePermission::JamPeers { genesis }` through the
+flow above. The connection asks once per genesis: concurrent dials wait for the
+same prompt, a refusal stays `NotGranted` for the connection, and the answer is
+persisted even when every dial waiting on it has timed out. Revoking or dropping
+the session instead cancels its pending permission checks and transport operations.
+
+Pending dials reserve from the eight-connection budget before awaiting permission,
+alongside retained connection handles. The session remembers at most eight distinct
+full-genesis decisions, including pending and denied decisions; a new ninth
+genesis returns `Limit` without prompting or evicting a prior decision. Cancelled,
+timed-out, or dropped dial futures release their pending reservation and subscription.
+The one bounded permission task per genesis remains until its answer or session stop.
+
+- A dial answers within 10 seconds, prompt included. One still waiting then
+  answers `Unreachable`, a cancelled one `Cancelled`, and what it would have
+  opened is dropped without holding one of the 8 connection slots. Native
+  closed connection handles retain their slot until the guest calls `close`,
+  so their remaining streams and queued data cannot bypass the cap.
+- The ALPN is `jam_peer_transport::alpn(genesis)`, and the peer certificate
+  must carry the Ed25519 key the dial names. The P-256 key is for WebTransport
+  hosts and is ignored.
+- The first granted dial creates the endpoint, so a refused product binds no
+  socket. Disposing the connection closes every peer connection, and later
+  calls are `Denied`.
+- Stream opens reserve one of 16 slots before waiting for the transport.
+  Cancellation and session closure cannot publish late stream handles.
+- Incoming and outgoing length-prefixed messages share a 4 MiB per-connection
+  reservation budget. Headers and empty messages consume space too; readers
+  wait for capacity before allocating payloads, and draining/resetting streams
+  releases capacity. Individual payloads remain limited to 1 MiB.
+
+The browser core keeps the trait's `NotGranted` defaults, because its
+JavaScript session answers trait 111 before frames reach the core.
+Browser dials share the eight-connection limit with established connections while
+awaiting permission or the handshake. Its execution-local cache holds at most
+eight distinct genesis decisions, counting pending/refused decisions too; a new
+ninth genesis returns `Limit` without evicting any remembered decision.
+Cancelling a dial releases its operation slot and removes its subscription to a
+pending decision. The shared decision remains available to retries until stop.
+
+The browser uses WebTransport's readable byte streams with BYOB reads to reserve
+space before receiving each payload; its cancellation path handles blocked opens
+and writes as well as dials. WebTransport negotiates HTTP/3, not the native
+genesis-prefix ALPN. The current PolkaJAM CONNECT endpoint has no additional
+genesis negotiation. On both platforms, the full genesis keys permission
+decisions and TLS pins the caller-supplied peer key; neither proves validator
+membership or makes received chain data trustworthy. Guests must verify it.
+
+`cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
+dials JAM-TEST-INSTANCE through a product runtime.
+
 ### Core database
 
 Native signing hosts (iOS, Android, the CLI) give the core a directory for its
@@ -309,6 +369,36 @@ reference itself for an open render. The host runs the executable and the core
 keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
 the page.
 
+### Host channel
+
+Authenticated Chat host messages exchange stable X25519 public keys. The hosts
+derive a pairwise encrypted statement-store channel scoped to the active identity
+and People network. Profile references and withdrawals can then arrive without a
+Chat product being open. Products keep using the existing Profile API.
+
+Peer keys persist in `HostChannelPeers` at codec slot 22 across feature layers.
+Slots 20 and 21 remain available to the deployed receiving and automatic-upload
+policies. The direct receiver persists reference revisions and withdrawals so
+reopening a host does not make an older disclosure current again.
+
+This prototype keeps at most 4096 peers and watches at most 128 topics. Published
+messages expire after two days. Bootstrap receipt is not acknowledged and there
+is no periodic republication. The existing Chat relay remains available.
+
+The deterministic regressions exercise real sealed publication bytes and the
+receiver without a Chat relay after bootstrap:
+
+```sh
+cargo test -p truapi --lib runtime::host_channel::tests
+cargo test -p truapi --lib two_hosts_exchange_host_channel_keys_over_chat_and_meet_on_one_topic
+```
+
+For browser qualification, establish a conversation between two independent host
+profiles, then leave Chat on both. Share, update and withdraw a profile while
+checking the other host. Confirm the direct receiver records the update rather
+than relying only on the visible change, which could also arrive through the
+legacy relay. Reopen the receiving host and check that withdrawal persists.
+
 ### Inter-host SSO
 
 `SsoRequestService::call(request)` sends typed requests to
@@ -385,6 +475,11 @@ is unchanged. Use `RemoteMessage::request(message_id, request)` to construct
 requests. Decoded `SsoSessionStatement::RemoteMessages` preserves message order;
 match variants directly or use the request's `SsoRequest::response_from_message`.
 
+Within an authenticated message batch, unreadable unrelated messages and replies
+for another request do not fail the current wait. A readable matching correlation
+id with a malformed payload fails immediately, without waiting for the stream to
+close. An earlier matching response still takes precedence over later messages.
+
 ## Host platform interface
 
 The `platform` module holds the capability traits a TrUAPI host implements.
@@ -401,29 +496,25 @@ are exposed through the trait signatures below. `ProductContext` and
 `ProductExecutionKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
-`parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
-parsing, so a context off the wire carries a normalized product id.
+`parity-scale-codec`; `ProductContext` decodes through its validating
+constructor, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
-that turns a host- or wire-supplied product id into the canonical form
-derivation, product storage and permission scopes are keyed by. Nothing else
-builds a `ProductId`, so holding one means the id is normalized. Code that reads
-an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
-and `CoreStorageKey::product_manifest` keys its manifest cache entry.
+`normalize_product_identifier` is the single chokepoint that turns a host- or
+wire-supplied product id into the canonical form derivation, product storage and
+permission scopes are keyed by; `is_product_identifier` is its boolean form.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
+`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-permission prompts. Device permissions still need the OS grant. The runtime grants
+prompt only for device permissions. The runtime grants
 account access, username disclosure, signing with their own product accounts and
-AutoSigning without approval. Legacy-account signing still asks the user, except
-for raw bytes signed inside the `<Bytes>` watermark.
+AutoSigning without approval. Legacy-account signing still asks the user.
 
 ### Host Callback Traits
 
@@ -439,11 +530,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
 - `UserConfirmation`: confirm signing, transaction, resource and alias
-  actions before the core asks the paired wallet. `preimage.submit` raises
-  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
-  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
-  Allocating or renewing the Bulletin allowance may still ask the paired
-  wallet.
+  actions before the core asks the paired wallet. Upload consent is separate
+  from the `PreimageSubmit` capability grant. The host reviews each upload
+  unless an explicit bounded automatic-upload policy approves it. Keep the
+  `PreimageSubmit` review callback even when the capability is already granted.
+  Allocating or renewing the Bulletin allowance may also require approval.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
@@ -453,109 +544,34 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
-- `FundingPlatform`: show the native funding overlay for a session, with its
-  direction and amount and the product that opened it, and report whether the
-  user started or dismissed it. Installed with `set_funding_platform`; the
-  Balance card opens sessions with `open_funding`. The core owns the sessions,
-  persists them, expires them, and answers Funding calls `Unsupported` while no
-  overlay is installed.
-  Native hosts reach this through `NativeTrUApiHostRuntime`:
-  `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `funding_history`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
-  The host owns the funding history. A session is stored only once the user
-  starts it in the overlay. `funding_sessions` lists sessions in flight first,
-  then ended ones the host has not recorded, each newest first. An ended
-  session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session`, so the
-  host's history writes every outcome once. After that the core keeps the
-  newest 64 recorded sessions per product in full and compacts older ones
-  into the session pack (intent, owner, direction, amounts, outcome and
-  times), which it never trims, so a product watching a compacted session
-  still gets its terminal item. It keeps the 200 newest ended sessions the
-  host has not recorded in full too, and compacts older ones the same way.
-  `funding_history` lists every ended session the host recorded or the core
-  compacted, as a summary newest first, so a host that lost its history
-  rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
-  `InProgress`.
-- `BalancePlatform`: stream what a payment request can spend right now, the
-  current value first and then each change. Installed with
-  `set_balance_platform`; native hosts use `set_balance_callbacks` with
-  `notify_balance`. The core requires a session and the product's
-  `BalanceAccess` remote permission, asking for it on the first subscription
-  and answering `PermissionDenied` when the user refuses. The balance is the
-  user's, per purse: one `notify_balance` reaches every product following the
-  purse, and the core checks each product's permission again before passing a
-  balance on, so a revoked grant ends that product's stream with
-  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
-  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
-  answers `Unsupported`.
-- `PaymentPlatform`: pay from the user's balance to an account once the user
-  approves, and stream each payment's status by its caller-chosen id.
-  Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and hands the host each id hashed with the product. Without it,
-  `request` and `statusSubscribe` answer `Unsupported`.
-- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
-  stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
-  requires a session, checks the source keys, passes a `ProductAccount`
-  source through for the host to derive, and hands the host each id hashed
-  with the product. The host owns claiming, retries, partial claims and
-  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
-  `Unsupported`.
-- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
-  Widget. It is carried per product connection on `ConnectionAdapters`, so only
-  the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
-- `GamePlatform`: hold the game product's next-game reminder and drop it.
-  The core serves Game only to `dim2`, on every network, and answers
-  `Unsupported` to any other product without calling the host. A host
-  keeps one reminder per product: a schedule replaces the reminder the same
-  product already holds. The core asks for no per-product consent: the host
-  asks the OS for what the reminder needs, rings an alarm where the OS allows
-  one and delivers a notification otherwise, may add a calendar event, and
-  keeps the reminder across app kill and reboot. A schedule the host cannot
-  hold fails as a host failure carrying its reason.
-- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
-  it the core refuses an invalid request, a Worker the user has not tapped in
-  the last 5 seconds, and a second open scan. After, it refuses a code the
-  request does not accept and any pairing request. The trait's docs list what
-  the host must do.
+- `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple
+  selection pickers, and place host-owned contact names over product surfaces.
+  `contacts` is the only required method; `pick_contact` and `pick_contacts`
+  default to `Unsupported`, never a fake selection. The multi-picker receives a
+  host-private `ContactSelection` record of resolved accounts. Confirmed empty
+  selection is distinct from dismissal, and unresolved initial handles fail closed.
+  Session and directory generations are checked across host calls.
+  `place_contact_labels` is independent of Profile grants; products receive neither
+  names nor availability. Placements are serialized and cleared at connection
+  teardown and session change. Hosts call `notify_contacts_changed` when a contact
+  is removed or blocked, invalidating cached handles. Their label layers clear stale
+  names and refresh the live placement from the current directory.
+- `ProfilePlatform`: show a product-referenced profile in host-owned UI, show
+  a contact's shared profile naming the contact who sent it, and draw the
+  avatars of contacts who shared one over a chat product. The host resolves,
+  decrypts and renders each reference; nothing returns to the product but
+  acceptance. Naming the contact is optional and presents the reference alone
+  by default; drawing avatars is optional and draws nothing by default.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
-lists instead: a host supplies each only when it can serve it. Four traits are in
-neither. `ExpandedCardHost` travels per connection rather than with the
-platform. `BalancePlatform`, `PaymentPlatform` and `TopUpPlatform` are installed
-on their own, with `set_balance_platform`, `set_payment_platform` and
-`set_top_up_platform` or their native `set_*_callbacks`, so only a Rust or
-native host can serve them: the host-callback bridge cannot yet carry their
-typed errors or their two-argument status streams, so a browser host, and the
-CLI today, answer them `Unsupported`. Codegen reads `OptionalPlatform` to emit each listed capability
-as an optional group on the host-callback surface.
+`PocketPlatform` and `ProfilePlatform`, which `OptionalPlatform` lists instead:
+a host supplies each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed
+capability as an optional group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
-`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
-connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
-`Unsupported`.
+omitting `ContactsPlatform`, `PocketPlatform` or `ProfilePlatform` does the same
+for Contacts, Pocket or Profile calls.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

@@ -16,16 +16,23 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
-use std::{collections::BTreeSet, sync::Mutex};
+use std::{
+	collections::BTreeSet,
+	sync::{Arc, Mutex, Weak},
+};
 use tracing::{debug, warn};
-use truapi::host_logic::{
-	attestation::build_lite_registration,
-	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
-	product_account::{
-		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+use truapi::{
+	LocalIdentityContext, SigningHostRuntime,
+	host_logic::{
+		attestation::build_lite_registration,
+		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
+		product_account::{
+			ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
+			identity_product_id, product_public_key_to_address,
+		},
 	},
+	latest::GenericError,
+	platform::IdentityBackendHost,
 };
 
 use crate::{
@@ -36,10 +43,6 @@ use crate::{
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
-
-#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
-#[display("backend auth identity derivation failed")]
-struct BackendIdentityDerivationError(ProductAccountError);
 
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 #[display("invalid entropy")]
@@ -70,6 +73,66 @@ struct BackendToken {
 	auth_client_id: [u8; 32],
 }
 
+/// The same backend handshake serves one-shot commands and a fenced Host session.
+enum BackendAuth<'a> {
+	Entropy { entropy: &'a [u8], network_suffix: &'a str },
+	Session { runtime: &'a SigningHostRuntime, context: LocalIdentityContext },
+}
+
+impl BackendAuth<'_> {
+	fn ensure_current(&self) -> Result<()> {
+		if let Self::Session { runtime, context } = self {
+			let current =
+				runtime.local_identity_context().map_err(|err| anyhow::anyhow!(err.reason))?;
+			if current.activation_id != context.activation_id ||
+				current.identity_account_id != context.identity_account_id
+			{
+				bail!("identity backend session changed");
+			}
+		}
+		Ok(())
+	}
+
+	fn client_id(&self) -> Result<[u8; 32]> {
+		self.ensure_current()?;
+		match self {
+			Self::Entropy { entropy, network_suffix } => {
+				derive_identity_keypair(entropy, network_suffix)
+					.map(|key| key.public.to_bytes())
+					.map_err(|err| {
+						anyhow::anyhow!("backend auth identity derivation failed: {err}")
+					})
+			},
+			Self::Session { context, .. } => {
+				decode_backend_account_id(&context.identity_account_id)
+			},
+		}
+	}
+
+	fn sign_challenge(&self, challenge: &[u8]) -> Result<([u8; 32], [u8; 64])> {
+		match self {
+			Self::Entropy { entropy, network_suffix } => {
+				truapi::host_logic::attestation::sign_backend_challenge(
+					entropy,
+					network_suffix,
+					challenge,
+					b"{}",
+				)
+				.context("backend auth identity derivation failed")
+			},
+			Self::Session { runtime, context } => {
+				let proof = runtime
+					.local_identity_auth_proof(&context.activation_id, challenge)
+					.map_err(|err| anyhow::anyhow!(err.reason))?;
+				if proof.len() != 96 {
+					bail!("identity backend auth proof has invalid length");
+				}
+				Ok((proof[..32].try_into()?, proof[32..].try_into()?))
+			},
+		}
+	}
+}
+
 /// Bearer token for the identity backend's username routes.
 ///
 /// The explicit env token wins. Otherwise the CLI completes the backend's
@@ -80,13 +143,9 @@ struct BackendToken {
 async fn backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
-	network_suffix: &str,
+	auth: &BackendAuth<'_>,
 ) -> Result<BackendToken> {
-	let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
-		.map_err(BackendIdentityDerivationError::from)?
-		.public
-		.to_bytes();
+	let auth_client_id = auth.client_id()?;
 	if let Ok(token) = std::env::var(IDENTITY_BACKEND_TOKEN_ENV) &&
 		!token.trim().is_empty()
 	{
@@ -109,7 +168,8 @@ async fn backend_token(
 			auth_client_id,
 		});
 	}
-	let token = mint_backend_token(client, backend_base, auth_entropy, network_suffix).await?;
+	let token = mint_backend_token(client, backend_base, auth).await?;
+	auth.ensure_current()?;
 	let token = {
 		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
 		if let Some(existing) = tokens.iter().find(|token| {
@@ -143,8 +203,7 @@ fn evict_rejected_backend_token(backend_base: &str, auth_client_id: &[u8; 32], r
 async fn mint_backend_token(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
-	network_suffix: &str,
+	auth: &BackendAuth<'_>,
 ) -> Result<String> {
 	let url = format!("{backend_base}/auth/challenges");
 	let body: Value = client
@@ -164,22 +223,8 @@ async fn mint_backend_token(
 		.to_string();
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
-	let keypair = derive_identity_keypair(auth_entropy, network_suffix)
-		.map_err(BackendIdentityDerivationError::from)?;
-	let client_id = keypair.public.to_bytes();
-
-	// The proof signs SHA256(challenge || clientId || SHA256(body)). It must
-	// cover the exact bytes the request carries, so the body is serialized once.
 	let payload = b"{}";
-	let mut hasher = Sha256::new();
-	hasher.update(&challenge_bytes);
-	hasher.update(client_id);
-	hasher.update(Sha256::digest(payload));
-	let message: [u8; 32] = hasher.finalize().into();
-	let proof = keypair
-		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-		.to_bytes();
+	let (client_id, proof) = auth.sign_challenge(&challenge_bytes)?;
 
 	let url = format!("{backend_base}/auth/token");
 	let response = client
@@ -213,15 +258,16 @@ async fn mint_backend_token(
 async fn send_with_backend_auth<F>(
 	client: &reqwest::Client,
 	backend_base: &str,
-	auth_entropy: &[u8],
-	network_suffix: &str,
+	auth: &BackendAuth<'_>,
 	request: F,
 ) -> Result<reqwest::Response>
 where
 	F: Fn(&str) -> reqwest::RequestBuilder,
 {
-	let token = backend_token(client, backend_base, auth_entropy, network_suffix).await?;
+	let token = backend_token(client, backend_base, auth).await?;
+	auth.ensure_current()?;
 	let response = request(&token.value).send().await?;
+	auth.ensure_current()?;
 	if response.status() != reqwest::StatusCode::UNAUTHORIZED ||
 		token.source == BackendTokenSource::Environment
 	{
@@ -230,10 +276,13 @@ where
 
 	warn!(backend = %backend_base, "identity backend rejected cached token; authenticating again");
 	evict_rejected_backend_token(backend_base, &token.auth_client_id, &token.value);
-	let refreshed = backend_token(client, backend_base, auth_entropy, network_suffix)
+	let refreshed = backend_token(client, backend_base, auth)
 		.await
 		.context("refresh identity backend token after 401 Unauthorized")?;
-	Ok(request(&refreshed.value).send().await?)
+	auth.ensure_current()?;
+	let response = request(&refreshed.value).send().await?;
+	auth.ensure_current()?;
+	Ok(response)
 }
 
 /// Inputs for one attestation run.
@@ -268,8 +317,7 @@ pub async fn lite_username_available(
 	let response = send_with_backend_auth(
 		&client,
 		backend_base,
-		auth_entropy,
-		network.network_suffix,
+		&BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.network_suffix },
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -340,10 +388,9 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 
 	submit_registration(&client, config, signed_at, &registration).await?;
 
-	let lite_username =
-		wait_for_lite_username(&mut reader, &registration.candidate_public_key).await?;
+	let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
-	Ok(lite_username)
+	identity.lite_username.context("registered dotNS identity has no lite username")
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -356,7 +403,7 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
-		.and_then(|identity| identity.into_lite_username())
+		.lite_username
 		.context("attested signer has no dotNS lite username")
 }
 
@@ -370,13 +417,14 @@ pub async fn lookup_registered_username(
 		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.map(|identity| identity.primary_username().to_owned()))
+	Ok(identity.full_username.or(identity.lite_username))
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UsernameSearchPage {
 	usernames: Vec<UsernameSearchItem>,
+	#[serde(deserialize_with = "Option::<String>::deserialize")]
 	next_cursor: Option<String>,
 }
 
@@ -386,6 +434,140 @@ struct UsernameSearchItem {
 	account_id: String,
 	username: String,
 	status: String,
+}
+
+/// A runtime-local provider: secrets stay in the active signing Host, and a
+/// weak reference avoids a provider/runtime ownership cycle.
+pub struct CliIdentityBackendHost {
+	runtime: Weak<SigningHostRuntime>,
+	network: NetworkConfig,
+	client: reqwest::Client,
+}
+
+impl CliIdentityBackendHost {
+	pub fn new(runtime: &Arc<SigningHostRuntime>, network: NetworkConfig) -> Result<Self> {
+		Ok(Self {
+			runtime: Arc::downgrade(runtime),
+			network,
+			client: reqwest::Client::builder()
+				.timeout(Duration::from_secs(30))
+				.redirect(reqwest::redirect::Policy::none())
+				.build()?,
+		})
+	}
+
+	async fn candidates(&self, username: &str, people_genesis: [u8; 32]) -> Result<Vec<[u8; 32]>> {
+		const LIMIT: usize = 32;
+		if people_genesis != self.network.people_genesis {
+			bail!("identity backend is not configured for the requested People network");
+		}
+		let backend_base = self.network.identity_backend()?;
+		if backend_base.trim().is_empty() {
+			bail!("identity backend is not configured");
+		}
+		if !is_registrable_full_label(username) {
+			bail!("identity backend requires an exact full username");
+		}
+		let runtime = self.runtime.upgrade().context("identity backend Host is unavailable")?;
+		let context =
+			runtime.local_identity_context().map_err(|err| anyhow::anyhow!(err.reason))?;
+		let auth = BackendAuth::Session { runtime: &runtime, context };
+		let mut cursor = None;
+		let mut seen_cursors = BTreeSet::new();
+		let mut candidates = BTreeSet::new();
+		for _ in 0..LIMIT {
+			let page = search_backend_page(
+				&self.client,
+				backend_base,
+				&auth,
+				username,
+				"32",
+				cursor.as_deref(),
+			)
+			.await?;
+			if page.usernames.len() > LIMIT {
+				bail!("identity backend exceeded the username search page limit");
+			}
+			if page.usernames.is_empty() && page.next_cursor.is_some() {
+				bail!("identity backend returned an incomplete username search page");
+			}
+			for item in page.usernames {
+				let account = decode_backend_account_id(&item.account_id)?;
+				if item.status == "ASSIGNED" && item.username == username {
+					candidates.insert(account);
+					if candidates.len() > LIMIT {
+						bail!("identity backend exceeded the username candidate limit");
+					}
+				}
+			}
+			auth.ensure_current()?;
+			match page.next_cursor {
+				None => return Ok(candidates.into_iter().collect()),
+				Some(next) => {
+					if next.trim().is_empty() || !seen_cursors.insert(next.clone()) {
+						bail!(
+							"identity backend returned an empty or repeated username search cursor"
+						);
+					}
+					cursor = Some(next);
+				},
+			}
+		}
+		bail!("identity backend username search is incomplete after 32 pages")
+	}
+}
+
+#[async_trait::async_trait]
+impl IdentityBackendHost for CliIdentityBackendHost {
+	async fn identity_username_candidates(
+		&self,
+		username: String,
+		people_chain_genesis_hash: [u8; 32],
+	) -> Result<Vec<[u8; 32]>, GenericError> {
+		self.candidates(&username, people_chain_genesis_hash)
+			.await
+			.map_err(|err| GenericError { reason: format!("{err:#}") })
+	}
+}
+
+fn decode_backend_account_id(account: &str) -> Result<[u8; 32]> {
+	let encoded = account
+		.strip_prefix("0x")
+		.context("identity backend AccountId32 must be 0x-prefixed hexadecimal")?;
+	let mut bytes = [0; 32];
+	hex::decode_to_slice(encoded, &mut bytes)
+		.context("identity backend returned a malformed AccountId32")?;
+	Ok(bytes)
+}
+
+async fn search_backend_page(
+	client: &reqwest::Client,
+	backend_base: &str,
+	auth: &BackendAuth<'_>,
+	prefix: &str,
+	limit: &str,
+	cursor: Option<&str>,
+) -> Result<UsernameSearchPage> {
+	let url = format!("{backend_base}/usernames/search");
+	let mut query = vec![("prefix", prefix), ("limit", limit)];
+	if let Some(cursor) = cursor {
+		query.push(("cursor", cursor));
+	}
+	let response = send_with_backend_auth(client, backend_base, auth, |token| {
+		client.get(&url).bearer_auth(token).query(&query)
+	})
+	.await
+	.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
+	let status = response.status();
+	if !status.is_success() {
+		bail!("identity backend username search failed ({status})");
+	}
+	let page = response
+		.json()
+		.await
+		.context("decode identity backend username search response")?;
+	auth.ensure_current()?;
+	Ok(page)
 }
 
 /// Reverse-resolve an assigned username from the identity backend.
@@ -440,32 +622,22 @@ async fn search_backend_prefix(
 	const PAGE_LIMIT: &str = "1000";
 
 	let backend_base = network.identity_backend()?;
-	let url = format!("{backend_base}/usernames/search");
+	let auth =
+		BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.network_suffix };
 	let prefix = initial.to_string();
 	let mut cursor = None;
 	let mut seen_cursors = BTreeSet::new();
 	let mut matches = Vec::new();
 	loop {
-		let mut query = vec![("prefix", prefix.as_str()), ("limit", PAGE_LIMIT)];
-		if let Some(cursor) = cursor.as_deref() {
-			query.push(("cursor", cursor));
-		}
-		let response = send_with_backend_auth(
+		let page = search_backend_page(
 			client,
 			backend_base,
-			auth_entropy,
-			network.network_suffix,
-			|token| client.get(&url).bearer_auth(token).query(&query),
+			&auth,
+			&prefix,
+			PAGE_LIMIT,
+			cursor.as_deref(),
 		)
-		.await
-		.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
-		let status = response.status();
-		let text = response.text().await.unwrap_or_default();
-		if !status.is_success() {
-			bail!("identity backend username search failed ({status}): {text}");
-		}
-		let page: UsernameSearchPage = serde_json::from_str(&text)
-			.with_context(|| format!("decode identity backend username search response: {text}"))?;
+		.await?;
 		matches.extend(matching_assigned_usernames(page.usernames, candidate_account_id));
 
 		let Some(next) = page.next_cursor else {
@@ -521,11 +693,12 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 	{
 		let address = product_public_key_to_address(public);
 		match reader.dotns_identity(&public).await {
-			Ok(Some(identity)) => {
-				let username = identity.primary_username();
-				println!("IDENTITY_FOUND path={label} account={address} username={username}")
+			Ok(identity) => match identity.full_username.or(identity.lite_username) {
+				Some(username) => {
+					println!("IDENTITY_FOUND path={label} account={address} username={username}")
+				},
+				None => println!("IDENTITY_NONE path={label} account={address}"),
 			},
-			Ok(None) => println!("IDENTITY_NONE path={label} account={address}"),
 			Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
 		}
 	}
@@ -563,28 +736,12 @@ async fn submit_registration(
 ) -> Result<()> {
 	let backend_base = config.backend_base.as_str();
 	let url = format!("{backend_base}/usernames");
-	let mut dotns = json!({
-		"signature": hex0x(&reg.dotns_signature),
-		"signedAt": signed_at,
-	});
-	if let Some(reserved) = config.reserved_username.as_deref() {
-		dotns["reservedUsername"] = json!(reserved);
-	}
-	let body = json!({
-		"username": config.username_base,
-		"candidateAccountId": reg.candidate_account_id,
-		"candidateSignature": hex0x(&reg.candidate_signature),
-		"ringVrfKey": hex0x(&reg.ring_vrf_key),
-		"proofOfOwnership": hex0x(&reg.proof_of_ownership),
-		"identifierKey": hex0x(&reg.identifier_key),
-		"consumerRegistrationSignature": hex0x(&reg.consumer_registration_signature),
-		"dotns": dotns,
-	});
+	let body =
+		reg.request_body(&config.username_base, config.reserved_username.as_deref(), signed_at);
 	let response = send_with_backend_auth(
 		client,
 		backend_base,
-		&config.entropy,
-		&config.network_suffix,
+		&BackendAuth::Entropy { entropy: &config.entropy, network_suffix: &config.network_suffix },
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -605,32 +762,24 @@ async fn submit_registration(
 	bail!("username registration failed ({status}): {text}");
 }
 
-fn hex0x(bytes: &[u8]) -> String {
-	format!("0x{}", hex::encode(bytes))
-}
-
-async fn wait_for_lite_username(
+async fn wait_for_dotns_username(
 	reader: &mut AssetHubReader,
 	candidate: &[u8; 32],
-) -> Result<String> {
+) -> Result<truapi::host_logic::dotns_gateway::DotnsIdentity> {
 	// First-time lite registration is backend-async and can lag the HTTP
 	// response. The record is permanent once written. Later runs therefore
 	// resolve on the first poll.
 	const MAX_ATTEMPTS: usize = 30;
 	for attempt in 1..=MAX_ATTEMPTS {
-		let lite_username = reader
-			.dotns_identity(candidate)
-			.await
-			.map(|identity| identity.and_then(|identity| identity.into_lite_username()));
-		match lite_username {
-			Ok(Some(lite_username)) => {
+		match reader.dotns_identity(candidate).await {
+			Ok(identity) if identity.lite_username.is_some() => {
 				crate::terminal_ui::update_activity(
 					"signer",
 					"Setting up signer",
 					Some("dotNS identity ready".to_string()),
 					crate::terminal_ui::ActivityState::Running,
 				);
-				return Ok(lite_username);
+				return Ok(identity);
 			},
 			Ok(_) => {
 				crate::terminal_ui::update_activity(
@@ -869,7 +1018,8 @@ mod tests {
 
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 		let url = format!("{backend_base}/protected");
-		let response = send_with_backend_auth(&client, &backend_base, &entropy, "paseo", |token| {
+		let auth = BackendAuth::Entropy { entropy: &entropy, network_suffix: "paseo" };
+		let response = send_with_backend_auth(&client, &backend_base, &auth, |token| {
 			client.post(&url).bearer_auth(token).body("{}")
 		})
 		.await?;

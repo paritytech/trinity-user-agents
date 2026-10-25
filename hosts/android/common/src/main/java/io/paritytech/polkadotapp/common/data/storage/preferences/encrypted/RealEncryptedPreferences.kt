@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.common.data.storage.preferences.encrypted
 
-import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
+import io.paritytech.polkadotapp.common.data.storage.preferences.RealPreferences
 import io.paritytech.polkadotapp.common.utils.flowOfAll
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -8,9 +8,11 @@ import javax.inject.Singleton
 
 @Singleton
 internal class RealEncryptedPreferences @Inject constructor(
-    private val preferences: Preferences,
+    private val preferences: RealPreferences,
     private val encryptionUtil: EncryptionUtil
 ) : EncryptedPreferences {
+    override fun keys(): Set<String> = preferences.keys()
+
     override fun putEncryptedString(
         field: String,
         value: String,

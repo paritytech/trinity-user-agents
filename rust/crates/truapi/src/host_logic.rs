@@ -4,19 +4,17 @@
 //! storage, URL handler, notification center). Everything else lives here so
 //! iOS, Android, and web hosts share one canonical implementation.
 
-// Links `verifiable` directly, which the browser core loads on demand instead.
-#[cfg(not(target_arch = "wasm32"))]
+// Its `verifiable` steps are native-only; the browser core supplies them from
+// the module it loads on demand.
 pub mod attestation;
 pub mod contact_substitution;
-// Only native hosts open a page from a development server.
-#[cfg(not(target_arch = "wasm32"))]
-pub mod dev_server;
 pub mod device_key;
 pub mod dotns;
 pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;
-pub mod funding;
+pub mod host_channel;
+pub(crate) mod media_protocol;
 pub mod product_account;
 pub mod raw_signing;
 pub mod scanner;

@@ -26,9 +26,8 @@ use truapi::{
 		},
 	},
 	statement_allowance::{
-		self as alloc, CollectionCandidate, FixedPersonhoodSigner, PersonhoodSigner,
-		collection::PersonhoodCollection, extension, extension::AS_DOTNS_GATEWAY, extrinsic, ring,
-		rpc::RpcClient,
+		self as alloc, collection::PersonhoodCollection, extension, extension::AS_DOTNS_GATEWAY,
+		extrinsic, proof, ring, rpc::RpcClient,
 	},
 };
 
@@ -113,10 +112,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let at = people_rpc.finalized_head().await?;
 	let full_entropy =
 		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix);
-	let candidates =
-		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
-	let signer = FixedPersonhoodSigner::new(&candidates).await?;
-	let member = signer.member(PersonhoodCollection::People)?;
+	let member = proof::member_key(full_entropy).await?;
 	let ring_index = ring::read_member_ring_index_at(
 		&people_rpc,
 		&people_metadata,
@@ -166,6 +162,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)
 			.await?;
+	let domain = proof::domain_for_ring_exponent(exponent)?;
 
 	let call_indices = ah_metadata.call_indices("DotnsGateway", "register_name")?;
 	let call = encode_register_name_call(call_indices, &who_public, config.label.as_bytes(), &link);
@@ -184,17 +181,14 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	// Building the ring-VRF membership proof. It is bound to the gateway context
 	// and the registration intent.
 	let proof_message = build_register_proof_message(&who_public, config.label.as_bytes(), &link);
-	let ring_proof = signer.prove(
-		&ring::RingParams {
-			collection: PersonhoodCollection::People,
-			members,
-			exponent,
-			ring_index,
-			block_hash: at,
-		},
+	let ring_proof = proof::ring_vrf_proof(
+		domain,
+		full_entropy,
+		&members,
 		&DOTNS_GATEWAY_CONTEXT,
 		&proof_message,
-	)?;
+	)
+	.await?;
 
 	// Asset Hub only verifies proofs against root revisions it has imported
 	// from People; wait for this one before submitting.
@@ -231,10 +225,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	println!(
 		"REGISTER_CONFIRMED label={} full_username={}",
 		config.label,
-		identity
-			.as_ref()
-			.and_then(|identity| identity.full_username())
-			.unwrap_or("<pending>")
+		identity.full_username.as_deref().unwrap_or("<pending>")
 	);
 	Ok(())
 }
@@ -253,7 +244,7 @@ async fn resolve_link(
 		return Ok(Link::LiteUsername(lite.as_bytes().to_vec()));
 	}
 	let identity = reader.dotns_identity(who).await?;
-	match identity.and_then(|identity| identity.into_lite_username()) {
+	match identity.lite_username {
 		// The resolved name goes into the signed ring-VRF message, so it has
 		// to pass the same shape check as an explicit --link-lite: a store can
 		// hold a two-digit-suffixed label whose dotted form exceeds the

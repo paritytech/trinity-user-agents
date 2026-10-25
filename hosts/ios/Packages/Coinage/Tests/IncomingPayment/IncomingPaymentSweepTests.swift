@@ -26,18 +26,16 @@ struct IncomingPaymentSweepTests {
         store: InMemoryIncomingPaymentStore,
         secretStore: InMemoryIncomingPaymentSecretStore = InMemoryIncomingPaymentSecretStore()
     ) -> IncomingPaymentService {
-        IncomingPaymentService(
-            store: store,
-            secretStore: secretStore,
-            sourceResolver: StubSourceResolver(),
-            paymentContext: IncomingPaymentContext(logger: StubLogger()),
-            claimCoinsService: StubClaimCoinsService(),
-            claimAssetService: StubClaimAssetService(),
-            verdictResolver: StubGroupVerdictResolver(verdict: .notClaimed),
-            acknowledger: StubAcknowledger(),
-            instanceId: 0,
-            logger: StubLogger()
-        )
+        IncomingPaymentService(store: store,
+        secretStore: secretStore,
+        sourceResolver: StubSourceResolver(),
+        paymentContext: IncomingPaymentContext(logger: StubLogger()),
+        claimCoinsService: StubClaimCoinsService(),
+        claimAssetService: StubClaimAssetService(),
+        verdictResolver: StubGroupVerdictResolver(verdict: .notClaimed),
+        acknowledger: StubAcknowledger(),
+        instanceId: 0,
+        logger: StubLogger(), ownerId: Data([0xA0]))
     }
 
     @Test(arguments: descriptors.indices)
@@ -97,9 +95,9 @@ struct IncomingPaymentSweepTests {
     func terminalVerdictReadBackExactly(outcome: IncomingPaymentTerminalOutcome) async throws {
         // Whatever verdict is persisted must round-trip through settle → store → status unchanged.
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
         ])
-        try await store.settle(groupId: "top up:prod:p", outcome: outcome)
+        try await store.settle(groupId: "top up:prod:p", ownerId: Data([0xA0]), outcome: outcome, authorization: {})
 
         let service = makeService(store: store)
         let stream = try await service.subscribeStatus(for: "p", productId: "prod")
@@ -115,9 +113,9 @@ struct IncomingPaymentSweepTests {
     @Test(arguments: outcomes)
     func settleWipesSecretForEveryOutcome(outcome: IncomingPaymentTerminalOutcome) async throws {
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
         ])
-        try await store.settle(groupId: "top up:prod:p", outcome: outcome)
+        try await store.settle(groupId: "top up:prod:p", ownerId: Data([0xA0]), outcome: outcome, authorization: {})
 
         // The record now carries the verdict and reports inactive.
         #expect(store.payment(for: "top up:prod:p")?.outcome == outcome)

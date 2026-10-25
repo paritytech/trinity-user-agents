@@ -30,6 +30,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let productStorage: TrUAPILocalStoring
         let coreStorage: TrUAPILocalStoring
         let confirmationPresenter: TrUAPIConfirmationPresenting
+        let chatFiles: NativeChatFilesHost
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
         let themeManager: ThemeManagerProtocol
@@ -38,6 +39,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
+    let media: NativeMediaBackend
 
     private let dependencies: Dependencies
     private let cardFace: (any ExpandedCardFaceShowing)?
@@ -47,14 +49,32 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     )
     private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
+    @MainActor
+    init(dependencies: Dependencies) {
         self.dependencies = dependencies
-        self.cardFace = cardFace
+        media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
+        theme = Self.makeTheme(dependencies.themeManager.theme)
+
+        // Register before opening the execution: its synchronous currentTheme
+        // callback already has the selected theme, and no transition is lost
+        // between the snapshot and starting the consumer.
+        let themes = dependencies.themeManager.observeTheme()
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themes {
+                guard !Task.isCancelled else { break }
+                self?.themeDidChange(theme)
+            }
+        }
+    }
+
+    deinit {
+        themeObservation?.cancel()
     }
 
     /// Attach the opened execution so callbacks can notify it in place.
+    @MainActor
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
@@ -115,7 +135,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        guard request != .calling else { return .deny }
+        return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
             permissions: request.toDomainPermissions()
         ).hostDecision
@@ -141,16 +162,56 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         }
     }
 
+    func pickChatFiles(request: NativeChatFilePickRequest) async throws -> [NativeChatPickedFile] {
+        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
+        return try await dependencies.chatFiles.pickChatFiles(request: request)
+    }
+
+    func readChatFile(sourceId: String, offset: UInt64, length: UInt32) async throws -> Data {
+        try await dependencies.chatFiles.readChatFile(sourceId: sourceId, offset: offset, length: length)
+    }
+
+    func releaseChatFile(sourceId: String) async throws {
+        try await dependencies.chatFiles.releaseChatFile(sourceId: sourceId)
+    }
+
+    func beginChatFileExport(request: NativeChatFileExportRequest) async throws -> String? {
+        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
+        return try await dependencies.chatFiles.beginChatFileExport(request: request)
+    }
+
+    func writeChatFileExport(exportId: String, offset: UInt64, data: Data) async throws {
+        try await dependencies.chatFiles.writeChatFileExport(exportId: exportId, offset: offset, data: data)
+    }
+
+    func finishChatFileExport(exportId: String) async throws {
+        try await dependencies.chatFiles.finishChatFileExport(exportId: exportId)
+    }
+
+    func cancelChatFileExport(exportId: String) async throws {
+        try await dependencies.chatFiles.cancelChatFileExport(exportId: exportId)
+    }
+
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
         await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        try await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
         dependencies.chainConnections.connect(genesisHash: genesisHash)
+    }
+
+    func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] {
+        dependencies.chainConnections.allowedHopEndpoints(bulletinGenesisHash: bulletinGenesisHash)
+    }
+
+    func hopConnect(bulletinGenesisHash: Data, endpoint: String) throws -> UInt32? {
+        try dependencies.chainConnections.hopConnect(
+            bulletinGenesisHash: bulletinGenesisHash, endpoint: endpoint
+        )
     }
 
     func chainSend(connectionId: UInt32, request: String) throws {
@@ -167,12 +228,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func currentTheme() throws -> HostThemeSubscribeItem {
         cachedTheme.withLock { $0 }
-    }
-
-    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
-        guard let cardFace else { return .unsupported }
-
-        return await cardFace.setFaceShown(shown)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
@@ -194,6 +249,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func authStateChanged(state: AuthState) {
+        switch state {
+        case .disconnected, .loginFailed: media.authorityLost()
+        default: break
+        }
         let details =
             switch state {
             case .disconnected:
@@ -298,7 +357,7 @@ extension HostDevicePermissionRequest {
 }
 
 extension RemotePermission {
-    /// The Products permissions the guard asks the user about.
+    /// Maps a TrUAPI request to the permissions shown by the Products guard.
     func toDomainPermissions() -> [ProductPermission] {
         switch self {
         case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
@@ -306,6 +365,7 @@ extension RemotePermission {
         case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
         case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
         case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case .calling: []
         case .balanceAccess: [.balanceAccess]
         case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
         }
@@ -325,5 +385,30 @@ extension NftPurseOwner {
 extension HostPushNotificationRequest {
     func toScheduledNotificationRequest() -> ScheduledNotificationRequest {
         ScheduledNotificationRequest(text: text, deeplink: deeplink, scheduledAtMs: scheduledAt)
+    }
+}
+
+/// Native execution closure is authoritative. Ordinary permission changes must
+/// refresh settings without destroying a still-authorized product's WebView.
+final class ProductExecutionRevocationObserver: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(
+        execution: TrUAPIProductExecutionProtocol,
+        onClosed: @escaping @Sendable () async -> Void
+    ) {
+        token = NotificationCenter.default.addObserver(
+            forName: .productPermissionAuthorizationsChanged, object: nil, queue: nil
+        ) { [weak execution] _ in
+            guard execution?.isClosed() == true else { return }
+            Task { await onClosed() }
+        }
+        if execution.isClosed() {
+            Task { await onClosed() }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }

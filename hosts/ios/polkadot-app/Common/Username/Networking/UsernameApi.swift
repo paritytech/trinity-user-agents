@@ -55,6 +55,7 @@ extension UsernameApi.V1: URLConvertible {
         switch self {
         case let .search(usernameRequest):
             [URLQueryItem(name: "prefix", value: usernameRequest.prefix)]
+                + (usernameRequest.cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [])
         case .available:
             [URLQueryItem(name: "version", value: "v1")]
         default:

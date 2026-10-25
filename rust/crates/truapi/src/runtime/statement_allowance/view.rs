@@ -2,7 +2,7 @@
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 use scale_info::{TypeDef, TypeDefPrimitive};
-use serde_json::{Value, json};
+use serde_json::Value;
 use thiserror::Error;
 
 use super::{
@@ -72,6 +72,7 @@ async fn read_u32(
 	metadata: &Metadata,
 	pallet: &'static str,
 	function: &'static str,
+	at: Option<&str>,
 ) -> Result<u32, StatementAllowanceError> {
 	let definition = metadata
 		.view_function(pallet, function)
@@ -84,11 +85,13 @@ async fn read_u32(
 		}));
 	}
 	let id = definition.id;
-	if let Some(value) = metadata.cached_view_u32(&id) {
+	if at.is_none() &&
+		let Some(value) = metadata.cached_view_u32(&id)
+	{
 		return Ok(value);
 	}
 
-	let output = execute_no_args(rpc, pallet, function, id).await?;
+	let output = execute_no_args(rpc, pallet, function, id, at).await?;
 	let primitive = metadata
 		.registry()
 		.resolve(definition.output_type)
@@ -125,7 +128,9 @@ async fn read_u32(
 			type_id: definition.output_type,
 		})),
 	}?;
-	metadata.cache_view_u32(id, value);
+	if at.is_none() {
+		metadata.cache_view_u32(id, value);
+	}
 	Ok(value)
 }
 
@@ -134,7 +139,17 @@ pub async fn read_resource_u32(
 	metadata: &Metadata,
 	function: &'static str,
 ) -> Result<u32, StatementAllowanceError> {
-	read_u32(rpc, metadata, "Resources", function).await
+	read_u32(rpc, metadata, "Resources", function, None).await
+}
+
+/// Resolve a runtime policy against the same block as an inspection's state.
+pub(super) async fn read_resource_u32_at(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	function: &'static str,
+	at: &str,
+) -> Result<u32, StatementAllowanceError> {
+	read_u32(rpc, metadata, "Resources", function, Some(at)).await
 }
 
 pub fn supports_resource_u32(metadata: &Metadata, function: &'static str) -> bool {
@@ -155,45 +170,55 @@ async fn execute_no_args(
 	pallet: &'static str,
 	function: &'static str,
 	id: [u8; 32],
+	at: Option<&str>,
 ) -> Result<Vec<u8>, StatementAllowanceError> {
 	let mut arguments = id.to_vec();
 	Vec::<u8>::new().encode_to(&mut arguments);
-	let response = rpc
-		.call("state_call", json!([EXECUTE_VIEW_FUNCTION, format!("0x{}", hex::encode(arguments))]))
-		.await?;
-	decode_response(pallet, function, response)
+	let mut params = vec![
+		Value::String(EXECUTE_VIEW_FUNCTION.to_string()),
+		Value::String(format!("0x{}", hex::encode(arguments))),
+	];
+	if let Some(at) = at {
+		params.push(Value::String(at.to_string()));
+	}
+	let response = rpc.call("state_call", Value::Array(params)).await?;
+	ViewFunctionError::decode_response(pallet, function, response)
 }
 
-fn decode_response(
-	pallet: &'static str,
-	function: &'static str,
-	response: Value,
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let encoded = response
-		.as_str()
-		.ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
-	let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
-		view_error(ViewFunctionFailure::ResponseHex { pallet, function, source })
-	})?;
-	let mut cursor = &bytes[..];
-	let dispatched =
-		Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor).map_err(|source| {
-			view_error(ViewFunctionFailure::ResponseDecode { pallet, function, source })
-		})?;
-	if !cursor.is_empty() {
-		return Err(view_error(ViewFunctionFailure::ResponseTrailingBytes {
-			pallet,
-			function,
-			remaining: cursor.len(),
-		}));
-	}
-	dispatched.map_err(|reason| {
-		view_error(ViewFunctionFailure::Dispatch {
-			pallet,
-			function,
-			reason: format!("{reason:?}"),
+impl ViewFunctionError {
+	/// Decode the SCALE dispatch result returned by a runtime view-function call.
+	pub fn decode_response(
+		pallet: &'static str,
+		function: &'static str,
+		response: Value,
+	) -> Result<Vec<u8>, StatementAllowanceError> {
+		let encoded = response
+			.as_str()
+			.ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
+		let bytes =
+			hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
+				view_error(ViewFunctionFailure::ResponseHex { pallet, function, source })
+			})?;
+		let mut cursor = &bytes[..];
+		let dispatched = Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor)
+			.map_err(|source| {
+				view_error(ViewFunctionFailure::ResponseDecode { pallet, function, source })
+			})?;
+		if !cursor.is_empty() {
+			return Err(view_error(ViewFunctionFailure::ResponseTrailingBytes {
+				pallet,
+				function,
+				remaining: cursor.len(),
+			}));
+		}
+		dispatched.map_err(|reason| {
+			view_error(ViewFunctionFailure::Dispatch {
+				pallet,
+				function,
+				reason: format!("{reason:?}"),
+			})
 		})
-	})
+	}
 }
 
 fn view_error(error: ViewFunctionFailure) -> StatementAllowanceError {
@@ -228,6 +253,7 @@ mod tests {
 			"Resources",
 			"get_lite_stmt_store_slots_per_period",
 			id,
+			None,
 		))
 		.unwrap();
 
@@ -253,7 +279,9 @@ mod tests {
 			)
 		));
 
-		let error = decode_response("Resources", "get_value", response).unwrap_err().to_string();
+		let error = ViewFunctionError::decode_response("Resources", "get_value", response)
+			.unwrap_err()
+			.to_string();
 
 		assert!(error.contains("dispatch failed: NotImplemented"), "{error}");
 	}
@@ -272,6 +300,7 @@ mod tests {
 			&metadata,
 			"Resources",
 			"get_stmt_store_slots_per_period",
+			None,
 		))
 		.unwrap();
 		let second = futures::executor::block_on(read_u32(
@@ -279,6 +308,7 @@ mod tests {
 			&metadata,
 			"Resources",
 			"get_stmt_store_slots_per_period",
+			None,
 		))
 		.unwrap();
 
@@ -306,6 +336,7 @@ mod tests {
 				&metadata,
 				"Resources",
 				"get_stmt_store_replacement_cooldown",
+				None,
 			))
 			.is_err()
 		);
@@ -314,6 +345,7 @@ mod tests {
 			&metadata,
 			"Resources",
 			"get_stmt_store_replacement_cooldown",
+			None,
 		))
 		.unwrap();
 

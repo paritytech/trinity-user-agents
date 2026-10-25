@@ -61,7 +61,6 @@ let package = Package(
                 "Individuality",
                 "BackgroundExecution",
                 .product(name: "DurableTransactionsTestSupport", package: "DurableTransactions"),
-                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "Clocks", package: "swift-clocks")
             ],
             path: "Tests"

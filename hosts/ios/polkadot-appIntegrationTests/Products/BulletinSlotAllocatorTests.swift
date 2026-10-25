@@ -45,7 +45,7 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
             networkSuffixProvider: ChainNetworkSuffixProvider(
-                chainId: AppConfig.Chains.peopleChain,
+                chainId: AppConfig.Chains.usernameChain,
                 chainRegistry: chainRegistry,
                 storageRequestFactory: storageRequestFactory
             )
@@ -84,7 +84,7 @@ final class BulletinSlotAllocatorTests: XCTestCase {
                     ttl: 0
                 ),
                 networkSuffixProvider: ChainNetworkSuffixProvider(
-                    chainId: AppConfig.Chains.peopleChain,
+                    chainId: AppConfig.Chains.usernameChain,
                     chainRegistry: chainRegistry,
                     storageRequestFactory: storageRequestFactory
                 )

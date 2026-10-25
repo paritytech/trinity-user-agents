@@ -35,8 +35,9 @@ use truapi::{
 		SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair,
 		derive_root_keypair_from_entropy,
 	},
+	latest::ProductId,
 	platform::{
-		HostInfo, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
+		HostInfo, PlatformInfo, ProductContext, SigningHostConfig,
 		mock::{ConfirmKind, MockConfig, MockPlatform},
 	},
 	v01,
@@ -121,7 +122,7 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("a signing host activates a local session from raw entropy");
 
-	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
+	let product = ProductContext::new(PRODUCT_ID.to_string()).expect("valid product context");
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());
 
@@ -201,7 +202,7 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
 
-	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
+	let product = ProductContext::new(PRODUCT_ID.to_string()).expect("valid product context");
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink);
 
@@ -244,7 +245,7 @@ fn a_declined_confirmation_withholds_the_signature() {
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
 
-	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
+	let product = ProductContext::new(PRODUCT_ID.to_string()).expect("valid product context");
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());
 
@@ -304,7 +305,7 @@ fn a_seeded_preimage_is_reachable_through_the_core() {
 	let key = platform.insert_preimage(PREIMAGE.to_vec());
 
 	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
-	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
+	let product = ProductContext::new(PRODUCT_ID.to_string()).expect("valid product context");
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());
 

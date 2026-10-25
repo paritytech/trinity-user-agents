@@ -9,6 +9,10 @@ import org.webrtc.PeerConnectionFactory
 import org.webrtc.audio.JavaAudioDeviceModule
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+
+internal enum class AudioCaptureState { IDLE, LIVE, FAILED }
 
 @Singleton
 internal class WebRtcCore @Inject constructor(
@@ -17,6 +21,7 @@ internal class WebRtcCore @Inject constructor(
     val eglBase: EglBase by lazy { EglBase.create() }
 
     val peerConnectionFactory: PeerConnectionFactory by lazy { createPeerConnectionFactory() }
+    val audioCaptureState = MutableStateFlow(AudioCaptureState.IDLE)
 
     private fun createPeerConnectionFactory(): PeerConnectionFactory {
         val options = PeerConnectionFactory
@@ -30,6 +35,15 @@ internal class WebRtcCore @Inject constructor(
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .setUseLowLatency(true)
+            .setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
+                override fun onWebRtcAudioRecordStart() { audioCaptureState.value = AudioCaptureState.LIVE }
+                override fun onWebRtcAudioRecordStop() { audioCaptureState.update { if (it == AudioCaptureState.FAILED) it else AudioCaptureState.IDLE } }
+            })
+            .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+                override fun onWebRtcAudioRecordInitError(message: String) { audioCaptureState.value = AudioCaptureState.FAILED }
+                override fun onWebRtcAudioRecordStartError(code: JavaAudioDeviceModule.AudioRecordStartErrorCode, message: String) { audioCaptureState.value = AudioCaptureState.FAILED }
+                override fun onWebRtcAudioRecordError(message: String) { audioCaptureState.value = AudioCaptureState.FAILED }
+            })
             .createAudioDeviceModule()
 
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)

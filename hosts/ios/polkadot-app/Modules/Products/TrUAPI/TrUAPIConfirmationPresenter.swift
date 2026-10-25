@@ -5,18 +5,22 @@ import TrUAPIHost
 protocol TrUAPIConfirmationPresenting: Sendable {
     /// Present an action review, using the bridge's requester name when the review omits it.
     func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String
-    ) async -> TrUAPIPermissionDecision
+    ) async throws -> TrUAPIPermissionDecision
 }
 
 /// Routes core-reviewed actions to the native confirmation surfaces exposed
 /// through `ProductRoutersFacadeProtocol`, keyed off the typed
 /// `UserConfirmationReview` so the full payload reaches each prompt.
 /// Cancellation-aware: the rust core dropping its future (e.g. the product
-/// closed mid-prompt) denies immediately; an already presented prompt
-/// stays up and its late decision is discarded.
+/// closed mid-prompt) rejects immediately (throws for permission decisions);
+/// an already presented prompt stays up and its late decision is discarded.
 final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked Sendable {
     private let routerFacade: ProductRoutersFacadeProtocol
     private let promptMapper: TrUAPIReviewPromptMapping
@@ -41,22 +45,39 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         }
     }
 
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool {
+        await confirmMainPursePayment(review, requiresPrivacyConfirmation: requiresPrivacyConfirmation)
+    }
+
     func confirmPermission(
         review: UserConfirmationReview,
         from _: String
-    ) async -> TrUAPIPermissionDecision {
+    ) async throws -> TrUAPIPermissionDecision {
         switch review {
+        case let .preimageSubmit(preimageReview):
+            await presentPreimagePermission(preimageReview)
         case let .identityDisclosure(identityReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
             )
         case let .accountAccess(accessReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: accessReview)
             )
         case let .accountAlias(aliasReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: aliasReview)
+            )
+        case let .chatAuthority(chatReview):
+            try await presentPermission(
+                promptMapper.makePermissionRequest(from: chatReview)
+            )
+        case let .profileDisclosure(profileReview):
+            try await presentPermission(
+                promptMapper.makePermissionRequest(from: profileReview)
             )
         default:
             .deny
@@ -67,20 +88,32 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
 private extension TrUAPIConfirmationPresenter {
     func dispatch(review: UserConfirmationReview, from requesterName: String) async throws -> Bool {
         switch review {
+        case let .calling(calling):
+            await confirmCalling(calling)
         case .signPayload,
              .signRaw,
              .createTransaction:
             try await confirmSigning(for: review, from: requesterName)
+        case let .mainPurseChatPayment(paymentReview):
+            await confirmMainPursePayment(paymentReview)
         case let .statementStoreProductSign(statementReview):
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
+        case let .preimageSubmit(preimageReview):
+            await confirmAction(
+                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
+            )
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
+        // Unsupported permission reviews throw; `confirm` still fails closed for single actions.
         case .identityDisclosure,
+             .chatAuthority,
+             .preimageSubmit,
              .accountAccess,
-             .accountAlias:
-            await confirmPermission(review: review, from: requesterName) != .deny
+             .accountAlias,
+             .profileDisclosure:
+            try await confirmPermission(review: review, from: requesterName) != .deny
         case let .createProof(proofReview):
             try await confirmCreateProof(
                 promptMapper.makeCreateProofRequest(from: proofReview)
@@ -93,6 +126,22 @@ private extension TrUAPIConfirmationPresenter {
             try await confirmSignVrf(
                 promptMapper.makeSignVrfRequest(from: vrfReview)
             )
+        }
+    }
+
+    func confirmCalling(_ review: CallingReview) async -> Bool {
+        let presentation = NativeMediaPresentation(productId: review.productId)
+        return await withTaskCancellationHandler {
+            do {
+                let result = try await presentation.confirmCalling(network: review.network, account: review.account)
+                await presentation.close()
+                return !Task.isCancelled && result
+            } catch {
+                await presentation.close()
+                return false
+            }
+        } onCancel: {
+            Task { @MainActor in presentation.cancelPrompt() }
         }
     }
 
@@ -130,20 +179,49 @@ private extension TrUAPIConfirmationPresenter {
             return decision == .approved
         }
     }
+    func confirmMainPursePayment(
+        _ review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool = false
+    ) async -> Bool {
+        await awaitDecision { [routerFacade] in
+            await withCheckedContinuation { continuation in
+                let context = MainPursePaymentConfirmationContext(
+                    review: review,
+                    requiresPrivacyConfirmation: requiresPrivacyConfirmation
+                )
+                context.setContinuation(continuation)
+                let prompt = MainPursePaymentPromptViewFactory.createView(context: context)
+                if !routerFacade.productsRouter.present(view: prompt) {
+                    context.deliver(false)
+                }
+            }
+        }
+    }
 
-    func presentPermission(_ request: TrUAPIPermissionRequest) async -> TrUAPIPermissionDecision {
-        await awaitDecision(cancelled: .deny) { [routerFacade] in
+    func presentPermission(_ request: TrUAPIPermissionRequest) async throws -> TrUAPIPermissionDecision {
+        let result: Result<TrUAPIPermissionDecision, HostRejection> = await awaitDecision(
+            cancelled: .failure(.Rejected(reason: "permission prompt cancelled"))
+        ) { [routerFacade] in
+            var presented = false
             let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
                 let context = ProductPermissionContext(
                     productId: request.productId,
                     permissions: request.permissions
                 )
                 context.setContinuation(continuation)
-                routerFacade.productsRouter.showPrompt(context: context)
+                let prompt = ProductPermissionPromptViewFactory.createView(context: context)
+                presented = routerFacade.productsRouter.present(view: prompt)
+                if !presented {
+                    // Resolve the UI continuation without turning failure into a user denial.
+                    context.deliver(.deny)
+                }
             }
-
-            return decision.hostDecision
+            guard presented else {
+                return .failure(.Rejected(reason: "permission prompt presentation unavailable"))
+            }
+            return .success(decision.hostDecision)
         }
+        return try result.get()
     }
 
     func confirmAction(_ request: TrUAPIActionConfirmationRequest) async -> Bool {
@@ -218,7 +296,7 @@ private extension TrUAPIConfirmationPresenter {
 
 /// Resume-once state for one confirmation. All mutable state is
 /// MainActor-confined; a cancellation racing ahead of `begin` resolves the
-/// incoming continuation with denial instead of leaking it.
+/// incoming continuation with its cancellation result instead of leaking it.
 @MainActor
 private final class PendingDecision<Decision: Sendable> {
     private var isFinished = false

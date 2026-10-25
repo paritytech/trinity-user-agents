@@ -23,7 +23,7 @@ use futures::{
 };
 use serde_json::Value;
 use subxt_rpcs::{RpcClient, client::RpcSubscription};
-use tracing::{debug, instrument};
+use tracing::instrument;
 use truapi::{CancellationReason, CancellationToken};
 
 /// Host-spec B.3.3 recommends seven-day statement expiry for session traffic:
@@ -63,12 +63,6 @@ impl SsoSessionKey {
 	/// Key for the session's own/peer id pair.
 	pub fn from_session(session: &SsoSessionInfo) -> Self {
 		Self { own: session.session_id_own, peer: session.session_id_peer }
-	}
-	/// Whether this channel is still selected by the canonical session.
-	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
-		state.current().as_ref().is_some_and(|current| {
-			current.sso.as_ref().is_some_and(|sso| Self::from_session(sso) == self)
-		})
 	}
 }
 
@@ -334,6 +328,7 @@ async fn wait_for_sso_remote_response_inner<T>(
 							session,
 							&value,
 							statement_request_id,
+							remote_message_id,
 							matches,
 							&mut request_accepted,
 							&mut pending_remote_response,
@@ -352,6 +347,7 @@ async fn wait_for_sso_remote_response_inner<T>(
 							session,
 							&value,
 							statement_request_id,
+							remote_message_id,
 							matches,
 							&mut request_accepted,
 							&mut pending_remote_response,
@@ -374,6 +370,7 @@ fn handle_sso_remote_statement_page<T>(
 	session: &SsoSessionInfo,
 	value: &Value,
 	statement_request_id: &str,
+	remote_message_id: &str,
 	matches: &impl Fn(v1::RemoteMessage) -> Option<Result<T, String>>,
 	request_accepted: &mut bool,
 	pending_remote_response: &mut Option<T>,
@@ -381,7 +378,14 @@ fn handle_sso_remote_statement_page<T>(
 	let page = parse_new_statements_result("sso-remote".to_string(), value)
 		.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
 	for statement in page.statements {
-		match decode_sso_session_statement(session, &statement, statement_request_id)? {
+		match decode_sso_session_statement(
+			session,
+			&statement,
+			statement_request_id,
+			Some(remote_message_id),
+		)
+		.map_err(SsoRemoteResponseError::Failure)?
+		{
 			Some(SsoSessionStatement::RequestAccepted) => {
 				*request_accepted = true;
 				if let Some(response) = pending_remote_response.take() {
@@ -390,13 +394,7 @@ fn handle_sso_remote_statement_page<T>(
 			},
 			Some(SsoSessionStatement::RemoteMessages(messages)) => {
 				for message in messages {
-					let message = match message {
-						Ok(message) => message,
-						Err(error) => {
-							debug!(%error, "skipping undecodable SSO remote message");
-							continue;
-						},
-					};
+					let message = message.map_err(SsoRemoteResponseError::Failure)?;
 					if message == v1::RemoteMessage::Disconnected {
 						return Err(SsoRemoteResponseError::PeerDisconnected);
 					}
@@ -610,6 +608,86 @@ mod tests {
 		}
 	}
 
+	#[test]
+	fn a_malformed_foreign_reply_does_not_poison_the_current_request() {
+		let (host, responder) = sso_host_and_responder_sessions();
+		let ack = build_signed_session_response_statement(
+			&responder,
+			"request-1".to_string(),
+			0,
+			fresh_statement_expiry(),
+		)
+		.unwrap();
+		let mut foreign_reply = subtree_response("another-request").encode();
+		foreign_reply.pop();
+		// Extension discriminant 205 and a two-byte compact string length
+		// must use the same correlation rule as baseline response variants.
+		let mut foreign_extension = RemoteMessage {
+			message_id: "extension-response".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::PaymentTopUpResponse(Response {
+				responding_to: "ø".repeat(40),
+				payload: Ok(()),
+			})),
+		}
+		.encode();
+		foreign_extension.pop();
+		let encrypted = encrypt_session_statement_data(
+			&responder,
+			&SsoStatementData::Request {
+				request_id: "resp-statement".to_string(),
+				data: vec![
+					foreign_reply,
+					foreign_extension,
+					subtree_response("request-1").encode(),
+				],
+			},
+		)
+		.unwrap();
+		let statement =
+			build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+				.unwrap();
+
+		let response = wait_for_subtree(&host, vec![peer_page(ack), peer_page(statement)]).unwrap();
+
+		assert_eq!(
+			response,
+			Response { responding_to: "request-1".to_string(), payload: Ok([7; 32]) }
+		);
+	}
+
+	#[test]
+	fn a_malformed_correlated_reply_fails_without_waiting_for_the_stream_to_end() {
+		let (host, responder) = sso_host_and_responder_sessions();
+		let mut reply = subtree_response("request-1").encode();
+		reply.pop();
+		let encrypted = encrypt_session_statement_data(
+			&responder,
+			&SsoStatementData::Request {
+				request_id: "resp-statement".to_string(),
+				data: vec![reply],
+			},
+		)
+		.unwrap();
+		let statement =
+			build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
+				.unwrap();
+
+		let cancel = CancellationToken::default();
+		let result = wait_for_sso_remote_response(
+			RemoteResponseWait {
+				peer_statements: stream::iter([Ok(peer_page(statement))])
+					.chain(stream::pending())
+					.boxed(),
+				submit: futures::future::ready(Ok(())).boxed(),
+				..pending_wait(&host, &cancel)
+			},
+			reply_matcher::<ProductSubtreeRequest>("request-1"),
+		)
+		.now_or_never();
+
+		assert!(matches!(result, Some(Err(SsoRemoteResponseError::Failure(_)))), "{result:?}");
+	}
+
 	fn wait_for_subtree(
 		host: &SsoSessionInfo,
 		pages: Vec<Value>,
@@ -688,11 +766,10 @@ mod tests {
 		);
 	}
 
-	/// A message that does not decode, such as a stale reply from an older peer
-	/// left on the session channel, is skipped wherever it sits, so it cannot
-	/// fail a wait for another request.
+	/// An uncorrelated message that does not decode cannot fail another request,
+	/// regardless of its position in the session's message batch.
 	#[test]
-	fn an_undecodable_message_is_skipped() {
+	fn an_uncorrelated_undecodable_message_is_skipped() {
 		let (host, responder) = sso_host_and_responder_sessions();
 		let ack = build_signed_session_response_statement(
 			&responder,

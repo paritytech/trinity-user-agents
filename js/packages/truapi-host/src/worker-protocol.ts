@@ -30,7 +30,13 @@
 // safe choice.
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
-import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
+import type { ProductContext } from "./generated/host-callbacks.js";
+import type {
+  LogLevel,
+  NativeChatContactsSnapshot,
+  PermissionAuthorizationStatus,
+} from "./runtime.js";
+import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type {
   CallbackName,
   SubscriptionName,
@@ -44,11 +50,33 @@ export type {
   SubscriptionName,
 } from "./generated/worker-callbacks.js";
 
+/** Shared cap includes connections still opening or closing during an open. */
+export const MAX_JSON_RPC_CONNECTIONS = 64;
+
+/** Wallet custody belongs to the runtime, never a product-specific callback bundle. */
+export const COINAGE_WALLET_CALLBACKS: Readonly<
+  Partial<Record<CallbackName, true>>
+> = {
+  nativeCoinage: true,
+};
+
 /**
  * Positional arguments for a callback. The wasm core calls each callback
  * at a fixed arity; a uniform `unknown[]` keeps the wire protocol simple.
  */
 export type CallbackArgs = readonly unknown[];
+
+/** Chain-verified identity metadata for the wallet's network-specific UID account. */
+export interface LocalIdentity {
+  /** Canonical lowercase 0x-prefixed 32-byte account identifier. */
+  identityAccountId: string;
+  liteUsername?: string;
+}
+
+/** Observable registration stages; acceptance is not verified ownership. */
+export type LocalIdentityProgress =
+  | { stage: "checking" | "authenticating" | "submitting" | "confirming" }
+  | { stage: "retrying"; error: string };
 
 /**
  * Messages posted by the main window to the WASM worker. These either control
@@ -81,7 +109,13 @@ export type MainToWorker =
        */
       role?: HostRole;
     }
-  | { kind: "createCore"; coreId: number; product: unknown }
+  | {
+      kind: "createCore";
+      coreId: number;
+      product: Pick<ProductContext, "productId"> &
+        Partial<Pick<ProductContext, "executionKind">>;
+      capabilities?: OptionalCapabilities;
+    }
   | { kind: "disposeCore"; coreId: number }
   | { kind: "setLogLevel"; level: LogLevel }
   | { kind: "frame"; coreId: number; bytes: Uint8Array }
@@ -128,6 +162,25 @@ export type MainToWorker =
     }
   | { kind: "resetSessionState"; requestId: number }
   | {
+      kind: "activateLocalSessionWithIdentity";
+      requestId: number;
+      secret: Uint8Array;
+      liteUsername?: string;
+    }
+  | { kind: "refreshLocalIdentity"; requestId: number }
+  | {
+      kind: "getWalletAllowanceSnapshot";
+      requestId: number;
+      productIds: string[];
+    }
+  | { kind: "getNativeChatContacts"; requestId: number }
+  | {
+      kind: "registerLocalLiteUsername";
+      requestId: number;
+      baseUsername: string;
+      identityBackendBaseUrl: string;
+    }
+  | {
       kind: "getPermissionAuthorizationStatus";
       productId: string;
       requestId: number;
@@ -145,6 +198,12 @@ export type MainToWorker =
       requestId: number;
       request: Uint8Array;
       status: PermissionAuthorizationStatus;
+    }
+  | {
+      kind: "refreshPermissionAuthorization";
+      productId: string;
+      requestId: number;
+      request: Uint8Array;
     }
   | { kind: "getSessionChatIdentityKey"; requestId: number }
   | { kind: "getDeviceStatementKey"; requestId: number }
@@ -184,6 +243,7 @@ export type MainToWorker =
   | { kind: "chainConnectAck"; connId: number; ok: true }
   | { kind: "chainConnectAck"; connId: number; ok: false; error: string }
   | { kind: "chainResponse"; connId: number; json: string }
+  | { kind: "chainClosed"; connId: number }
   | { kind: "dispose" };
 
 /**
@@ -202,7 +262,7 @@ export type WorkerToMain =
        */
       schema?: string;
     }
-  | { kind: "coreReady"; coreId: number }
+  | { kind: "coreReady"; coreId: number; trustedRemotePermissions: boolean }
   | { kind: "coreError"; coreId: number; error: string }
   | { kind: "fatalError"; error: string }
   | { kind: "frameError"; coreId: number; error: string }
@@ -223,6 +283,47 @@ export type WorkerToMain =
   | { kind: "sessionActivationResponse"; requestId: number; ok: true }
   | {
       kind: "sessionActivationResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "localIdentityProgress";
+      requestId: number;
+      progress: LocalIdentityProgress;
+    }
+  | {
+      kind: "localIdentityResponse";
+      requestId: number;
+      ok: true;
+      identity: LocalIdentity;
+    }
+  | {
+      kind: "localIdentityResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: true;
+      snapshot: WalletAllowanceSnapshot;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
+      requestId: number;
+      ok: true;
+      snapshot: NativeChatContactsSnapshot;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
       requestId: number;
       ok: false;
       error: string;
@@ -258,6 +359,17 @@ export type WorkerToMain =
     }
   | {
       kind: "setPermissionAuthorizationStatusResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "refreshPermissionAuthorizationResponse";
+      requestId: number;
+      ok: true;
+    }
+  | {
+      kind: "refreshPermissionAuthorizationResponse";
       requestId: number;
       ok: false;
       error: string;
@@ -337,17 +449,27 @@ export type WorkerToMain =
   | {
       kind: "callbackRequest";
       requestId: number;
+      coreId?: number;
       name: CallbackName;
       args: CallbackArgs;
     }
   | {
       kind: "subscriptionStart";
       subId: number;
+      coreId?: number;
       name: SubscriptionName;
-      payload: Uint8Array | string | null;
+      args: readonly unknown[];
     }
   | { kind: "subscriptionStop"; subId: number }
+  /** A trusted Media item reached the worker; bounds in-flight private data. */
+  | { kind: "mediaSubscriptionAck"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
+  | {
+      kind: "hopConnectStart";
+      connId: number;
+      genesisHash: string;
+      endpoint: string;
+    }
   | { kind: "chainSend"; connId: number; request: string }
   | { kind: "chainClose"; connId: number };
 

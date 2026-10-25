@@ -1,18 +1,18 @@
 //! Which transactions a submission watch owns, so a recovery pass skips them
 //! and each transaction has one writer at a time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use parking_lot::Mutex;
+use subxt::utils::H256;
 
 use super::model::DurableTxId;
 
 /// The attempts submission watches currently own.
 ///
 /// Held in memory only: after a crash nothing is owned, which is right,
-/// because no watch survived it. Each acquisition is its own
-/// [`OwnershipClaim`], and only that claim releases it, so releasing an
-/// earlier attempt never ends a later one, even one with the same bytes.
+/// because no watch survived it. Ownership is one-shot per attempt, so a late
+/// event from a released watch can never take a transaction back.
 #[derive(Default)]
 pub struct Ownership {
 	state: Mutex<OwnershipState>,
@@ -20,40 +20,39 @@ pub struct Ownership {
 
 #[derive(Default)]
 struct OwnershipState {
-	owned: HashMap<DurableTxId, u64>,
-	next_serial: u64,
-}
-
-/// One acquisition of a transaction by a submission watch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OwnershipClaim {
-	id: DurableTxId,
-	serial: u64,
-}
-
-impl OwnershipClaim {
-	/// The transaction claimed.
-	pub fn id(&self) -> DurableTxId {
-		self.id
-	}
+	owned: HashMap<DurableTxId, H256>,
+	released: HashSet<(DurableTxId, H256)>,
 }
 
 impl Ownership {
-	/// Takes ownership of `id` for a new attempt, replacing any earlier
-	/// claim on it.
-	pub fn acquire(&self, id: DurableTxId) -> OwnershipClaim {
+	/// Takes ownership of attempt `tx_hash` of `id`. Refused for an attempt
+	/// that was already released.
+	pub fn acquire(&self, id: DurableTxId, tx_hash: H256) -> bool {
 		let mut state = self.state.lock();
-		let serial = state.next_serial;
-		state.next_serial += 1;
-		state.owned.insert(id, serial);
-		OwnershipClaim { id, serial }
+		if state.released.contains(&(id, tx_hash)) {
+			return false;
+		}
+		state.owned.insert(id, tx_hash);
+		true
 	}
 
-	/// Ends `claim`, unless a later claim on its transaction replaced it.
-	pub fn release(&self, claim: OwnershipClaim) {
+	/// Releases attempt `tx_hash` of `id` for good.
+	pub fn release(&self, id: DurableTxId, tx_hash: H256) {
 		let mut state = self.state.lock();
-		if state.owned.get(&claim.id) == Some(&claim.serial) {
-			state.owned.remove(&claim.id);
+		if state.owned.get(&id) == Some(&tx_hash) {
+			state.owned.remove(&id);
+		}
+		state.released.insert((id, tx_hash));
+	}
+
+	/// Gives up attempts whose rows rolled back. Unlike [`Self::release`]
+	/// they can be owned again: a rolled-back id is handed out anew.
+	pub fn abandon_all(&self, attempts: &[(DurableTxId, H256)]) {
+		let mut state = self.state.lock();
+		for (id, tx_hash) in attempts {
+			if state.owned.get(id) == Some(tx_hash) {
+				state.owned.remove(id);
+			}
 		}
 	}
 
@@ -69,38 +68,38 @@ mod tests {
 
 	const ID: DurableTxId = DurableTxId(1);
 
-	/// A policy rebuilt the transaction into the bytes of the attempt that
-	/// failed. The new attempt gets a watch of its own, and the old watch
-	/// letting go afterwards must not leave it unowned for recovery to race.
+	/// A late event from a watch that already released its transaction must not
+	/// take it back from recovery.
 	#[test]
-	fn releasing_an_earlier_claim_leaves_the_current_one_owned() {
+	fn a_released_attempt_is_never_owned_again() {
 		let ownership = Ownership::default();
-		let earlier = ownership.acquire(ID);
-		ownership.acquire(ID);
+		let hash = H256::repeat_byte(1);
+		assert!(ownership.acquire(ID, hash));
+		ownership.release(ID, hash);
 
-		ownership.release(earlier);
-
-		assert!(ownership.is_owned(ID));
-	}
-
-	#[test]
-	fn a_released_transaction_can_be_owned_again() {
-		let ownership = Ownership::default();
-		let first = ownership.acquire(ID);
-		ownership.release(first);
-
-		ownership.acquire(ID);
-
-		assert!(ownership.is_owned(ID));
-	}
-
-	#[test]
-	fn releasing_the_current_claim_ends_ownership() {
-		let ownership = Ownership::default();
-		let claim = ownership.acquire(ID);
-
-		ownership.release(claim);
-
+		assert!(!ownership.acquire(ID, hash));
 		assert!(!ownership.is_owned(ID));
+	}
+
+	/// A policy rebuilt the transaction with new bytes under the same id; the
+	/// new attempt gets a watch of its own.
+	#[test]
+	fn a_new_attempt_of_the_same_transaction_is_owned_afresh() {
+		let ownership = Ownership::default();
+		ownership.acquire(ID, H256::repeat_byte(1));
+		ownership.release(ID, H256::repeat_byte(1));
+
+		assert!(ownership.acquire(ID, H256::repeat_byte(2)));
+		assert!(ownership.is_owned(ID));
+	}
+
+	#[test]
+	fn releasing_a_stale_attempt_leaves_the_current_one_owned() {
+		let ownership = Ownership::default();
+		ownership.acquire(ID, H256::repeat_byte(2));
+
+		ownership.release(ID, H256::repeat_byte(1));
+
+		assert!(ownership.is_owned(ID));
 	}
 }

@@ -163,7 +163,7 @@ UNIFFI_SWIFT_TMP := target/uniffi-swift-out
 PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
 uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
-	$(CARGO) build -p truapi --profile codegen
+	$(CARGO) rustc -p truapi --profile codegen --lib --crate-type cdylib
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -271,7 +271,7 @@ android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a he
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
 uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
-	$(CARGO) build -p truapi --profile codegen
+	$(CARGO) rustc -p truapi --profile codegen --lib --crate-type cdylib
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -544,14 +544,13 @@ XCFRAMEWORK_TARGETS ?= $(if $(SIM_ONLY_ON),$(IOS_SIM_TARGET),$(IOS_DEVICE_TARGET
 XCFRAMEWORK_PROFILE ?= release
 XCFRAMEWORK_CARGO_FLAGS := $(if $(filter release,$(XCFRAMEWORK_PROFILE)),--release,)
 
-# One cargo invocation carrying every slice, so the target graphs are scheduled
-# together: the release profile's single codegen unit and fat LTO leave a long
-# serial tail per slice, which the other slice fills.
+# Explicit crate types require one target per cargo rustc invocation.
 xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulator (SIM_ONLY=1 for simulator only).
 	rustup target add $(XCFRAMEWORK_TARGETS)
-	IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi \
-		$(XCFRAMEWORK_CARGO_FLAGS) \
-		$(XCFRAMEWORK_TARGETS:%=--target %)
+	set -e; for target in $(XCFRAMEWORK_TARGETS); do \
+		IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) rustc -p truapi --lib --crate-type staticlib \
+			$(XCFRAMEWORK_CARGO_FLAGS) --target "$$target"; \
+	done
 	rm -rf $(XCFRAMEWORK_OUT) $(XCFRAMEWORK_HEADERS)
 	mkdir -p $(XCFRAMEWORK_HEADERS)
 	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(XCFRAMEWORK_HEADERS)/

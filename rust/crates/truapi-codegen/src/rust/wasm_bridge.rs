@@ -10,8 +10,9 @@ use crate::{
 	platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait},
 	platform_callbacks::{
 		callback_namespace, collect_local_bridge_payload_types, composed_traits,
-		optional_trait_names, platform_trait_names, raw_callback_field_name, raw_callback_name,
-		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
+		is_scale_vector_result, optional_trait_names, platform_trait_names,
+		raw_callback_field_name, raw_callback_name, raw_callback_wire_name, snake_case,
+		stream_item, trait_object_return_name,
 	},
 	rustdoc::{
 		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
@@ -49,9 +50,10 @@ pub fn generate_wasm_bridge(
         use wasm_bindgen::JsValue;
 
         use super::{{
-            WasmPlatform, call_js_function, decode_bytes, decode_js_item, get_function,
-            get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
-            invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
+            WasmPlatform, absent_optional_callback, call_js_function, decode_bytes, decode_js_item,
+            generic, get_function, get_optional_function, invoke_bool, invoke_bytes_return,
+            invoke_js_media_subscription, invoke_js_subscription_args, invoke_optional_bytes_return,
+            invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
         }};
 
         /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -62,7 +64,7 @@ pub fn generate_wasm_bridge(
         /// Callbacks of an optional capability trait are replaced by a throwing
         /// stub when the host omits the group. The core never reaches them: it
         /// only holds an adapter for a capability whose `has_*` accessor is
-        /// true, and answers the rest with `Unsupported`.
+        /// true, and applies each omitted capability's absence behavior.
         pub struct JsBridge {{
         "#,
 	)
@@ -87,12 +89,16 @@ pub fn generate_wasm_bridge(
 	.unwrap();
 	for field in bridge_fields(&traits, &trait_names, &optional_traits) {
 		if field.optional {
+			let fallback = if field.absent_is_none {
+				"absent_optional_callback()".to_string()
+			} else {
+				format!("missing_callback({:?})", field.raw_name)
+			};
 			writeln!(
                 out,
-                "            {}: get_optional_function(callbacks, \"{}\")?\n                .unwrap_or_else(|| missing_callback(\"{}\")),",
-                field.field_name, field.raw_name, field.raw_name
-            )
-            .unwrap();
+                "            {}: get_optional_function(callbacks, {:?})?\n                .unwrap_or_else(|| {}),",
+                field.field_name, field.raw_name, fallback
+            ).unwrap();
 		} else {
 			writeln!(
 				out,
@@ -176,6 +182,12 @@ impl<'a> BridgeCtx<'a> {
 		matches!(ty, TypeRef::Named { name, .. } if self.local_codec_types.contains(name.as_str()))
 	}
 
+	fn is_encoded_codec(&self, ty: &TypeRef) -> bool {
+		self.is_api_codec(ty) ||
+			self.is_local_codec(ty) ||
+			matches!(ty, TypeRef::Vec(inner) if self.is_encoded_codec(inner))
+	}
+
 	fn alias_primitive(&self, ty: &TypeRef) -> Option<&'a str> {
 		let TypeRef::Named { name, .. } = ty else {
 			return None;
@@ -202,6 +214,7 @@ struct BridgeField {
 	field_name: String,
 	raw_name: String,
 	optional: bool,
+	absent_is_none: bool,
 	namespace: Option<String>,
 }
 
@@ -230,7 +243,12 @@ fn bridge_fields(
 			fields.push(BridgeField {
 				field_name: raw_callback_field_name(trait_def, method, platform_trait_names),
 				raw_name: raw_callback_wire_name(trait_def, method, platform_trait_names),
-				optional,
+				optional: optional || method.has_default,
+				absent_is_none: method.has_default &&
+					matches!(
+						&method.return_shape.inner,
+						PlatformInner::Result { ok: TypeRef::Option(_), .. }
+					),
 				namespace: namespace.clone(),
 			});
 		}
@@ -262,7 +280,7 @@ fn emit_trait_impl(
 		if idx != 0 {
 			out.push('\n');
 		}
-		out.push_str(&emit_method(method, ctx, parse_fns)?);
+		out.push_str(&emit_method(method, ctx, parse_fns, trait_def.name == "MediaPlatform")?);
 	}
 	out.push_str("}\n");
 	Ok(out)
@@ -272,10 +290,15 @@ fn emit_method(
 	method: &PlatformMethod,
 	ctx: &BridgeCtx<'_>,
 	parse_fns: &mut BTreeMap<String, String>,
+	private_media: bool,
 ) -> Result<String> {
 	match &method.return_shape.inner {
-		PlatformInner::Result { ok, err } => emit_result_method(method, ok, err, ctx),
-		PlatformInner::Stream(item) => emit_stream_method(method, item, ctx, parse_fns),
+		PlatformInner::Result { ok, err } => {
+			emit_result_method(method, ok, err, ctx, private_media)
+		},
+		PlatformInner::Stream(item) => {
+			emit_stream_method(method, item, ctx, parse_fns, private_media)
+		},
 		PlatformInner::Unit => emit_unit_method(method, ctx),
 		PlatformInner::Plain(ok) => emit_plain_method(method, ok, ctx),
 		PlatformInner::TraitObject(_) => {
@@ -289,33 +312,57 @@ fn emit_result_method(
 	ok: &TypeRef,
 	err: &TypeRef,
 	ctx: &BridgeCtx<'_>,
+	private_media: bool,
 ) -> Result<String> {
 	let raw = raw_callback_name(method);
 	let args = js_arg_vec(method, ctx)?;
 	let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
+	let map_err = if private_media {
+		".map_err(|_| generic(\"media backend failure\".to_string()))".to_string()
+	} else {
+		error_mapper(err, ctx)?
+	};
+
 	let body = if is_unit(ok) {
-		formatdoc! {
-			"{call}.await?;
-			Ok(())",
-			call = bridge_call("invoke_unit", &method.name, &args, &[]),
-		}
+		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
 	} else if is_bool(ok) {
-		format!("Ok({}.await?)", bridge_call("invoke_bool", &method.name, &args, &[]),)
+		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)
 	} else if is_bytes(ok) {
-		format!("Ok({}.await?)", bridge_call("invoke_bytes_return", &method.name, &args, &[]),)
+		await_chain(&bridge_call("invoke_bytes_return", &method.name, &args, &[]), &map_err)
+	} else if matches!(ok, TypeRef::Option(inner) if is_string(inner)) {
+		await_chain(
+			&bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
+			&map_err,
+		)
 	} else if is_optional_bytes(ok) {
-		format!(
-			"Ok({}.await?)",
-			bridge_call(
+		await_chain(
+			&bridge_call(
 				"invoke_optional_bytes_return",
 				&method.name,
 				&args,
 				&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
 			),
+			&map_err,
 		)
-	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) {
-		formatdoc_decode_result(method, ok, &raw, &args, ctx)?
+	} else if let TypeRef::Option(inner) = ok &&
+		ctx.is_encoded_codec(inner)
+	{
+		let call = bridge_call(
+			"invoke_optional_bytes_return",
+			&method.name,
+			&args,
+			&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
+		);
+		let inner_type = rust_type(inner, ctx)?;
+		formatdoc! {
+			r#"
+            let bytes = {call}.await{map_err}?;
+            bytes.map(|bytes| decode_bytes::<{inner_type}>(bytes, "{raw} response did not decode"){map_err}).transpose()
+            "#
+		}
+	} else if ctx.is_encoded_codec(ok) || is_scale_vector_result(ok) {
+		formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
 	} else {
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
@@ -366,6 +413,7 @@ fn emit_stream_method(
 	item: &TypeRef,
 	ctx: &BridgeCtx<'_>,
 	parse_fns: &mut BTreeMap<String, String>,
+	private_media: bool,
 ) -> Result<String> {
 	let raw = raw_callback_name(method);
 	let TypeRef::Named { name, args } = item else {
@@ -379,13 +427,11 @@ fn emit_stream_method(
 	let ret =
 		format!("BoxStream<'static, Result<{}, {}>>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
-	let payload = subscription_payload(method, ctx)?;
+	let args = js_args(method, ctx)?.join(", ");
 	let parser = stream_parser(ok, ctx, parse_fns)?;
-	let body = if payload == "None" {
-		format!("invoke_js_subscription(&self.bridge.{}, None, {parser})", method.name)
-	} else {
-		bridge_call("invoke_js_subscription", &method.name, &payload, std::slice::from_ref(&parser))
-	};
+	let helper =
+		if private_media { "invoke_js_media_subscription" } else { "invoke_js_subscription_args" };
+	let body = format!("{helper}(&self.bridge.{}, &[{args}], {parser})", method.name,);
 	Ok(format!(
 		"{header}\n{body}\n    }}\n",
 		header = method_header("", &method.name, &params, Some(&ret)),
@@ -398,18 +444,16 @@ fn formatdoc_decode_result(
 	ok: &TypeRef,
 	raw: &str,
 	args: &str,
+	map_err: &str,
 	ctx: &BridgeCtx<'_>,
 ) -> Result<String> {
 	let ty = rust_type(ok, ctx)?;
 	let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
-	Ok(formatdoc! {
-		"let bytes = {call}.await?;
-        Ok(decode_bytes::<{ty}>(
-            bytes,
-            {message:?},
-        )?)",
-		message = format!("{raw} response did not decode"),
-	})
+	let await_bytes = await_chain(&call, &format!("{map_err}?"));
+	Ok(format!(
+		"let bytes = {await_bytes};\ndecode_bytes::<{ty}>(\n    bytes,\n    {:?},\n)\n{map_err}",
+		format!("{raw} response did not decode"),
+	))
 }
 
 fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -418,7 +462,15 @@ fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
 		.iter()
 		.map(|param| {
 			let reference = if param.borrowed { "&" } else { "" };
-			Ok(format!("{}: {reference}{}", param.name, rust_type(&param.type_ref, ctx)?))
+			Ok(format!(
+				"{}: {reference}{}",
+				param.name,
+				if param.borrowed && is_string(&param.type_ref) {
+					"str".to_owned()
+				} else {
+					rust_type(&param.type_ref, ctx)?
+				}
+			))
 		})
 		.collect::<Result<Vec<_>>>()
 		.map(|params| params.join(", "))
@@ -459,6 +511,14 @@ fn bridge_call(name: &str, field: &str, second_arg: &str, extra_args: &[String])
 	}
 	out.push(')');
 	out
+}
+
+fn await_chain(call: &str, map_err: &str) -> String {
+	if call.contains('\n') {
+		format!("{call}\n.await\n{map_err}")
+	} else {
+		format!("{call}\n    .await\n    {map_err}")
+	}
 }
 
 fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -529,15 +589,32 @@ fn js_arg_vec(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
 }
 
 fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
+	if let TypeRef::Option(inner) = ty {
+		if ctx.is_encoded_codec(inner) {
+			return Ok(format!(
+				"{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.encode().as_slice()).into())"
+			));
+		}
+		if is_bytes(inner) {
+			return Ok(format!(
+				"{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.as_slice()).into())"
+			));
+		}
+		let value = js_arg_expr("value", inner, ctx)?;
+		return Ok(format!(
+			"match {name} {{ Some(value) => {value}, None => JsValue::UNDEFINED }}"
+		));
+	}
 	if is_string(ty) {
 		return Ok(format!("JsValue::from_str(&{name})"));
 	}
 	if is_bytes(ty) {
 		return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
 	}
-	if ctx.is_api_codec(ty) || ctx.is_local_codec(ty) {
+	if ctx.is_encoded_codec(ty) {
 		return Ok(format!("Uint8Array::from({name}.encode().as_slice()).into()"));
 	}
+
 	if let Some(primitive) = ctx.alias_primitive(ty) {
 		return numeric_js_arg(name, primitive);
 	}
@@ -555,19 +632,6 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
 		"u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
 		"bool" => Ok(format!("JsValue::from_bool({name})")),
 		other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
-	}
-}
-
-/// The `JsValue` a subscription hands its JS callback, or `None` when it takes
-/// no payload. Shares [`js_arg_expr`] with request callbacks, so a subscription
-/// accepts every parameter type a request already does.
-fn subscription_payload(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
-	match method.params.as_slice() {
-		[] => Ok("None".to_string()),
-		[param] => Ok(format!("Some({})", js_arg_expr(&param.name, &param.type_ref, ctx)?)),
-		_ => {
-			bail!("subscription `{}` has more than one payload parameter", method.name)
-		},
 	}
 }
 
@@ -600,6 +664,15 @@ fn stream_parser(
 	bail!("unsupported stream item type: {ok:?}")
 }
 
+fn error_mapper(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
+	let name = named_type_name(err)?;
+	if name == "GenericError" {
+		return Ok(".map_err(generic)".to_string());
+	}
+	let err_ty = rust_type(err, ctx)?;
+	Ok(format!(".map_err(|reason| {err_ty}::Unknown {{ reason }})"))
+}
+
 fn validate_errors(traits: &[&PlatformTrait], ctx: &BridgeCtx<'_>) -> Result<()> {
 	for trait_def in traits {
 		for method in &trait_def.methods {
@@ -629,6 +702,9 @@ fn validate_error_type(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<()> {
 	validate_error_name(name, ctx, &mut seen)
 }
 
+/// `seen` holds the envelopes on the path from the root, not every name
+/// visited: two versions of one envelope may carry the same payload, which is
+/// sharing, not recursion.
 fn validate_error_name<'a>(
 	name: &'a str,
 	ctx: &BridgeCtx<'a>,
@@ -640,6 +716,16 @@ fn validate_error_name<'a>(
 	if !seen.insert(name) {
 		bail!("platform error type `{name}` contains a recursive alias/envelope");
 	}
+	let result = validate_error_def(name, ctx, seen);
+	seen.remove(name);
+	result
+}
+
+fn validate_error_def<'a>(
+	name: &'a str,
+	ctx: &BridgeCtx<'a>,
+	seen: &mut BTreeSet<&'a str>,
+) -> Result<()> {
 	let Some(type_def) = resolve_alias_type(name, ctx) else {
 		bail!("platform error type `{name}` is not present in the API definition");
 	};
@@ -740,4 +826,88 @@ fn indent_body(body: &str, spaces: usize) -> String {
 		.map(|line| if line.is_empty() { String::new() } else { format!("{indent}{line}") })
 		.collect::<Vec<_>>()
 		.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::platform::{PlatformParam, PlatformReturn};
+
+	fn context() -> BridgeCtx<'static> {
+		BridgeCtx {
+			api_types: BTreeMap::new(),
+			codec_types: BTreeSet::new(),
+			local_types: ["ReceivingAuthority"].into_iter().collect(),
+			local_codec_types: ["ReceivingAuthority"].into_iter().collect(),
+		}
+	}
+
+	fn authority_type() -> TypeRef {
+		TypeRef::Named { name: "ReceivingAuthority".into(), args: Vec::new() }
+	}
+
+	#[test]
+	fn optional_codec_result_propagates_callback_failure_before_decode() {
+		let ok = TypeRef::Option(Box::new(authority_type()));
+		let error = TypeRef::Named { name: "GenericError".into(), args: Vec::new() };
+		let method = PlatformMethod {
+			name: "receiver_authority".into(),
+			docs: None,
+			params: vec![PlatformParam {
+				name: "product".into(),
+				type_ref: TypeRef::Primitive("str".into()),
+				borrowed: true,
+			}],
+			return_shape: PlatformReturn {
+				is_async: true,
+				inner: PlatformInner::Result { ok: ok.clone(), err: error.clone() },
+			},
+			has_default: true,
+		};
+		let output = emit_result_method(&method, &ok, &error, &context(), false).unwrap();
+		assert!(output.contains("product: &str"), "{output}");
+		assert!(output.contains(".await.map_err(generic)?;"), "{output}");
+		assert!(
+			output
+				.contains("bytes.map(|bytes| decode_bytes::<crate::platform::ReceivingAuthority>"),
+			"{output}"
+		);
+		assert!(output.contains(".transpose()"), "{output}");
+	}
+
+	#[test]
+	fn optional_and_vector_codec_arguments_use_matching_scale_payloads() {
+		let context = context();
+		let vector = TypeRef::Vec(Box::new(authority_type()));
+		assert_eq!(
+			js_arg_expr("watches", &vector, &context).unwrap(),
+			"Uint8Array::from(watches.encode().as_slice()).into()"
+		);
+		let optional = TypeRef::Option(Box::new(authority_type()));
+		let output = js_arg_expr("authority", &optional, &context).unwrap();
+		assert!(output.contains("map_or(JsValue::UNDEFINED"));
+		assert!(output.contains("value.encode()"));
+	}
+
+	#[test]
+	fn optional_default_authority_is_absent_not_successful_enrollment() {
+		let method = PlatformMethod {
+			name: "receiver_authority".into(),
+			docs: None,
+			params: Vec::new(),
+			return_shape: PlatformReturn {
+				is_async: true,
+				inner: PlatformInner::Result {
+					ok: TypeRef::Option(Box::new(authority_type())),
+					err: TypeRef::Named { name: "GenericError".into(), args: Vec::new() },
+				},
+			},
+			has_default: true,
+		};
+		let notifications =
+			PlatformTrait { name: "Notifications".into(), docs: None, methods: vec![method] };
+		let fields = bridge_fields(&[&notifications], &BTreeSet::new(), &BTreeSet::new());
+		assert!(fields[0].optional);
+		assert!(fields[0].absent_is_none);
+	}
 }

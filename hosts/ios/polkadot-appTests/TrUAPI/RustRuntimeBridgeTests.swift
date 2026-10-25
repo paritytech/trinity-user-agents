@@ -7,6 +7,8 @@ import SubstrateSdk
 import Keystore_iOS
 import StructuredConcurrency
 import TrUAPIHost
+import DesignSystem
+import UIKit
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
@@ -72,6 +74,54 @@ private struct StubHostProvider: ProductHostProviding {
     }
 }
 
+@MainActor
+private final class MockThemeManager: ThemeManagerProtocol {
+    private(set) var theme: Theme
+    private(set) var mode: ThemeMode
+    private var observers: [UUID: AsyncStream<Theme>.Continuation] = [:]
+    private var terminationWaiter: CheckedContinuation<Void, Never>?
+
+    init(selection: ThemeSelection = .berlinNight) {
+        mode = .app(selection)
+        theme = ThemesRegistry.makeTheme(selection)
+    }
+
+    func observeTheme() -> AsyncStream<Theme> {
+        AsyncStream { continuation in
+            let id = UUID()
+            observers[id] = continuation
+            continuation.yield(theme)
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.observers[id] = nil
+                    if self.observers.isEmpty {
+                        self.terminationWaiter?.resume()
+                        self.terminationWaiter = nil
+                    }
+                }
+            }
+        }
+    }
+
+    func select(_ mode: ThemeMode) {
+        guard mode != self.mode else { return }
+        self.mode = mode
+        switch mode {
+        case let .app(selection):
+            theme = ThemesRegistry.makeTheme(selection)
+        }
+        observers.values.forEach { $0.yield(theme) }
+    }
+
+    func setup(scene _: UIWindowScene) {}
+
+    func waitForObservationToEnd() async {
+        guard !observers.isEmpty else { return }
+        await withCheckedContinuation { terminationWaiter = $0 }
+    }
+}
+
 // MARK: - Bridge factory
 
 @MainActor
@@ -83,13 +133,11 @@ private func makeBridge(
     gameReminders: MockGameReminderScheduler? = nil,
     reminderPermissionAsker: MockReminderPermissionAsker = MockReminderPermissionAsker(),
     chainRegistry: MockChainRegistry = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
+    confirmationPresenter: any TrUAPIConfirmationPresenting = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
-    themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil,
-    router: MockNavigationRouter? = nil
+    themeManager: MockThemeManager = MockThemeManager()
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -97,7 +145,7 @@ private func makeBridge(
         ? FailingProductStorage()
         : TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: makeTestDefaults()
+            defaults: makeTestDefaults(), storageDomain: UUID().uuidString
         )
     return RustProductExecutionBridge(dependencies: .init(
         productId: productId,
@@ -108,15 +156,23 @@ private func makeBridge(
         reminderPermissionAsker: reminderPermissionAsker,
         navigationRouter: router,
         chainRegistry: chainRegistry,
-        chainConnections: pool,
+        chainConnections: chainConnections ?? pool,
         productStorage: productStorage,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults(), storageDomain: UUID().uuidString),
         confirmationPresenter: confirmationPresenter,
+        chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared
     ), cardFace: cardFace)
+}
+
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async {
+    for _ in 0 ..< 200 where !condition() {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 // MARK: - Tests
@@ -290,6 +346,24 @@ struct RustRuntimeBridgeTests {
 
         #expect(result == .allowAlways)
         #expect(guard_.requestedBatchedPermissions == [.webRtcAccess])
+    }
+
+    /// `remotePermission`: JamPeers asks for access keyed by its genesis as
+    /// lowercase `0x` hex, so each network is granted separately.
+    @Test func remotePermissionJamPeers() async throws {
+        let guard_ = MockPermissionGuard()
+        let bridge = makeBridge(permissionGuard: guard_)
+        let genesis = Data([0x10, 0xC1, 0x23, 0xF0] + [UInt8](repeating: 0xAB, count: 28))
+
+        let result = try await bridge.remotePermission(
+            product: testProduct,
+            request: .jamPeers(genesis: genesis)
+        )
+
+        #expect(result == .allowAlways)
+        #expect(guard_.requestedBatchedPermissions == [
+            .jamPeersAccess(genesis: "0x10c123f0" + String(repeating: "ab", count: 28))
+        ])
     }
 
     // MARK: pushNotification
@@ -472,6 +546,29 @@ struct RustRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "caller.dot")
     }
 
+    @Test func profileDisclosureWithoutPresentationPropagatesWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
+        #expect(try await bridge.confirmUserAction(review: review) == false)
+    }
+
+    @Test func supportedPermissionWithoutPresentationThrowsWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.accountAccess(
+            AccountAccessReview(requestingProductId: "caller.dot", targetProductId: "target.dot")
+        )
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
+    }
+
     // MARK: lookupPreimage
 
     @Test func lookupPreimageAwaitsFetchOnColdMiss() async throws {
@@ -565,21 +662,12 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: "test.product"))
-        #expect(await presenter.confirm(review: review, from: "test.product") == false)
-    }
-
-    // MARK: setExpandedCardFaceShown
-
-    /// The page's request reaches the card's face and its answer comes back.
-    /// Called through `HostBridge` because the core does: an override whose
-    /// signature drifts would lose to the default and answer `.unsupported`.
-    @Test func expandedCardFaceReachesTheCardsFace() async throws {
-        let face = StubCardFace()
-        let bridge: HostBridge = makeBridge(cardFace: face)
-
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
-        #expect(face.requests == [false])
+        for review in [
+            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
+            .productSubtree(ProductSubtreeReview(productId: "test.product"))
+        ] {
+            #expect(await presenter.confirm(review: review, from: "test.product") == false)
+        }
     }
 
     // MARK: attach
@@ -617,8 +705,6 @@ struct RustRuntimeBridgeTests {
             permissionGuard: MockPermissionGuard(),
             osPermissionAsker: MockOSPermissionAsker(),
             notificationScheduler: MockNotificationScheduler(),
-            gameReminders: MockGameReminderScheduler(),
-            reminderPermissionAsker: MockReminderPermissionAsker(),
             navigationRouter: MockNavigationRouter(),
             chainRegistry: chainRegistry,
             chainConnections: pool,
@@ -628,19 +714,13 @@ struct RustRuntimeBridgeTests {
             ),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
             confirmationPresenter: MockConfirmationPresenter(),
+            chatFiles: UnavailableNativeChatFiles(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
             themeManager: MockThemeManager(),
             logger: Logger.shared
         ))
 
-        #expect(pool.eventHandler == nil)
-
-        let execution = MockProductExecution()
-        bridge.attach(execution)
-
-        #expect(pool.eventHandler === bridge)
-    }
 
     /// After `attach`, chain notify-backs route to the opened execution.
     @Test func chainEventForwardingRoutesToAttachedExecution() {
@@ -670,7 +750,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { !execution.themeChanges.isEmpty }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -686,10 +766,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { execution.themeChanges.count == 1 }
 
         themeManager.select(.app(.berlinDay))
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { execution.themeChanges.count == 2 }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])

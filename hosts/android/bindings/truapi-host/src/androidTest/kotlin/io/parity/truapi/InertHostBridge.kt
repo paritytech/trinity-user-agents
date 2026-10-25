@@ -20,6 +20,8 @@ class InertHostBridge(
         context.getSharedPreferences("truapi_inert_bridge_core", Context.MODE_PRIVATE),
     )
 
+    override fun permissionAuthorizationsChanged(productId: String) = Unit
+
     override suspend fun navigateTo(url: String) = Unit
 
     override suspend fun devicePermission(
@@ -35,6 +37,8 @@ class InertHostBridge(
     override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
 
     override fun durableWorkChanged(pending: Boolean) = onDurableWork(pending)
+
+    override fun permissionAuthorizationsChanged(productId: String) = Unit
 }
 
 /** A runtime config whose core database lives in [databaseDirectory]. */

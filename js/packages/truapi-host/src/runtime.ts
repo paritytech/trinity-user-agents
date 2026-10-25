@@ -5,6 +5,12 @@ import type {
   RendererNode,
   WireProvider,
 } from "@parity/truapi";
+import { ReceivingEvent, ReceivingWatch } from "@parity/truapi";
+import { Option, Vector } from "@parity/truapi/scale";
+import {
+  ReceivingAuthority,
+  ReceivingRegistration,
+} from "./generated/host-callbacks.js";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
 import type {
   CoreAdmin,
@@ -26,6 +32,24 @@ export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
   return GeneratedCoreStorageKey.enc(key);
 }
 
+/** Authenticated, ready native Chat peer. Host-private; never a product directory. */
+export interface NativeChatContact {
+  /** Canonical lowercase 0x-prefixed People identity account. */
+  peerIdentity: string;
+  /** Verified roster name, absent when authorized products disagree. */
+  username?: string;
+}
+
+/** Current signing wallet's authenticated native Chat contacts, restored from storage. */
+export interface NativeChatContactsSnapshot {
+  /** Canonical lowercase 0x-prefixed root wallet public key. */
+  walletPublicKey: string;
+  /** Canonical lowercase 0x-prefixed People chain genesis hash. */
+  genesisHash: string;
+  /** Deterministically ordered, deduplicated ready peers. */
+  contacts: NativeChatContact[];
+}
+
 /**
  * Async-or-sync return. Synchronous hosts (e.g. the dotli main-thread
  * shell hitting localStorage) can return a plain value; the WASM bridge
@@ -33,19 +57,148 @@ export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
  */
 export type Awaitable<T> = T | Promise<T>;
 
+/** Canonical SCALE results returned by resident receiving runtime hooks. */
+export const receivingRegistrationsCodec = Vector(ReceivingRegistration);
+export const receivingEventsCodec = Vector(ReceivingEvent);
+export const receivingEventCodec = Option(ReceivingEvent);
+const receivingWatchesCodec = Vector(ReceivingWatch);
+
+/** Minimal host-owned callbacks for a wallet-free service-worker receiver. */
+export interface NotificationReceiverCallbacks {
+  /** Resolve current verified artifact/account state, never product message claims. */
+  receiverAuthority?(
+    productId: string,
+  ): Awaitable<ReceivingAuthority | undefined>;
+  /** Separate receiving consent, not an OS permission or relay acknowledgement. */
+  receiverConsent?(
+    authority: ReceivingAuthority,
+    watches: ReceivingWatch[],
+  ): Awaitable<boolean>;
+  /** Wake asynchronous transport work; never await remote synchronization. */
+  receiverChanged?(): Awaitable<void>;
+  readReceivingState(): Awaitable<Uint8Array | undefined>;
+  /** Atomically replace the private ledger. Only one receiver may write it. */
+  writeReceivingState(bytes: Uint8Array): Awaitable<void>;
+}
+
+/** Encode only the canonical domain records at the standalone WASM boundary. */
+export function createNotificationReceiverCallbacks(
+  callbacks: NotificationReceiverCallbacks,
+) {
+  return {
+    receiverAuthority: async (productId: string) => {
+      const authority = await callbacks.receiverAuthority?.(productId);
+      return authority === undefined
+        ? undefined
+        : ReceivingAuthority.enc(authority);
+    },
+    receiverConsent: async (authority: Uint8Array, watches: Uint8Array) => {
+      if (!callbacks.receiverConsent)
+        throw new Error("background receiving unsupported");
+      return callbacks.receiverConsent(
+        ReceivingAuthority.dec(authority),
+        receivingWatchesCodec.dec(watches),
+      );
+    },
+    receiverChanged: async () => {
+      if (!callbacks.receiverChanged)
+        throw new Error("background receiving unsupported");
+      return callbacks.receiverChanged();
+    },
+    readReceivingState: async () => callbacks.readReceivingState(),
+    writeReceivingState: async (bytes: Uint8Array) =>
+      callbacks.writeReceivingState(bytes),
+  };
+}
+
+/** Raw host-only receiving hooks on both full resident and standalone WASM cores.
+ * Products must use Notifications actions, never these host-authority hooks.
+ */
+export interface RawReceivingRuntime {
+  receivingPending(): Promise<Uint8Array>;
+  receivingSynchronized(productId: string, revision: bigint): Promise<boolean>;
+  receivingIngest(
+    productId: string,
+    revision: bigint,
+    watchId: string,
+    actualGenesis: string,
+    actualChannel: string,
+    actualTopics: string[],
+    frame: Uint8Array,
+  ): Promise<Uint8Array>;
+  receivingIngestStatement(
+    productId: string,
+    revision: bigint,
+    watchId: string,
+    actualGenesis: string,
+    statement: Uint8Array,
+  ): Promise<Uint8Array>;
+  receivingPrepareDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
+  receivingConfirmDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<void>;
+  /** Clear a reservation after explicit display failure, never after an unknown outcome. */
+  receivingCancelDisplay(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<void>;
+  receivingValidateActivation(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
+  receivingActivate(
+    productId: string,
+    revision: bigint,
+    eventId: string,
+  ): Promise<Uint8Array>;
+  receivingRevoke(productId: string): Promise<void>;
+  receivingMarkTransportChanged(productId: string): Promise<void>;
+}
+
+/** Standalone commands carry the immutable authority captured by the trusted execution channel.
+ * Authority bytes encode ReceivingAuthority; response is Result<latest response,HostNotificationReceivingError>.
+ */
+export interface RawNotificationReceiver extends RawReceivingRuntime {
+  commandForExecution(
+    authority: Uint8Array,
+    action: number,
+    payload: Uint8Array,
+  ): Promise<Uint8Array>;
+  free(): void;
+}
+
 /**
  * Open a JSON-RPC connection for `genesisHash`. The wasm bridge passes
  * `onResponse` so the host can push JSON-RPC replies back asynchronously.
  * Returning `null` (or throwing) tells the core no provider is available.
+ * `onClosed`, when supplied, is called when the remote response stream ends
+ * or fails. Local `close()` is idempotent and does not call it.
  */
 export type ChainConnect = (
   genesisHash: string,
   onResponse: (json: string) => void,
+  onClosed?: () => void,
+) => Awaitable<ChainConnection | null>;
+
+/** Open only a host-allowlisted HOP endpoint for this Bulletin chain. */
+export type HopConnect = (
+  bulletinGenesisHash: string,
+  endpoint: string,
+  onResponse: (json: string) => void,
+  onClosed?: () => void,
 ) => Awaitable<ChainConnection | null>;
 
 /**
- * Per-connection handle returned by `chainConnect`. `send` forwards a
- * SCALE-encoded JSON-RPC request; `close` tears the connection down.
+ * Per-connection handle returned by `chainConnect` or `hopConnect`. `send`
+ * forwards a JSON-RPC request string; `close` tears the connection down.
  */
 export interface ChainConnection {
   send(request: string): void;
@@ -158,6 +311,10 @@ export interface WorkerDemandChange {
 }
 
 export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
+  /** Rust-classified product trust, when the provider exposes core metadata.
+   * This is not a permission grant and never overrides stored or OS refusals.
+   */
+  readonly trustedRemotePermissions?: boolean;
   /**
    * Re-tune the wasm core's log level at runtime. Present on runtimes that
    * keep a live channel to the core (e.g. the Web Worker provider); absent on
