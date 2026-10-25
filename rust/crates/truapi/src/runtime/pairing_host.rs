@@ -211,36 +211,10 @@ impl PairingHost {
 			.await
 	}
 
+	/// Retained grants, exposed so tests can seed and inspect them.
 	#[cfg(test)]
-	pub async fn has_auto_signing_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		product_id: &str,
-	) -> Result<bool, AuthorityError> {
-		self.auto_signing_key(session, &crate::platform::ProductId::for_test(product_id))
-			.await
-			.map(|key| key.is_some())
-	}
-
-	#[cfg(test)]
-	pub async fn remember_auto_signing_key_for_tests(
-		&self,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		product_id: &str,
-		expected_product_subtree_public_key: [u8; 32],
-		secret: [u8; 64],
-		ring_vrf_domain_entropy: [u8; 32],
-	) -> Result<(), AuthorityError> {
-		self.remember_auto_signing_key(
-			session,
-			lifecycle_epoch,
-			&crate::platform::ProductId::for_test(product_id),
-			expected_product_subtree_public_key,
-			secret,
-			ring_vrf_domain_entropy,
-		)
-		.await
+	pub fn grants_for_tests(&self) -> &HostGrantStore {
+		&self.grants
 	}
 
 	/// Register fixture material in the actual durable registry.
@@ -255,29 +229,6 @@ impl PairingHost {
 		self.ring_vrf_registry
 			.register(session.public_key, handle, ring, public_key)
 			.await
-	}
-
-	/// Cache sizes for lifecycle regression checks.
-	#[cfg(test)]
-	pub fn capability_cache_sizes_for_tests(&self) -> (usize, usize, usize, usize) {
-		(
-			self.statement_store_allowances
-				.lock()
-				.expect("statement-store allowance cache mutex poisoned")
-				.len(),
-			self.bulletin_allowances
-				.lock()
-				.expect("bulletin allowance cache mutex poisoned")
-				.len(),
-			self.product_subtrees
-				.lock()
-				.expect("product subtree cache mutex poisoned")
-				.len(),
-			self.auto_signing_keys
-				.lock()
-				.expect("AutoSigning key cache mutex poisoned")
-				.len(),
-		)
 	}
 
 	/// Whether resolving `product_id`'s subtree would reach the Account Holder,
@@ -939,11 +890,7 @@ impl ProductAuthority for PairingHost {
 		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
-		let sso = session.sso.as_ref().expect("test session must contain SSO");
-		self.product_subtrees
-			.lock()
-			.expect("product subtree cache mutex poisoned")
-			.insert((SsoSessionKey::from_session(sso), product_id.clone()), public_key);
+		self.grants.cache_product_subtree_for_test(session, product_id, public_key);
 	}
 
 	async fn product_subtree_public_key(
