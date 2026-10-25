@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trinity User Agents CI</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="dashboard.js"></script>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="i-home" viewBox="0 0 24 24">
+          <path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h4.5v-5.5h4V20h4.5V9.5" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M4 17.5V20h16v-2.5" />
+        </symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24">
+          <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z" />
+        </symbol>
+        <symbol id="i-flow" viewBox="0 0 24 24">
+          <path
+            d="M4 12a8 8 0 0 1 13.7-5.6L20 8.5M20 4v4.5h-4.5M20 12a8 8 0 0 1-13.7 5.6L4 15.5M4 20v-4.5h4.5"
+          />
+        </symbol>
+        <symbol id="i-server" viewBox="0 0 24 24">
+          <path
+            d="M4 5h16v5H4zM4 14h16v5H4zM7.5 7.5h.01M7.5 16.5h.01M11 7.5h6M11 16.5h6"
+          />
+        </symbol>
+        <symbol id="i-signal" viewBox="0 0 24 24">
+          <path
+            d="M12 12h.01M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"
+          />
+        </symbol>
+        <symbol id="i-tag" viewBox="0 0 24 24">
+          <path d="M3.5 12.5V4h8.5l8.5 8.5-8 8-9-8ZM8 8h.01" />
+        </symbol>
+        <symbol id="i-bug" viewBox="0 0 24 24">
+          <path
+            d="M8 9a4 4 0 0 1 8 0v5a4 4 0 0 1-8 0V9Zm4 1v8M4 12h4m8 0h4M5 7l3 2m11-2-3 2M5 19l3-2m11 2-3-2M9 5l1.5 1.5M15 5l-1.5 1.5"
+          />
+        </symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24">
+          <path d="m6 15 6-6 6 6" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="topbar">
+      <a class="brand" href="#home">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="5" r="3.2" />
+          <circle cx="5.5" cy="16.5" r="3.2" />
+          <circle cx="18.5" cy="16.5" r="3.2" />
+        </svg>
+        Trinity User Agents CI
+      </a>
+      <div class="topbar-right">
+        <span id="updated" class="dim"></span>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <nav class="sidebar" aria-label="Sections">
+      <a href="#home" data-view="home"
+        ><svg><use href="#i-home" /></svg>Home</a
+      >
+
+      <div class="group" data-group="builds">
+        <button class="group-head" type="button" aria-expanded="true">
+          Builds <svg><use href="#i-chevron" /></svg>
+        </button>
+        <div class="group-items">
+          <a href="#downloads" data-view="downloads"
+            ><svg><use href="#i-download" /></svg>Downloads</a
+          >
+          <a href="#nightlies" data-view="nightlies"
+            ><svg><use href="#i-moon" /></svg>Nightlies</a
+          >
+          <a href="#releases" data-view="releases"
+            ><svg><use href="#i-tag" /></svg>Releases</a
+          >
+        </div>
+      </div>
+
+      <div class="group" data-group="alerts">
+        <button class="group-head" type="button" aria-expanded="true">
+          Alerts <svg><use href="#i-chevron" /></svg>
+        </button>
+        <div class="group-items">
+          <a href="#workflows" data-view="workflows"
+            ><svg><use href="#i-flow" /></svg>Workflows</a
+          >
+          <a href="#nodes" data-view="nodes"
+            ><svg><use href="#i-server" /></svg>Nodes</a
+          >
+          <a href="#uptime" data-view="uptime"
+            ><svg><use href="#i-signal" /></svg>Uptime</a
+          >
+          <a href="#sentry" data-view="sentry"
+            ><svg><use href="#i-bug" /></svg>Sentry</a
+          >
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <section id="view-home" data-title="Home">
+        <h1>Home</h1>
+        <div id="tiles" class="tiles"></div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Latest builds</h2>
+            <a class="button" href="#nightlies">All nightlies</a>
+          </div>
+          <div id="home-builds" class="scroll"></div>
+        </div>
+      </section>
+
+      <section id="view-downloads" data-title="Downloads" hidden>
+        <p class="crumbs">Builds <span>›</span> Downloads</p>
+        <h1>Downloads</h1>
+        <div id="downloads-body" class="download-cards">
+          <p class="empty">Loading…</p>
+        </div>
+      </section>
+
+      <section id="view-nightlies" data-title="Nightlies" hidden>
+        <p class="crumbs">Builds <span>›</span> List</p>
+        <h1>Nightlies</h1>
+        <div class="panel">
+          <div id="nightlies-body" class="scroll"></div>
+        </div>
+        <details class="panel help">
+          <summary>
+            Get every Android nightly automatically with Obtainium
+          </summary>
+          <ol>
+            <li>
+              In Obtainium, tap <strong>Add app</strong> and paste
+              <code id="obtainium-repo"></code>.
+            </li>
+            <li>Turn on <strong>Include prereleases</strong>.</li>
+            <li>
+              Under <strong>APK selection</strong>, set
+              <strong>Filter links by regular expression</strong> to
+              <code>app-gp-nightly\.apk</code>.
+            </li>
+          </ol>
+        </details>
+      </section>
+
+      <section id="view-releases" data-title="Releases" hidden>
+        <p class="crumbs">Releases <span>›</span> List</p>
+        <h1>Releases</h1>
+        <div class="panel">
+          <div class="panel-head"><h2>Latest of each package</h2></div>
+          <div id="releases-body" class="scroll"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Recent releases</h2></div>
+          <div id="releases-history" class="scroll"></div>
+        </div>
+        <p class="dim">Each published release is posted to Matrix.</p>
+      </section>
+
+      <section id="view-workflows" data-title="Workflows" hidden>
+        <p class="crumbs">Workflows <span>›</span> List</p>
+        <h1>Workflows</h1>
+        <div class="panel">
+          <div id="workflows-body" class="scroll"></div>
+        </div>
+        <p class="dim">
+          Failures of these, and of Release, are posted to Matrix as GitHub
+          reports them.
+        </p>
+        <div class="panel">
+          <div class="panel-head"><h2>Smoke checks</h2></div>
+          <div id="smoke-body" class="scroll"></div>
+        </div>
+        <p id="smoke-updated" class="dim"></p>
+        <details id="smoke-output" class="panel help" hidden>
+          <summary>Output of the last run</summary>
+          <pre id="smoke-output-text"></pre>
+        </details>
+      </section>
+
+      <section id="view-nodes" data-title="RPC Nodes" hidden>
+        <p class="crumbs">RPC Nodes <span>›</span> List</p>
+        <h1>RPC Nodes</h1>
+        <div class="panel">
+          <div id="nodes-body" class="scroll"></div>
+        </div>
+        <p id="nodes-updated" class="dim"></p>
+      </section>
+
+      <section id="view-uptime" data-title="Uptime Monitors" hidden>
+        <p class="crumbs">Uptime Monitors <span>›</span> List</p>
+        <h1>Uptime Monitors</h1>
+        <div class="panel">
+          <div id="uptime-body" class="scroll"></div>
+        </div>
+        <p id="uptime-updated" class="dim"></p>
+        <div class="panel">
+          <div class="panel-head"><h2>TLS certificates</h2></div>
+          <div id="certificates-body" class="scroll"></div>
+        </div>
+        <p id="certificates-updated" class="dim"></p>
+        <p class="dim">
+          A link or node is posted to Matrix after failing two checks in a row,
+          and again when it recovers. A certificate with less than two weeks
+          left counts as failing.
+        </p>
+      </section>
+
+      <section id="view-sentry" data-title="Sentry" hidden>
+        <p class="crumbs">Sentry <span>›</span> List</p>
+        <h1>Sentry</h1>
+        <div class="panel">
+          <div id="sentry-body" class="scroll"></div>
+        </div>
+        <p class="dim">
+          New issues are posted to Matrix as Sentry reports them.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

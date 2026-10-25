@@ -25,6 +25,10 @@
 "area:ci":
   - ".github/workflows/**"
   - ".github/actions/**"
+  - "ci-dashboard/**"
+  - "manifest.yaml"
+  - "manifest-staging.yaml"
+  - "manifest-production.yaml"
 
 "area:js":
   - "js/**"

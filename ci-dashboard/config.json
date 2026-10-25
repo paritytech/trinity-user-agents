@@ -1,0 +1,180 @@
+{
+  "repository": "paritytech/trinity-user-agents",
+  "nightlies": [
+    {
+      "label": "Android",
+      "tagPrefix": "android-",
+      "assets": ["app-gp-nightly.apk", "app-vanilla-nightly.apk"],
+      "e2eJob": "host-playground e2e / Android emulator"
+    },
+    {
+      "label": "iOS",
+      "tagPrefix": "simulator-",
+      "assets": ["polkadot-app-simulator.app.zip"]
+    }
+  ],
+  "downloads": {
+    "obtainiumApkFilter": "app-gp-nightly\\.apk",
+    "simulatorInstall": [
+      "unzip polkadot-app-simulator.app.zip",
+      "xcrun simctl install booted polkadot-app.app",
+      "xcrun simctl launch booted io.parity.polkadotapp"
+    ],
+    "cliReleasePrefix": "@parity/truapi@",
+    "cliInstall": "curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash"
+  },
+  "sentry": {
+    "organization": "",
+    "api": "https://sentry.io/api/0",
+    "projects": [
+      {
+        "slug": "polkadot-ios",
+        "label": "iOS"
+      },
+      {
+        "slug": "polkadot-android",
+        "label": "Android"
+      }
+    ]
+  },
+  "smoke": {
+    "npmPackages": [
+      "@parity/truapi",
+      "@parity/truapi-host",
+      "@parity/trinity-stack"
+    ],
+    "nightlyApk": {
+      "url": "https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk",
+      "package": "io.parity.polkadotapp.nightly",
+      "tagPrefix": "android-"
+    }
+  },
+  "workflows": [
+    {
+      "file": "android-nightly.yml",
+      "label": "Android nightly"
+    },
+    {
+      "file": "ios-nightly-prepare.yml",
+      "label": "iOS nightly",
+      "title": "iOS Nightly (main)"
+    },
+    {
+      "file": "ios-nightly-prepare.yml",
+      "label": "iOS simulator nightly",
+      "title": "iOS Nightly (main)",
+      "job": "nightly / Simulator bundle / "
+    },
+    {
+      "file": "validate-signing-credentials.yml",
+      "label": "Signing credentials"
+    },
+    {
+      "file": "deploy-docs.yml",
+      "label": "Docs deploy"
+    },
+    {
+      "file": "registry-drift.yml",
+      "label": "Registry drift"
+    },
+    {
+      "file": "ios-update-signing-data.yml",
+      "label": "Update signing data"
+    },
+    {
+      "file": "update-chain-specs.yml",
+      "label": "Refresh chain specs"
+    }
+  ],
+  "alertOnFailure": ["release.yml"],
+  "rpcEndpoints": [
+    {
+      "name": "Previewnet Relay (alice)",
+      "url": "https://previewnet.substrate.dev/relay/alice",
+      "network": "Previewnet",
+      "minPeers": 0
+    },
+    {
+      "name": "Previewnet Asset Hub",
+      "url": "https://previewnet.substrate.dev/asset-hub",
+      "network": "Previewnet",
+      "minPeers": 0
+    },
+    {
+      "name": "Previewnet People",
+      "url": "https://previewnet.substrate.dev/people",
+      "network": "Previewnet",
+      "minPeers": 0
+    },
+    {
+      "name": "Previewnet Bulletin",
+      "url": "https://previewnet.substrate.dev/bulletin",
+      "network": "Previewnet",
+      "minPeers": 0
+    },
+    {
+      "name": "Paseo Next Asset Hub",
+      "url": "https://paseo-asset-hub-next-rpc.polkadot.io",
+      "network": "Paseo Next",
+      "minPeers": 1
+    },
+    {
+      "name": "Paseo Next People",
+      "url": "https://paseo-people-next-system-rpc.polkadot.io",
+      "network": "Paseo Next",
+      "minPeers": 1
+    },
+    {
+      "name": "Paseo Next Bulletin",
+      "url": "https://paseo-bulletin-next-rpc.polkadot.io",
+      "network": "Paseo Next",
+      "minPeers": 1
+    },
+    {
+      "name": "Polkadot Asset Hub",
+      "url": "https://polkadot-asset-hub-rpc.polkadot.io",
+      "network": "Polkadot",
+      "minPeers": 1
+    },
+    {
+      "name": "Polkadot People",
+      "url": "https://polkadot-people-rpc.polkadot.io",
+      "network": "Polkadot",
+      "minPeers": 1
+    },
+    {
+      "name": "Polkadot Bulletin",
+      "url": "https://bulletin-rpc.polkadot.io",
+      "network": "Polkadot",
+      "minPeers": 1
+    }
+  ],
+  "links": [
+    {
+      "name": "Docs",
+      "url": "https://paritytech.github.io/trinity-user-agents/",
+      "method": "GET",
+      "lookFor": "TrUAPI Explorer"
+    },
+    {
+      "name": "Playground (GitHub Pages)",
+      "url": "https://paritytech.github.io/trinity-user-agents/playground/",
+      "method": "GET"
+    },
+    {
+      "name": "Playground (dotNS)",
+      "url": "https://truapi-playground.paseo.li",
+      "method": "GET"
+    },
+    {
+      "name": "CLI stable version",
+      "url": "https://github.com/paritytech/trinity-user-agents/releases/download/truapi-host-cli-stable/version",
+      "method": "GET"
+    },
+    {
+      "name": "Android nightly APK",
+      "url": "https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk",
+      "method": "HEAD"
+    }
+  ]
+}
