@@ -577,9 +577,15 @@ impl PairingHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.pairing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 }
 
@@ -1076,9 +1082,15 @@ impl SigningHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.signing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1479,10 +1491,7 @@ impl HostAdmin {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.set_permission_authorization_status(request, status)
-			.await
+		self.product_runtime.set_permission_authorization_status(request, status).await
 	}
 }
 
@@ -2142,6 +2151,49 @@ mod tests {
 		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
 			.expect("activation succeeds");
 		runtime
+	}
+
+	/// An answer changed in settings applies at once: a product that was allowed
+	/// once is asked again after the user resets its account access.
+	#[test]
+	fn a_settings_change_to_account_access_ends_allow_once() {
+		use crate::{
+			platform::{PermissionAuthorizationRequest, PermissionDecision},
+			runtime::ProductAuthority,
+		};
+
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+			),
+			..StubPlatform::default()
+		});
+		let runtime = activated_signing_runtime(platform.clone());
+		let (requester, target) =
+			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+		let access = || {
+			futures::executor::block_on(runtime.signing_host.consent().account_access(
+				&requester,
+				&target,
+				platform.as_ref(),
+			))
+			.expect("the stub answers every prompt")
+		};
+
+		let allowed_once = access();
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&requester,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: "peopl.dot".to_string(),
+			},
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.expect("the reset is stored");
+
+		assert_eq!(
+			(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
+			(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+		);
 	}
 
 	/// Install `session` once the boot reconcile has reported the empty
