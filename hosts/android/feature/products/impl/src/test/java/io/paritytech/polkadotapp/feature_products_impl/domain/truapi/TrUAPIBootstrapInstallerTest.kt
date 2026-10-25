@@ -8,6 +8,8 @@ import android.net.Uri
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
@@ -15,6 +17,7 @@ import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
@@ -44,7 +47,8 @@ class TrUAPIBootstrapInstallerTest {
                             null
                         }
 
-                    TrUAPIBootstrapInstaller(context).installerFor(productOrigins)("endpoint();")(webView)
+                    TrUAPIBootstrapInstaller(context)
+                        .installerFor(productOrigins, "endpoint-test-session")("endpoint();")(webView)
 
                     assertEquals(
                         listOf(
@@ -64,6 +68,7 @@ class TrUAPIBootstrapInstallerTest {
 
     @Test
     fun `host telemetry and endpoint share the main frame guard for every webview`() {
+        assumeTrue(FeatureOption.HOST_TELEMETRY.isEnabled)
         withContainerAsset()
         mockStatic(WebViewFeature::class.java).use { features ->
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
@@ -76,14 +81,17 @@ class TrUAPIBootstrapInstallerTest {
                             null
                         }
 
-                    val telemetry = "try { telemetry(); } catch {}"
+                    withTelemetryMetadata()
                     val installer = TrUAPIBootstrapInstaller(context)
-                        .installerForScript(productOrigins, telemetry)("endpoint();")
+                        .installerFor(productOrigins, "telemetry-test-session")("endpoint();")
                     installer(webView)
                     installer(webView)
 
                     assertEquals(4, registered.size)
-                    assertEquals("if (window === window.top) {\n$telemetry\nendpoint();\n}", registered.first().script)
+                    assertTrue(registered.first().script.startsWith("if (window === window.top) {"))
+                    assertTrue(registered.first().script, registered.first().script.contains("try {"))
+                    assertTrue(registered.first().script.contains("\"hostSessionId\":\"telemetry-test-session\""))
+                    assertTrue(registered.first().script.endsWith("endpoint();\n}"))
                     assertEquals(registered.take(2), registered.drop(2))
                 }
             }
@@ -155,7 +163,7 @@ class TrUAPIBootstrapInstallerTest {
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
 
             assertThrows(FileNotFoundException::class.java) {
-                TrUAPIBootstrapInstaller(context).installerFor(productOrigins)
+                TrUAPIBootstrapInstaller(context).installerFor(productOrigins, "missing-container-test")
             }
             verifyNoInteractions(chromeClient)
         }
@@ -167,7 +175,7 @@ class TrUAPIBootstrapInstallerTest {
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(false)
 
             assertThrows(IllegalStateException::class.java) {
-                TrUAPIBootstrapInstaller(context).installerFor(productOrigins)
+                TrUAPIBootstrapInstaller(context).installerFor(productOrigins, "unsupported-webview-test")
             }
         }
     }
@@ -176,6 +184,15 @@ class TrUAPIBootstrapInstallerTest {
         whenever(webView.webChromeClient).thenReturn(chromeClient)
         whenever(context.assets).thenReturn(assets)
         whenever(assets.open("truapi-container.js")).thenReturn(ByteArrayInputStream("container();".toByteArray()))
+    }
+
+    private fun withTelemetryMetadata() {
+        val packageInfo = mock(PackageInfo::class.java).apply { versionName = "1.2.3" }
+        val packageManager = mock(PackageManager::class.java)
+        whenever(packageInfo.longVersionCode).thenReturn(456L)
+        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
+        whenever(context.packageManager).thenReturn(packageManager)
+        whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
     }
 
     private data class Registration(val script: String, val origins: Set<String>)

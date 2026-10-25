@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ProductExecutionKind
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
@@ -70,7 +71,7 @@ class TrUAPISessionStarter @Inject constructor(
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
         // WebView is ever pointed at.
-        val hostSessionId = HostWebViewCreatedTelemetry.newSessionId()
+        val hostSessionId = UUID.randomUUID().toString()
         val installBootstrap = runCatching {
             bootstrapInstaller.installerFor(
                 origins = setOf(productUrl.toUri().origin()),

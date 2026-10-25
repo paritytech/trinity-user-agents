@@ -2,66 +2,45 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import android.webkit.WebView
+import io.mockk.Runs
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.slot
+import io.mockk.unmockkStatic
+import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Answers
-import org.mockito.MockedStatic
-import org.mockito.Mockito.doAnswer
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.mockStatic
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPISessionStarterTest {
-    private val runtime = mock<TrUAPIHostRuntime>()
-    private val execution = mock<TrUAPIProductExecution>()
-
-    // Kotlin mangles suspend functions that return the inline Result, and an unstubbed Mockito
-    // call unboxes null, so these mocks answer the underlying value directly.
-    private val bridge = mock(ProductTrUAPIHostBridge::class.java) { invocation ->
-        when {
-            invocation.method.name.startsWith("attach") -> {
-                runBlocking { invocation.getArgument<suspend (String) -> Unit>(7)("endpoint-bootstrap") }
-                execution
-            }
-
-            else -> Answers.RETURNS_DEFAULTS.answer(invocation)
-        }
-    }
-    private val runtimeProvider = mock(TrUAPIHostRuntimeProvider::class.java) { invocation ->
-        when {
-            invocation.method.name.startsWith("runtime") -> runtime
-            else -> Answers.RETURNS_DEFAULTS.answer(invocation)
-        }
-    }
-    private val chains = mock<TrUAPIChains>()
+    private val runtime = mockk<TrUAPIHostRuntime>()
+    private val execution = mockk<TrUAPIProductExecution>()
+    private val bridge = mockk<ProductTrUAPIHostBridge>()
+    private val runtimeProvider = mockk<TrUAPIHostRuntimeProvider>()
+    private val chains = mockk<TrUAPIChains>()
     private val navigation = NavigationPolicy.DeeplinkNavigation { }
-    private val provider = mock<BrowserWebViewProvider>()
-    private val bootstrapInstaller = mock<TrUAPIBootstrapInstaller>()
-    private val telemetry = mock<HostWebViewCreatedTelemetry>()
-    private val visibleProducts = mock<VisibleProducts>()
-    private val hostBridgeFactory = mock<ProductTrUAPIHostBridge.Factory>()
-    private val chainDirectory = mock<TrUAPIChainDirectory>()
-    private val dotNsTldProvider = mock<DotNsTldProvider>()
+    private val provider = mockk<BrowserWebViewProvider>()
+    private val bootstrapInstaller = mockk<TrUAPIBootstrapInstaller>()
+    private val telemetry = mockk<HostWebViewCreatedTelemetry>()
+    private val visibleProducts = mockk<VisibleProducts>(relaxed = true)
+    private val hostBridgeFactory = mockk<ProductTrUAPIHostBridge.Factory>()
+    private val chainDirectory = mockk<TrUAPIChainDirectory>()
+    private val dotNsTldProvider = mockk<DotNsTldProvider>()
+    private val installerSessionId = slot<String>()
+    private val reportedSessionId = slot<String>()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
-    private var installerSessionId: String? = null
-    private var reportedSessionId: String? = null
-    private lateinit var uriStatic: MockedStatic<Uri>
 
     private val starter = TrUAPISessionStarter(
         hostBridgeFactory = hostBridgeFactory,
@@ -74,16 +53,18 @@ class TrUAPISessionStarterTest {
     )
 
     @Before
-    fun setUp() {
+    fun setUp() = runBlocking<Unit> {
         stubProductUrl()
         stubSuccessfulSession()
     }
 
     @After
-    fun tearDown() = uriStatic.close()
+    fun tearDown() {
+        unmockkStatic(Uri::class)
+    }
 
     @Test
-    fun `the first WebView setup reports the same session id exposed to the product`() = runTest {
+    fun `the first WebView setup reports the same session id exposed to the product`() = runBlocking<Unit> {
         starter.start(
             provider = provider,
             productUrl = PRODUCT_URL,
@@ -91,50 +72,42 @@ class TrUAPISessionStarterTest {
             hostApiNavigation = navigation,
             explicitProductId = PRODUCT_ID,
         )
-        advanceUntilIdle()
+        yield()
 
         invokeTelemetrySetupTwice()
 
-        verifyTelemetryReportedOnce()
-        assertEquals(installerSessionId, reportedSessionId)
+        verify(exactly = 1) { telemetry.report(any()) }
+        assertEquals(installerSessionId.captured, reportedSessionId.captured)
     }
 
     private fun stubProductUrl() {
-        val uri = mock<Uri>()
-        uriStatic = mockStatic(Uri::class.java)
-        uriStatic.`when`<Uri> { Uri.parse(PRODUCT_URL) }.thenReturn(uri)
-        whenever(uri.scheme).thenReturn("https")
-        whenever(uri.host).thenReturn("product.paseo")
-        whenever(uri.port).thenReturn(-1)
+        val uri = mockk<Uri> {
+            every { scheme } returns "https"
+            every { host } returns "product.paseo"
+            every { port } returns -1
+        }
+        mockkStatic(Uri::class)
+        every { Uri.parse(PRODUCT_URL) } returns uri
     }
 
-    private fun stubSuccessfulSession() = runBlocking {
-        whenever(hostBridgeFactory.create(any())).thenReturn(bridge)
-        whenever(chainDirectory.resolve()).thenReturn(chains)
-        whenever(bootstrapInstaller.installerFor(any(), any())).thenAnswer { invocation ->
-            installerSessionId = invocation.getArgument(1)
-            val installer: (String) -> (WebView) -> Unit = { { Unit } }
-            installer
-        }
-        doAnswer { invocation ->
-            webViewSetups += invocation.getArgument<(WebView) -> Unit>(0)
-            Unit
-        }.`when`(provider).addWebViewSetup(any())
-        doAnswer { Unit }.`when`(provider).loadInitialContent()
-        whenever(telemetry.report(any())).thenAnswer { invocation ->
-            reportedSessionId = invocation.getArgument(0)
-            Unit
+    private fun stubSuccessfulSession() {
+        every { hostBridgeFactory.create(any()) } returns bridge
+        coEvery { runtimeProvider.runtime() } returns Result.success(runtime)
+        coEvery { chainDirectory.resolve() } returns chains
+        every { bootstrapInstaller.installerFor(any(), capture(installerSessionId)) } returns { { } }
+        coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
+        coEvery { provider.loadInitialContent() } just Runs
+        every { telemetry.report(capture(reportedSessionId)) } just Runs
+        coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
+            Result.success(execution)
         }
     }
 
     private fun invokeTelemetrySetupTwice() {
         val telemetrySetup = webViewSetups.last()
-        telemetrySetup(mock())
-        telemetrySetup(mock())
-    }
-
-    private fun verifyTelemetryReportedOnce() {
-        verify(telemetry, times(1)).report(any())
+        telemetrySetup(mockk())
+        telemetrySetup(mockk())
     }
 
     private companion object {

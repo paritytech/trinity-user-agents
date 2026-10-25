@@ -3,17 +3,16 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import android.content.Context
 import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.sentry.Sentry
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.protocol.Message
-import io.paritytech.polkadotapp.common.utils.FeatureOption
-import io.paritytech.polkadotapp.common.utils.isEnabled
-import io.paritytech.polkadotapp.common.utils.logFailure
-import java.util.UUID
-import javax.inject.Inject
 import uniffi.truapi.truapiHostVersion
+import javax.inject.Inject
 
 internal data class HostWebViewCreatedEvent(
     val sessionId: String,
@@ -24,46 +23,50 @@ internal data class HostWebViewCreatedEvent(
     val monotonicMs: Long,
 )
 
-class HostWebViewCreatedTelemetry private constructor(
-    private val enabled: () -> Boolean,
-    private val metadata: () -> HostWebViewCreatedEvent,
-    private val capture: (SentryEvent) -> Unit,
+internal fun interface HostWebViewCreatedEventCapture {
+    fun capture(event: () -> SentryEvent)
+}
+
+internal class SentryHostWebViewCreatedEventCapture @Inject constructor() : HostWebViewCreatedEventCapture {
+    override fun capture(event: () -> SentryEvent) {
+        if (FeatureOption.HOST_TELEMETRY.isEnabled) {
+            Sentry.captureEvent(event())
+        }
+    }
+}
+
+internal fun interface HostMonotonicTimeProvider {
+    fun nowMillis(): Long
+}
+
+internal class AndroidHostMonotonicTimeProvider @Inject constructor() : HostMonotonicTimeProvider {
+    override fun nowMillis(): Long = SystemClock.elapsedRealtime()
+}
+
+class HostWebViewCreatedTelemetry @Inject internal constructor(
+    @param:ApplicationContext private val context: Context,
+    private val timeProvider: HostMonotonicTimeProvider,
+    private val capture: HostWebViewCreatedEventCapture,
 ) {
-    @Inject
-    constructor(@ApplicationContext context: Context) : this(
-        enabled = { FeatureOption.HOST_TELEMETRY.isEnabled },
-        metadata = {
-            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            HostWebViewCreatedEvent(
-                sessionId = "",
-                appVariant = BuildConfig.BUILD_TYPE,
-                nativeAppVersion = packageInfo.versionName.orEmpty(),
-                hostVersion = truapiHostVersion(),
-                appBuild = packageInfo.longVersionCode,
-                monotonicMs = SystemClock.elapsedRealtime(),
-            )
-        },
-        capture = { Sentry.captureEvent(it) },
-    )
-
     fun report(sessionId: String) {
-        if (!enabled()) return
-
-        runCatching { capture(metadata().copy(sessionId = sessionId).toSentryEvent()) }
+        runCatching { capture.capture { metadata(sessionId).toSentryEvent() } }
             .logFailure("Failed to capture native host WebView event")
+    }
+
+    private fun metadata(sessionId: String): HostWebViewCreatedEvent {
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        return HostWebViewCreatedEvent(
+            sessionId = sessionId,
+            appVariant = BuildConfig.BUILD_TYPE,
+            nativeAppVersion = packageInfo.versionName.orEmpty(),
+            hostVersion = truapiHostVersion(),
+            appBuild = packageInfo.longVersionCode,
+            monotonicMs = timeProvider.nowMillis(),
+        )
     }
 
     companion object {
         const val EVENT_NAME = "host.webview.created"
-
-        internal fun createForTest(
-            enabled: () -> Boolean,
-            metadata: () -> HostWebViewCreatedEvent,
-            capture: (SentryEvent) -> Unit,
-        ) = HostWebViewCreatedTelemetry(enabled, metadata, capture)
-
-        internal fun newSessionId(): String = UUID.randomUUID().toString()
-
     }
 }
 

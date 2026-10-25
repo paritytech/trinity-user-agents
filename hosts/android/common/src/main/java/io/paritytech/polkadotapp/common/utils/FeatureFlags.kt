@@ -10,6 +10,7 @@ object FeatureFlags {
             FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
+            // Safetynet reports the same native host telemetry as the other non-release builds.
             FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 

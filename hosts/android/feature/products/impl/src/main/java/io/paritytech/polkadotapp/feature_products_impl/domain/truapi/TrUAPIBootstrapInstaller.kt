@@ -7,16 +7,16 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ContainerScriptBundle
-import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import javax.inject.Inject
 import uniffi.truapi.truapiHostVersion
+import javax.inject.Inject
 
 /**
  * Builds the WebView setup that runs a product's bootstrap script at document start, for the app
@@ -29,21 +29,14 @@ import uniffi.truapi.truapiHostVersion
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>, hostSessionId: String? = null): (bootstrap: String) -> (WebView) -> Unit {
-        val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
+    fun installerFor(origins: Set<String>, hostSessionId: String): (bootstrap: String) -> (WebView) -> Unit {
+        val telemetryScript = if (FeatureOption.HOST_TELEMETRY.isEnabled) {
             runCatching { hostTelemetryScript(context, hostSessionId) }
                 .logFailure("Native host telemetry unavailable")
                 .getOrNull()
         } else {
             null
         }
-        return installerForScript(origins, telemetryScript)
-    }
-
-    internal fun installerForScript(
-        origins: Set<String>,
-        telemetryScript: String?,
-    ): (bootstrap: String) -> (WebView) -> Unit {
         check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             "WebView lacks DOCUMENT_START_SCRIPT; cannot run a TrUAPI product"
         }
