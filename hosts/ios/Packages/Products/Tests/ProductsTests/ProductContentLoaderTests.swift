@@ -158,7 +158,6 @@ final class ProductContentLoaderTests {
         #expect(phases.recorded.contains(.waitingForNetwork))
         #expect(phases.recorded.contains(.retrying(attempt: 1)))
     }
-
 }
 
 private extension ProductContentLoaderTests {
