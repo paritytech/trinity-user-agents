@@ -22,11 +22,17 @@ The page shows:
 | When                | What                                                                                                                                                                                                                                     |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GitHub webhook      | A failed run of a watched workflow, or of Release, is posted to Matrix. A published release that is not a prerelease is announced; nightlies announce themselves. Either refreshes the page's GitHub data.                               |
+| GitHub webhook      | A versioned tag pushed without a release is posted if no release for it appears within a minute. Nightly, pointer and dev tags in `announcements.skipTags`, pre-releases and tags without a version are left out.                        |
+| GitHub webhook      | A package version published to GitHub Packages, such as the Android AAR `release-android.yml` publishes, is posted. Snapshots and pre-releases are left out.                                                                             |
 | Sentry webhook      | A new issue in one of the projects in `config.json` is posted to Matrix.                                                                                                                                                                 |
 | Every minute        | Each RPC endpoint and published link is checked. One that fails two checks in a row is posted, and again when it recovers.                                                                                                               |
 | Every hour          | Each host's TLS certificate is read. Less than two weeks left counts as failing, and is posted the same way.                                                                                                                             |
 | Every 5 minutes     | GitHub data is read again, in case a webhook was missed.                                                                                                                                                                                 |
 | Each day, 06:37 UTC | `smoke.sh` runs after the nightlies: the CLI install command from the docs installs and runs the stable version, each npm package installs and imports, and the fixed Android nightly link serves the newest build. A failure is posted. |
+
+`validate-signing-credentials.yml` lists the days left on each iOS certificate and profile in its job summary, warns
+under 30 days, and fails with 1 day or less left, so its failure is posted like any watched workflow's. While it fails,
+Home shows a red banner linking to the run.
 
 Check state is kept in `STATE_DIR`, so a restart neither forgets an outage nor posts it twice. Posts go out one at a
 time, and what arrives while one is being sent, such as a burst of Sentry issues, is folded into the next. Without the
@@ -51,6 +57,7 @@ inside the iOS nightly's run. A nightly's `e2eJob` does the same for the e2e job
 bun test ci-dashboard/test
 bun ci-dashboard/build.ts ci-dashboard/dist
 bun ci-dashboard/server/main.ts      # then open http://localhost:8787
+bun ci-dashboard/src/run-signing.ts certs.pem profiles/  # days left on signing items
 ```
 
 With no environment set it reads GitHub anonymously, posts nothing, and refuses webhooks. The image is built from
@@ -89,7 +96,8 @@ The container starts as root only to hand the volume at `/data` to the `node` us
 ### Webhooks
 
 - **GitHub:** a repository webhook to `https://ci-host-dashboard.parity-prod.parity.io/webhooks/github`, content type
-  `application/json`, with `GITHUB_WEBHOOK_SECRET` as its secret, for **Workflow runs** and **Releases**.
+  `application/json`, with `GITHUB_WEBHOOK_SECRET` as its secret, for **Workflow runs**, **Releases**, **Branch or tag
+  creation** and **Packages**.
 - **Sentry:** an internal integration with its webhook URL set to
   `https://ci-host-dashboard.parity-prod.parity.io/webhooks/sentry` and the **issue** webhook on. Its client secret is
   `SENTRY_CLIENT_SECRET`. Also set `sentry.organization` in `config.json`.

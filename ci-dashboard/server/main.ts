@@ -112,6 +112,9 @@ const server = Bun.serve({
     refresh,
     status: () => monitor.status,
     notify,
+    releaseExists: async (tag) =>
+      (await get(`/releases/tags/${encodeURIComponent(tag)}`)) !== undefined,
+    tagGraceMs: MINUTE,
     githubWebhookSecret: env("GITHUB_WEBHOOK_SECRET", ""),
     sentryClientSecret: env("SENTRY_CLIENT_SECRET", ""),
   }),

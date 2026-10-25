@@ -64,6 +64,14 @@ export type Smoke = {
   nightlyApk: { url: string; package: string; tagPrefix: string };
 };
 
+export type Announcements = {
+  /**
+   * Tags pushed without a release that are not announced, besides those
+   * without a version; a trailing `*` matches any rest.
+   */
+  skipTags: string[];
+};
+
 export type Config = {
   repository: string;
   nightlies: Nightly[];
@@ -78,6 +86,7 @@ export type Config = {
   alertOnFailure: string[];
   rpcEndpoints: RpcEndpoint[];
   links: Link[];
+  announcements: Announcements;
 };
 
 export default config as Config;

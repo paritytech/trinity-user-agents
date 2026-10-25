@@ -6,6 +6,7 @@
 import config from "./config";
 import type { Snapshot } from "./data";
 import {
+  failingSigningRun,
   runState,
   type NightlyBuild,
   type RunState,
@@ -464,6 +465,15 @@ function setUpGroups() {
   }
 }
 
+// Signing is the one failure that stops a release, so it gets a banner on
+// Home rather than only a red pill under Workflows.
+function renderSigningBanner(github: Snapshot) {
+  const run = failingSigningRun(config.workflows, github.runs);
+  element("home-alert").innerHTML = run
+    ? `<a class="banner" href="${escape(run.html_url)}"><strong>Signing credentials check failing.</strong> A certificate or profile is about to expire, or a credential has stopped working. View the run.</a>`
+    : "";
+}
+
 // --- Start ------------------------------------------------------------------
 
 const GITHUB_VIEWS = [
@@ -485,6 +495,7 @@ async function refresh() {
   }
   if (data.github) {
     renderGithub(data.github);
+    renderSigningBanner(data.github);
   } else {
     for (const id of GITHUB_VIEWS) {
       element(id).innerHTML =

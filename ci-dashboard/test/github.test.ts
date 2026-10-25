@@ -6,6 +6,7 @@ import {
   latestTagged,
   nightlyBuilds,
   runState,
+  failingSigningRun,
   sdkReleases,
   type Release,
 } from "../src/github";
@@ -193,5 +194,31 @@ describe("sdkReleases", () => {
       ["@parity/truapi", "0.26.0"],
       ["@parity/truapi", "0.25.0"],
     ]);
+  });
+});
+
+describe("failingSigningRun", () => {
+  const workflows = [
+    { file: "android-nightly.yml" },
+    { file: "validate-signing-credentials.yml" },
+  ];
+  const run = {
+    html_url: "https://run",
+    status: "completed",
+    conclusion: "failure",
+    event: "schedule",
+    head_branch: "main",
+    created_at: "2026-10-25T06:00:00Z",
+  };
+
+  test("returns the signing check's run while it fails", () => {
+    expect(failingSigningRun(workflows, [undefined, run])).toBe(run);
+  });
+
+  test("ignores other workflows and a passing check", () => {
+    expect(failingSigningRun(workflows, [run, undefined])).toBe(undefined);
+    expect(
+      failingSigningRun(workflows, [run, { ...run, conclusion: "success" }]),
+    ).toBe(undefined);
   });
 });

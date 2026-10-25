@@ -4,10 +4,21 @@ import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createApp, MAX_BODY_BYTES, serveSite } from "../server/app";
+import {
+  announceTag,
+  createApp,
+  MAX_BODY_BYTES,
+  serveSite,
+} from "../server/app";
 import { fold, post, queue, type Message } from "../server/matrix";
 import { Monitor, type Checks, type Status } from "../server/monitor";
-import { githubEvent, sentryEvent, verifyGithub } from "../server/webhooks";
+import {
+  githubEvent,
+  isAnnouncedTag,
+  sentryEvent,
+  tagVersion,
+  verifyGithub,
+} from "../server/webhooks";
 import config from "../src/config";
 
 const SECRET = "test-secret";
@@ -99,6 +110,118 @@ describe("githubEvent", () => {
     ).toContain("📦 @parity/truapi 1.2.0 released");
     const nightly = githubEvent("release", release(true), config);
     expect(nightly).toEqual({ refresh: true });
+  });
+});
+
+describe("tags", () => {
+  const skip = config.announcements.skipTags;
+
+  test("reads the version of a release-like tag", () => {
+    expect(tagVersion("0.26.0")).toBe("0.26.0");
+    expect(tagVersion("v1.2.3")).toBe("v1.2.3");
+    expect(tagVersion("@parity/truapi@0.19.0")).toBe("0.19.0");
+    expect(tagVersion("truapi-host-cli-stable")).toBeUndefined();
+    expect(tagVersion("backup/main-2026-10-01")).toBeUndefined();
+  });
+
+  test("announces versioned tags, not nightlies, pointers or pre-releases", () => {
+    for (const tag of ["0.26.0", "@parity/truapi@0.19.0", "v2.0.0"]) {
+      expect(isAnnouncedTag(tag, skip)).toBe(true);
+    }
+    for (const tag of [
+      "android-2026.10.25-1",
+      "simulator-0.26.0",
+      "nightly-android",
+      "truapi-host-cli-stable",
+      "truapi-provider-dev-5",
+      "0.27.0-rc.1",
+      "backup/main",
+    ]) {
+      expect(isAnnouncedTag(tag, skip)).toBe(false);
+    }
+  });
+
+  test("a pushed tag waits for a release; a branch does not count", () => {
+    const outcome = githubEvent(
+      "create",
+      { ref: "0.26.0", ref_type: "tag" },
+      config,
+    );
+    expect(outcome.message).toBeUndefined();
+    expect(outcome.tag?.name).toBe("0.26.0");
+    expect(outcome.tag?.message.text).toContain(
+      "🏷️ 0.26.0 tagged, with no release",
+    );
+    expect(
+      githubEvent("create", { ref: "0.26.0", ref_type: "branch" }, config),
+    ).toEqual({ refresh: false });
+    expect(
+      githubEvent(
+        "create",
+        { ref: "nightly-android", ref_type: "tag" },
+        config,
+      ),
+    ).toEqual({ refresh: false });
+  });
+
+  test("posts the tag only when no release appeared", async () => {
+    const message: Message = { text: "t", html: "h" };
+    for (const released of [true, false]) {
+      const sent: Message[] = [];
+      await announceTag(
+        {
+          notify: async (m) => void sent.push(m),
+          releaseExists: async () => released,
+          tagGraceMs: 0,
+        },
+        { name: "0.26.0", message },
+      );
+      expect(sent).toEqual(released ? [] : [message]);
+    }
+  });
+
+  test("stays quiet when the release lookup fails", async () => {
+    const sent: Message[] = [];
+    await announceTag(
+      {
+        notify: async (m) => void sent.push(m),
+        releaseExists: async () => {
+          throw new Error("GitHub API 502");
+        },
+        tagGraceMs: 0,
+      },
+      { name: "0.26.0", message: { text: "t", html: "h" } },
+    );
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("packages", () => {
+  const published = (version: string, action = "published") => ({
+    action,
+    package: {
+      name: "io.parity.truapi-host-android",
+      package_type: "maven",
+      html_url: "https://github.test/package",
+      package_version: { version },
+    },
+  });
+
+  test("announces a published release version", () => {
+    const outcome = githubEvent("package", published("0.26.0"), config);
+    expect(outcome.message?.text).toBe(
+      "📦 io.parity.truapi-host-android 0.26.0 published to GitHub Packages (maven) https://github.test/package",
+    );
+  });
+
+  test("leaves out snapshots, pre-releases and other actions", () => {
+    for (const payload of [
+      published("0.27.0-SNAPSHOT"),
+      published("0.27.0-rc.1"),
+      published("0.26.0", "updated"),
+    ]) {
+      expect(githubEvent("package", payload, config).message).toBeUndefined();
+    }
   });
 });
 
@@ -378,6 +501,8 @@ describe("createApp", () => {
       refresh: () => void refreshed++,
       status: () => status,
       notify: async (m) => void sent.push(m),
+      releaseExists: async () => false,
+      tagGraceMs: 0,
       githubWebhookSecret: SECRET,
       sentryClientSecret: SECRET,
     });
@@ -433,6 +558,24 @@ describe("createApp", () => {
     expect(signed.status).toBe(200);
     expect(sent).toHaveLength(1);
     expect(refreshed()).toBe(1);
+  });
+
+  test("posts a pushed tag after its grace period, without holding the reply", async () => {
+    const { app, sent } = await setUp();
+    const body = JSON.stringify({ ref: "0.26.0", ref_type: "tag" });
+    const response = await app(
+      request("/webhooks/github", {
+        method: "POST",
+        body,
+        headers: {
+          "x-github-event": "create",
+          "x-hub-signature-256": `sha256=${sign(body)}`,
+        },
+      }),
+    );
+    expect(response.status).toBe(200);
+    await Bun.sleep(10);
+    expect(sent[0]?.text).toContain("0.26.0 tagged, with no release");
   });
 
   test("acts on a signed Sentry webhook", async () => {
@@ -493,6 +636,8 @@ describe("createApp", () => {
         called++;
         return new Promise(() => {});
       },
+      releaseExists: async () => false,
+      tagGraceMs: 0,
       githubWebhookSecret: SECRET,
       sentryClientSecret: SECRET,
     });
