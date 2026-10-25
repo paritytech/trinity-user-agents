@@ -271,7 +271,7 @@ android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a he
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
 uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
-	$(CARGO) build -p truapi --profile codegen
+	$(CARGO) rustc -p truapi --profile codegen --lib --crate-type cdylib
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
