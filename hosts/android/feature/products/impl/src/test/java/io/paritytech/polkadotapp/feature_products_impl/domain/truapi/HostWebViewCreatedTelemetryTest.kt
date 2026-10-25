@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.sentry.SentryEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -55,6 +57,18 @@ class HostWebViewCreatedTelemetryTest {
 
         verify(exactly = 0) { context.packageManager }
         verify(exactly = 0) { timeProvider.nowMillis() }
+    }
+
+    @Test
+    fun `Sentry capture follows the host telemetry feature gate`() {
+        var eventCreated = false
+
+        SentryHostWebViewCreatedEventCapture().capture {
+            eventCreated = true
+            SentryEvent()
+        }
+
+        assertEquals(FeatureOption.HOST_TELEMETRY.isEnabled, eventCreated)
     }
 
     @Test

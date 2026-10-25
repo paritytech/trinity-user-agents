@@ -29,8 +29,8 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>, hostSessionId: String): (bootstrap: String) -> (WebView) -> Unit {
-        val telemetryScript = if (FeatureOption.HOST_TELEMETRY.isEnabled) {
+    fun installerFor(origins: Set<String>, hostSessionId: String?): (bootstrap: String) -> (WebView) -> Unit {
+        val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
             runCatching { hostTelemetryScript(context, hostSessionId) }
                 .logFailure("Native host telemetry unavailable")
                 .getOrNull()
@@ -58,9 +58,6 @@ class TrUAPIBootstrapInstaller @Inject constructor(
 internal fun hostTelemetryScript(
     context: Context,
     hostSessionId: String,
-    hostVersion: String = truapiHostVersion(),
-    osVersion: String = Build.VERSION.RELEASE,
-    buildType: String = BuildConfig.BUILD_TYPE,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
     val telemetry = hostTelemetryJson.encodeToString(
@@ -68,10 +65,10 @@ internal fun hostTelemetryScript(
             hostSessionId = hostSessionId,
             appVersion = packageInfo.versionName?.takeIf(String::isNotBlank),
             appBuild = packageInfo.longVersionCode.toString(),
-            appVariant = buildType,
+            appVariant = BuildConfig.BUILD_TYPE,
             platform = "android",
-            osVersion = osVersion.takeIf(String::isNotBlank),
-            truapiHostVersion = hostVersion.takeIf(String::isNotBlank),
+            osVersion = Build.VERSION.RELEASE?.takeIf(String::isNotBlank),
+            truapiHostVersion = truapiHostVersion().takeIf(String::isNotBlank),
             schemaVersion = "1",
         ),
     )

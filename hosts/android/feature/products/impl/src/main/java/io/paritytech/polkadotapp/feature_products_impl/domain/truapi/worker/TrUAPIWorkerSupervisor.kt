@@ -33,7 +33,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import uniffi.truapi.ProductExecutionKind
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -133,7 +132,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
             webViewRuntime.initialize()
-            bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), UUID.randomUUID().toString())
+            bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
         }.getOrElse { return Result.failure(it) }
         provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
 

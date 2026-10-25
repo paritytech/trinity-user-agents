@@ -5,11 +5,13 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.net.Uri
+import android.os.Build
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
@@ -23,6 +25,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import uniffi.truapi.truapiHostVersion
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 
@@ -110,9 +113,6 @@ class TrUAPIBootstrapInstallerTest {
         val script = hostTelemetryScript(
             context = context,
             hostSessionId = "123e4567-e89b-12d3-a456-426614174000",
-            hostVersion = "0.24.0",
-            osVersion = "16",
-            buildType = "nightly",
         )
 
         assertTrue(script.contains("try {"))
@@ -121,10 +121,10 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("value: Object.freeze({\"hostSessionId\":\"123e4567-e89b-12d3-a456-426614174000\""))
         assertTrue(script.contains("\"appVersion\":\"1.2.3\""))
         assertTrue(script.contains("\"appBuild\":\"456\""))
-        assertTrue(script.contains("\"appVariant\":\"nightly\""))
+        assertTrue(script.contains("\"appVariant\":\"${BuildConfig.BUILD_TYPE}\""))
         assertTrue(script.contains("\"platform\":\"android\""))
-        assertTrue(script.contains("\"osVersion\":\"16\""))
-        assertTrue(script.contains("\"truapiHostVersion\":\"0.24.0\""))
+        Build.VERSION.RELEASE?.let { assertTrue(script.contains("\"osVersion\":\"$it\"")) }
+        assertTrue(script.contains("\"truapiHostVersion\":\"${truapiHostVersion()}\""))
         assertTrue(script.contains("\"schemaVersion\":\"1\""))
         assertTrue(script.contains("writable: false"))
         assertTrue(script.contains("configurable: false"))
