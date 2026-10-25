@@ -64,7 +64,7 @@ impl AccountCaller<'_> {
 	}
 }
 
-/// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
+/// Validated Bulletin signing material, redacted in diagnostics and zeroized on drop.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct BulletinAllowanceKey {
 	#[debug("\"<redacted>\"")]
@@ -78,6 +78,9 @@ impl BulletinAllowanceKey {
 			secret.try_into().map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
 				reason: format!("bulletin allowance key must be 64 bytes, got {}", secret.len()),
 			})?;
+		schnorrkel::SecretKey::from_bytes(&secret).map_err(|_| AuthorityError::Unavailable {
+			reason: "invalid bulletin allowance key".to_string(),
+		})?;
 		Ok(Self { secret })
 	}
 
@@ -97,14 +100,17 @@ pub struct AutoSigningKey {
 }
 
 impl AutoSigningKey {
+	/// Keep both delegated secrets together for the same product subtree.
 	pub fn from_parts(secret: [u8; 64], ring_vrf_domain_entropy: [u8; 32]) -> Self {
 		Self { secret, ring_vrf_domain_entropy }
 	}
 
+	/// Retained subtree secret for delegated account signing.
 	pub fn as_secret_bytes(&self) -> &[u8; 64] {
 		&self.secret
 	}
 
+	/// Product-scoped entropy for delegated ring signing.
 	pub fn ring_vrf_domain_entropy(&self) -> &[u8; 32] {
 		&self.ring_vrf_domain_entropy
 	}
@@ -345,8 +351,7 @@ pub enum AutoSigningGrant {
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
-	/// Secret used to sign allowance statements.
-	pub secret: [u8; 64],
+	secret: [u8; 64],
 	/// Public key derived from the secret.
 	pub public_key: [u8; 32],
 }
@@ -366,6 +371,37 @@ impl StatementStoreAllowanceKey {
 			.map_err(|reason| AuthorityError::Unavailable { reason })?;
 		Ok(Self { secret, public_key })
 	}
+
+	/// sr25519 secret used to sign allowance statements.
+	pub fn as_secret_bytes(&self) -> &[u8; 64] {
+		&self.secret
+	}
+}
+
+/// Issued capability material, ready for the host to validate and retain.
+pub enum AccountGrant {
+	/// Statement signing material and a known on-chain allocation period, if supplied.
+	StatementStore {
+		/// Validated statement signing key.
+		key: StatementStoreAllowanceKey,
+		/// Actual period returned by wallet issuance; SSO does not provide one.
+		period: Option<u32>,
+	},
+	/// Dedicated Bulletin allowance key.
+	Bulletin(BulletinAllowanceKey),
+	/// Funded product account.
+	SmartContract,
+	/// Exported product signing material.
+	AutoSigning(AutoSigningKey),
+}
+
+/// How a host keeps the grants its account holder issues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GrantKeeping {
+	/// The wallet's own host: grants last one wallet activation.
+	Wallet,
+	/// A host paired with a wallet on another device: grants persist under the pairing.
+	Paired,
 }
 
 /// Host account authority used by product runtimes.
@@ -499,11 +535,17 @@ pub trait ProductAuthority: Send + Sync {
 		request: ProductRequest<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
-	/// Ask the account authority to allocate product-scoped resources.
+	/// Revision of this host's kept grants. Read before a review, it lets a
+	/// product reset during the review discard the grants it confirmed.
+	fn grant_revision(&self) -> u64;
+
+	/// Ask the account authority to allocate product-scoped resources, keeping
+	/// them only while the grants are still at `grant_revision`.
 	async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		product_id: &ProductId,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;

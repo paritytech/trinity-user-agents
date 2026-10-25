@@ -6,10 +6,7 @@ mod local_activation;
 pub mod ring_vrf;
 mod sso_service;
 
-use std::{
-	collections::{HashMap, HashSet},
-	sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 use truapi::latest::{
 	ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
 	HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
@@ -26,12 +23,15 @@ pub use sso_service::SigningHostSsoService;
 
 use super::{
 	HostSession, RuntimeServices,
+	allowances::AllowanceResource,
 	authority::{
-		AccountCaller, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
+		AccountCaller, AccountGrant, AuthorityError, AuthoritySession, AutoSigningGrant,
+		AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, GrantKeeping,
+		ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+		StatementStoreAllowanceKey, authority_session_validation_id,
 	},
 	connected_session_ui_info,
+	host_grants::HostGrantStore,
 	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
@@ -48,8 +48,8 @@ use crate::{
 		product_account::{
 			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
 			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
-			derive_product_subtree_keypair, derive_ring_vrf_entropy,
-			derive_root_keypair_from_entropy, personhood_product_id,
+			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
+			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, personhood_product_id,
 		},
 		raw_signing::raw_payload_bytes,
 		session::{SessionInfo, SessionState},
@@ -76,77 +76,6 @@ use crate::platform::{
 use truapi::{CallContext, CallError, latest, v01};
 use zeroize::Zeroizing;
 
-#[derive(Default)]
-struct LocalGrantState {
-	activation_generation: u64,
-	auto_signing_grants: HashSet<([u8; 32], ProductId)>,
-	/// Per product, the period its statement-store allowance was last seen
-	/// registered in, and its key.
-	// TODO(#1159): persist in core.sqlite3 allowance_records.
-	statement_allowance_keys: HashMap<ProductId, (u32, StatementStoreAllowanceKey)>,
-}
-
-impl LocalGrantState {
-	fn advance_activation(&mut self) {
-		self.activation_generation = self
-			.activation_generation
-			.checked_add(1)
-			.expect("local activation generation exhausted");
-		self.auto_signing_grants.clear();
-		self.statement_allowance_keys.clear();
-	}
-
-	fn revoke_product(&mut self, product_id: &ProductId) {
-		self.activation_generation = self
-			.activation_generation
-			.checked_add(1)
-			.expect("local activation generation exhausted");
-		self.auto_signing_grants
-			.retain(|(_, granted_product_id)| granted_product_id != product_id);
-		self.statement_allowance_keys.remove(product_id);
-	}
-
-	fn statement_allowance_key(
-		&self,
-		activation_generation: u64,
-		product_id: &ProductId,
-		period: u32,
-	) -> Result<Option<&StatementStoreAllowanceKey>, AuthorityError> {
-		if self.activation_generation != activation_generation {
-			return Err(AuthorityError::Disconnected);
-		}
-		Ok(self
-			.statement_allowance_keys
-			.get(product_id)
-			.filter(|(cached_period, _)| *cached_period == period)
-			.map(|(_, key)| key))
-	}
-
-	fn forget_statement_allowance_key(&mut self, product_id: &ProductId, public_key: [u8; 32]) {
-		if self
-			.statement_allowance_keys
-			.get(product_id)
-			.is_some_and(|(_, key)| key.public_key == public_key)
-		{
-			self.statement_allowance_keys.remove(product_id);
-		}
-	}
-
-	fn remember_statement_allowance_key(
-		&mut self,
-		activation_generation: u64,
-		product_id: ProductId,
-		period: u32,
-		key: StatementStoreAllowanceKey,
-	) -> Result<(), AuthorityError> {
-		if self.activation_generation != activation_generation {
-			return Err(AuthorityError::Disconnected);
-		}
-		self.statement_allowance_keys.insert(product_id, (period, key));
-		Ok(())
-	}
-}
-
 /// Wallet-local account authority for a signing host.
 pub struct SigningHost {
 	services: Arc<RuntimeServices>,
@@ -172,10 +101,12 @@ pub struct SigningHost {
 	submit_preimages_locally: core::sync::atomic::AtomicBool,
 	/// Root BIP-39 entropy held only while a session is active.
 	root_entropy: Mutex<Option<Zeroizing<Vec<u8>>>>,
-	/// In-memory grants and the activation generation that owns them. The
-	/// lifecycle mutex also makes session replacement and snapshot creation
-	/// atomic with respect to generation changes.
-	local_grants: Mutex<LocalGrantState>,
+	/// Generation of the installed wallet. Its mutex also makes session
+	/// replacement and snapshot creation atomic with respect to generation
+	/// changes.
+	activation_generation: Mutex<u64>,
+	/// Grants kept for this wallet activation.
+	grants: HostGrantStore,
 	/// Durable RFC-0024 registry, scoped by the active wallet root.
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
 	/// Paired-host requests the pairing host can still withdraw.
@@ -201,7 +132,8 @@ impl SigningHost {
 			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
-			local_grants: Mutex::new(LocalGrantState::default()),
+			activation_generation: Mutex::new(0),
+			grants: HostGrantStore::new(platform.clone(), GrantKeeping::Wallet),
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
@@ -323,35 +255,50 @@ impl SigningHost {
 		&self.sso_withdrawals
 	}
 
-	fn grant_auto_signing(
+	/// The selected wallet session and the grant revision it is read under.
+	fn grant_session(
 		&self,
 		session: &AuthoritySession,
+	) -> Result<(SessionInfo, u64), AuthorityError> {
+		let lifecycle = self.grants.lifecycle();
+		let (current, _) = self.require_current_session(session)?;
+		Ok((current, lifecycle.revision()))
+	}
+
+	async fn grant_auto_signing(
+		&self,
+		session: &AuthoritySession,
+		grant_revision: u64,
 		product_id: &ProductId,
 	) -> Result<(), AuthorityError> {
-		let (_, activation_generation) = self.require_current_session(session)?;
+		let (current, _) = self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy)?;
-		let owner = root.public.to_bytes();
-		if owner != session.public_key {
+		if root.public.to_bytes() != session.public_key {
 			return Err(AuthorityError::Disconnected);
 		}
-		derive_product_subtree_keypair(&root, product_id)?;
-
-		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		if state.activation_generation != activation_generation {
-			return Err(AuthorityError::Disconnected);
-		}
-		state.auto_signing_grants.insert((owner, product_id.clone()));
-		Ok(())
+		let subtree = derive_product_subtree_keypair(&root, product_id)?;
+		let ring_vrf_domain_entropy = derive_ring_vrf_domain_entropy(&entropy, product_id)?;
+		self.grants
+			.remember_auto_signing_key(
+				&self.session_state,
+				&current,
+				grant_revision,
+				product_id,
+				subtree.public.to_bytes(),
+				AutoSigningKey::from_parts(subtree.secret.to_bytes(), ring_vrf_domain_entropy),
+			)
+			.await
 	}
 
 	async fn allocate_statement_store_allowance_key(
 		&self,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		product_id: &ProductId,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<StatementStoreAllowanceKey, allowance::AllowanceAllocationError> {
-		let (_, activation_generation) = self.require_current_session(session)?;
+		let (current, _) = self.require_current_session(session)?;
 		let allocation = allowance::allocate_statement_store_allowance(
 			&self.services,
 			self,
@@ -361,42 +308,45 @@ impl SigningHost {
 		)
 		.await?;
 		let key = StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?;
-		self.local_grants
-			.lock()
-			.expect("local AutoSigning grant mutex poisoned")
-			.remember_statement_allowance_key(
-				activation_generation,
-				product_id.clone(),
-				allocation.period,
-				key.clone(),
-			)?;
+		self.grants
+			.retain_allowance(
+				&self.session_state,
+				&current,
+				grant_revision,
+				product_id,
+				&AccountGrant::StatementStore { key: key.clone(), period: Some(allocation.period) },
+			)
+			.await?;
 		Ok(key)
 	}
 
-	fn has_auto_signing_grant(
+	async fn keeps_auto_signing_key(
 		&self,
-		activation_generation: u64,
-		owner: [u8; 32],
+		session: &SessionInfo,
 		calling_product_id: &ProductId,
 		account_product_id: &ProductId,
 	) -> bool {
-		if account_product_id != calling_product_id {
-			return false;
-		}
-
-		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		state.activation_generation == activation_generation &&
-			state.auto_signing_grants.contains(&(owner, calling_product_id.clone()))
+		calling_product_id == account_product_id &&
+			self.grants
+				.auto_signing_key(session, calling_product_id)
+				.await
+				.is_ok_and(|key| key.is_some())
 	}
 
-	/// Fence in-flight grant work and revoke this product's grants from the
-	/// current local activation while preserving unrelated products.
-	pub fn clear_product_state(&self, product_id: &ProductId) {
+	/// Clear one product's grants and Allow once answers, keeping the wallet
+	/// and other products.
+	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), String> {
 		self.consent.forget_allowed_once_for(product_id);
-		self.local_grants
-			.lock()
-			.expect("local AutoSigning grant mutex poisoned")
-			.revoke_product(product_id);
+		let session = {
+			let mut lifecycle = self.grants.lifecycle();
+			lifecycle.revoke_product(product_id);
+			self.session_state.current()
+		};
+		self.grants
+			.persistence()
+			.await
+			.clear_product(session.as_ref(), product_id)
+			.await
 	}
 
 	/// Derive the product's hard-subtree public key from the active session root.
@@ -446,28 +396,39 @@ impl SigningHost {
 		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
 	}
 
+	/// Start a new wallet activation, holding its lock until the session changes.
+	fn advance_activation(&self) -> std::sync::MutexGuard<'_, u64> {
+		let mut generation =
+			self.activation_generation.lock().expect("activation generation mutex poisoned");
+		*generation = generation.checked_add(1).expect("local activation generation exhausted");
+		generation
+	}
+
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
-		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		state.advance_activation();
+		let mut lifecycle = self.grants.lifecycle();
+		lifecycle.clear_memory();
+		let _activation = self.advance_activation();
 		self.consent.forget_allowed_once();
 		*self.root_entropy.lock().expect("signing host entropy mutex poisoned") = Some(secret);
 		self.session_state.set_session(session);
 	}
 
 	fn clear_local_session(&self) {
-		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-		state.advance_activation();
+		let mut lifecycle = self.grants.lifecycle();
+		lifecycle.clear_memory();
+		let _activation = self.advance_activation();
 		self.consent.forget_allowed_once();
 		self.root_entropy.lock().expect("signing host entropy mutex poisoned").take();
 		self.session_state.clear_session();
 	}
 
 	fn current_local_session(&self) -> Option<AuthoritySession> {
-		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
+		let generation =
+			self.activation_generation.lock().expect("activation generation mutex poisoned");
 		let session = self.session_state.current()?;
 		Some(AuthoritySession::from_session_info(
 			&session,
-			local_session_validation_id(&session, state.activation_generation),
+			local_session_validation_id(&session, *generation),
 		))
 	}
 
@@ -475,14 +436,13 @@ impl SigningHost {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<(SessionInfo, u64), AuthorityError> {
-		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
+		let generation =
+			self.activation_generation.lock().expect("activation generation mutex poisoned");
 		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
-		if local_session_validation_id(&current, state.activation_generation) !=
-			session.validation_id
-		{
+		if local_session_validation_id(&current, *generation) != session.validation_id {
 			return Err(AuthorityError::Disconnected);
 		}
-		Ok((current, state.activation_generation))
+		Ok((current, *generation))
 	}
 
 	fn ring_vrf_entropy(
@@ -737,16 +697,11 @@ impl SigningHost {
 		self.require_current_session(session)?;
 		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
 		let keypair = self.product_keypair(&request.account)?;
-		let (current, activation_generation) = self.require_current_session(session)?;
+		let (current, _) = self.require_current_session(session)?;
 		let calling_product_id = caller.product_id().ok_or(AuthorityError::Rejected)?;
 		let owner = &request.account.dot_ns_identifier;
 		let auto_signing = matches!(caller, AccountCaller::Local { .. }) &&
-			self.has_auto_signing_grant(
-				activation_generation,
-				current.public_key,
-				calling_product_id,
-				owner,
-			);
+			self.keeps_auto_signing_key(&current, calling_product_id, owner).await;
 		if !auto_signing {
 			let review = UserConfirmationReview::SignVrf(SignVrfReview {
 				calling_product_id: calling_product_id.clone(),
@@ -859,6 +814,10 @@ impl ProductAuthority for SigningHost {
 		&self.consent
 	}
 
+	fn grant_revision(&self) -> u64 {
+		self.grants.lifecycle().revision()
+	}
+
 	async fn product_subtree_public_key(
 		&self,
 		_cx: &CallContext,
@@ -891,17 +850,14 @@ impl ProductAuthority for SigningHost {
 	) -> Result<AutoSigningGrant, AuthorityError> {
 		// A stale session is not a grant, and is answered here rather than
 		// raising a prompt against a session that no longer exists.
-		// `grant_auto_signing` refuses to record a grant whose owner is not
-		// the session's own key, so the session carries the owner a grant can
-		// be keyed on and no root derivation is needed to answer this.
-		let (current, activation_generation) = self.require_current_session(session)?;
+		// `grant_auto_signing` refuses to keep a key whose owner is not the
+		// session's own key, so the session carries the owner a key is kept
+		// under and no root derivation is needed to answer this.
+		let (current, _) = self.require_current_session(session)?;
 		if super::authority::is_blessed_owner(calling_product_id, &account.dot_ns_identifier) ||
-			self.has_auto_signing_grant(
-				activation_generation,
-				current.public_key,
-				calling_product_id,
-				&account.dot_ns_identifier,
-			) {
+			self.keeps_auto_signing_key(&current, calling_product_id, &account.dot_ns_identifier)
+				.await
+		{
 			Ok(AutoSigningGrant::Active)
 		} else {
 			Ok(AutoSigningGrant::Absent)
@@ -1208,10 +1164,12 @@ impl ProductAuthority for SigningHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		product_id: &ProductId,
 		request: v01::HostRequestResourceAllocationRequest,
 	) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
 		self.require_current_session(session)?;
+		self.grants.lifecycle().require_revision(grant_revision)?;
 		#[cfg(feature = "test-host")]
 		if self.resource_controls.grants_allowances_unchecked() {
 			// Nothing is allocated and no proof is built: a suite in this mode
@@ -1250,6 +1208,7 @@ impl ProductAuthority for SigningHost {
 				v01::AllocatableResource::StatementStoreAllowance => self
 					.allocate_statement_store_allowance_key(
 						session,
+						grant_revision,
 						product_id,
 						OnExistingAllowancePolicy::Increase,
 					)
@@ -1279,7 +1238,8 @@ impl ProductAuthority for SigningHost {
 					.map(|()| v01::AllocationOutcome::Allocated)
 				},
 				v01::AllocatableResource::AutoSigning => self
-					.grant_auto_signing(session, product_id)
+					.grant_auto_signing(session, grant_revision, product_id)
+					.await
 					.map(|_| v01::AllocationOutcome::Allocated)
 					.map_err(allowance::AllowanceAllocationError::Authority),
 			};
@@ -1300,21 +1260,27 @@ impl ProductAuthority for SigningHost {
 		session: &AuthoritySession,
 		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-		let (_, activation_generation) = self.require_current_session(session)?;
+		let (current, grant_revision) = self.grant_session(session)?;
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
 		let period = statement_allowance::slot::current_period(allowance::current_unix_secs()?);
-		if let Some(key) = self
-			.local_grants
-			.lock()
-			.expect("local AutoSigning grant mutex poisoned")
-			.statement_allowance_key(activation_generation, product_id, period)?
+		if let Some(AccountGrant::StatementStore { key, period: Some(kept_period) }) = self
+			.grants
+			.cached_allowance(
+				&self.session_state,
+				&current,
+				grant_revision,
+				product_id,
+				AllowanceResource::StatementStore,
+			)
+			.await? && kept_period == period
 		{
-			return Ok(key.clone());
+			return Ok(key);
 		}
 		self.allocate_statement_store_allowance_key(
 			session,
+			grant_revision,
 			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
@@ -1329,10 +1295,7 @@ impl ProductAuthority for SigningHost {
 	}
 
 	fn forget_statement_store_allowance_key(&self, product_id: &ProductId, public_key: [u8; 32]) {
-		self.local_grants
-			.lock()
-			.expect("local AutoSigning grant mutex poisoned")
-			.forget_statement_allowance_key(product_id, public_key);
+		self.grants.forget_statement_store_allowance_key(product_id, public_key);
 	}
 
 	async fn bulletin_allowance_key(

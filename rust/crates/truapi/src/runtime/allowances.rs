@@ -16,26 +16,51 @@ pub enum AllowanceResource {
 	StatementStore,
 }
 
+/// Canonical wallet and optional paired channel owning in-memory grants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GrantScope {
+	root_public_key: [u8; 32],
+	channel: Option<SsoSessionKey>,
+}
+
+impl GrantScope {
+	/// Use session identity directly, without interpreting an authority token.
+	pub fn from_session(session: &SessionInfo) -> Self {
+		Self {
+			root_public_key: session.public_key,
+			channel: session.sso.as_ref().map(SsoSessionKey::from_session),
+		}
+	}
+
+	/// Whether this owner remains selected by the canonical session.
+	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
+		state
+			.current()
+			.as_ref()
+			.is_some_and(|session| Self::from_session(session) == self)
+	}
+}
+
 /// Memory-cache key: `(session, product_id, resource)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
-	session: SsoSessionKey,
+	session: GrantScope,
 	product_id: ProductId,
 	resource: AllowanceResource,
 }
 
 impl AllowanceCacheKey {
-	/// Cache key for the session's SSO pair; fails when the session has none.
-	pub fn new(
-		session: &SessionInfo,
-		product_id: &ProductId,
-		resource: AllowanceResource,
-	) -> Result<Self, AuthorityError> {
-		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.clone(), resource })
+	/// Key for the wallet and authenticated channel that received this grant.
+	pub fn new(session: &SessionInfo, product_id: &ProductId, resource: AllowanceResource) -> Self {
+		Self {
+			session: GrantScope::from_session(session),
+			product_id: product_id.clone(),
+			resource,
+		}
 	}
 
 	/// Whether this key belongs to the given SSO session.
-	pub fn is_for_session(&self, session: SsoSessionKey) -> bool {
+	pub fn is_for_session(&self, session: GrantScope) -> bool {
 		self.session == session
 	}
 
@@ -181,11 +206,6 @@ fn storage_key(session: &SessionInfo) -> Result<CoreStorageKey, AuthorityError> 
 	Ok(CoreStorageKey::AllowanceKeys {
 		session_id: session_storage_id(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?),
 	})
-}
-
-fn sso_cache_key(session: &SessionInfo) -> Result<SsoSessionKey, AuthorityError> {
-	let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-	Ok(SsoSessionKey::from_session(sso))
 }
 
 pub fn session_storage_id(session: &SsoSessionInfo) -> String {

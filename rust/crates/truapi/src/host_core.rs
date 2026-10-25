@@ -1038,8 +1038,11 @@ impl SigningHostRuntime {
 	/// Revoke one product's grants from the current local activation while
 	/// preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) {
-		self.signing_host.clear_product_state(product_id);
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
+		self.signing_host.clear_product_state(product_id).await.map_err(Into::into)
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
