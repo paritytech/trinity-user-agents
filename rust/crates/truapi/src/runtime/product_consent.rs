@@ -7,20 +7,22 @@ use std::{
 
 use truapi::{CallContext, latest::GenericError};
 
-use super::authority::{AccountCaller, AuthorityError};
+use super::{
+	ProductConnection,
+	authority::{AccountCaller, AuthorityError},
+};
 use crate::{
 	host_internal::permissions::{
-		TemporaryPermissions, account_access_status, cross_product_signature_key,
-		set_account_access_status,
+		account_access_status, cross_product_signature_key, set_account_access_status,
 	},
 	platform::{
 		AccountAccessReview, CreateTransactionReview, CrossProductSignatureKind,
-		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductId,
-		SignPayloadReview, SignRawReview, UserConfirmationReview,
+		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
+		SignRawReview, UserConfirmationReview,
 	},
 };
 
-/// One runtime's consent policy: one prompt channel, one store, one set of rules.
+/// One runtime's consent policy: one decision store, one prompt at a time, one set of rules.
 pub struct ProductConsent {
 	platform: Arc<dyn Platform>,
 	permission_prompt: futures::lock::Mutex<()>,
@@ -28,7 +30,7 @@ pub struct ProductConsent {
 }
 
 impl ProductConsent {
-	/// Ask through `platform`, the runtime-wide channel, and store decisions there.
+	/// Store decisions through `platform`, the runtime-wide one.
 	pub fn new(platform: Arc<dyn Platform>) -> Self {
 		Self {
 			platform,
@@ -37,7 +39,8 @@ impl ProductConsent {
 		}
 	}
 
-	/// Whether `requester` may use `target`'s accounts, prompting when nothing is decided.
+	/// Whether `requester` may use `target`'s accounts, prompting through `prompt`
+	/// when nothing is decided.
 	///
 	/// Allow once lasts until this runtime forgets it; only one prompt runs at a time,
 	/// and a request that waited for it reuses the answer.
@@ -45,6 +48,7 @@ impl ProductConsent {
 		&self,
 		requester: &ProductId,
 		target: &ProductId,
+		prompt: &dyn Platform,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
 		if requester == target || requester.has_trusted_remote_permissions() {
 			return Ok(PermissionAuthorizationStatus::Authorized);
@@ -59,8 +63,7 @@ impl ProductConsent {
 		if let Some(status) = self.decided(&pair).await? {
 			return Ok(status);
 		}
-		let decision = self
-			.platform
+		let decision = prompt
 			.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
 				requesting_product_id: requester.clone(),
 				target_product_id: target.clone(),
@@ -81,39 +84,43 @@ impl ProductConsent {
 		Ok(status)
 	}
 
-	/// Confirm an operation with the user unless `caller` may skip its review.
+	/// Confirm an operation through `prompt` unless `caller` may skip its review.
 	pub async fn review(
 		&self,
 		cx: &CallContext,
 		caller: AccountCaller<'_>,
+		prompt: &dyn Platform,
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
 		if skips_review(caller, &review) {
 			return Ok(());
 		}
-		let approved = super::until_cancelled(cx, self.platform.confirm_user_action(review))
+		let approved = super::until_cancelled(cx, prompt.confirm_user_action(review))
 			.await?
 			.map_err(AuthorityError::ConfirmationFailed)?;
 		if approved { Ok(()) } else { Err(AuthorityError::Rejected) }
 	}
 
-	/// Confirm `product`'s signature with an account `owner` holds.
+	/// Confirm a signature by `connection`'s product with an account `owner` holds,
+	/// on the product's own connection.
 	///
 	/// Another product's account is confirmed once per kind of signature and owning
-	/// product, for as long as `approvals`' execution lasts. Signature prompts open
-	/// one at a time, and a signature already approved never waits for one.
+	/// product, for as long as the connection's execution lasts. Signature prompts
+	/// open one at a time, and a signature already approved never waits for one.
 	pub async fn review_signature(
 		&self,
 		cx: &CallContext,
-		product: &ProductContext,
-		approvals: &TemporaryPermissions,
+		connection: &ProductConnection,
 		kind: CrossProductSignatureKind,
 		owner: &ProductId,
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
+		let product = &connection.product;
+		let approvals = &connection.temporary_permissions;
+		let prompt = connection.platform.as_ref();
 		let caller = AccountCaller::Local { product };
 		if *owner == product.product_id {
-			return self.review(cx, caller, review).await;
+			return self.review(cx, caller, prompt, review).await;
 		}
 		let approval = cross_product_signature_key(&product.product_id, owner, kind);
 		if approvals.authorize(&approval, false) {
@@ -123,7 +130,7 @@ impl ProductConsent {
 		if approvals.authorize(&approval, false) {
 			return Ok(());
 		}
-		self.review(cx, caller, review).await?;
+		self.review(cx, caller, prompt, review).await?;
 		approvals.grant(approval);
 		Ok(())
 	}
@@ -133,7 +140,8 @@ impl ProductConsent {
 		self.allowed_once.lock().expect("account access mutex poisoned").clear();
 	}
 
-	/// Forget the Allow once answers `product_id` received, as on its reset.
+	/// Forget the Allow once answers `product_id` received, as on its reset or a
+	/// change to its account access in settings.
 	pub fn forget_allowed_once_for(&self, product_id: &ProductId) {
 		let requester = product_id.bare_label();
 		self.allowed_once
@@ -217,10 +225,11 @@ mod tests {
 	}
 
 	fn access(consent: &ProductConsent, requester: &str) -> PermissionAuthorizationStatus {
-		futures::executor::block_on(
-			consent
-				.account_access(&ProductId::for_test(requester), &ProductId::for_test("peopl.dot")),
-		)
+		futures::executor::block_on(consent.account_access(
+			&ProductId::for_test(requester),
+			&ProductId::for_test("peopl.dot"),
+			consent.platform.as_ref(),
+		))
 		.expect("the stub answers every prompt")
 	}
 
@@ -277,8 +286,8 @@ mod tests {
 			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 		let (first, second, ()) = futures::executor::block_on(async {
 			futures::join!(
-				consent.account_access(&requester, &target),
-				consent.account_access(&requester, &target),
+				consent.account_access(&requester, &target, platform.as_ref()),
+				consent.account_access(&requester, &target, platform.as_ref()),
 				async { release.send(()).unwrap() },
 			)
 		});

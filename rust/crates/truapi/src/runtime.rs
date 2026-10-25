@@ -678,6 +678,22 @@ impl ProductRuntimeHost {
 		&self.connection
 	}
 
+	/// Store `status` for one of this product's permissions. A changed answer about
+	/// another product's accounts also ends this product's Allow once answers.
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.connection.set_permission_authorization_status(request, status).await?;
+		if account_access {
+			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
+		}
+		Ok(())
+	}
+
 	/// Test constructor building a standalone pairing-host runtime.
 	#[cfg(test)]
 	pub fn new<P>(
@@ -820,7 +836,10 @@ impl ProductRuntimeHost {
 		review: UserConfirmationReview,
 	) -> Result<(), AuthorityError> {
 		let caller = AccountCaller::Local { product: &self.connection.product };
-		self.accounts.consent().review(cx, caller, review).await
+		self.accounts
+			.consent()
+			.review(cx, caller, self.connection.platform.as_ref(), review)
+			.await
 	}
 
 	/// Confirm a signature with one of `owner`'s accounts, once per kind for this
@@ -834,14 +853,7 @@ impl ProductRuntimeHost {
 	) -> Result<(), AuthorityError> {
 		self.accounts
 			.consent()
-			.review_signature(
-				cx,
-				&self.connection.product,
-				&self.connection.temporary_permissions,
-				kind,
-				owner,
-				review,
-			)
+			.review_signature(cx, &self.connection, kind, owner, review)
 			.await
 	}
 

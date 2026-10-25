@@ -92,7 +92,12 @@ impl SigningHostSsoService {
 	) -> Result<(), AuthorityError> {
 		self.signing_host
 			.consent
-			.review(&cx.call, AccountCaller::Remote { product_id }, review)
+			.review(
+				&cx.call,
+				AccountCaller::Remote { product_id },
+				self.signing_host.platform.as_ref(),
+				review,
+			)
 			.await
 	}
 

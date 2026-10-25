@@ -1340,7 +1340,7 @@ impl PairingHost {
 			request: request.clone(),
 		});
 		self.consent
-			.review(cx, AccountCaller::Local { product: &product }, review)
+			.review(cx, AccountCaller::Local { product: &product }, self.platform.as_ref(), review)
 			.await?;
 		self.remote_sign_vrf(cx, &session, calling_product_id, request).await
 	}

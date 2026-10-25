@@ -33,8 +33,8 @@ use crate::{
 	runtime::{
 		ProductRuntimeHost, account_get_authority_error, remote_authority_call,
 		remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
-		ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript, versioning::version,
-		vrf_call_error,
+		ring_vrf_register_error, ring_vrf_sign_error, until_cancelled, validate_vrf_transcript,
+		versioning::version, vrf_call_error,
 	},
 };
 
@@ -55,11 +55,14 @@ impl Account for ProductRuntimeHost {
 					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
 
 				if &owner != self.connection.product_id() {
-					match self
-						.accounts
-						.consent()
-						.account_access(self.connection.product_id(), &owner)
+					let access = self.accounts.consent().account_access(
+						self.connection.product_id(),
+						&owner,
+						self.connection.platform.as_ref(),
+					);
+					match until_cancelled(cx, access)
 						.await
+						.map_err(account_get_authority_error)?
 						.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
 					{
 						PermissionAuthorizationStatus::Authorized => {},

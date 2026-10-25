@@ -685,7 +685,8 @@ impl SigningHost {
 		requester: &ProductId,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		let status = super::until_cancelled(cx, self.consent.account_access(requester, owner))
+		let access = self.consent.account_access(requester, owner, self.platform.as_ref());
+		let status = super::until_cancelled(cx, access)
 			.await?
 			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
 		if status == PermissionAuthorizationStatus::Authorized {
@@ -751,7 +752,7 @@ impl SigningHost {
 				calling_product_id: calling_product_id.clone(),
 				request: request.clone(),
 			});
-			self.consent.review(cx, caller, review).await?;
+			self.consent.review(cx, caller, self.platform.as_ref(), review).await?;
 		}
 		let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
 			&keypair,
@@ -2349,6 +2350,7 @@ mod tests {
 			crate::runtime::product_consent::ProductConsent::new(platform.clone()).account_access(
 				&ProductId::for_test("ordinary.dot"),
 				&ProductId::for_test("peopl.dot"),
+				platform.as_ref(),
 			),
 		)
 		.expect("the stub records the declined decision");
