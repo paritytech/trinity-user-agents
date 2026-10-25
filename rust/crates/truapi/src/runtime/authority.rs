@@ -28,10 +28,15 @@ use crate::{
 		transaction::ExtrinsicPayloadError,
 	},
 	host_logic::{
+		product_account::ProductAccountError,
 		raw_signing::RawPayloadError,
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},
+};
+
+use super::sso_remote::{
+	SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
 };
 
 /// Trust boundary for product identity and host permissions.
@@ -169,6 +174,35 @@ pub enum AuthorityError {
 	/// Catch-all authority failure.
 	#[display("{reason}")]
 	Unknown { reason: String },
+}
+
+impl From<ProductAccountError> for AuthorityError {
+	fn from(err: ProductAccountError) -> Self {
+		Self::Unavailable { reason: err.to_string() }
+	}
+}
+
+impl From<SsoRemoteResponseError> for AuthorityError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		match reason {
+			SsoRemoteResponseError::Cancelled(err) => {
+				Self::Cancelled(AuthorityCancelError::new(err.remote_message_id(), err.reason()))
+			},
+			SsoRemoteResponseError::LocalDisconnected |
+			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
+			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
+				"Rejected" | "User rejected" => Self::Rejected,
+				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
+				_ => Self::Unknown { reason },
+			},
+		}
+	}
+}
+
+impl From<SsoRemoteResponseError> for RingVrfError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		AuthorityError::from(reason).into()
+	}
 }
 
 /// A preimage this host cannot assemble is a shape failure, not a transport one.
