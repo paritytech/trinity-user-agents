@@ -75,8 +75,8 @@ async fn next_report_within_timeout<K, V>(
 async fn first_three_timestamps_at(head: WatchedHead) -> Vec<(u64, u64)> {
 	let genesis = live_asset_hub_genesis();
 	let address = dynamic::<(), u64>("Timestamp", "Now");
-	let watch = live_chain_runtime(genesis).watch_entry_changes(genesis, head, address, vec![()]);
-	let mut changes = watch.await.expect("the watch starts");
+	let mut changes =
+		live_chain_runtime(genesis).watch_entry_changes(genesis, head, address, vec![()]);
 	let mut timestamps = Vec::new();
 	for _ in 0..3 {
 		let report = next_report_within_timeout(&mut changes).await;
@@ -128,13 +128,12 @@ async fn a_thousand_keys_are_answered_in_one_read() {
 	let genesis = live_asset_hub_genesis();
 	let accounts: Vec<([u8; 32],)> = (0..BATCH_SIZE).map(distinct_unused_account).collect();
 	let address = dynamic::<([u8; 32],), Value>("System", "Account");
-	let watch = live_chain_runtime(genesis).watch_entry_changes(
+	let mut changes = live_chain_runtime(genesis).watch_entry_changes(
 		genesis,
 		WatchedHead::Finalized,
 		address,
 		accounts,
 	);
-	let mut changes = watch.await.expect("the watch starts");
 
 	let started = std::time::Instant::now();
 	let report = next_report_within_timeout(&mut changes).await;
