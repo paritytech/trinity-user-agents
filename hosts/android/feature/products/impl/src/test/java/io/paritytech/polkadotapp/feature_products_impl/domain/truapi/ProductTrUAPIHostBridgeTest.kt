@@ -148,7 +148,7 @@ class ProductTrUAPIHostBridgeTest {
 
         coVerify {
             gameReminder.schedule(game, 1_000)
-            gameReminder.cancel(game)
+            gameReminder.cancelByProduct(game)
         }
     }
 
