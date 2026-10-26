@@ -2,7 +2,8 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use crate::platform::ProductId;
+use super::product_consent::ProductConsent;
+use crate::platform::{ProductContext, ProductId};
 use async_trait::async_trait;
 use truapi::{
 	CallContext, CancellationReason,
@@ -27,11 +28,41 @@ use crate::{
 		transaction::ExtrinsicPayloadError,
 	},
 	host_logic::{
+		product_account::ProductAccountError,
 		raw_signing::RawPayloadError,
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},
 };
+
+use super::sso_remote::{
+	SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
+};
+
+/// Trust boundary for product identity and host permissions.
+#[derive(Clone, Copy)]
+pub enum AccountCaller<'a> {
+	/// Product identity bound by this host's runtime.
+	Local {
+		/// Product bound by the host runtime.
+		product: &'a ProductContext,
+	},
+	/// Product identity reported by an authenticated paired host.
+	Remote {
+		/// Some SSO operations carry no product identity.
+		product_id: Option<&'a ProductId>,
+	},
+}
+
+impl AccountCaller<'_> {
+	/// Product named by this invocation, when the transport supplied one.
+	pub fn product_id(&self) -> Option<&ProductId> {
+		match self {
+			Self::Local { product } => Some(&product.product_id),
+			Self::Remote { product_id } => *product_id,
+		}
+	}
+}
 
 /// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
@@ -124,6 +155,9 @@ pub enum AuthorityError {
 	/// User or authority rejected the request.
 	#[display("Rejected")]
 	Rejected,
+	/// The platform could not present or complete a wallet review.
+	#[display("confirmation failed: {}", _0.reason)]
+	ConfirmationFailed(#[error(not(source))] crate::latest::GenericError),
 	/// The selected authority session is no longer active.
 	#[display("Disconnected")]
 	Disconnected,
@@ -140,6 +174,35 @@ pub enum AuthorityError {
 	/// Catch-all authority failure.
 	#[display("{reason}")]
 	Unknown { reason: String },
+}
+
+impl From<ProductAccountError> for AuthorityError {
+	fn from(err: ProductAccountError) -> Self {
+		Self::Unavailable { reason: err.to_string() }
+	}
+}
+
+impl From<SsoRemoteResponseError> for AuthorityError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		match reason {
+			SsoRemoteResponseError::Cancelled(err) => {
+				Self::Cancelled(AuthorityCancelError::new(err.remote_message_id(), err.reason()))
+			},
+			SsoRemoteResponseError::LocalDisconnected |
+			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
+			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
+				"Rejected" | "User rejected" => Self::Rejected,
+				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
+				_ => Self::Unknown { reason },
+			},
+		}
+	}
+}
+
+impl From<SsoRemoteResponseError> for RingVrfError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		AuthorityError::from(reason).into()
+	}
 }
 
 /// A preimage this host cannot assemble is a shape failure, not a transport one.
@@ -192,6 +255,9 @@ impl From<AuthorityError> for HostAccountSignVrfError {
 		match err {
 			AuthorityError::Disconnected => Self::NotConnected,
 			AuthorityError::Rejected => Self::Rejected,
+			AuthorityError::ConfirmationFailed(error) => {
+				Self::Unknown { reason: format!("VRF signing confirmation failed: {error:?}") }
+			},
 			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
 			AuthorityError::Unavailable { reason } |
 			AuthorityError::NotSupported { reason } |
@@ -307,6 +373,9 @@ impl StatementStoreAllowanceKey {
 pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
+
+	/// This runtime's account-access decisions and operation reviews.
+	fn consent(&self) -> &ProductConsent;
 
 	/// Seed a product subtree for authority tests.
 	#[cfg(test)]

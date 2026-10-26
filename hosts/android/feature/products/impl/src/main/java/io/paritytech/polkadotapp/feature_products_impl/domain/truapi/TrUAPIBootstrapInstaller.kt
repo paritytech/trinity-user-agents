@@ -1,12 +1,21 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
+import android.os.Build
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ContainerScriptBundle
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
 
 /**
@@ -20,7 +29,14 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>): (bootstrap: String) -> (WebView) -> Unit {
+    fun installerFor(origins: Set<String>, hostSessionId: String?): (bootstrap: String) -> (WebView) -> Unit {
+        val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
+            runCatching { hostTelemetryScript(context, hostSessionId) }
+                .logFailure("Native host telemetry unavailable")
+                .getOrNull()
+        } else {
+            null
+        }
         check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             "WebView lacks DOCUMENT_START_SCRIPT; cannot run a TrUAPI product"
         }
@@ -29,10 +45,57 @@ class TrUAPIBootstrapInstaller @Inject constructor(
             ContainerScriptBundle.load(context)
         return { bootstrap ->
             { webView ->
-                WebViewCompat.addDocumentStartJavaScript(webView, "if (window === window.top) {\n$bootstrap\n}", origins)
+                val mainFrameBootstrap = listOfNotNull(telemetryScript, bootstrap).joinToString("\n")
+                val pageBootstrap = "if (window === window.top) {\n$mainFrameBootstrap\n}"
+                WebViewCompat.addDocumentStartJavaScript(webView, pageBootstrap, origins)
                 WebViewCompat.addDocumentStartJavaScript(webView, container, setOf("*"))
                 (webView.webChromeClient as? ProductWebChromeClient)?.useContainerPermissions()
             }
         }
     }
 }
+
+internal fun hostTelemetryScript(
+    context: Context,
+    hostSessionId: String,
+): String {
+    val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+    val telemetry = hostTelemetryJson.encodeToString(
+        HostTelemetryBootstrap(
+            hostSessionId = hostSessionId,
+            appVersion = packageInfo.versionName?.takeIf(String::isNotBlank),
+            appBuild = packageInfo.longVersionCode.toString(),
+            appVariant = BuildConfig.BUILD_TYPE,
+            platform = "android",
+            osVersion = Build.VERSION.RELEASE?.takeIf(String::isNotBlank),
+            truapiHostVersion = truapiHostVersion().takeIf(String::isNotBlank),
+            schemaVersion = "1",
+        ),
+    )
+
+    return """
+        try {
+          if (!Object.prototype.hasOwnProperty.call(globalThis, "__trinityHostTelemetry")) {
+            Object.defineProperty(globalThis, "__trinityHostTelemetry", {
+              value: Object.freeze($telemetry),
+              writable: false,
+              configurable: false
+            });
+          }
+        } catch {}
+    """.trimIndent()
+}
+
+private val hostTelemetryJson = Json { explicitNulls = false }
+
+@Serializable
+private data class HostTelemetryBootstrap(
+    val hostSessionId: String,
+    val appVersion: String?,
+    val appBuild: String,
+    val appVariant: String,
+    val platform: String,
+    val osVersion: String?,
+    val truapiHostVersion: String?,
+    val schemaVersion: String,
+)

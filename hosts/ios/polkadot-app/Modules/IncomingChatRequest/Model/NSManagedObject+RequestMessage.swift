@@ -63,33 +63,13 @@ extension NSManagedObjectContext {
     func setupAcceptMessage(
         for requestId: String,
         peerAccountId: AccountId,
-        messageExchangeMode: MessageExchangeMode,
-        acceptorDevice: Chat.PeerDevice?
+        acceptorDevice: Chat.PeerDevice
     ) throws -> CDChatMessage {
         let acceptMessageEntity = CDChatMessage(context: self)
 
-        let content: Chat.LocalMessage.Content
-
-        switch messageExchangeMode {
-        case .identity:
-            let acceptContent = ChatRemoteMessageContent.ChatAccepted(
-                messageId: requestId
-            )
-            content = .chatAccepted(acceptContent)
-        case .multidevice:
-            guard let acceptorDevice else {
-                throw CoreDataMapperError.unexpected("acceptorDevice is required for DeviceChatAccepted")
-            }
-            let acceptContent = ChatRemoteMessageContent.DeviceChatAccepted(
-                requestId: requestId,
-                device: acceptorDevice
-            )
-            content = .multiChatAccepted(acceptContent)
-        }
-
         let acceptMessageModel = Chat.LocalMessage.newMessageToPerson(
             peerAccountId,
-            content: content
+            content: .multiChatAccepted(.init(requestId: requestId, device: acceptorDevice))
         )
 
         try ChatMessageEntityMapper().populate(

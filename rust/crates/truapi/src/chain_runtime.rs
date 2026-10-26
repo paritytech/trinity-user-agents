@@ -157,6 +157,9 @@ pub struct LegacyConnection {
 	pub backend: Arc<LegacyBackend<SubstrateConfig>>,
 	/// Legacy methods the backend does not expose, such as the best block hash.
 	pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
+	/// Raw JSON-RPC client, for legacy subscriptions neither of the above
+	/// offers, such as `state_subscribeStorage`.
+	pub raw_rpc_client: RpcClient,
 }
 
 /// Classification of framework-level chain failures separate from JSON-RPC
@@ -1273,7 +1276,8 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
-		let built = LegacyConnection { client, backend, methods: LegacyRpcMethods::new(rpc) };
+		let methods = LegacyRpcMethods::new(rpc.clone());
+		let built = LegacyConnection { client, backend, methods, raw_rpc_client: rpc };
 		Ok(self.legacy_connection.lock().unwrap().get_or_insert(built).clone())
 	}
 

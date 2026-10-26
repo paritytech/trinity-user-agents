@@ -394,3 +394,12 @@ extension MainTabBarViewController {
         widgetController.detach(for: id)
     }
 }
+
+extension MainTabBarViewController {
+    /// The chrome sits over every tab, so a Pocket card flying out of the
+    /// Wallet fades it along with the Pocket's own content.
+    func setChromeAlpha(_ alpha: CGFloat) {
+        statusBarHost.view.alpha = alpha
+        chromeController.view.alpha = alpha
+    }
+}

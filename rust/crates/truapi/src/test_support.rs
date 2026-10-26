@@ -53,7 +53,9 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod scripted_chain;
 
-pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+pub use scripted_chain::{
+	ScriptedProvider, extract_id, later_notification_sender, notification_sender, wait_for_sent,
+};
 
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
@@ -115,6 +117,8 @@ pub struct StubPlatform {
 	pub account_access_confirmed: bool,
 	pub account_access_error: Option<&'static str>,
 	pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+	/// Holds the account-access prompt open until the sender fires.
+	pub account_access_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Permission answers retain their lifetime separately from action confirmations.
 	pub permission_confirmation_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -1130,6 +1134,16 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[crate::platform::async_trait]
+impl crate::installation::InstallationIdProvider for StubPlatform {
+	async fn current_installation(
+		&self,
+	) -> Result<crate::installation::InstallationId, v01::GenericError> {
+		Ok(crate::nft::TEST_INSTALLATION)
+	}
+}
+
 #[crate::platform::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
@@ -1912,6 +1926,14 @@ impl UserConfirmation for StubPlatform {
 					.lock()
 					.expect("account access review list mutex poisoned")
 					.push(review);
+				let gate = self
+					.account_access_confirmation_gate
+					.lock()
+					.expect("account access gate mutex poisoned")
+					.take();
+				if let Some(gate) = gate {
+					gate.await.expect("account access gate was released");
+				}
 				(self.account_access_error, self.account_access_confirmed)
 			},
 			UserConfirmationReview::IdentityDisclosure(_) => {
@@ -1980,7 +2002,7 @@ impl LocaleHost for StubPlatform {
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))

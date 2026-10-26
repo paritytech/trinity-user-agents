@@ -113,7 +113,7 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
 	PairingProposal::from_deeplink(&deeplink)
-		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
@@ -122,7 +122,7 @@ pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, Nativ
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
 	PairingProposal::from_deeplink(deeplink)
 		.map(|_| ())
-		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
 /// Largest nesting a face may carry, matching what the core accepts on the
@@ -285,11 +285,24 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
+/// Screen a product-supplied chat icon with the rules `create_room` and
+/// `register_bot` apply.
+///
+/// Hosts call this wherever they take a room icon from a product instead of
+/// screening it themselves: the rules are the core's, and a host that guesses
+/// at them draws icons the core refused. An absent icon screens to the empty
+/// string.
+#[uniffi::export]
+pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
+}
+
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
-/// Blessed products bypass recorded permissions. Only device permissions require
-/// consent. Hosts mediating product network access can use this check before storage.
+/// Trusted products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant. Hosts mediating product network access
+/// can use this check before storage.
 ///
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.

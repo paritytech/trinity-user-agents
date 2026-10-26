@@ -103,8 +103,9 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Blessed products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions. Only device permissions require consent.
+Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
+recorded permissions and permission prompts. Device permissions still need the OS
+grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -126,7 +127,8 @@ ProductRuntime
         v
 PermissionsService(storage, platform, product_id)
         |
-        +-- blessed product, non-device --> allow without storage or prompt
+        +-- trusted product --> allow without storage or prompt,
+        |                       unless the OS refuses a device capability
         |
         | builds storage key:
         |
@@ -170,7 +172,7 @@ CoreStorage lookup
 
 #### Auto-granted remote permissions
 
-A valid remote permission request from a blessed product is authorized before
+A valid remote permission request from a trusted product is authorized before
 reading or writing permission storage. Empty or invalid domain bundles are denied.
 Other products resolve saved decisions and prompt when undecided.
 
@@ -228,9 +230,12 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, then calls
+`start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
 
 ### Durable transactions
 
@@ -255,7 +260,7 @@ presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
-records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be
@@ -292,6 +297,7 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -300,8 +306,8 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
 bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or
-`Stop` the counts produce is reported on one channel, the host's
-`worker_demand_changed` callback, in the order the ledger produced it and one
+`Stop` the counts produce is requested through the host's
+`request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
 reference itself for an open render. The host runs the executable and the core
 keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
@@ -416,9 +422,9 @@ register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-prompt only for device permissions. The runtime grants
+permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.

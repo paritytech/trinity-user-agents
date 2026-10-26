@@ -106,21 +106,26 @@ impl NativeTrUApiHostRuntime {
 			spawner.clone(),
 		));
 		assert!(
-			runtime.worker_ledger().install_demand_observer(platform.clone()),
-			"a freshly built runtime installs its worker demand observer once"
+			runtime.worker_ledger().install_worker_controller(platform.clone()),
+			"a freshly built runtime installs its worker controller once"
 		);
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
 			"a freshly built runtime installs its durable work observer once"
 		);
 		assert!(
-			runtime.set_device_pairing_observer(platform),
+			runtime.set_device_pairing_observer(platform.clone()),
 			"a freshly built runtime installs its device pairing observer once"
 		);
 		assert!(
 			runtime.set_core_db(core_db),
 			"a freshly built runtime installs its core database once"
 		);
+		assert!(
+			runtime.set_installation_provider(platform),
+			"a freshly built runtime installs its installation provider once"
+		);
+		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
 				secret,
@@ -451,7 +456,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
+	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
 	/// [`Self::release_worker`]. An id that is not a product id is logged and
 	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
@@ -1477,7 +1482,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("stash.dot", ProductExecutionKind::App),
+				native_execution_config("motion.dot", ProductExecutionKind::App),
 			)
 			.unwrap();
 		let motion = truapi::latest::HostDevicePermissionRequest::Motion;

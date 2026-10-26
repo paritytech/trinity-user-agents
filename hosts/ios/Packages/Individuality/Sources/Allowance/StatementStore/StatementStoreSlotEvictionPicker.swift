@@ -47,7 +47,7 @@ final class StatementStoreSlotEvictionPicker: StatementStoreSlotEvictionPicking 
 
         let evictable = slotsOfOthers.filter { slot in
             let priority = prioritiesByAccount[slot.accountId] ?? .normal
-            return priority <= callerPriority
+            return priority.isEvictable && priority <= callerPriority
         }
 
         guard !evictable.isEmpty else {
