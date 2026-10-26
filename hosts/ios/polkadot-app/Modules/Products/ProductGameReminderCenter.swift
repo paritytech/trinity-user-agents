@@ -30,24 +30,24 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         let applicationStateStreams: ApplicationStateStreamFactory
         let productOpener: ProductOpening
         let dateProvider: CurrentDateProviding
-        let telemetry: GameReminderTelemetry
+        let diagnostics: GameReminderDiagnostics
     }
 
     static func makeDefault() -> ProductGameReminderCenter {
-        let telemetry = IssueMonitoringFactory.createGameReminderTelemetry()
+        let diagnostics = GameReminderDiagnostics.make(reporter: IssueReportingFacade.shared)
         return ProductGameReminderCenter(
             dependencies: Dependencies(
                 services: ProductGameReminderServicesFactory(
                     settingsManager: SettingsManager.shared,
                     localNotificationService: UserNotificationService.shared,
-                    telemetry: telemetry
+                    diagnostics: diagnostics
                 ),
                 settingsManager: SettingsManager.shared,
                 applicationState: UIApplication.shared,
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 productOpener: ProductOpener(),
                 dateProvider: NowDateProvider(),
-                telemetry: telemetry
+                diagnostics: diagnostics
             )
         )
     }
@@ -71,7 +71,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     private let applicationStateStreams: ApplicationStateStreamFactory
     private let productOpener: ProductOpening
     private let dateProvider: CurrentDateProviding
-    private let telemetry: GameReminderTelemetry
+    private let diagnostics: GameReminderDiagnostics
 
     /// One pair per product: AlarmKit serialises its calls per instance.
     private var reminders: [ProductId: Reminders] = [:]
@@ -88,7 +88,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         applicationStateStreams = dependencies.applicationStateStreams
         productOpener = dependencies.productOpener
         dateProvider = dependencies.dateProvider
-        telemetry = dependencies.telemetry
+        diagnostics = dependencies.diagnostics
     }
 
     /// Held reminders, soonest first.
@@ -367,7 +367,7 @@ private extension ProductGameReminderCenter {
         )
         event.appState = GameReminderEvent.AppState(applicationState.applicationState)
         configure(&event)
-        telemetry.record(event)
+        diagnostics.record(event)
     }
 
     func wake(at date: Date, from now: Date) {

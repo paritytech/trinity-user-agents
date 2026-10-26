@@ -32,14 +32,4 @@ public enum IssueMonitoringFactory {
             NoopIssueReporter()
         #endif
     }
-
-    /// Records game reminder steps through the SDK `IssueMonitoringServiceProtocol.setup()` started; a no-op until
-    /// then and in Release.
-    public static func createGameReminderTelemetry() -> GameReminderTelemetry {
-        #if SENTRY_ENABLED
-            SentryGameReminderTelemetry()
-        #else
-            NoopGameReminderTelemetry()
-        #endif
-    }
 }

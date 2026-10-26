@@ -22,7 +22,7 @@ struct GameReminderEventTests {
         event.appState = .inactive
         event.navigated = true
 
-        let fields = event.sentryFields(origin: origin)
+        let fields = event.fields(origin: origin)
 
         #expect(event.name == "host.reminder.product_opened")
         #expect(GameReminderEvent.logger == "host.telemetry")
@@ -36,7 +36,7 @@ struct GameReminderEventTests {
 
     @Test func eventCarriesTheCanonicalHostFields() {
         let fields = GameReminderEvent(step: .scheduled, productId: "game.dot", startsAt: startsAt)
-            .sentryFields(origin: origin)
+            .fields(origin: origin)
 
         #expect(fields.tags["host.platform"] == "ios")
         #expect(fields.tags["host.os_version"] == "26.5")
@@ -50,7 +50,7 @@ struct GameReminderEventTests {
         event.delivery = .alarm
         event.skipReason = .notAuthorized
 
-        let fields = event.sentryFields(origin: origin)
+        let fields = event.fields(origin: origin)
 
         #expect(event.name == "host.reminder.not_scheduled")
         #expect(fields.tags["reminder.delivery"] == "alarm")
@@ -59,7 +59,7 @@ struct GameReminderEventTests {
 
     @Test func absentValuesAreOmittedInsteadOfInvented() {
         let fields = GameReminderEvent(step: .tapped, productId: "game.dot", startsAt: nil)
-            .sentryFields(origin: HostEventOrigin(launchID: UUID(), osVersion: "26.5", appVersion: nil, appBuild: nil))
+            .fields(origin: HostEventOrigin(launchID: UUID(), osVersion: "26.5", appVersion: nil, appBuild: nil))
 
         #expect(fields.extras["reminder.starts_at_unix_ms"] == nil)
         #expect(fields.extras["reminder.delay_after_start_ms"] == nil)

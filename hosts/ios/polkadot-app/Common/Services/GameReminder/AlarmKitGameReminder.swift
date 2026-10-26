@@ -22,7 +22,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
-    private let telemetry: GameReminderTelemetry
+    private let diagnostics: GameReminderDiagnostics
     private let taskLock = NSLock()
     private var lastTask: Task<Void, Never>?
 
@@ -31,13 +31,13 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared,
-        telemetry: GameReminderTelemetry = NoopGameReminderTelemetry()
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics(reporter: NoopIssueReporter())
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
-        self.telemetry = telemetry
+        self.diagnostics = diagnostics
     }
 
     func scheduleReminder(gameDate: Date, productId: ProductId) {
@@ -105,7 +105,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
             var event = GameReminderEvent(step: .scheduled, productId: productId, startsAt: fireDate)
             event.delivery = .alarm
-            telemetry.record(event)
+            diagnostics.record(event)
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
             recordNotScheduled(.failed, gameDate: fireDate, productId: productId)
@@ -115,7 +115,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private func recordNotScheduled(_ reason: GameReminderEvent.SkipReason, gameDate: Date, productId: ProductId) {
         var event = GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate)
         event.skipReason = reason
-        telemetry.record(event)
+        diagnostics.record(event)
     }
 
     private func performCancelReminder(alarmId: UUID?) {

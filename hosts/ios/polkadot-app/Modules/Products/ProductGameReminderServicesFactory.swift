@@ -20,7 +20,7 @@ protocol ProductGameReminderServicesMaking {
 struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
     let settingsManager: SettingsManagerProtocol
     let localNotificationService: UserNotificationServicing
-    let telemetry: GameReminderTelemetry
+    let diagnostics: GameReminderDiagnostics
 
     func makeAlarm(for productId: ProductId) -> (any GameStartReminderServicing)? {
         if #available(iOS 26.1, *) {
@@ -28,7 +28,7 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
                 alarmManger: AlarmManager.shared,
                 settingsManager: settingsManager,
                 keys: .product(productId),
-                telemetry: telemetry
+                diagnostics: diagnostics
             )
         }
         return nil
@@ -39,7 +39,7 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
             localNotificationService: localNotificationService,
             settingsManager: settingsManager,
             keys: .product(productId),
-            telemetry: telemetry
+            diagnostics: diagnostics
         )
     }
 

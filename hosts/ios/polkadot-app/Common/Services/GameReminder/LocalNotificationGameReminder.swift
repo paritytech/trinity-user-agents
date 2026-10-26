@@ -10,20 +10,20 @@ final class LocalNotificationGameReminder {
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
-    private let telemetry: GameReminderTelemetry
+    private let diagnostics: GameReminderDiagnostics
 
     init(
         localNotificationService: UserNotificationServicing,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared,
-        telemetry: GameReminderTelemetry = NoopGameReminderTelemetry()
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics(reporter: NoopIssueReporter())
     ) {
         self.localNotificationService = localNotificationService
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
-        self.telemetry = telemetry
+        self.diagnostics = diagnostics
     }
 }
 
@@ -91,7 +91,7 @@ private extension LocalNotificationGameReminder {
         var event = GameReminderEvent(step: step, productId: productId, startsAt: gameDate)
         event.delivery = step == .scheduled ? .notification : nil
         event.skipReason = skipReason
-        telemetry.record(event)
+        diagnostics.record(event)
     }
 
     func cancel() {

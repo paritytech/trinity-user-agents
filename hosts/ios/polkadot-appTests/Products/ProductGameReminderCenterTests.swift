@@ -29,7 +29,7 @@ struct ProductGameReminderCenterTests {
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 productOpener: fakes,
                 dateProvider: fakes,
-                telemetry: fakes.telemetry
+                diagnostics: fakes.diagnostics
             )
         )
         center.start()
@@ -240,9 +240,9 @@ struct ProductGameReminderCenterTests {
         center.cancel(productId: other)
         center.cancel(productId: productId)
 
-        #expect(fakes.telemetry.events.map(\.step) == [.cancelled])
-        #expect(fakes.telemetry.events.first?.productId == productId)
-        #expect(fakes.telemetry.events.first?.startsAt == startsAt)
+        #expect(fakes.reporter.events.map(\.step) == [.cancelled])
+        #expect(fakes.reporter.events.first?.productId == productId)
+        #expect(fakes.reporter.events.first?.startsAt == startsAt)
     }
 
     @Test("Opening at the start is reported as an auto-open with the app state and whether it navigated")
@@ -255,8 +255,8 @@ struct ProductGameReminderCenterTests {
         fakes.now = startsAt.addingTimeInterval(2)
         center.refresh()
 
-        let event = try #require(fakes.telemetry.events.last)
-        #expect(fakes.telemetry.events.map(\.step) == [.productOpened])
+        let event = try #require(fakes.reporter.events.last)
+        #expect(fakes.reporter.events.map(\.step) == [.productOpened])
         #expect(event.openSource == .autoOpen)
         #expect(event.appState == .inactive)
         #expect(event.navigated == false)
@@ -272,8 +272,8 @@ struct ProductGameReminderCenterTests {
         fakes.now = startsAt.addingTimeInterval(600)
         center.refresh()
 
-        let event = try #require(fakes.telemetry.events.last)
-        #expect(fakes.telemetry.events.map(\.step) == [.missed])
+        let event = try #require(fakes.reporter.events.last)
+        #expect(fakes.reporter.events.map(\.step) == [.missed])
         #expect(event.appState == .background)
         #expect(event.occurredAt == startsAt.addingTimeInterval(600))
         #expect(fakes.opened.isEmpty)
@@ -295,9 +295,9 @@ struct ProductGameReminderCenterTests {
         for alarmIds: Set<UUID> in [[UUID()], [alarmId], [alarmId], [otherAlarmId]] {
             fakes.alarmAlerts.yield(alarmIds)
         }
-        try await waitUntil { fakes.telemetry.events.count == 2 }
+        try await waitUntil { fakes.reporter.events.count == 2 }
 
-        let events = fakes.telemetry.events
+        let events = fakes.reporter.events
         #expect(events.map(\.step) == [.fired, .fired])
         #expect(events.map(\.productId) == [productId, other])
         #expect(events.first?.delivery == .alarm)
@@ -314,7 +314,7 @@ struct ProductGameReminderCenterTests {
         fakes.now = startsAt.addingTimeInterval(600)
         center.refresh()
 
-        let events = fakes.telemetry.events
+        let events = fakes.reporter.events
         #expect(events.map(\.step) == [.tapped, .productOpened])
         #expect(events.last?.openSource == .alarm)
         #expect(events.last?.navigated == true)
@@ -330,8 +330,8 @@ struct ProductGameReminderCenterTests {
 
         center.openFromAlarm(productId: productId, startsAt: nil)
 
-        #expect(fakes.telemetry.events.map(\.step) == [.tapped, .productOpened])
-        #expect(fakes.telemetry.events.first?.startsAt == nil)
+        #expect(fakes.reporter.events.map(\.step) == [.tapped, .productOpened])
+        #expect(fakes.reporter.events.first?.startsAt == nil)
         #expect(fakes.opened == [productId])
     }
 
@@ -366,7 +366,8 @@ private final class Fakes: @unchecked Sendable {
     var opened: [String] = []
     var openNavigates = true
     let calendar = RecordingCalendar()
-    let telemetry = RecordingGameReminderTelemetry()
+    let reporter = RecordingGameReminderIssueReporter()
+    var diagnostics: GameReminderDiagnostics { reporter.diagnostics }
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
     private let alarmAlertStream: AsyncStream<Set<UUID>>
     private let alarmAvailable: Bool

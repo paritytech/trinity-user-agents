@@ -5,51 +5,51 @@ import Testing
 @testable import polkadot_app
 
 @MainActor
-@Suite("Game reminder delivery telemetry")
-struct GameReminderDeliveryTelemetryTests {
+@Suite("Game reminder delivery diagnostics")
+struct GameReminderDeliveryDiagnosticsTests {
     private struct ScheduleFailed: Error {}
 
     private let productId = "game.dot"
     private let keys = GameReminderStorageKeys.product("game.dot")
 
     @available(iOS 26.1, *)
-    private func makeAlarm(_ manager: MockGameAlarmManager, _ telemetry: RecordingGameReminderTelemetry)
+    private func makeAlarm(_ manager: MockGameAlarmManager, _ reporter: RecordingGameReminderIssueReporter)
         -> AlarmKitGameReminder {
         AlarmKitGameReminder(
             alarmManger: manager,
             settingsManager: InMemorySettingsManager(),
             keys: keys,
-            telemetry: telemetry
+            diagnostics: reporter.diagnostics
         )
     }
 
     private func makeNotification(
         _ service: MockUserNotificationService,
-        _ telemetry: RecordingGameReminderTelemetry
+        _ reporter: RecordingGameReminderIssueReporter
     ) -> LocalNotificationGameReminder {
         LocalNotificationGameReminder(
             localNotificationService: service,
             settingsManager: InMemorySettingsManager(),
             keys: keys,
-            telemetry: telemetry
+            diagnostics: reporter.diagnostics
         )
     }
 
     @available(iOS 26.1, *)
     @Test func alarmBookedOnceIsReportedOnceAsScheduled() async throws {
         let manager = MockGameAlarmManager()
-        let telemetry = RecordingGameReminderTelemetry()
-        let reminder = makeAlarm(manager, telemetry)
+        let reporter = RecordingGameReminderIssueReporter()
+        let reminder = makeAlarm(manager, reporter)
         let startsAt = Date().addingTimeInterval(3_600)
 
         reminder.scheduleReminder(gameDate: startsAt, productId: productId)
         reminder.scheduleReminder(gameDate: startsAt, productId: productId)
-        try await waitUntil { manager.scheduled.count == 1 && !telemetry.events.isEmpty }
+        try await waitUntil { manager.scheduled.count == 1 && !reporter.events.isEmpty }
         try await Task.sleep(for: .milliseconds(50))
 
-        #expect(telemetry.events.map(\.step) == [.scheduled])
-        #expect(telemetry.events.first?.delivery == .alarm)
-        #expect(telemetry.events.first?.startsAt == startsAt)
+        #expect(reporter.events.map(\.step) == [.scheduled])
+        #expect(reporter.events.first?.delivery == .alarm)
+        #expect(reporter.events.first?.startsAt == startsAt)
     }
 
     @Test(
@@ -70,27 +70,27 @@ struct GameReminderDeliveryTelemetryTests {
         let manager = MockGameAlarmManager()
         manager.isAuthorized = authorized
         manager.scheduleError = fails ? ScheduleFailed() : nil
-        let telemetry = RecordingGameReminderTelemetry()
+        let reporter = RecordingGameReminderIssueReporter()
 
         // The reminder holds itself only weakly while its work is queued.
-        let reminder = makeAlarm(manager, telemetry)
+        let reminder = makeAlarm(manager, reporter)
         reminder.scheduleReminder(gameDate: Date().addingTimeInterval(secondsToStart), productId: productId)
-        try await waitUntil { !telemetry.events.isEmpty }
+        try await waitUntil { !reporter.events.isEmpty }
 
-        #expect(telemetry.events.map(\.step) == [.notScheduled])
-        #expect(telemetry.events.first?.skipReason == reason)
-        #expect(telemetry.events.first?.delivery == nil)
+        #expect(reporter.events.map(\.step) == [.notScheduled])
+        #expect(reporter.events.first?.skipReason == reason)
+        #expect(reporter.events.first?.delivery == nil)
     }
 
     @Test func notificationBookedIsReportedAsScheduled() async throws {
-        let telemetry = RecordingGameReminderTelemetry()
+        let reporter = RecordingGameReminderIssueReporter()
 
-        makeNotification(MockUserNotificationService(), telemetry)
+        makeNotification(MockUserNotificationService(), reporter)
             .scheduleReminder(gameDate: Date().addingTimeInterval(3_600), productId: productId)
-        try await waitUntil { !telemetry.events.isEmpty }
+        try await waitUntil { !reporter.events.isEmpty }
 
-        #expect(telemetry.events.map(\.step) == [.scheduled])
-        #expect(telemetry.events.first?.delivery == .notification)
+        #expect(reporter.events.map(\.step) == [.scheduled])
+        #expect(reporter.events.first?.delivery == .notification)
     }
 
     @Test(
@@ -110,16 +110,16 @@ struct GameReminderDeliveryTelemetryTests {
         let service = MockUserNotificationService()
         service.accessStatus = allowed ? .allowed : .notAllowed(denied: true)
         service.scheduleError = fails ? ScheduleFailed() : nil
-        let telemetry = RecordingGameReminderTelemetry()
+        let reporter = RecordingGameReminderIssueReporter()
 
-        makeNotification(service, telemetry).scheduleReminder(
+        makeNotification(service, reporter).scheduleReminder(
             gameDate: Date().addingTimeInterval(secondsToStart),
             productId: productId
         )
-        try await waitUntil { !telemetry.events.isEmpty }
+        try await waitUntil { !reporter.events.isEmpty }
 
-        #expect(telemetry.events.map(\.step) == [.notScheduled])
-        #expect(telemetry.events.first?.skipReason == reason)
-        #expect(telemetry.events.first?.delivery == nil)
+        #expect(reporter.events.map(\.step) == [.notScheduled])
+        #expect(reporter.events.first?.skipReason == reason)
+        #expect(reporter.events.first?.delivery == nil)
     }
 }

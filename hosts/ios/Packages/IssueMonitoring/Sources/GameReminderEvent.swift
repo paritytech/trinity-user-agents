@@ -63,7 +63,7 @@ public struct GameReminderEvent: Sendable, Equatable {
 
     /// Times are device wall clock. The alarm rings at the start, so `delay_after_start_ms` is also how
     /// late a step came against the alarm's fire time.
-    public func sentryFields(origin: HostEventOrigin) -> HostEventFields {
+    public func fields(origin: HostEventOrigin) -> HostEventFields {
         var tags = origin.tags
         tags["reminder.product_id"] = productId
         tags["reminder.delivery"] = delivery?.rawValue
