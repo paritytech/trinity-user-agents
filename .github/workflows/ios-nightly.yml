@@ -1,37 +1,102 @@
-name: Nightly Distribution
-# The run is always dispatched on main, whatever it builds, so the ref it built
-# is recorded here. The nightly's changed check matches on it to tell a build of
-# main apart from one of a release branch.
-run-name: Nightly Distribution (${{ inputs.release_branch }})
+name: iOS nightly
 
+# One night as one run: the core is built once, and TestFlight, the simulator
+# release and the host-playground e2e are built from it as legs that do not
+# wait on each other's result, so "Re-run failed jobs" re-runs one leg in place.
+# ios-nightly-prepare.yml calls this once its prepare pipeline has decided what
+# to build.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       release_branch:
-        description: "Release branch to build from"
+        description: "The branch to build, main for a direct build"
         required: true
         type: string
       release_pr_number:
-        description: "Release PR number, empty for a direct build"
+        description: "The release pull request, empty for a direct build"
         required: false
-        default: ""
         type: string
+        default: ""
       increment_step:
-        description: "Build number increment step for direct builds (1 if empty)"
+        description: "Build number increment step for a direct build (1 if empty)"
         required: false
-        default: ""
         type: string
+        default: ""
+
+permissions:
+  contents: read
 
 jobs:
-  build_nightly:
+  # Device and simulator slices, since TestFlight archives for a device. Every
+  # leg unpacks this rather than building its own. The cache is the pull request
+  # gate's, which main's runs of ios-main.yml write; this only restores it.
+  core:
+    name: Build the in-tree core
+    runs-on: parity-macos-large
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_branch }}
+
+      - uses: ./.github/actions/mac-preflight
+        with:
+          simulator: "false"
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      # Through tar rather than the raw paths, so the xcframework keeps its
+      # layout and executable bits, which upload-artifact does not preserve.
+      - name: Package the generated core
+        run: |
+          set -euo pipefail
+          paths=(
+            ios/truapi-host/Sources
+            ios/truapi-host/Binaries
+            ios/truapi-provider/Sources
+          )
+          for path in "${paths[@]}"; do
+            if [ ! -e "$path" ]; then
+              echo "::error::$path was not generated, so the core is incomplete"
+              exit 1
+            fi
+          done
+          tar -czf "$RUNNER_TEMP/ios-core.tgz" "${paths[@]}"
+          ls -lh "$RUNNER_TEMP/ios-core.tgz"
+
+      # Kept for three days, so a leg re-run the next morning still finds it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: ios-nightly-core-${{ github.run_id }}
+          path: ${{ runner.temp }}/ios-core.tgz
+          retention-days: 3
+          if-no-files-found: error
+          overwrite: true
+
+  testflight:
+    name: TestFlight
+    needs: core
     uses: ./.github/workflows/ios-build-distribute.yml
+    # Reading the release pull request and the build's own run, commenting on
+    # the pull request and setting its commit status.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+      statuses: write
     with:
       release_branch: ${{ inputs.release_branch }}
       release_pr_number: ${{ inputs.release_pr_number }}
-      increment_step: ${{ inputs.increment_step || '' }}
+      increment_step: ${{ inputs.increment_step }}
       build_configuration: "Nightly"
       distribute_to_external_group: true
       external_group_name: "Daily test builds"
+      core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
@@ -49,30 +114,36 @@ jobs:
       SENTRY_DSN_IOS: ${{ secrets.SENTRY_DSN_IOS }}
 
   # The same commit as the TestFlight build, published as a release asset so a
-  # build is downloadable without being a registered tester. Runs alongside the
-  # TestFlight leg, so it costs the night no wall-clock, and a failure here
-  # leaves the announcement to report the TestFlight build on its own.
-  build_simulator:
+  # build is downloadable without being a registered tester. It runs alongside
+  # TestFlight, and a failure here leaves the announcement to report the
+  # TestFlight build on its own.
+  simulator:
     name: Simulator bundle
+    needs: core
     uses: ./.github/workflows/ios-nightly-simulator-release.yml
+    permissions:
+      contents: write
     with:
       ref: ${{ inputs.release_branch }}
+      core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
       MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
       SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
       SENTRY_DSN_IOS: ${{ secrets.SENTRY_DSN_IOS }}
 
-  # The commit the simulator bundle was built from, by sha since the release branch is deleted
-  # once merged, with its results added to the bundle's prerelease. Never fails the night.
+  # The commit the simulator bundle was built from, by sha since the release
+  # branch is deleted once merged, with its results added to the bundle's
+  # prerelease. Never fails the night.
   e2e:
     name: host-playground e2e
-    needs: build_simulator
+    needs: simulator
     uses: ./.github/workflows/host-playground-e2e.yml
     with:
       platform: ios
-      ref: ${{ needs.build_simulator.outputs.sha }}
-      release_tag: ${{ needs.build_simulator.outputs.tag }}
+      ref: ${{ needs.simulator.outputs.sha }}
+      release_tag: ${{ needs.simulator.outputs.tag }}
+      core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
       MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
@@ -87,11 +158,12 @@ jobs:
   # Safetynet is what Release ships — release feature set — running against the nightly
   # environment, under its own bundle id so it installs alongside the real app. See
   # Configs/base.safetynet.xcconfig.
-  build_safetynet:
+  safetynet:
     # Safetynet ships from the app repository. Held here rather than left to
     # be refused by ios-build-distribute, because a refusal fails the job and
     # every nightly run would be red with the two jobs after it skipped.
     if: false
+    needs: core
     uses: ./.github/workflows/ios-build-distribute.yml
     with:
       release_branch: ${{ inputs.release_branch }}
@@ -99,6 +171,7 @@ jobs:
       build_configuration: "Safetynet"
       distribute_to_external_group: true
       external_group_name: "Daily test builds"
+      core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
@@ -116,14 +189,17 @@ jobs:
       SENTRY_DSN_IOS: ${{ secrets.SENTRY_DSN_IOS }}
 
   auto_merge:
+    permissions:
+      contents: write
+      pull-requests: write
     name: Auto-merge nightly build PR
     runs-on: ubuntu-latest
-    needs: [build_nightly]
+    needs: [testflight]
     # A build straight from the main branch carries no release branch and no
     # pull request, so there is nothing here to merge.
     if: >-
       ${{ !cancelled() &&
-      needs.build_nightly.outputs.succeeded == 'true' &&
+      needs.testflight.outputs.succeeded == 'true' &&
       inputs.release_pr_number != '' }}
     steps:
       - name: Merge PR and delete branch
@@ -168,16 +244,20 @@ jobs:
     # The build shipped to TestFlight before this runs. A relay that is
     # briefly unreachable should not turn that into a failed run.
     continue-on-error: true
-    # build_simulator is a dependency so its link can be carried, not a
+    # The simulator leg is a dependency so its link can be carried, not a
     # condition: !cancelled() keeps this running when that leg failed, and the
     # download line says so instead of the announcement being lost with it.
-    needs: [build_nightly, build_simulator]
+    # Re-running a failed leg runs this again, so it posts only once per
+    # release and leaves an announced night as it is.
+    needs: [testflight, simulator]
     if: >-
       ${{ !cancelled() &&
-      needs.build_nightly.outputs.succeeded == 'true' }}
-    # contents: write is for marking the simulator release as announced.
+      needs.testflight.outputs.succeeded == 'true' }}
+    # contents: write is for marking the simulator release as announced, and
+    # actions: read for finding an earlier attempt's record on this run.
     permissions:
       contents: write
+      actions: read
     steps:
       # The announcement carries the bare join URL, a substring of the secret
       # rather than its value, which nothing redacts. This repository is public,
@@ -202,18 +282,35 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/actions/announce-nightly
 
+      # An earlier attempt of this run that announced left a record on the run,
+      # which outlives the attempt, so a re-run of any leg finds it.
+      - name: Check whether this night was announced
+        id: announced
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=nightly-announced" --jq .total_count)"
+          if [ "$count" != 0 ]; then
+            echo "An earlier attempt announced this night; nothing to send."
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Send nightly release notification
+        if: steps.announced.outputs.done != 'true'
         uses: ./.github/actions/announce-nightly
         with:
           platform: iOS
           # The changelog lives on the simulator prerelease, whose notes list
           # what merged since the previous one.
           changelog: >-
-            ${{ needs.build_simulator.outputs.tag != ''
-            && format('[Changelog for {0}]({1}/{2}/releases/tag/{0})', needs.build_simulator.outputs.tag, github.server_url, github.repository)
+            ${{ needs.simulator.outputs.tag != ''
+            && format('[Changelog for {0}]({1}/{2}/releases/tag/{0})', needs.simulator.outputs.tag, github.server_url, github.repository)
             || 'No changelog link for this build: the simulator release did not publish.' }}
           release_info: |
-            Nightly: ${{ needs.build_nightly.outputs.marketing_version }} (${{ needs.build_nightly.outputs.build_number }})
+            Nightly: ${{ needs.testflight.outputs.marketing_version }} (${{ needs.testflight.outputs.build_number }})
           # The TestFlight secret holds a ready-to-render markdown entry, label
           # included, so that an access hint stays out of this public repo. The
           # simulator asset is public, so its link is built here the way the
@@ -221,11 +318,23 @@ jobs:
           # page link is configured, so those two are the whole list.
           download_links: |
             ${{ secrets.TESTFLIGHT_DISTRIBUTION_LINK }}
-            ${{ needs.build_simulator.outputs.download_url != ''
-              && format('[Simulator .app]({0})', needs.build_simulator.outputs.download_url)
+            ${{ needs.simulator.outputs.download_url != ''
+              && format('[Simulator .app]({0})', needs.simulator.outputs.download_url)
               || 'No simulator bundle for this build: that leg did not finish.' }}
           relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
           relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
           room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
-          release_tag: ${{ needs.build_simulator.outputs.tag }}
+          release_tag: ${{ needs.simulator.outputs.tag }}
           github_token: ${{ github.token }}
+
+      - name: Record that this night was announced
+        if: steps.announced.outputs.done != 'true'
+        run: echo "${GITHUB_RUN_ATTEMPT}" > "$RUNNER_TEMP/nightly-announced"
+
+      - name: Keep the record on the run
+        if: steps.announced.outputs.done != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly-announced
+          path: ${{ runner.temp }}/nightly-announced
+          retention-days: 30

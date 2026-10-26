@@ -1,8 +1,13 @@
-name: Prepare Nightly
+name: iOS Nightly
+# The ref a run built, so the changed check below can tell a night that built
+# main apart from one that built another ref.
+run-name: iOS Nightly (${{ inputs.source_ref || 'main' }})
 
+# A night is one run, and cancelling one mid-upload would leave a build number
+# taken and nothing announced, so a second start waits for the first.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ios-nightly
+  cancel-in-progress: false
 
 on:
   workflow_dispatch:
@@ -28,6 +33,8 @@ permissions:
   contents: write
   pull-requests: write
   actions: write
+  issues: write
+  statuses: write
 
 jobs:
   # A build straight from main releases unconditionally, so a night on which
@@ -50,8 +57,8 @@ jobs:
         uses: ./.github/actions/changed-since-last-build
         with:
           github_token: ${{ github.token }}
-          workflow: ios-nightly-distribution.yml
-          title: Nightly Distribution (main)
+          workflow: ios-nightly-prepare.yml
+          title: iOS Nightly (main)
 
   prepare:
     needs: changed
@@ -66,4 +73,20 @@ jobs:
       bump_level: "no-bump"
       source_ref: ${{ inputs.source_ref || 'main' }}
       increment_step: ${{ inputs.increment_step || '' }}
-      distribution_workflow: ios-nightly-distribution.yml
+
+  # The night itself, in this run, so a failed leg is re-run in place.
+  nightly:
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.outputs.should_release == 'true' }}
+    uses: ./.github/workflows/ios-nightly.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    with:
+      release_branch: ${{ needs.prepare.outputs.release_branch }}
+      release_pr_number: ${{ needs.prepare.outputs.release_pr_number }}
+      increment_step: ${{ inputs.increment_step || '' }}

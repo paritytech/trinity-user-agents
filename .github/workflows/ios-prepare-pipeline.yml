@@ -19,8 +19,23 @@ on:
         type: string
         default: ""
       distribution_workflow:
-        required: true
+        description: >-
+          The workflow to dispatch with what to build. Empty dispatches
+          nothing, for a caller that builds from this workflow's outputs in the
+          same run.
+        required: false
         type: string
+        default: ""
+    outputs:
+      should_release:
+        description: "'true' when there is something to build"
+        value: ${{ jobs.prepare_release.outputs.should_release }}
+      release_branch:
+        description: "The branch to build, main for a direct build"
+        value: ${{ jobs.prepare_release.outputs.release_branch }}
+      release_pr_number:
+        description: "The release pull request, empty for a direct build"
+        value: ${{ jobs.prepare_release.outputs.release_pr_number }}
 
 permissions:
   contents: write
@@ -36,6 +51,10 @@ jobs:
   prepare_release:
     name: Bump MARKETING_VERSION, create PR, and trigger distribution
     runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.decide.outputs.should_release }}
+      release_branch: ${{ steps.decide.outputs.direct_build == 'true' && env.MAIN_BRANCH || steps.bump_version.outputs.branch_name }}
+      release_pr_number: ${{ steps.decide.outputs.direct_build != 'true' && steps.create_pr.outputs.pull_request_number || '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -350,7 +369,7 @@ jobs:
             }
 
       - name: Trigger distribution workflow
-        if: steps.decide.outputs.should_release == 'true'
+        if: steps.decide.outputs.should_release == 'true' && inputs.distribution_workflow != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DIRECT_BUILD: ${{ steps.decide.outputs.direct_build }}
