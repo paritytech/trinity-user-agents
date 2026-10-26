@@ -1,14 +1,14 @@
-import AsyncExtensions
 import BackgroundExecution
 import Foundation
 import SDKLogger
+import StructuredConcurrency
 
 public actor ProductContentLoader {
     public struct Environment: Sendable {
-        let pathProvider: ProductNetworkPathProviding
+        let pathProvider: NetworkPathProviding
         let backgroundExecutor: BackgroundExecuting
 
-        public init(pathProvider: ProductNetworkPathProviding, backgroundExecutor: BackgroundExecuting) {
+        public init(pathProvider: NetworkPathProviding, backgroundExecutor: BackgroundExecuting) {
             self.pathProvider = pathProvider
             self.backgroundExecutor = backgroundExecutor
         }
@@ -28,10 +28,6 @@ public actor ProductContentLoader {
             self.maxBackoff = maxBackoff
             self.clock = clock
         }
-    }
-
-    private enum Constants {
-        static let maxBackoffDoublings = 16
     }
 
     private let fetcher: ProductUpdateFetching
@@ -68,62 +64,43 @@ private extension ProductContentLoader {
     func retrying<T: Sendable>(
         _ productId: ProductId,
         policy: ProductLoadPolicy,
-        onPhase: ProductLoadPhaseHandler,
+        onPhase: @escaping ProductLoadPhaseHandler,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        var failedAttempts = 0
-
-        while true {
-            do {
-                return try await environment.backgroundExecutor.execute(operation)
-            } catch {
-                try Task.checkCancellation()
-
-                guard ProductLoadErrorClass(error) == .transient else {
-                    throw error
-                }
-
-                guard try await isPathSatisfied() else {
+        let strategy = NetworkFetchRetryStrategy(
+            classifier: ProductLoadErrorClassifier(),
+            maxAttempts: policy.maxAttempts,
+            backoff: NetworkFetchRetryStrategy.Backoff(initial: timing.initialBackoff, max: timing.maxBackoff),
+            clock: timing.clock,
+            pathProvider: environment.pathProvider,
+            onEvent: { [logger] event in
+                switch event {
+                case .waitingForNetwork:
                     onPhase(.waitingForNetwork)
-                    try await waitForSatisfiedPath()
-                    continue
+                case let .attemptFailed(attempt, error):
+                    logger.warning("Product load attempt \(attempt) failed for \(productId): \(error)")
+                case let .willRetry(attempt):
+                    onPhase(.retrying(attempt: attempt))
+                case .networkRestored,
+                     .notRetryable:
+                    break
                 }
-
-                failedAttempts += 1
-                logger.warning("Product load attempt \(failedAttempts) failed for \(productId): \(error)")
-
-                guard policy.allowsRetry(afterFailedAttempts: failedAttempts) else {
-                    throw error
-                }
-
-                onPhase(.retrying(attempt: failedAttempts))
-                try await timing.clock.sleep(for: backoff(afterFailedAttempts: failedAttempts))
             }
+        )
+
+        return try await withRetry(strategy: strategy) { [backgroundExecutor = environment.backgroundExecutor] in
+            try await backgroundExecutor.execute(operation)
         }
-    }
-
-    func isPathSatisfied() async throws -> Bool {
-        try await environment.pathProvider.pathStream().first { _ in true } ?? true
-    }
-
-    func waitForSatisfiedPath() async throws {
-        _ = try await environment.pathProvider.pathStream().first { $0 }
-    }
-
-    func backoff(afterFailedAttempts failedAttempts: Int) -> Duration {
-        let doublings = min(failedAttempts - 1, Constants.maxBackoffDoublings)
-
-        return min(timing.initialBackoff * (1 << doublings), timing.maxBackoff)
     }
 }
 
 private extension ProductLoadPolicy {
-    func allowsRetry(afterFailedAttempts failedAttempts: Int) -> Bool {
+    var maxAttempts: Int? {
         switch self {
         case .untilCancelled:
-            true
+            nil
         case let .attempts(limit):
-            failedAttempts < limit
+            limit
         }
     }
 }

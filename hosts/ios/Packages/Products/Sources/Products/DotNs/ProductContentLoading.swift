@@ -1,4 +1,3 @@
-import AsyncExtensions
 import Foundation
 
 public enum ProductLoadPolicy: Equatable, Sendable {
@@ -48,8 +47,4 @@ public extension ProductContentLoading {
     func open(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ProductContent {
         try await open(productId, policy: policy, onPhase: { _ in })
     }
-}
-
-public protocol ProductNetworkPathProviding: Sendable {
-    func pathStream() -> AnyAsyncSequence<Bool>
 }
