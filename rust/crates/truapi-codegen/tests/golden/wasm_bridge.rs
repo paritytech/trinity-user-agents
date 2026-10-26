@@ -11,7 +11,7 @@ use truapi::latest;
 use wasm_bindgen::JsValue;
 
 use super::{
-    WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
+    WasmPlatform, call_js_function, decode_bytes, decode_js_item, get_function,
     get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
     invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
 };
@@ -200,13 +200,11 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostChatCreateRoomError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatCreateRoomResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostChatCreateRoomResponse>(
             bytes,
             "createChatRoom response did not decode",
-        )
-        .map_err(|reason| latest::HostChatCreateRoomError::Unknown { reason })
+        )?)
     }
 
     async fn register_chat_bot(
@@ -221,13 +219,11 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostChatRegisterBotError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatRegisterBotResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostChatRegisterBotResponse>(
             bytes,
             "registerChatBot response did not decode",
-        )
-        .map_err(|reason| latest::HostChatRegisterBotError::Unknown { reason })
+        )?)
     }
 
     async fn post_chat_message(
@@ -242,13 +238,11 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostChatPostMessageError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatPostMessageResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostChatPostMessageResponse>(
             bytes,
             "postChatMessage response did not decode",
-        )
-        .map_err(|reason| latest::HostChatPostMessageError::Unknown { reason })
+        )?)
     }
 
     async fn set_chat_room_footer(
@@ -263,8 +257,8 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 
     fn subscribe_chat_rooms(
@@ -289,13 +283,11 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
             &self.bridge.contacts,
             vec![Uint8Array::from(lookup.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::HostContactMatches>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::HostContactMatches>(
             bytes,
             "contacts response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 
     async fn pick_contact(
@@ -306,13 +298,11 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
             &self.bridge.pick_contact,
             vec![Uint8Array::from(_product.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::HostContactPick>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::HostContactPick>(
             bytes,
             "pickContact response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 }
 
@@ -322,13 +312,12 @@ impl crate::platform::CoreStorage for WasmPlatform {
         &self,
         key: crate::platform::CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, latest::GenericError> {
-        invoke_optional_bytes_return(
+        Ok(invoke_optional_bytes_return(
             &self.bridge.read_core_storage,
             vec![Uint8Array::from(key.encode().as_slice()).into()],
             "readCoreStorage must resolve to Uint8Array, null or undefined",
         )
-        .await
-        .map_err(generic)
+        .await?)
     }
 
     async fn write_core_storage(
@@ -343,8 +332,8 @@ impl crate::platform::CoreStorage for WasmPlatform {
                 Uint8Array::from(value.as_slice()).into(),
             ],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 
     async fn clear_core_storage(
@@ -355,8 +344,8 @@ impl crate::platform::CoreStorage for WasmPlatform {
             &self.bridge.clear_core_storage,
             vec![Uint8Array::from(key.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 }
 
@@ -386,26 +375,21 @@ impl crate::platform::Features for WasmPlatform {
             &self.bridge.feature_supported,
             vec![Uint8Array::from(request.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<latest::HostFeatureSupportedResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostFeatureSupportedResponse>(
             bytes,
             "featureSupported response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 
     async fn supported_chains(
         &self,
     ) -> Result<crate::platform::HostChainSet, latest::GenericError> {
-        let bytes = invoke_bytes_return(&self.bridge.supported_chains, Vec::new())
-            .await
-            .map_err(generic)?;
-        decode_bytes::<crate::platform::HostChainSet>(
+        let bytes = invoke_bytes_return(&self.bridge.supported_chains, Vec::new()).await?;
+        Ok(decode_bytes::<crate::platform::HostChainSet>(
             bytes,
             "supportedChains response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 }
 
@@ -423,8 +407,8 @@ impl crate::platform::GamePlatform for WasmPlatform {
                 js_sys::BigInt::from(starts_at).into(),
             ],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 
     async fn cancel_game_reminder(
@@ -435,8 +419,8 @@ impl crate::platform::GamePlatform for WasmPlatform {
             &self.bridge.cancel_game_reminder,
             vec![Uint8Array::from(product.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 }
 
@@ -455,9 +439,8 @@ impl crate::platform::LocaleHost for WasmPlatform {
 #[crate::platform::async_trait]
 impl crate::platform::Navigation for WasmPlatform {
     async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError> {
-        invoke_unit(&self.bridge.navigate_to, vec![JsValue::from_str(&url)])
-            .await
-            .map_err(|reason| latest::HostNavigateToError::Unknown { reason })
+        invoke_unit(&self.bridge.navigate_to, vec![JsValue::from_str(&url)]).await?;
+        Ok(())
     }
 }
 
@@ -471,13 +454,11 @@ impl crate::platform::Notifications for WasmPlatform {
             &self.bridge.push_notification,
             vec![Uint8Array::from(notification.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<latest::HostPushNotificationResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostPushNotificationResponse>(
             bytes,
             "pushNotification response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 
     async fn cancel_notification(&self, id: u32) -> Result<(), latest::GenericError> {
@@ -485,8 +466,8 @@ impl crate::platform::Notifications for WasmPlatform {
             &self.bridge.cancel_notification,
             vec![JsValue::from_f64(f64::from(id))],
         )
-        .await
-        .map_err(generic)
+        .await?;
+        Ok(())
     }
 }
 
@@ -500,13 +481,11 @@ impl crate::platform::PermissionStatusHost for WasmPlatform {
             &self.bridge.device_permission_status,
             vec![Uint8Array::from(request.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::DevicePermissionStatus>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::DevicePermissionStatus>(
             bytes,
             "devicePermissionStatus response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 }
 
@@ -524,13 +503,11 @@ impl crate::platform::Permissions for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::PermissionDecision>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::PermissionDecision>(
             bytes,
             "devicePermission response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 
     async fn remote_permission(
@@ -545,13 +522,11 @@ impl crate::platform::Permissions for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::PermissionDecision>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::PermissionDecision>(
             bytes,
             "remotePermission response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 }
 
@@ -580,8 +555,8 @@ impl crate::platform::PocketPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostPocketRemoveCardError::Unknown { reason })
+        .await?;
+        Ok(())
     }
 }
 
@@ -612,13 +587,11 @@ impl crate::platform::ProductOperations for WasmPlatform {
                 JsValue::from_str(&label),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })?;
-        decode_bytes::<latest::HostWorkerBeginOperationResponse>(
+        .await?;
+        Ok(decode_bytes::<latest::HostWorkerBeginOperationResponse>(
             bytes,
             "beginOperation response did not decode",
-        )
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })
+        )?)
     }
 
     async fn end_operation(
@@ -633,8 +606,8 @@ impl crate::platform::ProductOperations for WasmPlatform {
                 JsValue::from_f64(f64::from(id)),
             ],
         )
-        .await
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })
+        .await?;
+        Ok(())
     }
 }
 
@@ -644,13 +617,12 @@ impl crate::platform::ProductStorage for WasmPlatform {
         &self,
         key: String,
     ) -> Result<Option<Vec<u8>>, truapi::v01::HostLocalStorageReadError> {
-        invoke_optional_bytes_return(
+        Ok(invoke_optional_bytes_return(
             &self.bridge.read,
             vec![JsValue::from_str(&key)],
             "read must resolve to Uint8Array, null or undefined",
         )
-        .await
-        .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+        .await?)
     }
 
     async fn write(
@@ -665,14 +637,13 @@ impl crate::platform::ProductStorage for WasmPlatform {
                 Uint8Array::from(value.as_slice()).into(),
             ],
         )
-        .await
-        .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+        .await?;
+        Ok(())
     }
 
     async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
-        invoke_unit(&self.bridge.clear, vec![JsValue::from_str(&key)])
-            .await
-            .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+        invoke_unit(&self.bridge.clear, vec![JsValue::from_str(&key)]).await?;
+        Ok(())
     }
 
     fn subscribe_storage(
@@ -701,10 +672,11 @@ impl crate::platform::ScannerPlatform for WasmPlatform {
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::HostScan>(bytes, "scanCode response did not decode")
-            .map_err(generic)
+        .await?;
+        Ok(decode_bytes::<crate::platform::HostScan>(
+            bytes,
+            "scanCode response did not decode",
+        )?)
     }
 }
 
@@ -730,25 +702,22 @@ impl crate::platform::UserConfirmation for WasmPlatform {
             &self.bridge.confirm_permission,
             vec![Uint8Array::from(review.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::PermissionDecision>(
+        .await?;
+        Ok(decode_bytes::<crate::platform::PermissionDecision>(
             bytes,
             "confirmPermission response did not decode",
-        )
-        .map_err(generic)
+        )?)
     }
 
     async fn confirm_user_action(
         &self,
         review: crate::platform::UserConfirmationReview,
     ) -> Result<bool, latest::GenericError> {
-        invoke_bool(
+        Ok(invoke_bool(
             &self.bridge.confirm_user_action,
             vec![Uint8Array::from(review.encode().as_slice()).into()],
         )
-        .await
-        .map_err(generic)
+        .await?)
     }
 }
 

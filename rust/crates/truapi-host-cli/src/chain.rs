@@ -100,9 +100,7 @@ impl ChainProvider for WsChainProvider {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let url = self.url_for(&genesis_hash);
 		debug!(genesis = %hex::encode(genesis_hash), %url, "chain connect");
-		let connection = WsJsonRpcConnection::connect(url)
-			.await
-			.map_err(|reason| ProviderError::Transport { reason })?;
+		let connection = WsJsonRpcConnection::connect(url).await?;
 		Ok(Box::new(connection))
 	}
 }
@@ -123,10 +121,11 @@ pub struct WsJsonRpcConnection {
 }
 
 impl WsJsonRpcConnection {
-	async fn connect(url: &str) -> Result<Self, String> {
-		let (stream, _response) = connect_async(url)
-			.await
-			.map_err(|err| format!("statement-store websocket connect failed: {err}"))?;
+	async fn connect(url: &str) -> Result<Self, ProviderError> {
+		let (stream, _response) =
+			connect_async(url).await.map_err(|err| ProviderError::Transport {
+				reason: format!("statement-store websocket connect failed: {err}"),
+			})?;
 		let (mut write, mut read) = stream.split();
 		let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
 		let (inbound_tx, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);

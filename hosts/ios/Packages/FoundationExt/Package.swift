@@ -10,6 +10,10 @@ let package = Package(
         .library(
             name: "FoundationExt",
             targets: ["FoundationExt"]
+        ),
+        .library(
+            name: "FoundationExtTestSupport",
+            targets: ["FoundationExtTestSupport"]
         )
     ],
     dependencies: [
@@ -23,7 +27,13 @@ let package = Package(
             name: "FoundationExt",
             dependencies: [
                 .product(name: "Foundation-iOS", package: "Foundation-iOS")
-            ]
+            ],
+            path: "Sources"
+        ),
+        .target(
+            name: "FoundationExtTestSupport",
+            dependencies: ["FoundationExt"],
+            path: "TestSupport"
         ),
         .testTarget(
             name: "FoundationExtTests",

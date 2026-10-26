@@ -1,5 +1,7 @@
 //! Item keys and where they sit in the derivation tree.
 
+use std::sync::Weak;
+
 use super::purse::PurseId;
 use crate::{
 	host_logic::product_account::{
@@ -44,6 +46,18 @@ impl ItemSlot {
 pub trait ItemKeyDeriver: Send + Sync {
 	/// The public key at each of `slots`, in order.
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError>;
+}
+
+/// For a deriver that owns the ledger, which must not keep it alive in turn.
+/// Once the deriver is gone there are no keys to derive.
+impl<Deriver: ItemKeyDeriver> ItemKeyDeriver for Weak<Deriver> {
+	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
+		let Some(deriver) = self.upgrade() else {
+			let reason = "the item key deriver was dropped".to_string();
+			return Err(AuthorityError::Unavailable { reason });
+		};
+		deriver.derive_item_keys(slots)
+	}
 }
 
 /// The public key at each of `slots`, derived from the root of `entropy`.

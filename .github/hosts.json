@@ -1,0 +1,62 @@
+{
+  "core": [
+    "rust/crates/truapi/",
+    "rust/crates/truapi-codegen/",
+    "rust/crates/truapi-macros/",
+    "rust/crates/truapi-provider/",
+    "rust/crates/truapi-verifiable/",
+    "rust/crates/uniffi-bindgen-cli/",
+    "js/packages/truapi/",
+    "js/container/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "nightly-toolchain",
+    "Makefile",
+    "scripts/",
+    "package.json",
+    "package-lock.json",
+    ".github/actions/rust-nightly/",
+    ".github/hosts.json"
+  ],
+  "hosts": {
+    "ios": {
+      "tree": [
+        "hosts/ios/",
+        "ios/",
+        "Package.swift"
+      ],
+      "full": [
+        "js/packages/",
+        "js/container/",
+        "Makefile",
+        "nightly-toolchain",
+        "scripts/",
+        "package.json",
+        "package-lock.json",
+        ".github/actions/rust-nightly/"
+      ],
+      "ci": [
+        ".github/workflows/ios-pr.yml",
+        ".github/workflows/ios-firebase-debug-distribution.yml",
+        ".github/actions/bootstrap-ios-core/",
+        ".github/actions/find-main-artifact/",
+        ".github/actions/mac-preflight/",
+        ".github/actions/rust-cache/",
+        ".github/actions/setup-swiftlint/",
+        ".github/actions/upsert-pr-comment/"
+      ]
+    },
+    "android": {
+      "tree": [
+        "hosts/android/",
+        "android/truapi-host/",
+        "android/truapi-container.gradle"
+      ],
+      "full": [],
+      "ci": [
+        ".github/actions/setup-android-build/",
+        ".github/actions/rust-cache/"
+      ]
+    }
+  }
+}

@@ -15,19 +15,16 @@ actor ChatRequestEngineContext {
 
     let tokenProvider: APNSTokenProviding
     let chatRequestStoreService: ChatRequestStoreServicing
-    let messageExchangeModeProvider: any MessageExchangeModeProviding
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
 
     init(
         pendingRequest: ChatOpenModel.NewRequest?,
         chatRequestStoreService: ChatRequestStoreServicing,
-        messageExchangeModeProvider: any MessageExchangeModeProviding,
         tokenProvider: APNSTokenProviding,
         storageFacade: StorageFacadeProtocol
     ) {
         self.pendingRequest = pendingRequest
         self.chatRequestStoreService = chatRequestStoreService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.tokenProvider = tokenProvider
 
         chatRepository = AnyDataProviderRepository(
@@ -80,26 +77,21 @@ actor ChatRequestEngineContext {
     }
 
     func acceptIncomingRequest(for chatId: Chat.Id) async throws {
-        let (contact, request) = try await fetchIncomingChatContact(for: chatId)
-        let messageExchangeMode = messageExchangeModeProvider.mode(for: contact.ownKeyId)
-        let acceptorDevice = try chatRequestStoreService.buildLocalAcceptorDevice(for: contact.ownKeyId)
+        let request = try await fetchIncomingChatContact(for: chatId)
+        let acceptorDevice = try chatRequestStoreService.buildLocalAcceptorDevice()
         try await chatRequestStoreService.acceptIncomingRequest(
-            .existing(
-                requestId: request.requestId,
-                messageExchangeMode: messageExchangeMode,
-                acceptorDevice: acceptorDevice
-            )
+            .existing(requestId: request.requestId, acceptorDevice: acceptorDevice)
         )
     }
 
     func declineIncomingRequest(for chatId: Chat.Id) async throws {
-        let (_, request) = try await fetchIncomingChatContact(for: chatId)
+        let request = try await fetchIncomingChatContact(for: chatId)
         try await chatRequestStoreService.declineIncomingRequest(request.requestId)
     }
 }
 
 private extension ChatRequestEngineContext {
-    func fetchIncomingChatContact(for chatId: Chat.Id) async throws -> (Chat.Contact, Chat.Request) {
+    func fetchIncomingChatContact(for chatId: Chat.Id) async throws -> Chat.Request {
         let chat = try await chatRepository
             .fetchOperation(
                 by: { chatId.rawRepresentation },
@@ -116,6 +108,6 @@ private extension ChatRequestEngineContext {
             throw ChatRequestEngineContextError.noIncomingRequest
         }
 
-        return (contact, request)
+        return request
     }
 }
