@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.sentry.Sentry
@@ -54,11 +56,24 @@ enum class GameReminderSkipReason(val value: String) {
     FAILED("failed"),
 }
 
-class GameReminderTelemetry @Inject constructor(
+internal fun interface GameReminderEventCapture {
+    fun capture(event: () -> SentryEvent)
+}
+
+internal class SentryGameReminderEventCapture @Inject constructor() : GameReminderEventCapture {
+    override fun capture(event: () -> SentryEvent) {
+        if (FeatureOption.HOST_TELEMETRY.isEnabled) {
+            Sentry.captureEvent(event())
+        }
+    }
+}
+
+class GameReminderTelemetry @Inject internal constructor(
     private val timeProvider: TimeProvider,
+    private val capture: GameReminderEventCapture,
 ) {
     fun report(event: GameReminderEvent) {
-        runCatching { Sentry.captureEvent(event.toSentryEvent(timeProvider.now().toEpochMilliseconds())) }
+        runCatching { capture.capture { event.toSentryEvent(timeProvider.now().toEpochMilliseconds()) } }
             .logFailure("Failed to capture game reminder event")
     }
 }
@@ -72,7 +87,7 @@ private fun GameReminderEvent.eventName() = when (this) {
     is GameReminderEvent.Cancelled -> "host.reminder.cancelled"
 }
 
-internal fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().apply {
+private fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().apply {
     val event = this@toSentryEvent
     message = Message().apply { formatted = event.eventName() }
     level = SentryLevel.INFO

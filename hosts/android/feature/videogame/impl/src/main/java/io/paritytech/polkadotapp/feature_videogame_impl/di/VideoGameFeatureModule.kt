@@ -15,12 +15,14 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPub
 import io.paritytech.polkadotapp.feature_videogame_impl.data.calendar.RealProductGameCalendar
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.RealVideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderAlarms
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEventCapture
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameCalendar
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameNotificationAutoCanceller
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOsAccess
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealGameReminderAlarms
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealVideoGameReminderScheduler
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.SentryGameReminderEventCapture
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.VideoGameReminderScheduler
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.autoLaunch.ProductGameAutoOpener
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.GamePillOverlayRenderer
@@ -35,6 +37,9 @@ internal interface VideoGameFeatureModule {
 
     @Binds
     fun bindGameReminderAlarms(impl: RealGameReminderAlarms): GameReminderAlarms
+
+    @Binds
+    fun bindGameReminderEventCapture(impl: SentryGameReminderEventCapture): GameReminderEventCapture
 
     @Binds
     fun bindProductGameReminder(impl: RealProductGameReminder): ProductGameReminder
