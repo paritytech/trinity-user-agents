@@ -96,9 +96,9 @@ pub struct CallbackPlatform {
 	pub storage_events: Arc<NativeEventBus>,
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
-	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.callbacks.worker_demand_changed(product_id.clone(), transition);
+impl crate::host_logic::worker::WorkerController for CallbackPlatform {
+	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.callbacks.request_worker_transition(product_id.clone(), transition);
 	}
 }
 

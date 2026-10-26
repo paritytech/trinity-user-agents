@@ -157,8 +157,8 @@ pub trait HostCallbacks: Send + Sync {
 	/// promptly.
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
-	/// Observe demand on a product's worker crossing zero. `Start` means the
-	/// host runs the worker now, `Stop` that nothing wants it any more. Every
+	/// Request a product worker transition. `Start` means the host runs the
+	/// worker now; `Stop` means it is no longer needed and may stop. Every
 	/// transition arrives here, in ledger order: the ones the host asks for
 	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
 	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
@@ -172,7 +172,7 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
-	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition);
+	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// A device finished pairing with this signing host.
 	///

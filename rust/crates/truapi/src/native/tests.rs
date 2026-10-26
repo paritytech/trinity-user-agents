@@ -247,7 +247,7 @@ impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, _detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push(marker);
 	}
-	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition) {
+	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
 			.lock()
 			.expect("worker demand mutex poisoned")
@@ -1834,7 +1834,8 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
+		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
+		}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
@@ -2000,7 +2001,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
+		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
+		}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
