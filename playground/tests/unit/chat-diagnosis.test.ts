@@ -13,13 +13,12 @@ import { WORKER_DIAGNOSIS_METHODS, ChatDiagnosis } from "../../worker/diagnosis"
 const UNDIAGNOSED_WORKER_METHODS: ReadonlySet<string> = new Set([
   "Pocket/list_subscribe",
   "Pocket/remove_card",
+  "Funding Provider/quote",
   "Funding Provider/assign",
   "Funding Provider/cancel",
   "Funding Provider/settle_cancel",
   "Funding Provider/report",
   "Funding Provider/present_frame",
-  "Funding Provider/answer_quote",
-  "Funding Provider/save",
 ]);
 
 describe("ChatDiagnosis", () => {
