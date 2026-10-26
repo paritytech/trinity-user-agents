@@ -106,16 +106,18 @@ struct WidgetNodeLayoutTests {
     }
 
     @Test
-    func aMissingImageDrawsNothing() async throws {
-        let image = node(.image(.init(source: .archive(path: "gone.png"))), width: 40, height: 40)
+    func aMissingImageDrawsItsPlaceholderInTheMiddleOfItsSpace() async throws {
+        let image = node(.image(.init(source: .archive(path: "gone.png"))), width: 80, height: 60)
 
         let drawn = try await WidgetNodeRaster.bounds(
             of: image,
-            in: CGSize(width: 40, height: 40),
+            in: CGSize(width: 100, height: 100),
             resolveImage: WidgetImageResolver { _ in nil }
         )
+        let icon = drawn.filter { $0.key != WidgetNodeRaster.backdrop }.values.reduce(CGRect.null) { $0.union($1) }
 
-        #expect(Array(drawn.keys) == [WidgetNodeRaster.backdrop])
+        #expect(abs(icon.midX - 40) <= 1 && abs(icon.midY - 30) <= 1)
+        #expect(icon.width <= 44 && icon.height <= 44)
     }
 
     /// Where a picture lands for each way a face can size it: cut to its node,

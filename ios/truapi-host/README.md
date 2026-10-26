@@ -294,6 +294,11 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+`currentInstallation()` on the runtime bridge returns the 32-byte id of the
+current app installation, the one the host registers for recovery. NFT purse
+item keys are derived under it. Defaults to a rejection, which fails
+`createItems`.
+
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
 finds at launch. While it is `true`, schedule a background task (a
@@ -338,6 +343,35 @@ allows one and delivers an ordinary notification otherwise, may add the game to
 the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
+
+## Payments
+
+A host with a wallet serves top-ups, payments and the spendable balance by
+installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
+on the runtime, before any product opens. A runtime without one answers the
+matching calls `Unsupported`.
+
+```swift
+runtime.setTopUp(wallet)
+runtime.setPayments(wallet)
+runtime.setBalance(wallet)
+
+// Later, from the wallet's own status and balance streams:
+runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
+runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
+runtime.notifyBalance(purse: nil, available: "1500000000")
+```
+
+The core checks the session, the source keys, a positive amount and the
+product's balance access, so the host never prompts for balance access. A
+payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
+which the core turns into `Rejected` for a product without balance access. The
+balance is what a payment can spend now, as a decimal string of CASH units.
+
+`topUpStatus` and `paymentStatus` answer the current status of an id inline,
+or `nil` when the host holds none. Every later status goes through
+`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
+core relays each to the products following that id.
 
 ## Architecture
 

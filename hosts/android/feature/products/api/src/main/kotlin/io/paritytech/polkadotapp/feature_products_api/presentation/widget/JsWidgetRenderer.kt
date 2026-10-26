@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,10 +44,14 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
+import io.paritytech.polkadotapp.design.components.icon.NovaIcon
+import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.FileNotFound
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.text.NovaTextField
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -61,7 +66,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import timber.log.Timber
 import coil.size.Size as CoilSize
+import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
  * CompositionLocal for event dispatcher, allowing nested widgets to dispatch events.
@@ -101,6 +108,14 @@ private fun JsWidgetContent(
     }
 }
 
+private sealed interface JsImagePicture {
+    data object Loading : JsImagePicture
+
+    data class Located(val model: Any) : JsImagePicture
+
+    data object Unavailable : JsImagePicture
+}
+
 @Composable
 private fun JsImageRenderer(
     widget: JsWidget.Image,
@@ -108,41 +123,67 @@ private fun JsImageRenderer(
 ) {
     val resolver = LocalJsImageResolver.current
     // Kept across a re-resolve, so a face that redraws does not blink its images away.
-    var model by remember(widget.source) { mutableStateOf(resolver.resolved(widget.source)) }
-    LaunchedEffect(widget.source, resolver) {
-        resolver.resolve(widget.source)?.let { model = it }
+    var picture by remember(widget.source) {
+        mutableStateOf(resolver.resolved(widget.source)?.let(JsImagePicture::Located) ?: JsImagePicture.Loading)
     }
-    val imageModifier = modifier.then(widget.modifiers.toComposeModifier())
+    LaunchedEffect(widget.source, resolver) {
+        val model = resolver.resolve(widget.source)
+        picture = when {
+            model != null -> JsImagePicture.Located(model)
+            picture is JsImagePicture.Located -> picture
+            else -> JsImagePicture.Unavailable
+        }
+    }
 
-    // An image the host cannot fetch draws as empty space.
-    if (model == null) {
-        Spacer(modifier = imageModifier)
-    } else {
-        val density = LocalDensity.current.density
-        val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
-        // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
-        val drawsNaturalSize = widget.fit == JsImageFit.NONE || sizedSides == 0
-        AsyncImage(
-            modifier = imageModifier,
-            model = if (drawsNaturalSize) {
-                ImageRequest.Builder(LocalContext.current).data(model).size(CoilSize.ORIGINAL).build()
-            } else {
-                model
-            },
-            contentDescription = null,
-            contentScale = when {
-                sizedSides == 0 -> ContentScale.Inside
-                sizedSides == 1 && widget.fit != JsImageFit.NONE -> ContentScale.Fit
-                else -> widget.fit.toContentScale()
-            },
-            transform = { state ->
-                if (state is AsyncImagePainter.State.Success) {
-                    state.copy(painter = DpPainter(state.painter, density))
-                } else {
-                    state
-                }
-            },
-        )
+    // Loading and failure both fill the space the node reserves, so a missing file costs the card
+    // one node rather than its layout.
+    Box(
+        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+        contentAlignment = Alignment.Center,
+        propagateMinConstraints = true,
+    ) {
+        when (val current = picture) {
+            JsImagePicture.Loading -> JsImageLoading()
+            JsImagePicture.Unavailable -> JsImageUnavailable()
+            is JsImagePicture.Located -> {
+                var drawn by remember(current.model) { mutableStateOf(false) }
+                val density = LocalDensity.current.density
+                val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
+                // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
+                val drawsNaturalSize = widget.fit == JsImageFit.NONE || sizedSides == 0
+                AsyncImage(
+                    model = if (drawsNaturalSize) {
+                        ImageRequest.Builder(LocalContext.current).data(current.model).size(CoilSize.ORIGINAL).build()
+                    } else {
+                        current.model
+                    },
+                    contentDescription = null,
+                    contentScale = when {
+                        sizedSides == 0 -> ContentScale.Inside
+                        sizedSides == 1 && widget.fit != JsImageFit.NONE -> ContentScale.Fit
+                        else -> widget.fit.toContentScale()
+                    },
+                    transform = { state ->
+                        if (state is AsyncImagePainter.State.Success) {
+                            state.copy(painter = DpPainter(state.painter, density))
+                        } else {
+                            state
+                        }
+                    },
+                    onState = { state ->
+                        when (state) {
+                            is AsyncImagePainter.State.Success -> drawn = true
+                            is AsyncImagePainter.State.Error -> {
+                                Timber.w(state.result.throwable, "Widget image %s failed to load from %s", widget.source, current.model)
+                                picture = JsImagePicture.Unavailable
+                            }
+                            else -> Unit
+                        }
+                    },
+                )
+                if (!drawn) JsImageLoading()
+            }
+        }
     }
 }
 
@@ -152,6 +193,25 @@ private class DpPainter(private val picture: Painter, private val density: Float
         get() = picture.intrinsicSize.let { if (it.isSpecified) it * density else it }
 
     override fun DrawScope.onDraw() = with(picture) { draw(size) }
+}
+
+@Composable
+private fun JsImageLoading() {
+    CircularProgressIndicator(
+        modifier = Modifier.wrapContentSize().size(24.dp),
+        color = PolkadotTheme.colors.fg.secondary,
+        strokeWidth = 2.dp,
+    )
+}
+
+@Composable
+private fun JsImageUnavailable() {
+    NovaIcon(
+        modifier = Modifier.wrapContentSize().size(44.dp),
+        imageVector = NovaIcons.FileNotFound,
+        contentDescription = stringResource(RCommon.string.products_widget_image_unavailable),
+        tint = PolkadotTheme.colors.fg.tertiary,
+    )
 }
 
 @Composable
@@ -348,7 +408,7 @@ private fun JsButtonRenderer(
         }
     }
 
-    val buttonModifier = modifier.then(widget.modifiers.toComposeModifier())
+    val buttonModifier = modifier.then(widget.modifiers.toComposeModifier()).fillMaxWidth()
 
     when (widget.variant) {
         JsButtonVariant.PRIMARY -> {

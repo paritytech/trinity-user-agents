@@ -70,10 +70,11 @@ enum class CoinageArrangement {
             areaHeight: Float,
             designs: List<CoinageAssetStore.Design>,
             stripHeight: Float,
-            focus: Focus?
+            focus: Focus?,
+            set: CoinageScene.CoinSet
         ): Result {
             val laid = when (arrangement) {
-                STRIP -> strip(coins, areaWidth, designs, stripHeight)
+                STRIP -> strip(coins, areaWidth, designs, stripHeight, set)
                 GRID -> grid(coins, areaWidth, areaHeight)
             }
 
@@ -142,13 +143,14 @@ enum class CoinageArrangement {
             coins: List<CoinageScene.Coin>,
             width: Float,
             designs: List<CoinageAssetStore.Design>,
-            height: Float
+            height: Float,
+            set: CoinageScene.CoinSet
         ): Result {
             val layout = CoinageStripLayout.layout(
                 coins.map { coin ->
                     CoinageStripLayout.Coin(
                         size = CoinageCoinDesign.design(coin.exponent).size,
-                        width = CoinageScene.geometry(coin.exponent).faceWidth,
+                        width = CoinageScene.geometry(coin.exponent, set).faceWidth,
                         thickness = thickness(coin, designs),
                         partition = coin.partition
                     )

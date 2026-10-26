@@ -8,6 +8,7 @@ extension WidgetImageResolver {
     /// Kingfisher's cache, and logs a source that cannot be located or loaded.
     static func cached(
         logger: any LoggerProtocol & Sendable = Logger.shared,
+        options: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) -> KingfisherOptionsInfo = { _ in [] },
         locate: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
     ) -> WidgetImageResolver {
         WidgetImageResolver { source in
@@ -19,7 +20,7 @@ extension WidgetImageResolver {
                 let processor = SVGImageProcessor()
                 let image = try await KingfisherManager.shared.retrieveImage(
                     with: url,
-                    options: [.processor(processor), .cacheSerializer(RemoteImageSerializer.shared)]
+                    options: [.processor(processor), .cacheSerializer(RemoteImageSerializer.shared)] + options(source)
                 ).image
                 // The SVG serializer answers bytes it cannot read with an empty
                 // image, which is not kept, so a later draw tries again.

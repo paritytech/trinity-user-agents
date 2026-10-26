@@ -11,6 +11,7 @@ import {
   Bytes32,
   ChainIdentifier,
   CodeFormat,
+  FundingDirection,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -37,6 +38,7 @@ import type {
   HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
+  HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
   HostPaymentBalanceSubscribeError,
@@ -213,7 +215,24 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * Funding sessions: every live one plus a bounded tail of settled ones,
+   * as one versioned SCALE blob.
+   */
+  | { tag: "FundingSessions"; value?: undefined }
+  /**
+   * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
+   * raw blobs, newest last, so a stored session is never overwritten
+   * unread and a later bad blob does not replace an earlier one. Kept for
+   * diagnosis only: the core never reads them back.
+   */
+  | { tag: "FundingSessionsUnreadable"; value?: undefined }
+  /**
+   * Recorded funding sessions compacted out of the funding sessions blob,
+   * as one versioned SCALE blob. Never trimmed.
+   */
+  | { tag: "FundingSessionPack"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -290,6 +309,31 @@ export type ExpandedCardFaceOutcome =
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
+
+/**
+ * How the user left the funding overlay.
+ */
+export type FundingPresentOutcome = "Started" | "Dismissed";
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export interface FundingPresentation {
+  /**
+   * Session id.
+   */
+  intent: string;
+
+  /**
+   * Which way value moves, which decides the screen the overlay opens on.
+   */
+  direction: FundingDirection;
+
+  /**
+   * Amount the caller asked for, or ``undefined`` to let the user choose.
+   */
+  amount?: bigint;
+}
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -769,45 +813,63 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          productId: S.str,
+          request: PermissionAuthorizationRequest,
+        }) as S.Codec<{
+          productId: string;
+          request: PermissionAuthorizationRequest;
+        }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
+          sessionId: string;
+          productId: string;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      FundingSessions: [13, S._void] as const,
+      FundingSessionsUnreadable: [17, S._void] as const,
+      FundingSessionPack: [18, S._void] as const,
     }),
 );
 
@@ -872,6 +934,25 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
+ * How the user left the funding overlay.
+ */
+export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
+  (): S.Codec<FundingPresentOutcome> => S.Status("Started", "Dismissed"),
+);
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
+  (): S.Codec<FundingPresentation> =>
+    S.Struct({
+      intent: S.str,
+      direction: FundingDirection,
+      amount: S.Option(S.u128),
+    }) as S.Codec<FundingPresentation>,
 );
 
 /**
@@ -1194,7 +1275,11 @@ export interface AuthPresenter {
  * the figure the host checks a payment against. Optional: a host that omits
  * it leaves balance subscriptions answered `Unsupported`.
  *
- * The core asks for the product's balance access before calling here.
+ * The balance is the user's, per purse, not the product's: every product
+ * following a purse sees the same figure. The core asks for the product's
+ * balance access before calling here, and checks it again before passing on
+ * each balance the stream emits, so a revoked grant ends the stream with
+ * `PermissionDenied`.
  */
 export interface BalancePlatform {
   /**
@@ -1516,6 +1601,31 @@ export interface Features {
    * `get_chain_info` requests against the returned set.
    */
   supportedChains(): Promise<HostChainSet>;
+}
+
+/**
+ * Host-implemented funding surface: the native overlay a funding session
+ * runs in. Optional: a host that omits it leaves funding requests answered
+ * `Unsupported`.
+ */
+export interface FundingPlatform {
+  /**
+   * Show the funding overlay for a session that `product` opened, or the
+   * host itself when `product` is ``undefined``.
+   */
+  presentFunding(
+    product: ProductContext | undefined,
+    session: FundingPresentation,
+  ): Promise<FundingPresentOutcome>;
+
+  /**
+   * Observe a session's status change, for host UI such as the in-flight
+   * pill.
+   */
+  fundingSessionChanged?(
+    intent: string,
+    status: HostFundingStatusSubscribeItem,
+  ): void;
 }
 
 /**

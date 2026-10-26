@@ -125,11 +125,13 @@ private struct NodeImageView: View {
             }
     }
 
+    /// Loading and failure both fill the space the node reserves, so a missing
+    /// file costs the card one node rather than its layout.
     @ViewBuilder
     private var content: some View {
         switch picture {
         case .loading:
-            nothing
+            placeholder(ProgressView())
         case let .loaded(image):
             switch (modifiers.hasOwnWidth, modifiers.hasOwnHeight) {
             case (true, true):
@@ -149,16 +151,21 @@ private struct NodeImageView: View {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
             }
         case .unavailable:
-            nothing
-                .accessibilityElement()
-                .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
+            placeholder(
+                Image(.fileNotFound)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 44, maxHeight: 44)
+                    .foregroundStyle(Color.fgTertiary)
+            )
+            .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
         }
     }
 
-    private var nothing: some View {
-        Color.clear.frame(
-            maxWidth: modifiers.hasOwnWidth ? .infinity : 0,
-            maxHeight: modifiers.hasOwnHeight ? .infinity : 0
+    private func placeholder(_ view: some View) -> some View {
+        view.frame(
+            maxWidth: modifiers.hasOwnWidth ? .infinity : nil,
+            maxHeight: modifiers.hasOwnHeight ? .infinity : nil
         )
     }
 }
