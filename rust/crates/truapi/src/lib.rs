@@ -47,6 +47,8 @@ use parity_scale_codec::{Decode, Encode};
 pub use async_trait::async_trait;
 
 pub mod api;
+mod dotns_name;
+mod product_id;
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -66,10 +68,33 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
 	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+/// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
+/// FFI surfaces. Named only because `uniffi::custom_type!` takes an ident, not
+/// an array type.
+pub type Bytes64 = [u8; 64];
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(Bytes64, Vec<u8>, {
+	remote,
+	lower: |bytes| bytes.to_vec(),
+	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
+});
+
+// Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
+// decimal strings.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(u128, String, {
+	remote,
+	lower: |amount| amount.to_string(),
+	try_lift: |amount| Ok(amount.parse()?),
+});
+
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {
 	use crate::versioned::{self, Versioned};
+
+	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
@@ -78,13 +103,15 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
+		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePurse, OperationStartedResult, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
 		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
 		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
 		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
@@ -99,6 +126,75 @@ pub mod latest {
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
 
+	/// Account proof creation failure.
+	pub type HostAccountCreateProofError =
+		LatestOf<versioned::account::HostAccountCreateProofError>;
+	/// Contextual alias derivation failure.
+	pub type HostAccountGetAliasError = LatestOf<versioned::account::HostAccountGetAliasError>;
+	/// Account lookup request.
+	pub type HostAccountGetRequest = LatestOf<versioned::account::HostAccountGetRequest>;
+	/// Account lookup result.
+	pub type HostAccountGetResponse = LatestOf<versioned::account::HostAccountGetResponse>;
+	/// Ring-VRF registry listing failure.
+	pub type HostAccountListRingVrfKeysError =
+		LatestOf<versioned::account::HostAccountListRingVrfKeysError>;
+	/// Ring-VRF key registration failure.
+	pub type HostAccountRegisterRingVrfKeyError =
+		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyError>;
+	/// Ring-VRF signing failure.
+	pub type HostAccountRingVrfSignError =
+		LatestOf<versioned::account::HostAccountRingVrfSignError>;
+	/// User identifier lookup failure.
+	pub type HostGetUserIdError = LatestOf<versioned::account::HostGetUserIdError>;
+	/// User identifier lookup result.
+	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
+	/// Transaction creation failure.
+	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction created for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountResponse =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
+	/// Payload signing failure.
+	pub type HostSignPayloadError = LatestOf<versioned::signing::HostSignPayloadError>;
+	/// Product entropy derivation failure.
+	pub type HostDeriveEntropyError = LatestOf<versioned::entropy::HostDeriveEntropyError>;
+	/// Product entropy derivation request.
+	pub type HostDeriveEntropyRequest = LatestOf<versioned::entropy::HostDeriveEntropyRequest>;
+	/// Product entropy derivation result.
+	pub type HostDeriveEntropyResponse = LatestOf<versioned::entropy::HostDeriveEntropyResponse>;
+	/// Host information exposed to a product.
+	pub type HostInfoResponse = LatestOf<versioned::system::HostInfoResponse>;
+	/// Product navigation request.
+	pub type HostNavigateToRequest = LatestOf<versioned::system::HostNavigateToRequest>;
+	/// Storage read request, optionally naming another product.
+	pub type HostLocalStorageReadRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageReadRequest>;
+	/// Value read from product storage.
+	pub type HostLocalStorageReadResponse =
+		LatestOf<versioned::local_storage::HostLocalStorageReadResponse>;
+	/// Product storage write request.
+	pub type HostLocalStorageWriteRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageWriteRequest>;
+	/// Product storage removal request.
+	pub type HostLocalStorageClearRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageClearRequest>;
+	/// Product storage change subscription request.
+	pub type HostLocalStorageSubscribeRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageSubscribeRequest>;
+	/// Worker pending operation completion request.
+	pub type HostWorkerEndOperationRequest =
+		LatestOf<versioned::worker::HostWorkerEndOperationRequest>;
+	/// Push notification scheduling failure.
+	pub type HostPushNotificationError =
+		LatestOf<versioned::notifications::HostPushNotificationError>;
+	/// Push notification cancellation request.
+	pub type HostPushNotificationCancelRequest =
+		LatestOf<versioned::notifications::HostPushNotificationCancelRequest>;
+	/// Content-addressed preimage lookup request.
+	pub type RemotePreimageLookupSubscribeRequest =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeRequest>;
+	/// Current preimage lookup result.
+	pub type RemotePreimageLookupSubscribeItem =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
 	/// Ring VRF proof creation result.
 	pub type HostAccountCreateProofResponse =
 		LatestOf<versioned::account::HostAccountCreateProofResponse>;
@@ -196,6 +292,89 @@ pub mod latest {
 	pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
 	/// Navigation request error.
 	pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+	/// Funding request.
+	pub type HostFundingRequest = LatestOf<versioned::funding::HostFundingRequest>;
+	/// Accepted funding intent.
+	pub type HostFundingResponse = LatestOf<versioned::funding::HostFundingResponse>;
+	/// Funding request failure.
+	pub type HostFundingError = LatestOf<versioned::funding::HostFundingError>;
+	/// Request to watch a funding session.
+	pub type HostFundingStatusSubscribeRequest =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeRequest>;
+	/// Progress of a funding session.
+	pub type HostFundingStatusSubscribeItem =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeItem>;
+	/// Failure watching a funding session.
+	pub type HostFundingStatusSubscribeError =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+	/// Payment balance subscription request.
+	pub type HostPaymentBalanceSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
+	/// Payment balance subscription item.
+	pub type HostPaymentBalanceSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeItem>;
+	/// Payment balance subscription failure.
+	pub type HostPaymentBalanceSubscribeError =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// Payment request.
+	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
+	/// Payment request failure.
+	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+	/// Payment status subscription request.
+	pub type HostPaymentStatusSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeRequest>;
+	/// Progress of a payment.
+	pub type HostPaymentStatusSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
+	/// Failure following a payment.
+	pub type HostPaymentStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+	/// Payment top-up request.
+	pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
+	/// Payment top-up failure.
+	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
+	/// Payment top-up status subscription request.
+	pub type HostPaymentTopUpStatusSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeRequest>;
+	/// Progress of a payment top-up.
+	pub type HostPaymentTopUpStatusSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeItem>;
+	/// Failure following a payment top-up.
+	pub type HostPaymentTopUpStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
+	/// NFT purse creation request.
+	pub type HostNftPurseCreatePurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseRequest>;
+	/// Created NFT purse.
+	pub type HostNftPurseCreatePurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseResponse>;
+	/// NFT purse listing request.
+	pub type HostNftPurseListPursesRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesRequest>;
+	/// An owner's NFT purses.
+	pub type HostNftPurseListPursesResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesResponse>;
+	/// NFT purse listing failure.
+	pub type HostNftPurseListPursesError =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesError>;
+	/// NFT purse item key creation request.
+	pub type HostNftPurseCreateItemsRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsRequest>;
+	/// Created NFT purse item keys.
+	pub type HostNftPurseCreateItemsResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsResponse>;
+	/// NFT purse item key creation failure.
+	pub type HostNftPurseCreateItemsError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsError>;
+	/// NFT purse page request.
+	pub type HostNftPurseQueryPurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseRequest>;
+	/// One page of an NFT purse.
+	pub type HostNftPurseQueryPurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseResponse>;
+	/// NFT purse page failure.
+	pub type HostNftPurseQueryPurseError =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
@@ -312,6 +491,18 @@ pub enum CallError<D> {
 }
 
 impl<D> CallError<D> {
+	/// Transform the domain failure while preserving framework outcomes.
+	pub fn map_domain<T>(self, map: impl FnOnce(D) -> T) -> CallError<T> {
+		match self {
+			Self::Domain(domain) => CallError::Domain(map(domain)),
+			Self::Denied => CallError::Denied,
+			Self::Unsupported => CallError::Unsupported,
+			Self::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+			Self::HostFailure { reason } => CallError::HostFailure { reason },
+			Self::Cancelled => CallError::Cancelled,
+		}
+	}
+
 	/// Convenience for default handlers whose implementation is not wired.
 	pub fn unavailable() -> Self {
 		Self::HostFailure { reason: "unavailable".into() }
@@ -543,6 +734,8 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 }
 
 #[cfg(feature = "runtime")]
+pub mod background_task;
+#[cfg(feature = "runtime")]
 pub mod bootstrap;
 #[cfg(feature = "runtime")]
 pub mod chain;
@@ -579,6 +772,8 @@ mod session_usernames;
 #[cfg(feature = "runtime")]
 pub mod subscription;
 #[cfg(feature = "runtime")]
+pub mod time;
+#[cfg(feature = "runtime")]
 pub mod transport;
 #[cfg(feature = "runtime")]
 mod truapi_core;
@@ -613,6 +808,18 @@ pub mod store;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod durable;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod installation;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft_purse;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
@@ -651,7 +858,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+pub use runtime::product_manifest::encode_cached_root_manifest;
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
@@ -659,6 +866,8 @@ pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
 };
+#[cfg(feature = "runtime")]
+pub use unix_time::current_unix_millis;
 
 #[cfg(feature = "runtime")]
 #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
@@ -675,6 +884,29 @@ pub use wasm::{
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn mapping_domain_errors_preserves_framework_outcomes() {
+		let errors = [
+			CallError::Domain(7),
+			CallError::Denied,
+			CallError::Unsupported,
+			CallError::MalformedFrame { reason: "invalid payload".into() },
+			CallError::HostFailure { reason: "host disconnected".into() },
+			CallError::Cancelled,
+		];
+		assert_eq!(
+			errors.map(|error| error.map_domain(|domain| domain.to_string())),
+			[
+				CallError::Domain("7".to_string()),
+				CallError::Denied,
+				CallError::Unsupported,
+				CallError::MalformedFrame { reason: "invalid payload".into() },
+				CallError::HostFailure { reason: "host disconnected".into() },
+				CallError::Cancelled,
+			],
+		);
+	}
 
 	#[test]
 	fn call_context_timeout_can_be_set_and_replaced() {

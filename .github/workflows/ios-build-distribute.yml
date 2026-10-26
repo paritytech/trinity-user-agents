@@ -70,7 +70,7 @@ on:
         required: false
       SENTRY_AUTH_TOKEN:
         required: false
-      SENTRY_DSN:
+      SENTRY_DSN_IOS:
         required: false
 
 env:
@@ -92,19 +92,18 @@ env:
 jobs:
   prepare_build_metadata:
     name: Prepare Build Metadata
-    runs-on: macos-26
-    # actions: read is what lets the pull request lookup below find the run
-    # this one follows. check_build_result declares it for the same call.
+    # The Parity pool, like the TestFlight build it gates: reading the build
+    # number needs fastlane and Xcode, and the hosted macOS queue can hold this
+    # short job for hours.
+    runs-on: parity-macos-large
     permissions:
       contents: read
-      actions: read
       pull-requests: read
     outputs:
       build_number: ${{ steps.build_version.outputs.build_number }}
       marketing_version: ${{ steps.build_version.outputs.marketing_version }}
       release_notes: ${{ steps.release_notes.outputs.notes }}
-      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes
-        || steps.collect_prs_since_last_build.outputs.release_notes }}
+      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes }}
     steps:
       # Safetynet ships from the app repository, which produces it from its
       # nightly pipeline. Every upload to Apple passes through this workflow,
@@ -123,7 +122,7 @@ jobs:
           echo "${BUILD_CONFIGURATION} is published from this repository."
 
       - name: Security Check - Verify bot-initiated workflow
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_BRANCH: ${{ inputs.release_branch }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
@@ -155,14 +154,14 @@ jobs:
             console.log('Security checks passed!');
 
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
 
       - name: Prepare TestFlight release notes
         id: release_notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           RELEASE_BRANCH: ${{ inputs.release_branch }}
@@ -221,10 +220,11 @@ jobs:
           asc_key_base64: ${{ secrets.ASC_KEY_BASE64 }}
 
       # A release branch carries the pull requests that main does not yet have,
-      # so the diff between the two is the list.
+      # so the diff between the two is the list the release announcement shows.
+      # The nightly announcement links to its prerelease notes instead.
       - name: Collect merged PRs from the release branch
         id: collect_prs_markdown
-        if: inputs.release_branch != env.MAIN_BRANCH || inputs.build_configuration != 'Nightly'
+        if: inputs.build_configuration != 'Nightly'
         uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
         with:
           github_token: ${{ github.token }}
@@ -232,34 +232,24 @@ jobs:
           dst_ref: ${{ env.MAIN_BRANCH }}
           release_notes_format: markdown
 
-      # A nightly builds main itself, where that diff compares the branch with
-      # itself and is empty by construction. The range is the one since the last
-      # successful run of this pipeline instead. Narrowed to the nightly: a
-      # Release built straight from main reaches here too, and it carries its
-      # own notes rather than a range since the last nightly.
-      - name: Collect merged PRs since the last successful build
-        id: collect_prs_since_last_build
-        if: inputs.release_branch == env.MAIN_BRANCH && inputs.build_configuration == 'Nightly'
-        uses: ./.github/actions/collect-prs-since-last-build
-        with:
-          github_token: ${{ github.token }}
-
   check_and_build:
     # The configuration is part of the name so that a caller invoking this workflow
     # twice in one run (nightly_distribution builds Nightly and Release together)
     # produces distinct job names — check-job-conclusion matches by name suffix and
     # would otherwise resolve both lookups to the same leg.
     name: Check and Build TestFlight (${{ inputs.build_configuration }})
-    # The same runner as the pull request gate, because the app's
-    # timing-sensitive tests exceed their limits on the standard runner.
-    runs-on: macos-26-xlarge
+    # The same runner as the pull request test gate, because the app's
+    # timing-sensitive tests exceed their limits on shared hosted runners.
+    runs-on: parity-macos-large
     needs: prepare_build_metadata
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -296,12 +286,42 @@ jobs:
           match_password: ${{ secrets.MATCH_PASSWORD }}
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      # The distribute action runs the unit tests before it archives. xcpretty
+      # drops the failing test names, and on a reused runner the result bundle
+      # does not outlive the next job, so both are taken here.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            summary="$(xcrun xcresulttool get test-results summary --path "$result")"
+            echo "$summary"
+            {
+              echo "### Unit test results for this failed build"
+              echo '```json'
+              echo "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No result bundle: the run failed before the tests"
+          fi
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ inputs.build_configuration }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hosts/ios/fastlane/test_output/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Comment on PR with build info
         if: inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
           MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
@@ -333,7 +353,7 @@ jobs:
         if: >-
           github.event_name == 'workflow_dispatch' &&
           inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           # Statuses are keyed by context, so each configuration needs its own — a nightly
@@ -378,7 +398,7 @@ jobs:
       succeeded: ${{ steps.check.outputs.succeeded }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the build result
         id: check
         uses: ./hosts/ios/.github/actions/check-job-conclusion

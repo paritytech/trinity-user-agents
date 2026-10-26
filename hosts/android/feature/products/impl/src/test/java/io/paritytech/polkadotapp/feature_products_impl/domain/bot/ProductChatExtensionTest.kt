@@ -5,21 +5,27 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerReference
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -39,6 +45,9 @@ private const val ROOM = "truapi-playground"
 class ProductChatExtensionTest {
     private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
+
+    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -98,7 +107,7 @@ class ProductChatExtensionTest {
         )
 
         withChatHost(incoming = flowOf(message)) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker)).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk()).startGlobalWork()
         }
 
         assertEquals(listOf<Pair<ProductChatIdParameter?, String>>(ProductChatIdParameter(ROOM) to "hello"), worker.delivered)
@@ -107,7 +116,7 @@ class ProductChatExtensionTest {
     @Test
     fun `a boot failure does not take the chat host down with it`() = runTest {
         val refCounter = FakeRefCounter(bootFailure = IllegalStateException("core runtime unavailable"))
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter)
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -124,7 +133,7 @@ class ProductChatExtensionTest {
     fun `disposing stops the inbound collector instead of leaking it`() = runTest {
         val worker = RecordingWorker()
         val incoming = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 4)
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker))
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk())
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -153,7 +162,7 @@ class ProductChatExtensionTest {
     @Test
     fun `an empty footer hides the input of that room alone`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter)
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
 
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
@@ -172,10 +181,44 @@ class ProductChatExtensionTest {
         val ownRooms = flowOf(listOf(ChatId.forExtension(extensionId), ChatId.forExtensionRoom(extensionId, ROOM)))
 
         withChatHost(ownRooms) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk()).startGlobalWork()
         }
 
         val rooms = requireNotNull(refCounter.chatSurface).subscribeChatRooms().first()
         assertEquals(listOf(ROOM to RoomParticipation.ROOM_HOST), rooms.map { it.roomId to it.participatingAs })
+    }
+
+    private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
+        val computationalScope = object : ComputationalScope, CoroutineScope by this {}
+        val preview = with(computationalScope) { customChatPreviewDelegate(chatId).provider.provide().first() }
+        preview to (customMenuRenderer(chatId) as ProductChatMenuRenderer).removable
+    }
+
+    // The host put it there, so it holds the top of the list rather than competing on recency,
+    // and nobody can remove it: a removal would only hide the row until the next launch while
+    // its worker kept running.
+    @Test
+    fun `a host-placed chat is pinned above the rest and offers no removal`() = runTest {
+        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
+
+        assertEquals(
+            ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,
+            extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "jollity")),
+        )
+    }
+
+    @Test
+    fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+
+        assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
+    }
+
+    // Until the worker registers an icon for its room, the chat shows the one the manifest declares.
+    @Test
+    fun `a product's chat defaults to its manifest icon`() {
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+
+        assertEquals(product.id.productIconUri(), extension.defaultRoomMetadata.icon)
     }
 }

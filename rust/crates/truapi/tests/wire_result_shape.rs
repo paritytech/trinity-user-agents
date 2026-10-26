@@ -22,7 +22,10 @@
 //! `S.Result(okCodec, S.CallError(errCodec))` composition the generated
 //! client decodes a `Response` frame's payload through.
 
-use std::sync::Arc;
+use std::{
+	sync::{Arc, Condvar, Mutex},
+	time::{Duration, Instant},
+};
 
 use parity_scale_codec::{Decode, Encode};
 
@@ -38,9 +41,48 @@ use truapi::{
 };
 
 mod common;
-use common::{RecordingTransport, WireShapePlatform, test_runtime_config, test_spawner};
+use common::{WireShapePlatform, test_runtime_config, test_spawner};
+use truapi::transport::Transport;
 
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
+/// Transport stub that records every frame sent through it, for asserting
+/// what the core emits during a dispatch.
+#[derive(Default)]
+struct RecordingTransport {
+	/// Frames captured in send order.
+	sent: Mutex<Vec<ProtocolMessage>>,
+	recorded: Condvar,
+}
+
+impl RecordingTransport {
+	/// Wait until at least `count` frames have been recorded, or `timeout`
+	/// elapses. A subscription's frames are produced by the spawner, so a
+	/// dispatch that starts one returns before they are sent.
+	fn wait_for(&self, count: usize, timeout: Duration) {
+		let deadline = Instant::now() + timeout;
+		let mut sent = self.sent.lock().unwrap();
+		while sent.len() < count {
+			let now = Instant::now();
+			if now >= deadline {
+				break;
+			}
+			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
+			sent = guard;
+		}
+	}
+}
+
+impl Transport for RecordingTransport {
+	fn send(&self, message: ProtocolMessage) {
+		self.sent.lock().unwrap().push(message);
+		self.recorded.notify_all();
+	}
+	fn on_message(
+		&self,
+		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
+	) -> Box<dyn FnOnce()> {
+		Box::new(|| {})
+	}
+}
 
 fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 	let encoded = frame.encode();
@@ -190,33 +232,6 @@ fn versioned_interrupt_err_payload<Wrapper: Encode>(wrapped_error: Wrapper) -> V
 	expected
 }
 
-fn assert_request_returns_domain_error<Wrapper: Encode>(
-	core: &TrUApiCore,
-	request_id: &str,
-	method: &str,
-	value: Vec<u8>,
-	wrapped_error: Wrapper,
-) {
-	let ids = request_ids(method).expect("known request method");
-	let response = dispatch(
-		core,
-		ProtocolMessage {
-			request_id: request_id.into(),
-			payload: Payload {
-				trait_id: ids.trait_id,
-				method_id: ids.method_id,
-				message_type: MESSAGE_TYPE_REQUEST,
-				value,
-			},
-		},
-	);
-	assert_eq!(response.request_id, request_id);
-	assert_eq!(response.payload.trait_id, ids.trait_id);
-	assert_eq!(response.payload.method_id, ids.method_id);
-	assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
-	assert_eq!(response.payload.value, versioned_result_err_payload(wrapped_error));
-}
-
 fn assert_subscription_start_interrupts_error<Wrapper: Encode>(
 	core: &TrUApiCore,
 	request_id: &str,
@@ -255,7 +270,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	let core = make_core();
 	let request = v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: "peopl.dot".parse().expect("valid product id"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {
@@ -304,7 +319,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	// assertion would race the dispatch. That the grant is what refuses a
 	// foreign handle is asserted in
 	// `runtime::signing_host::tests::a_foreign_proof_is_refused_when_the_owner_granted_nothing`
-	// and end to end by `make e2e-cross-product-ringvrf`.
+	// and end to end by `make e2e-cross-product SCENARIO=ringvrf`.
 	let expected =
 		versioned_result_err_payload(truapi::versioned::account::HostAccountCreateProofError::V1(
 			v01::HostAccountCreateProofError::Rejected,
@@ -312,64 +327,95 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	assert_eq!(response.payload.value, expected);
 }
 
+/// A host with no payment engine answers `Unsupported`, so a product can tell
+/// "this host never pays" from a payment that failed.
 #[test]
-fn deferred_payment_requests_return_dotli_not_implemented_errors() {
+fn payment_request_reports_unsupported_without_a_host_engine() {
 	let core = make_core();
-	let request = v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32] };
-
-	assert_request_returns_domain_error(
-		&core,
-		"p:payment",
-		"payment_request",
-		truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
-		truapi::versioned::payment::HostPaymentError::V1(v01::HostPaymentError::Unknown {
-			reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-		}),
-	);
-
-	let top_up = v01::HostPaymentTopUpRequest {
-		into: None,
-		amount: 1,
-		source: v01::PaymentTopUpSource::ProductAccount {
-			derivation_index: v01::DerivationIndex::Index(0),
+	let request =
+		v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32], id: [7; 32] };
+	let ids = request_ids("payment_request").expect("known request method");
+	let frame = ProtocolMessage {
+		request_id: "p:payment".into(),
+		payload: Payload {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			message_type: MESSAGE_TYPE_REQUEST,
+			value: truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
 		},
 	};
-	assert_request_returns_domain_error(
-		&core,
-		"p:top-up",
-		"payment_top_up",
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(top_up).encode(),
-		truapi::versioned::payment::HostPaymentTopUpError::V1(
-			v01::HostPaymentTopUpError::Unknown { reason: PAYMENTS_NOT_IMPLEMENTED.to_string() },
+	let response = dispatch(&core, frame);
+	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
+}
+
+/// Following a payment on a host with no payment engine interrupts with
+/// `Unsupported`, as requesting one answers.
+#[test]
+fn payment_status_subscription_interrupts_unsupported_without_a_host_engine() {
+	let core = make_core();
+	let status = v01::HostPaymentStatusSubscribeRequest { id: [7; 32] };
+	let ids = subscription_ids("payment_status_subscribe").expect("known subscription method");
+	let transport = Arc::new(RecordingTransport::default());
+	futures::executor::block_on(
+		core.dispatch(
+			ProtocolMessage {
+				request_id: "p:status".into(),
+				payload: Payload {
+					trait_id: ids.trait_id,
+					method_id: ids.method_id,
+					message_type: MESSAGE_TYPE_START,
+					value: truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+						status,
+					)
+					.encode(),
+				},
+			},
+			transport.clone(),
 		),
+	);
+	transport.wait_for(1, std::time::Duration::from_secs(5));
+
+	let sent = transport.sent.lock().unwrap();
+	assert_eq!(
+		(sent[0].payload.message_type, sent[0].payload.value.clone()),
+		// [Result::Err=0x01][CallError::Unsupported=0x02], as for a request.
+		(MESSAGE_TYPE_INTERRUPT, vec![0x01u8, 0x02u8])
 	);
 }
 
+/// Following the balance on a host with no balance view interrupts with
+/// `Unsupported`, so a product can tell "this host never shares a balance"
+/// from a user who declined.
 #[test]
-fn deferred_payment_subscriptions_interrupt_dotli_not_implemented_errors() {
+fn payment_balance_subscription_interrupts_unsupported_without_a_host_view() {
 	let core = make_core();
 	let balance = v01::HostPaymentBalanceSubscribeRequest { purse: None };
-	assert_subscription_start_interrupts_error(
-		&core,
-		"p:balance",
-		"payment_balance_subscribe",
-		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(balance).encode(),
-		truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
-			v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+	let ids = subscription_ids("payment_balance_subscribe").expect("known subscription method");
+	let transport = Arc::new(RecordingTransport::default());
+	futures::executor::block_on(
+		core.dispatch(
+			ProtocolMessage {
+				request_id: "p:balance".into(),
+				payload: Payload {
+					trait_id: ids.trait_id,
+					method_id: ids.method_id,
+					message_type: MESSAGE_TYPE_START,
+					value: truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+						balance,
+					)
+					.encode(),
+				},
+			},
+			transport.clone(),
 		),
 	);
+	transport.wait_for(1, std::time::Duration::from_secs(5));
 
-	let status = v01::HostPaymentStatusSubscribeRequest { payment_id: "payment-id".to_string() };
-	assert_subscription_start_interrupts_error(
-		&core,
-		"p:status",
-		"payment_status_subscribe",
-		truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(status).encode(),
-		truapi::versioned::payment::HostPaymentStatusSubscribeError::V1(
-			v01::HostPaymentStatusSubscribeError::Unknown {
-				reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-			},
-		),
+	let sent = transport.sent.lock().unwrap();
+	assert_eq!(
+		(sent[0].payload.message_type, sent[0].payload.value.clone()),
+		// [Result::Err=0x01][CallError::Unsupported=0x02]
+		(MESSAGE_TYPE_INTERRUPT, vec![0x01u8, 0x02u8])
 	);
 }
 
@@ -632,5 +678,32 @@ fn coin_payment_request_reports_unsupported_on_the_wire() {
 	assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
 	// [Result::Err=0x01][CallError::Unsupported=0x02], and nothing more:
 	// `Unsupported` carries no domain payload, so no wrapper tag follows.
+	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
+}
+
+/// A host with no top-up engine answers `Unsupported`, so a product can tell
+/// "this host never tops up" from a top-up that failed.
+#[test]
+fn top_up_reports_unsupported_without_a_host_engine() {
+	let core = make_core();
+	let request = v01::HostPaymentTopUpRequest {
+		into: None,
+		amount: 1,
+		source: v01::PaymentTopUpSource::ProductAccount {
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+		id: [7; 32],
+	};
+	let ids = request_ids("payment_top_up").expect("known request method");
+	let frame = ProtocolMessage {
+		request_id: "p:top-up".into(),
+		payload: Payload {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			message_type: MESSAGE_TYPE_REQUEST,
+			value: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request).encode(),
+		},
+	};
+	let response = dispatch(&core, frame);
 	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
 }

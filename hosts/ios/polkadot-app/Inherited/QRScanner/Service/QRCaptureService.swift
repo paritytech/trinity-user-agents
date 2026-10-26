@@ -23,6 +23,9 @@ struct CapturedCode {
 }
 
 protocol QRCaptureServiceDelegate: AnyObject {
+    /// Called on the main thread before the session starts, while it is stopped: attaching a preview layer then
+    /// avoids reconfiguring a running session.
+    func qrCapture(service: QRCaptureServiceProtocol, willStart captureSession: AVCaptureSession)
     func qrCapture(service: QRCaptureServiceProtocol, didSetup captureSession: AVCaptureSession)
     /// Every code in one frame, in the order the camera reports them.
     func qrCapture(service: QRCaptureServiceProtocol, didReceive codes: [CapturedCode])
@@ -93,6 +96,10 @@ final class QRCaptureService: NSObject {
                 try self.configureSessionIfNeeded()
 
                 if let captureSession = self.captureSession {
+                    DispatchQueue.main.sync {
+                        self.delegate?.qrCapture(service: self, willStart: captureSession)
+                    }
+
                     self.isRecognitionArmed = true
 
                     captureSession.startRunning()
@@ -135,7 +142,10 @@ final class QRCaptureService: NSObject {
 
     deinit {
         QRCaptureService.processingQueue.async { [captureSession] in
-            captureSession?.stopRunning()
+            guard let captureSession, captureSession.isRunning else {
+                return
+            }
+            captureSession.stopRunning()
         }
     }
 }
@@ -162,11 +172,15 @@ extension QRCaptureService: QRCaptureServiceProtocol {
         }
     }
 
+    /// A stopped session is left alone: a repeated stop could land inside the preview layer's detach, which throws.
     func stop() {
         QRCaptureService.processingQueue.async {
             self.isRecognitionArmed = false
 
-            self.captureSession?.stopRunning()
+            guard let captureSession = self.captureSession, captureSession.isRunning else {
+                return
+            }
+            captureSession.stopRunning()
         }
     }
 }

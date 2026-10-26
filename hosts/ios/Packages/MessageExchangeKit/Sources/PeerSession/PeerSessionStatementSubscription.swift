@@ -1,5 +1,6 @@
 import Foundation
 import StatementStore
+import SubstrateSdk
 
 typealias PeerSessionStatementHandler = (PeerSessionStatement) -> StatementHandlingStatus
 
@@ -16,6 +17,7 @@ protocol PeerSessionStatementSubscribing {
 final class PeerSessionStatementSubscription: PeerSessionStatementSubscribing {
     struct Input {
         let route: PeerSessionRoute
+        let topicAccountId: AccountId
         let subscription: StatementSubscribing
     }
 
@@ -33,7 +35,7 @@ final class PeerSessionStatementSubscription: PeerSessionStatementSubscribing {
     func start(handler: @escaping PeerSessionStatementHandler) {
         inputs.forEach { input in
             input.subscription.start { statement in
-                handler(.init(statement: statement, route: input.route))
+                handler(.init(statement: statement, route: input.route, topicAccountId: input.topicAccountId))
             }
         }
     }
@@ -61,7 +63,7 @@ final class PeerSessionStatementSubscription: PeerSessionStatementSubscribing {
         inputs.forEach { input in
             group.enter()
             input.subscription.fetchOnce(handler: { statement in
-                handler(.init(statement: statement, route: input.route))
+                handler(.init(statement: statement, route: input.route, topicAccountId: input.topicAccountId))
             }, completion: { error in
                 if resultError == nil {
                     resultError = error

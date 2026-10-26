@@ -37,18 +37,24 @@ public struct PGASClaimTimeoutError: Error, Equatable {
 /// proof, which the allowance manager waits for — a fresh account simply waits here.
 public final class PGASAccountProvisioner: PGASAccountProvisioning, @unchecked Sendable {
     private let allowanceManager: any AllowanceManaging
+    private let domain: AllowanceRecord.Domain
     private let balanceProvider: any PGASBalanceProviding
+    private let issueDiagnostics: AllowanceIssueDiagnostics
     private let claimTimeout: Duration
     private let clock: any Clock<Duration>
 
     public init(
         allowanceManager: any AllowanceManaging,
+        domain: AllowanceRecord.Domain,
         balanceProvider: any PGASBalanceProviding,
+        issueDiagnostics: AllowanceIssueDiagnostics,
         claimTimeout: Duration = .seconds(2 * 60),
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.allowanceManager = allowanceManager
+        self.domain = domain
         self.balanceProvider = balanceProvider
+        self.issueDiagnostics = issueDiagnostics
         self.claimTimeout = claimTimeout
         self.clock = clock
     }
@@ -78,12 +84,19 @@ private extension PGASAccountProvisioner {
     /// would hold the caller forever. Giving up is safe: a retry reads the balance first, and a claim
     /// for the same slot proves the same alias, which the chain accepts once.
     func claim(account: AccountId, policy: OnExistingAllowancePolicy) async throws {
-        do {
-            try await withTimeout(claimTimeout, clock: clock) { [allowanceManager] in
-                try await allowanceManager.allocate(accountId: account, policy: policy, priority: .normal)
+        try await issueDiagnostics.observeAllocation {
+            do {
+                try await withTimeout(claimTimeout, clock: clock) { [allowanceManager, domain] in
+                    try await allowanceManager.allocate(
+                        accountId: account,
+                        policy: policy,
+                        priority: .normal,
+                        domain: domain
+                    )
+                }
+            } catch is TimeoutError {
+                throw PGASClaimTimeoutError()
             }
-        } catch is TimeoutError {
-            throw PGASClaimTimeoutError()
         }
     }
 }

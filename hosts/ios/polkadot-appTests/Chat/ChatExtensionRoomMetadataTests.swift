@@ -117,7 +117,6 @@ private final class StubRoomBot: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Jollity",
-            contactSource: .chat,
             icon: .product(domain: identifier),
             input: .empty,
             moreActions: []
@@ -154,6 +153,10 @@ private struct StubRegistry: ChatExtensionsRegistering {
 
     func getChatExtensionBot(for _: ChatExtension.Id) -> ChatExtensionBotProtocol? {
         bot
+    }
+
+    func peerListMetadata(for _: ChatExtension.Id) -> Chat.PeerListMetadata? {
+        bot.peerMetadata.list
     }
 
     func getWidgetProviders() -> [ChatExtensionWidgetProvider] {

@@ -40,7 +40,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { owner, repo } = context.repo;
@@ -65,7 +65,7 @@ jobs:
                 label: 'ios-simulator-build',
                 name: 'iOS simulator build',
                 path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
-                what: 'builds the iOS app, runs its tests and attaches a build for the iOS Simulator on a Mac',
+                what: 'builds the iOS app and attaches a build for the iOS Simulator on a Mac; its unit tests run on every pull request',
               },
               {
                 label: 'ios-device-build',

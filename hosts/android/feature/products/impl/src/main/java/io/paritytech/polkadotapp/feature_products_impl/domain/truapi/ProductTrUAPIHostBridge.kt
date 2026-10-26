@@ -49,6 +49,7 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
@@ -196,17 +197,28 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestDevicePermissionDecision(callingProductId, request.toCapability())
-                .getOrElse { throw it }
-                .toNative()
+            // Android WebView serves motion sensors without asking, so the
+            // capability is granted without a prompt. Allow once keeps the core
+            // from storing a grant that no settings screen can revoke.
+            if (request == HostDevicePermissionRequest.MOTION) {
+                TrUAPIPermissionDecision.ALLOW_ONCE
+            } else {
+                hostApiInteractor
+                    .requestDevicePermissionDecision(callingProductId, request.toCapability())
+                    .getOrElse { throw it }
+                    .toNative()
+            }
 
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestRemotePermissionDecision(callingProductId, request.toDomain())
+            when (request) {
+                RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                is RemotePermission.NftPurseRead ->
+                    hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
+            }
                 .getOrElse { throw it }
                 .toNative()
 
@@ -383,15 +395,30 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.CLIPBOARD -> DeviceCapabilityType.Clipboard
     HostDevicePermissionRequest.OPEN_URL -> DeviceCapabilityType.OpenUrl
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
+    HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+/**
+ * The request this host's remote-access prompt shows for `this`. Balance access
+ * and NFT purse reads have their own prompts (`ProductPermission.BalanceAccess`,
+ * `ProductPermission.NftPurseRead`) and never reach here.
+ */
+private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    RemotePermission.BalanceAccess -> error("balance access has its own prompt")
+    is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
 }
+
+/** The owning product, or `null` for purses of the user's own account. */
+private val NftPurseOwner.productId: String?
+    get() = when (this) {
+        is NftPurseOwner.Product -> v1
+        NftPurseOwner.Root -> null
+    }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
     PermissionDecision.AllowOnce -> TrUAPIPermissionDecision.ALLOW_ONCE

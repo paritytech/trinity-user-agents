@@ -1,4 +1,5 @@
 import Foundation
+import DesignSystem
 
 extension NavigationBarSettings {
     static var defaultSettings: NavigationBarSettings {
@@ -20,7 +21,7 @@ extension NavigationBarSettings {
                 backgroundColor: nil,
                 shadow: nil,
                 shadowColor: nil,
-                tintColor: .white100,
+                tintColor: .fgStaticWhite,
                 backImage: nil,
                 backgroundEffect: nil,
                 titleAttributes: nil,

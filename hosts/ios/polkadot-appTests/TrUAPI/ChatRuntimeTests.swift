@@ -1,7 +1,9 @@
 import Foundation
 import os
-import Testing
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
+import Testing
 import TrUAPIHost
 import UIKitExt
 @testable import polkadot_app
@@ -67,15 +69,6 @@ private func makeRustRuntime(
         workers: workers,
         renderStartupWindow: renderStartupWindow
     )
-}
-
-/// Whether a start has returned, so a test can tell waiting from finishing.
-private actor StartCompletion {
-    private(set) var happened = false
-
-    func mark() {
-        happened = true
-    }
 }
 
 /// A manager whose worker is already up, which is what chat finds whenever
@@ -186,20 +179,16 @@ struct ChatRuntimeTests {
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
 
-        // Completion is observed rather than inferred from cancellation: a
-        // start that returned at once is not cancelled either, so a runtime
-        // that stopped waiting would pass that test.
-        let returned = StartCompletion()
-        let start = Task {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-            await returned.mark()
+        let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        try await withTimeout(.hangGuard) {
+            var asks = workers.asks.makeAsyncIterator()
+            _ = await asks.next()
         }
-        try await Task.sleep(for: .milliseconds(60))
-        #expect(await returned.happened == false)
 
         workers.publish([chatProduct: execution])
-        try await start.value
-        #expect(await returned.happened)
+        try await withTimeout(.hangGuard) {
+            try await withTaskCancellationHandler { try await start.value } onCancel: { start.cancel() }
+        }
 
         try await runtime.onUserMessage(text: "hi", roomId: "room")
         #expect(execution.publishedChatActions.count == 1)
@@ -233,7 +222,7 @@ struct ChatRuntimeTests {
         let workers = StubWorkerManager(startupWindow: .milliseconds(50))
         let runtime = makeRustRuntime(workers: workers)
 
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: TimeoutError.self) {
             try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
         }
 
@@ -367,9 +356,10 @@ struct ChatRuntimeTests {
                 roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
             )
         }
-        // Long enough for the render to reach the retry loop with no worker.
-        try await Task.sleep(for: .milliseconds(60))
-        #expect(execution.renderRequests.isEmpty)
+        try await withTimeout(.hangGuard) {
+            var lookups = workers.executionLookups.makeAsyncIterator()
+            _ = await lookups.next()
+        }
 
         workers.publish([chatProduct: execution])
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))

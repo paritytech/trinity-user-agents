@@ -7,15 +7,18 @@ use std::{
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductExecutionKind, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductExecutionKind, ProductId, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
 use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
-use crate::{PairedSsoPeer, PairingProposal, host_logic::worker::WorkerTransition};
+use crate::{
+	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	host_logic::worker::WorkerTransition,
+};
 
 use super::{
 	callbacks::{
@@ -166,6 +169,9 @@ pub struct EventCallbacks {
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
+	/// Number of `lookup_preimage` calls.
+	pub preimage_lookups: std::sync::atomic::AtomicUsize,
+	pub preimage_rejection: Mutex<Option<String>>,
 	pub auth_states: Mutex<Vec<AuthState>>,
 	pub chain_id: Mutex<Option<u32>>,
 	pub on_chain_connect: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -190,7 +196,9 @@ pub struct EventCallbacks {
 	pub permission_confirmation_result: PermissionDecision,
 	/// Counts prompts across the execution's separate connections.
 	pub remote_permission_calls: std::sync::atomic::AtomicUsize,
-	pub remote_permission_products: Mutex<Vec<(String, ProductExecutionKind)>>,
+	pub remote_permission_products: Mutex<Vec<(ProductId, ProductExecutionKind)>>,
+	/// Counts device permission prompts.
+	pub device_permission_calls: std::sync::atomic::AtomicUsize,
 }
 
 impl EventCallbacks {
@@ -218,6 +226,8 @@ impl EventCallbacks {
 			}),
 			locale: Mutex::new(v01::HostLocaleSubscribeItem { language_tag: "en".to_string() }),
 			preimages: Mutex::new(Vec::new()),
+			preimage_lookups: std::sync::atomic::AtomicUsize::new(0),
+			preimage_rejection: Mutex::new(None),
 			auth_states: Mutex::new(Vec::new()),
 			chain_id: Mutex::new(None),
 			on_chain_connect: Mutex::new(None),
@@ -233,6 +243,7 @@ impl EventCallbacks {
 			core_storage: Mutex::default(),
 			permission_confirmation_result: PermissionDecision::Deny,
 			remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
+			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
 			face_requests: Mutex::new(Vec::new()),
 		}
@@ -244,11 +255,11 @@ impl HostCallbacks for EventCallbacks {
 	fn on_core_log(&self, marker: String, _detail: String) {
 		self.logs.lock().expect("logs mutex poisoned").push(marker);
 	}
-	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
+	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
 			.lock()
 			.expect("worker demand mutex poisoned")
-			.push((product_id, transition));
+			.push((product_id.into(), transition));
 	}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
@@ -257,6 +268,9 @@ impl HostCallbacks for EventCallbacks {
 
 	fn durable_work_changed(&self, pending: bool) {
 		self.durable_work.lock().expect("durable work mutex poisoned").push(pending);
+	}
+	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+		Ok(vec![7; 32])
 	}
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
@@ -275,6 +289,7 @@ impl HostCallbacks for EventCallbacks {
 		_product: ProductExecutionConfig,
 		_request: v01::HostDevicePermissionRequest,
 	) -> Result<PermissionDecision, HostRejection> {
+		self.device_permission_calls.fetch_add(1, Ordering::SeqCst);
 		Ok(PermissionDecision::Deny)
 	}
 	async fn device_permission_status(
@@ -362,6 +377,15 @@ impl HostCallbacks for EventCallbacks {
 		Ok(self.permission_confirmation_result)
 	}
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+		self.preimage_lookups.fetch_add(1, Ordering::SeqCst);
+		if let Some(reason) = self
+			.preimage_rejection
+			.lock()
+			.expect("preimage rejection mutex poisoned")
+			.clone()
+		{
+			return Err(HostRejection::Rejected { reason });
+		}
 		Ok(self
 			.preimages
 			.lock()
@@ -406,12 +430,12 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn begin_operation(
 		&self,
-		_product_id: String,
+		_product_id: ProductId,
 		_label: String,
 	) -> Result<u32, HostRejection> {
 		Ok(1)
 	}
-	async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+	async fn end_operation(&self, _product_id: ProductId, _id: u32) -> Result<(), HostRejection> {
 		Ok(())
 	}
 }
@@ -577,7 +601,7 @@ pub fn native_execution_config(
 	product_id: &str,
 	execution_kind: ProductExecutionKind,
 ) -> ProductExecutionConfig {
-	ProductExecutionConfig { product_id: product_id.to_string(), execution_kind }
+	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
 }
 
 pub fn native_product_execution(
@@ -807,6 +831,32 @@ fn process_runtime_counts_worker_references_per_product() {
 	);
 }
 
+/// Two spellings of one product would otherwise be two workers, and an id no
+/// product runs under would start a worker with nothing to serve.
+#[test]
+fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+
+	host.acquire_worker("Shared.DOT".to_string());
+	host.acquire_worker("shared.dot".to_string());
+	host.acquire_worker("not_a.dot".to_string());
+	host.release_worker("shared.dot".to_string());
+	host.release_worker("SHARED.dot".to_string());
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![
+			("shared.dot".to_string(), WorkerTransition::Start),
+			("shared.dot".to_string(), WorkerTransition::Stop),
+		]
+	);
+}
+
 /// A host removes a card through its own storage, which can take a while,
 /// so the core waits for the answer without holding the thread that asked.
 #[test]
@@ -835,7 +885,7 @@ fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
 		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
 		&platform,
 		&product,
@@ -860,7 +910,7 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
 		vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
 	let events = Arc::new(NativeEventBus::default());
 	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let remove = |card_id: &str| {
 		futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
 			&platform,
@@ -919,7 +969,7 @@ impl NativeGameCallbacks for RecordingGameCallbacks {
 fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	let callbacks = Arc::new(RecordingGameCallbacks::default());
 	let platform = GameCallbackPlatform { game: callbacks.clone() };
-	let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("dim2.dot"));
 
 	futures::executor::block_on(async {
 		crate::platform::GamePlatform::schedule_game_reminder(&platform, &product, 42)
@@ -986,6 +1036,7 @@ fn permission_authorization_request_mirror_round_trips() {
 		v01::HostDevicePermissionRequest::Clipboard,
 		v01::HostDevicePermissionRequest::OpenUrl,
 		v01::HostDevicePermissionRequest::Biometrics,
+		v01::HostDevicePermissionRequest::Motion,
 	];
 	let remote_cases = [
 		v01::RemotePermission::Remote { domains: vec!["a.dot".to_string(), "b.dot".to_string()] },
@@ -1093,13 +1144,13 @@ fn native_theme_subscription_emits_current_then_notified_changes() {
 #[test]
 fn native_preimage_subscription_emits_current_then_notified_value() {
 	let (callbacks, events, platform) = event_platform();
-	let key = vec![7; 32];
+	let key = [7; 32];
 	callbacks
 		.preimages
 		.lock()
 		.expect("preimage map mutex poisoned")
-		.push((key.clone(), Some(vec![1, 2, 3])));
-	let mut stream = platform.lookup_preimage(key.clone());
+		.push((key.to_vec(), Some(vec![1, 2, 3])));
+	let mut stream = platform.lookup_preimage(key);
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	events.notify_preimage_changed(&key, Some(vec![4, 5, 6]));
@@ -1109,13 +1160,309 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 	assert_eq!(second.unwrap(), Some(vec![4, 5, 6]));
 }
 
+/// Long enough for several retries at the test pause lengths.
+const PREIMAGE_QUIET_WINDOW: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The stream's next item, or `None` when it yields nothing within `wait`.
+fn next_preimage_within(
+	stream: &mut BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>>,
+	wait: std::time::Duration,
+) -> Option<Result<Option<Vec<u8>>, v01::GenericError>> {
+	futures::executor::block_on(async {
+		match futures::future::select(stream.next(), futures_timer::Delay::new(wait)).await {
+			futures::future::Either::Left((item, _)) => {
+				Some(item.expect("the preimage stream ended"))
+			},
+			futures::future::Either::Right(_) => None,
+		}
+	})
+}
+
+/// Set the value the host returns for `key`.
+fn host_preimage(callbacks: &EventCallbacks, key: &[u8], value: Option<Vec<u8>>) {
+	*callbacks.preimages.lock().expect("preimage map mutex poisoned") = vec![(key.to_vec(), value)];
+}
+
+/// A lookup whose first fetch failed still gets the value once the host has
+/// it, and the retries stop there.
+#[test]
+fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value);
+	let mut stream = platform.lookup_preimage(key);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_found = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_found = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, found, after_found), (Ok(None), Some(Ok(Some(value))), None));
+	assert_eq!(
+		callbacks.preimage_lookups.load(Ordering::SeqCst),
+		lookups_until_found,
+		"the lookup kept asking after it had the value"
+	);
+}
+
+/// The runtime treats bytes that do not hash to the key as a miss, so they
+/// must not stop the retries.
+#[test]
+fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value);
+	host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
+	let mut stream = platform.lookup_preimage(key);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let while_wrong = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let found = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+
+	assert_eq!((first, while_wrong, found), (Ok(Some(vec![9, 9, 9])), None, Some(Ok(Some(value)))));
+}
+
+/// A host error during a retry reaches the product and stops the retries,
+/// as an error on the first lookup does.
+#[test]
+fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_asking() {
+	let (callbacks, _events, platform) = event_platform();
+	let mut stream = platform.lookup_preimage(preimage_key(&[1, 2, 3]));
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	*callbacks.preimage_rejection.lock().expect("preimage rejection mutex poisoned") =
+		Some("key refused".to_string());
+	let rejected = next_preimage_within(&mut stream, std::time::Duration::from_secs(5));
+	let lookups_until_rejected = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	let after_rejection = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!(
+		(first, rejected, after_rejection),
+		(Ok(None), Some(Err(v01::GenericError { reason: "key refused".to_string() })), None)
+	);
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), lookups_until_rejected);
+}
+
+/// A hit is not retried. Each retry is another gateway request.
+#[test]
+fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
+	let (callbacks, _events, platform) = event_platform();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value);
+	host_preimage(&callbacks, &key, Some(value.clone()));
+	let mut stream = platform.lookup_preimage(key);
+
+	let first = futures::executor::block_on(stream.next()).unwrap();
+	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
+
+	assert_eq!((first, later), (Ok(Some(value)), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
+}
+
+/// An execution whose host answers preimage lookups from the returned
+/// callbacks, and the bridge URL a product dials.
+fn preimage_bridge() -> (Arc<EventCallbacks>, Arc<NativeProductExecution>, String) {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let execution = native_product_execution(callbacks.clone(), "lookup.dot");
+	let endpoint = execution.start_ws_bridge(0).expect("start bridge");
+	let url = format!("ws://127.0.0.1:{}/?t={}", endpoint.port, endpoint.token);
+	(callbacks, execution, url)
+}
+
+/// A `preimage_lookup_subscribe` frame a product sends as `request_id`.
+fn preimage_lookup_frame(
+	request_id: &str,
+	message_type: u8,
+	value: Vec<u8>,
+) -> tokio_tungstenite::tungstenite::Message {
+	use crate::frame::{Payload, ProtocolMessage, subscription_ids};
+
+	let ids = subscription_ids("preimage_lookup_subscribe").expect("known subscription");
+	let frame = ProtocolMessage {
+		request_id: request_id.into(),
+		payload: Payload { trait_id: ids.trait_id, method_id: ids.method_id, message_type, value },
+	};
+	tokio_tungstenite::tungstenite::Message::Binary(frame.encode())
+}
+
+/// Start the lookup of `key` as `request_id`.
+fn start_preimage_lookup(request_id: &str, key: &[u8]) -> tokio_tungstenite::tungstenite::Message {
+	let request = truapi::versioned::preimage::RemotePreimageLookupSubscribeRequest::V1(
+		v01::RemotePreimageLookupSubscribeRequest { key: key.to_vec() },
+	);
+	preimage_lookup_frame(request_id, crate::frame::MESSAGE_TYPE_START, request.encode())
+}
+
+/// Stop the lookup open as `request_id`.
+fn stop_preimage_lookup(request_id: &str) -> tokio_tungstenite::tungstenite::Message {
+	preimage_lookup_frame(request_id, crate::frame::MESSAGE_TYPE_STOP, Vec::new())
+}
+
+/// The next answer to lookup `request_id`, or `None` if none arrives within
+/// `wait`.
+async fn next_preimage_answer<S>(
+	ws: &mut S,
+	request_id: &str,
+	wait: std::time::Duration,
+) -> Option<Option<Vec<u8>>>
+where
+	S: futures::Stream<
+			Item = Result<
+				tokio_tungstenite::tungstenite::Message,
+				tokio_tungstenite::tungstenite::Error,
+			>,
+		> + Unpin,
+{
+	use parity_scale_codec::Decode;
+	use tokio_tungstenite::tungstenite::Message as WsMessage;
+	use truapi::versioned::preimage::RemotePreimageLookupSubscribeItem;
+
+	use crate::frame::{MESSAGE_TYPE_RECEIVE, ProtocolMessage};
+
+	let answer = async {
+		loop {
+			match ws.next().await {
+				Some(Ok(WsMessage::Binary(bytes))) => {
+					let frame = ProtocolMessage::decode(&mut &bytes[..]).expect("decode frame");
+					if frame.request_id != request_id {
+						continue;
+					}
+					assert_eq!(frame.payload.message_type, MESSAGE_TYPE_RECEIVE);
+					let RemotePreimageLookupSubscribeItem::V1(item) =
+						RemotePreimageLookupSubscribeItem::decode(&mut &frame.payload.value[..])
+							.expect("decode lookup item");
+					return item.value;
+				},
+				Some(Ok(_)) => {},
+				Some(Err(error)) => panic!("bridge error: {error}"),
+				None => panic!("bridge closed"),
+			}
+		}
+	};
+	tokio::time::timeout(wait, answer).await.ok()
+}
+
+/// Host lookups counted once in-flight work settles, then again after
+/// [`PREIMAGE_QUIET_WINDOW`]. Equal counts mean nothing is still retrying.
+async fn preimage_lookups_settled(callbacks: &EventCallbacks) -> (usize, usize) {
+	tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+	let settled = callbacks.preimage_lookups.load(Ordering::SeqCst);
+	tokio::time::sleep(PREIMAGE_QUIET_WINDOW).await;
+	(settled, callbacks.preimage_lookups.load(Ordering::SeqCst))
+}
+
+/// A runtime for the product's side of the bridge.
+fn bridge_test_runtime() -> tokio::runtime::Runtime {
+	tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("test runtime")
+}
+
+/// The bug's path over the bridge: a lookup whose first fetch failed gets the
+/// value once the host has it, and bytes that do not hash to the key never
+/// reach the product.
+#[test]
+fn a_product_gets_a_preimage_the_host_finds_after_a_miss() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+	let value = vec![1, 2, 3];
+	let key = preimage_key(&value);
+
+	let answers = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &key)).await.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
+		let while_wrong = next_preimage_answer(&mut ws, "lookup", PREIMAGE_QUIET_WINDOW).await;
+		host_preimage(&callbacks, &key, Some(value.clone()));
+		let found =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		(first, while_wrong, found)
+	});
+
+	assert_eq!(answers, (Some(None), None, Some(Some(value))));
+}
+
+/// A product that unsubscribes stops the retries, so a lookup it gave up on
+/// does not keep calling the host.
+#[test]
+fn a_stopped_preimage_lookup_stops_asking_the_host() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let (first, (settled, later)) = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &preimage_key(&[1, 2, 3])))
+			.await
+			.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		ws.send(stop_preimage_lookup("lookup")).await.expect("stop lookup");
+		(first, preimage_lookups_settled(&callbacks).await)
+	});
+
+	assert_eq!(first, Some(None));
+	assert_eq!(later, settled, "the host was asked again after the product stopped the lookup");
+}
+
+/// A product whose connection closes, for example on a page reload, stops
+/// the retries too.
+#[test]
+fn a_closed_connection_stops_its_preimage_lookups() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let (first, (settled, later)) = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &preimage_key(&[1, 2, 3])))
+			.await
+			.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		drop(ws);
+		(first, preimage_lookups_settled(&callbacks).await)
+	});
+
+	assert_eq!(first, Some(None));
+	assert_eq!(later, settled, "the host was asked again after the connection closed");
+}
+
+/// Preimage keys are 32-byte blake2b-256 digests, so the runtime answers a
+/// key of any other length with a miss and never asks the host.
+#[test]
+fn a_key_that_is_not_32_bytes_is_a_miss_without_asking_the_host() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let answers = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &[7; 20])).await.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		let later = next_preimage_answer(&mut ws, "lookup", PREIMAGE_QUIET_WINDOW).await;
+		(first, later)
+	});
+
+	assert_eq!(answers, (Some(None), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 0);
+}
+
 #[test]
 fn native_chat_room_subscription_emits_current_then_notified_replacement() {
 	let (callbacks, events, _platform) = event_platform();
 	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let mut stream = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 
 	let first = ready_rooms(stream.as_mut(), "initial room list");
@@ -1161,9 +1508,10 @@ fn native_chat_adapter_forwards_every_message_variant() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let reaction =
 		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
 	// Every variant the protocol advertises reaches the host, so a product
@@ -1225,9 +1573,10 @@ fn native_chat_adapter_forwards_the_alt_of_a_message() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
 		message_type: "results".to_string(),
 		payload: vec![1],
@@ -1265,9 +1614,10 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let connection = crate::runtime::ActionChannel::chat();
 
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1329,9 +1679,10 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
 		Some("cannot render a file card".to_string());
 
@@ -1369,9 +1720,10 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
 		Some("keychain locked".to_string());
 
@@ -1406,9 +1758,10 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let events = Arc::new(NativeEventBus::default());
 	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatRegisterBotRequest {
 		bot_id: "flipper".to_string(),
 		name: "Flipper".to_string(),
@@ -1466,9 +1819,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatCreateRoomRequest {
 		room_id: "support".to_string(),
 		name: "Support".to_string(),
@@ -1534,9 +1888,10 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
@@ -1727,18 +2082,18 @@ fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
 	);
 }
 
+/// The app passes a product id as a string, and UniFFI parses it while
+/// converting the call's arguments, so an execution can only open under a
+/// valid id.
 #[test]
-fn product_execution_config_rejects_empty_product_id() {
-	let err = ProductContext::try_from(ProductExecutionConfig {
-		product_id: " ".to_string(),
-		..native_execution_config("app.dot", ProductExecutionKind::App)
-	})
-	.unwrap_err();
+fn a_product_id_from_the_app_is_parsed_when_the_call_is_converted() {
+	let lift = |product_id: &str| {
+		let mut wire = Vec::new();
+		<String as uniffi::Lower<crate::UniFfiTag>>::write(product_id.to_string(), &mut wire);
+		<ProductId as uniffi::Lift<crate::UniFfiTag>>::try_read(&mut wire.as_slice()).ok()
+	};
 
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid { reason: "product_id must not be empty".to_string() }
-	);
+	assert_eq!((lift("App.DOT"), lift(" ")), (Some(ProductId::for_test("app.dot")), None));
 }
 
 #[test]
@@ -1791,9 +2146,13 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
+		}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
+		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+			Ok(vec![0; 32])
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -1903,12 +2262,16 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -1950,9 +2313,13 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 
 		fn on_core_log(&self, _marker: String, _detail: String) {}
-		fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
+		}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
+		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+			Ok(vec![0; 32])
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -2064,12 +2431,16 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn begin_operation(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_label: String,
 		) -> Result<u32, HostRejection> {
 			Ok(1)
 		}
-		async fn end_operation(&self, _product_id: String, _id: u32) -> Result<(), HostRejection> {
+		async fn end_operation(
+			&self,
+			_product_id: ProductId,
+			_id: u32,
+		) -> Result<(), HostRejection> {
 			Ok(())
 		}
 	}
@@ -2511,7 +2882,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.dot"), ProductExecutionKind::Worker)]),
 		);
 	}
 }
@@ -2533,7 +2904,9 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 				storage_events: Arc::default(),
 			};
 			let review = UserConfirmationReview::IdentityDisclosure(
-				crate::platform::IdentityDisclosureReview { product_id: "product.dot".to_string() },
+				crate::platform::IdentityDisclosureReview {
+					product_id: crate::platform::ProductId::for_test("product.dot"),
+				},
 			);
 			assert_eq!(
 				(
@@ -2792,6 +3165,24 @@ fn a_card_title_accepts_what_a_card_id_refuses() {
 		"\u{2615}\u{fe0f} Coffee"
 	);
 	assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
+}
+
+/// A host screening a room icon itself gets the answer the core's own
+/// `create_room` would give, so a product cannot pass one path and fail the
+/// other.
+#[test]
+fn a_chat_icon_is_screened_as_create_room_screens_it() {
+	assert_eq!(screen_chat_icon("  ".to_string()).unwrap(), "");
+	assert_eq!(
+		screen_chat_icon("data:image/png;base64,iVBORw0KGgo=".to_string()).unwrap(),
+		"data:image/png;base64,iVBORw0KGgo="
+	);
+	assert_eq!(
+		screen_chat_icon("https://example.invalid".to_string()).unwrap(),
+		"https://example.invalid/"
+	);
+	assert!(screen_chat_icon("data:image/svg+xml,<svg onload=alert(1)>".to_string()).is_err());
+	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
 }
 
 /// Both sides NFC-normalize, so a host that compares raw bytes against what

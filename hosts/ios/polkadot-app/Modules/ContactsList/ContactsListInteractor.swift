@@ -46,8 +46,8 @@ extension ContactsListInteractor: ContactsListInteractorInputProtocol {
         foregroundVisibilityReporter?.updateVisibleScreen(.other)
     }
 
-    func entryRoute(for model: ChatOpenModel) async -> ChatExtensionEntryRoute {
-        await chatExtensionsRegistry.entryRoute(for: model)
+    func entryRoute(for model: ChatOpenModel) async throws -> ChatExtensionEntryRoute {
+        try await chatExtensionsRegistry.entryRoute(for: model)
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKitExt
 
@@ -37,7 +38,8 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
 
         let executionModel = try environment.rust.makeSPAExecution(
             productId: productId,
-            routers: environment.routers
+            routers: environment.routers,
+            cardFace: environment.configuration.cardFace
         )
 
         return SPARustRuntime(
@@ -46,7 +48,8 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             dotNsResolver: environment.dotNsResolver,
             productResolver: environment.productResolver,
             schemeHandlerProxy: environment.schemeHandlerProxy,
-            logger: environment.rust.logger
+            logger: environment.rust.logger,
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }
 }

@@ -1,6 +1,8 @@
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
+use super::NftPurseOwner;
+
 /// Device-capability permission requested from the host (RFC 0002).
 ///
 /// Lasting grants and denials survive app restarts. A host may also offer a
@@ -15,6 +17,8 @@ use parity_scale_codec::{Decode, Encode};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
 #[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(test, derive(strum::VariantArray))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum HostDevicePermissionRequest {
 	/// Showing system notifications.
 	#[display("notifications")]
@@ -44,14 +48,19 @@ pub enum HostDevicePermissionRequest {
 	/// Biometric authentication.
 	#[display("biometrics")]
 	Biometrics,
+	/// Device motion and orientation sensor access.
+	#[display("motion")]
+	Motion,
 }
 
 /// One remote-operation permission requested by the product (RFC 0002).
 ///
-/// `ChainSubmit`, `PreimageSubmit`, and `StatementSubmit` are also triggered
-/// implicitly by the corresponding business calls when not yet granted.
+/// `ChainSubmit`, `PreimageSubmit`, `StatementSubmit` and `BalanceAccess`
+/// are also triggered implicitly by the corresponding business calls when not
+/// yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum RemotePermission {
 	/// Outbound HTTP/WebSocket access to a set of domains. External navigation
 	/// uses [`HostDevicePermissionRequest::OpenUrl`] instead.
@@ -82,6 +91,19 @@ pub enum RemotePermission {
 	/// Submitting statements on behalf of the user via `remote_statement_store_submit`.
 	#[display("submit statements")]
 	StatementSubmit,
+	/// Seeing the user's payment balance through `payment.balanceSubscribe`,
+	/// and learning that a payment request was refused for the balance rather
+	/// than by the user.
+	#[display("see your balance")]
+	BalanceAccess,
+	/// Reading the NFT purses of an owner other than the caller: listing them,
+	/// querying their items and creating item keys in them. A grant covers
+	/// that owner only.
+	#[display("see the NFT purses of {owner}")]
+	NftPurseRead {
+		/// Whose purses.
+		owner: NftPurseOwner,
+	},
 }
 
 /// remote-permission request (RFC 0002).

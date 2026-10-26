@@ -1,0 +1,65 @@
+name: iOS app on main
+
+# The iOS suite for a push to main that reaches the app, which publishes the
+# reusable core and the record of the bindings its tests passed against for
+# pull requests to find. Its own workflow rather than a job in ci.yml, so a
+# Mac run holds back neither CI's verdict nor what waits on it, the deploys and
+# the release, and a push that does not reach the app never replaces one that
+# does while it waits.
+#
+# The paths are the ios host's core, tree, full and ci entries in
+# .github/hosts.json; `scripts/ci-gates.py --check` fails while they differ.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/find-main-artifact/**"
+      - ".github/actions/mac-preflight/**"
+      - ".github/actions/rust-cache/**"
+      - ".github/actions/rust-nightly/**"
+      - ".github/actions/setup-swiftlint/**"
+      - ".github/actions/upsert-pr-comment/**"
+      - ".github/hosts.json"
+      - ".github/workflows/ios-app.yml"
+      - ".github/workflows/ios-firebase-debug-distribution.yml"
+      - ".github/workflows/ios-main.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Makefile"
+      - "Package.swift"
+      - "hosts/ios/**"
+      - "ios/**"
+      - "js/container/**"
+      - "js/packages/truapi/**"
+      - "nightly-toolchain"
+      - "package-lock.json"
+      - "package.json"
+      - "rust/crates/truapi-codegen/**"
+      - "rust/crates/truapi-macros/**"
+      - "rust/crates/truapi-provider/**"
+      - "rust/crates/truapi-verifiable/**"
+      - "rust/crates/truapi/**"
+      - "rust/crates/uniffi-bindgen-cli/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+# Every run finishes, so each one publishes what it built. A later push waits,
+# and replaces any push still waiting behind it, whose changes it contains.
+concurrency:
+  group: ios-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ios-app:
+    name: iOS app
+    uses: ./.github/workflows/ios-app.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write

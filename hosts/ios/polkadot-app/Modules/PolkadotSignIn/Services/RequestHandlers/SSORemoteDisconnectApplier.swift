@@ -10,32 +10,22 @@ final class SSORemoteDisconnectApplier: @unchecked Sendable, SSORemoteDisconnect
     private let hostRepository: AnyDataProviderRepository<PolkadotSignInHost>
     private let localDeviceRepository: AnyDataProviderRepository<Chat.LocalDevice>
     private let injectedBroadcaster: DeviceMessageBroadcasting?
-    private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
     init(
         hostRepositoryFactory: PolkadotSignInHostRepositoryMaking = PolkadotSignInHostRepositoryFactory(),
         localDeviceRepositoryFactory: LocalDeviceRepositoryMaking = LocalDeviceRepositoryFactory(),
         deviceMessageBroadcaster: DeviceMessageBroadcasting? = nil,
-        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         hostRepository = hostRepositoryFactory.createRepository(forFilter: nil)
         localDeviceRepository = localDeviceRepositoryFactory.createRepository(forFilter: nil)
         injectedBroadcaster = deviceMessageBroadcaster
-        self.tldProvider = tldProvider
         self.logger = logger
     }
 
-    private func makeBroadcaster() throws -> DeviceMessageBroadcasting {
-        if let injectedBroadcaster {
-            return injectedBroadcaster
-        }
-
-        let tld = try tldProvider.currentTldOrError()
-        return MultideviceComponentFactory.makeDeviceMessageBroadcaster(
-            messageExchangeModeProvider: ChatMessageExchangeModeProvider(tld: tld)
-        )
+    private func makeBroadcaster() -> DeviceMessageBroadcasting {
+        injectedBroadcaster ?? MultideviceComponentFactory.makeDeviceMessageBroadcaster()
     }
 
     func applyDisconnect(from host: PolkadotSignInHost) async {

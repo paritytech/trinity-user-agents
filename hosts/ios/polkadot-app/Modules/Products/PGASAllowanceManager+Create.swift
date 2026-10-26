@@ -36,7 +36,8 @@ extension PGASAllowanceManager {
         let pgasOriginFactory = PGasOriginFactory(
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: tldProvider
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(
@@ -69,16 +70,17 @@ extension PGASAllowanceManager {
 
         let slotInfoProvider = PGASSlotInfoProvider(
             chainId: ahChain.chainId,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: tldProvider,
             keyResolver: keyResolver,
             chainTimeProvider: chainTimeProvider
         )
 
         let allocator = PGASSlotAllocator(
             submissionChainId: ahChain.chainId,
-            originChainId: AppConfig.Chains.usernameChain,
+            originChainId: AppConfig.Chains.peopleChain,
             originFactory: pgasOriginFactory,
             submitter: SlotAssignmentSubmitter(monitorFactory: monitorFactory),
             slotInfoProvider: slotInfoProvider

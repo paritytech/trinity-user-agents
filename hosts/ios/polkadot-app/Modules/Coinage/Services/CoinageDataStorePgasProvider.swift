@@ -57,13 +57,15 @@ extension PGASAccountProvisioner {
     ) -> PGASAccountProvisioner {
         PGASAccountProvisioner(
             allowanceManager: allowanceManager,
+            domain: .coinage,
             balanceProvider: CoinageDataStorePgasProvider(
                 chainResource: chainRegistry,
                 balanceService: BalanceQueryService(
                     chainResource: chainRegistry,
                     operationQueue: OperationManagerFacade.sharedDefaultQueue
                 )
-            )
+            ),
+            issueDiagnostics: .make(flow: "pgas-allowance", reporter: IssueReportingFacade.shared)
         )
     }
 }

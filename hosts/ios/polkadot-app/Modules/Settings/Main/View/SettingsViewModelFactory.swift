@@ -10,6 +10,7 @@ struct SettingsContentInput {
     let selectedCurrencyCode: String?
     let selectedThemeName: String?
     let selectedPrivacyStrategy: RecyclingStrategyType?
+    let paymentsBackupStatus: CoinageAccountBackupStatus?
     let appVersion: String?
     let isTabBarLabelsEnabled: Bool
     let onSelect: (SettingsViewModel.CellType) -> Void
@@ -56,7 +57,7 @@ private extension SettingsViewModelFactory {
         input: SettingsContentInput
     ) -> DSMenuListItem {
         let needsAttention = input.attentionItems.contains(cellType)
-        let usesToggle = cellType == .tabBarLabels
+        let isStatic = cellType == .tabBarLabels || cellType == .paymentsBackup
         return DSMenuListItem(
             id: cellType,
             title: cellType.title,
@@ -65,13 +66,22 @@ private extension SettingsViewModelFactory {
             icon: icon(for: cellType),
             rightSlot: rightSlot(for: cellType, input: input),
             accessibilityId: AccessibilityID.Settings.menuItem(for: cellType),
-            action: usesToggle ? nil : { input.onSelect(cellType) }
+            action: isStatic ? nil : { input.onSelect(cellType) }
         )
+    }
+
+    func statusText(for status: CoinageAccountBackupStatus) -> String {
+        switch status {
+        case .registering: String(localized: .settingsPaymentsBackupStatusRegistering)
+        case .delayed: String(localized: .settingsPaymentsBackupStatusDelayed)
+        case .completed: String(localized: .settingsPaymentsBackupStatusCompleted)
+        }
     }
 
     func icon(for cellType: SettingsViewModel.CellType) -> ImageResource? {
         switch cellType {
         case .backup: .iconCloud
+        case .paymentsBackup: .iconDollar
         case .theme: .iconPalette
         case .tabBarLabels: .iconPalette
         case .currency: .iconDollar
@@ -89,6 +99,8 @@ private extension SettingsViewModelFactory {
         switch cellType {
         case .theme:
             input.selectedThemeName.map(DSMenuListItemRightSlot.Style.labelChevron)
+        case .paymentsBackup:
+            input.paymentsBackupStatus.map { .labelOnly(statusText(for: $0)) }
         case .tabBarLabels:
             .toggle(Binding(
                 get: { input.isTabBarLabelsEnabled },

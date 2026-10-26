@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
@@ -7,8 +8,8 @@ import UIKitExt
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
 /// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) is answered by a `JSDeviceCapabilityHandler`
-/// registered on the engine.
+/// media capture (getUserMedia) and WebKit's motion request are answered by a
+/// `JSDeviceCapabilityHandler` registered on the engine.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -21,6 +22,8 @@ actor SPARustRuntime {
     private let productResolver: ProductResolving
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
@@ -33,7 +36,8 @@ actor SPARustRuntime {
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -41,6 +45,7 @@ actor SPARustRuntime {
         self.productResolver = productResolver
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -66,17 +71,36 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
-            executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+            executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                execution: executionModel.execution
+            )
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
