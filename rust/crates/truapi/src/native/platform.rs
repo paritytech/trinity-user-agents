@@ -16,9 +16,11 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
+use zeroize::Zeroizing;
 
 use crate::{
 	DevicePairingObserver, PairedSsoPeer,
+	encrypted_storage::EncryptedStorage,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
 };
@@ -112,6 +114,21 @@ impl crate::durable::DurableWorkObserver for CallbackPlatform {
 impl DevicePairingObserver for CallbackPlatform {
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.callbacks.device_paired(device);
+	}
+}
+
+#[async_trait]
+impl EncryptedStorage for CallbackPlatform {
+	async fn read_encrypted(
+		&self,
+		key: &[u8],
+	) -> Result<Option<Zeroizing<Vec<u8>>>, v01::GenericError> {
+		let value = self.callbacks.encrypted_storage_read(key.to_vec()).await?;
+		Ok(value.map(Zeroizing::new))
+	}
+
+	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_write(key.to_vec(), value.to_vec()).await?)
 	}
 }
 

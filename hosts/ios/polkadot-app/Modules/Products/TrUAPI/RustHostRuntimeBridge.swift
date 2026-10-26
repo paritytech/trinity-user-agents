@@ -21,6 +21,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
+    private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -31,6 +32,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
+        encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -38,6 +40,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
         self.backedUpInstallation = backedUpInstallation
+        self.encryptedStorage = encryptedStorage
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -124,6 +127,14 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func currentInstallation() async throws -> Data {
         try await backedUpInstallation.installationId()
+    }
+
+    func encryptedStorageRead(key: Data) async throws -> Data? {
+        try encryptedStorage.read(key: key)
+    }
+
+    func encryptedStorageWrite(key: Data, value: Data) async throws {
+        try encryptedStorage.write(key: key, value: value)
     }
 
     func supportedChains() throws -> HostChainSet {

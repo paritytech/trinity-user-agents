@@ -19,6 +19,7 @@ mod chain;
 mod chat;
 mod contacts;
 mod dotns_read;
+mod encrypted_storage;
 mod frame_server;
 #[cfg(feature = "test-host")]
 mod funding_host;
@@ -1825,6 +1826,9 @@ fn build_signing_runtime(
 	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
 	let installation_path = storage_path.join("installation");
 	let installation = Arc::new(installation::CliInstallation::new(installation_path));
+	let encrypted_storage_path = storage_path.join("encrypted-storage.json");
+	let encrypted_storage =
+		Arc::new(encrypted_storage::CliEncryptedStorage::new(encrypted_storage_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
@@ -1857,6 +1861,7 @@ fn build_signing_runtime(
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
 	runtime.set_installation_provider(installation);
+	runtime.set_encrypted_storage(encrypted_storage);
 	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))

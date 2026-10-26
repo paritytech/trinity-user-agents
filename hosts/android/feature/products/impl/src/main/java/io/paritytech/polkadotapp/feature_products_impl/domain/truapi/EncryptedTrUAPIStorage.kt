@@ -46,9 +46,13 @@ class EncryptedHostStorage(
  * not to a product, and scoping it per product would make every product demand
  * its own pairing. The core disambiguates internally through the SCALE-encoded
  * `CoreStorageKey` it passes here.
+ *
+ * [namespace] keeps separate stores apart: the core's encrypted storage, which
+ * holds NFT receive key secrets, lives under [ENCRYPTED_STORAGE_NAMESPACE].
  */
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,
+    private val namespace: String = CORE_NAMESPACE,
 ) : HostCoreStorage {
     override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
 
@@ -62,10 +66,13 @@ class EncryptedHostCoreStorage(
             .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
     }
 
-    private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
+    private fun qualify(key: ByteArray) = "$namespace/${key.toHex()}"
 
-    private companion object {
-        const val CORE_NAMESPACE = "truapi/core"
+    companion object {
+        private const val CORE_NAMESPACE = "truapi/core"
+
+        /** Namespace of the core's encrypted storage, apart from its core storage slots. */
+        const val ENCRYPTED_STORAGE_NAMESPACE = "truapi/encrypted"
     }
 }
 

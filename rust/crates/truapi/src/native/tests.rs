@@ -264,6 +264,19 @@ impl HostCallbacks for EventCallbacks {
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 		Ok(vec![7; 32])
 	}
+	async fn encrypted_storage_read(
+		&self,
+		_key: Vec<u8>,
+	) -> Result<Option<Vec<u8>>, HostRejection> {
+		Ok(None)
+	}
+	async fn encrypted_storage_write(
+		&self,
+		_key: Vec<u8>,
+		_value: Vec<u8>,
+	) -> Result<(), HostRejection> {
+		Ok(())
+	}
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
 	}
@@ -1846,6 +1859,19 @@ fn start_ws_bridge_twice_returns_already_running() {
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
 		}
+		async fn encrypted_storage_read(
+			&self,
+			_key: Vec<u8>,
+		) -> Result<Option<Vec<u8>>, HostRejection> {
+			Ok(None)
+		}
+		async fn encrypted_storage_write(
+			&self,
+			_key: Vec<u8>,
+			_value: Vec<u8>,
+		) -> Result<(), HostRejection> {
+			Ok(())
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -2017,6 +2043,19 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
+		}
+		async fn encrypted_storage_read(
+			&self,
+			_key: Vec<u8>,
+		) -> Result<Option<Vec<u8>>, HostRejection> {
+			Ok(None)
+		}
+		async fn encrypted_storage_write(
+			&self,
+			_key: Vec<u8>,
+			_value: Vec<u8>,
+		) -> Result<(), HostRejection> {
+			Ok(())
 		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())

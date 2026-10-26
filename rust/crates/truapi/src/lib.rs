@@ -833,6 +833,10 @@ pub mod durable;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+pub mod encrypted_storage;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod installation;
 
 #[cfg(feature = "runtime")]

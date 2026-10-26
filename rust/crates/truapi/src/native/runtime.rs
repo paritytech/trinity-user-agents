@@ -122,8 +122,12 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its core database once"
 		);
 		assert!(
-			runtime.set_installation_provider(platform),
+			runtime.set_installation_provider(platform.clone()),
 			"a freshly built runtime installs its installation provider once"
+		);
+		assert!(
+			runtime.set_encrypted_storage(platform),
+			"a freshly built runtime installs its encrypted storage once"
 		);
 		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {

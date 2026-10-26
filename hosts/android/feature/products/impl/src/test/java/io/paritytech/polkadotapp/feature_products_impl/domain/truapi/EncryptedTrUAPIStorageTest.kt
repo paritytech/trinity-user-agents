@@ -103,6 +103,19 @@ class EncryptedTrUAPIStorageTest {
 
         assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
     }
+
+    /** Receive key secrets must not collide with, or be cleared as, a core storage slot of the same key. */
+    @Test
+    fun `encrypted storage keeps its values apart from core storage`() = runTest {
+        val core = EncryptedHostCoreStorage(prefs)
+        val encrypted = EncryptedHostCoreStorage(prefs, namespace = EncryptedHostCoreStorage.ENCRYPTED_STORAGE_NAMESPACE)
+
+        core.write(byteArrayOf(1), byteArrayOf(10))
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        core.clear(byteArrayOf(1))
+
+        assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
+    }
 }
 
 private class FakeEncryptedPreferences(

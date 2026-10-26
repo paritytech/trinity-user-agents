@@ -211,6 +211,19 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Defaults to a rejection for a host that keeps no installation id.
     func currentInstallation() async throws -> Data
 
+    /// A value the host keeps encrypted at rest, such as in the Keychain with
+    /// a `ThisDeviceOnly` accessibility. Return `nil` when nothing is stored
+    /// under `key`, and throw only when the store cannot be read. The core
+    /// keeps NFT receive key secrets here. Runtime-wide, like
+    /// `durableWorkChanged`. Defaults to a rejection for a host with no such
+    /// store, which fails `createReceiveKey`.
+    func encryptedStorageRead(key: Data) async throws -> Data?
+
+    /// Stores `value` under `key`, encrypted at rest and excluded from
+    /// backups, replacing any earlier value. Runtime-wide, like
+    /// `durableWorkChanged`. Defaults to a rejection.
+    func encryptedStorageWrite(key: Data, value: Data) async throws
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -433,6 +446,12 @@ public extension HostBridge {
     func durableWorkChanged(pending: Bool) {}
     func currentInstallation() async throws -> Data {
         throw HostRejection.Rejected(reason: "this host keeps no installation id")
+    }
+    func encryptedStorageRead(key: Data) async throws -> Data? {
+        throw HostRejection.Rejected(reason: "this host keeps no encrypted storage")
+    }
+    func encryptedStorageWrite(key: Data, value: Data) async throws {
+        throw HostRejection.Rejected(reason: "this host keeps no encrypted storage")
     }
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
@@ -699,6 +718,18 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func currentInstallation() async throws -> Data {
         try await withHostRejection {
             try await bridge.currentInstallation()
+        }
+    }
+
+    func encryptedStorageRead(key: Data) async throws -> Data? {
+        try await withHostRejection {
+            try await bridge.encryptedStorageRead(key: key)
+        }
+    }
+
+    func encryptedStorageWrite(key: Data, value: Data) async throws {
+        try await withHostRejection {
+            try await bridge.encryptedStorageWrite(key: key, value: value)
         }
     }
 

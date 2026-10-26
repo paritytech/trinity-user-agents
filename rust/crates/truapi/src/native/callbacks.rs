@@ -211,6 +211,25 @@ pub trait HostCallbacks: Send + Sync {
 	/// with.
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection>;
 
+	/// Read a value the host keeps encrypted at rest: the Keychain on iOS,
+	/// encrypted preferences on Android. Return `None` when nothing is stored
+	/// under `key`, and an error only when the store cannot be read.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+
+	/// Store `value` under `key`, encrypted at rest and excluded from backups,
+	/// replacing any earlier value.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_write(
+		&self,
+		key: Vec<u8>,
+		value: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
 		&self,

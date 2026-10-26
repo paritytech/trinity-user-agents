@@ -221,6 +221,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
+        // Shared preferences are excluded from backups, and the AndroidKeyStore key wrapping them never leaves the device.
+        private val encryptedStorage = EncryptedHostCoreStorage(
+            encryptedPreferences,
+            namespace = EncryptedHostCoreStorage.ENCRYPTED_STORAGE_NAMESPACE,
+        )
+
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)
         }
@@ -242,6 +248,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
         override suspend fun currentInstallation(): ByteArray =
             installations.awaitBackedUp().getOrThrow().value.value
+
+        override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? = encryptedStorage.read(key)
+
+        override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+            encryptedStorage.write(key, value)
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
