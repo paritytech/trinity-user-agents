@@ -374,7 +374,10 @@ mod tests {
 		let purses = purses_holding(1);
 		let key = purses.held[0];
 		let hand_off = move |tx: &rusqlite::Transaction<'_>| {
-			tx.execute("INSERT INTO nft_consumption (key, kind) VALUES (?1, 'HANDOFF')", [key.0])?;
+			tx.execute(
+				"INSERT INTO nft_consumption (key, kind, handoff_tag) VALUES (?1, 'HANDOFF', x'01')",
+				[key.0],
+			)?;
 			Ok(())
 		};
 		block_on(purses.db.write(hand_off)).unwrap();
