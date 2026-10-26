@@ -10,7 +10,6 @@ use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
 	durable::{CompletionOracle, DurableTxEntry, DurableTxId, HeadKind, LedgerView, PassScope},
-	nft::ItemKey,
 };
 
 const OPEN_PASS: &str = "scarcity_transfer_oracle";
@@ -41,10 +40,11 @@ impl ScarcityTransferOracle {
 	) -> Result<HashMap<DurableTxId, bool>, RuntimeFailure> {
 		let instances: Vec<u64> = transfers.iter().map(|(_, params)| params.instance).collect();
 		let holders = self.chain.holders_at(at.hash, &instances).await.map_err(runtime_failure)?;
-		let landed = |((id, params), holder): (&(DurableTxId, TransferParams), Option<ItemKey>)| {
-			(*id, holder == Some(params.destination))
-		};
-		Ok(transfers.iter().zip(holders).map(landed).collect())
+		Ok(transfers
+			.iter()
+			.zip(holders)
+			.map(|((id, params), holder)| (*id, holder == Some(params.destination)))
+			.collect())
 	}
 }
 
@@ -108,9 +108,12 @@ mod tests {
 	use crate::{
 		chain::Mortality,
 		durable::{DomainId, DurableTxStatus, PolicyId, SubmissionPlan},
-		nft::scarcity::{
-			chain::{KeyLocks, ScarcityNft, TransferContext},
-			policy::TRANSFER_POLICY,
+		nft::{
+			ItemKey,
+			scarcity::{
+				chain::{KeyLocks, ScarcityNft, TransferContext},
+				policy::TRANSFER_POLICY,
+			},
 		},
 	};
 

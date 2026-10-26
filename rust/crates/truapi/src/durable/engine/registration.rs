@@ -199,10 +199,12 @@ fn insert_presigned(
 	group: Option<&GroupId>,
 	submissions: &[DurableSubmission],
 ) -> Result<Vec<DurableTxId>, DbError> {
-	let insert = |submission: &DurableSubmission| {
-		dao::insert(tx, domain, group, &submission.extrinsic, submission.plan.as_ref())
-	};
-	submissions.iter().map(insert).collect()
+	submissions
+		.iter()
+		.map(|submission| {
+			dao::insert(tx, domain, group, &submission.extrinsic, submission.plan.as_ref())
+		})
+		.collect()
 }
 
 /// Records each plan as a waiting row, in order.
@@ -217,8 +219,10 @@ fn schedule_all(
 
 /// One plan of `policy` per params.
 fn plans_of(policy: &PolicyId, params: Vec<PolicyParams>) -> Vec<SubmissionPlan> {
-	let plan = |params| SubmissionPlan { policy: policy.clone(), params };
-	params.into_iter().map(plan).collect()
+	params
+		.into_iter()
+		.map(|params| SubmissionPlan { policy: policy.clone(), params })
+		.collect()
 }
 
 impl DurableTxEngine {
@@ -659,13 +663,16 @@ mod tests {
 		let (ids, ()) =
 			block_on(engine.execute_with(request, |_, _| Ok::<_, DbError>(()))).unwrap();
 
-		let waiting = |(id, params): (&DurableTxId, u8)| DurableTxState {
-			id: *id,
-			status: DurableTxStatus::PendingSubmission,
-			tx_hash: None,
-			plan: Some(test_plan(vec![params])),
-		};
-		let expected: Vec<_> = ids.iter().zip([7, 8]).map(waiting).collect();
+		let expected: Vec<_> = ids
+			.iter()
+			.zip([7, 8])
+			.map(|(id, params)| DurableTxState {
+				id: *id,
+				status: DurableTxStatus::PendingSubmission,
+				tx_hash: None,
+				plan: Some(test_plan(vec![params])),
+			})
+			.collect();
 		assert_eq!(op_group(engine), expected);
 	}
 

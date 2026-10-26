@@ -306,8 +306,12 @@ fn zip_views(
 ) -> Vec<TransferView> {
 	let KeyLocks { now, until } = locks;
 	let locked = until.into_iter().map(move |until| until.is_some_and(|until| until > now));
-	let view = |((source, destination), locked)| TransferView { source, destination, locked };
-	sources.into_iter().zip(destinations).zip(locked).map(view).collect()
+	sources
+		.into_iter()
+		.zip(destinations)
+		.zip(locked)
+		.map(|((source, destination), locked)| TransferView { source, destination, locked })
+		.collect()
 }
 
 /// [`Preparation::GiveUp`] once `transfer` waited past its limit, at unix

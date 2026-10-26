@@ -119,10 +119,13 @@ pub fn plan_transfers(
 		TransferDestinations::Foreign(destination) => (vec![destination], false),
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	let transfer_params = |(instance, destination)| {
-		TransferParams { instance, destination, destination_is_fresh, give_up_after }.into()
-	};
-	Ok(instances.into_iter().zip(destinations).map(transfer_params).collect())
+	Ok(instances
+		.into_iter()
+		.zip(destinations)
+		.map(|(instance, destination)| {
+			TransferParams { instance, destination, destination_is_fresh, give_up_after }.into()
+		})
+		.collect())
 }
 
 /// One fresh key in `purse` for each of `instances`.

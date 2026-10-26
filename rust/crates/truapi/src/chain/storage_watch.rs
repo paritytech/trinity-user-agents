@@ -120,15 +120,18 @@ impl dyn WatchedStorage {
 		let client = self.client_at_finalized_head(genesis).await?;
 		let encoded = codec::encode_storage_keys(address, keys, &client)?;
 		let snapshot = self.read_raw_keys_at(genesis, at, encoded).await?;
-		let decode = |bytes: &Option<Vec<u8>>| {
-			codec::decode_value_or_default(
-				address,
-				bytes.as_deref(),
-				&snapshot.metadata,
-				snapshot.at,
-			)
-		};
-		snapshot.value.iter().map(decode).collect()
+		snapshot
+			.value
+			.iter()
+			.map(|bytes| {
+				codec::decode_value_or_default(
+					address,
+					bytes.as_deref(),
+					&snapshot.metadata,
+					snapshot.at,
+				)
+			})
+			.collect()
 	}
 
 	/// Starts one watch of `keys` of the entry `address` names on `genesis`,
