@@ -8,6 +8,7 @@ final class SettingsInteractor {
 
     let logger: LoggerProtocol
     let mnemonicBackupHelper: MnemonicBackupHelperProtocol
+    private let coinageService: CoinageServicing
     let selectedCurrencyManager: SelectedCurrencyManaging
     private let notificationCenter: NotificationCenter
     private let eventCenter: EventCenterProtocol
@@ -18,10 +19,12 @@ final class SettingsInteractor {
     private var blockedContactsTask: Task<Void, Never>?
     private var privacyStrategyTask: Task<Void, Never>?
     private var tabBarLabelsTask: Task<Void, Never>?
+    private var paymentsBackupTask: Task<Void, Never>?
 
     init(
         logger: LoggerProtocol,
         mnemonicBackupHelper: MnemonicBackupHelperProtocol,
+        coinageService: CoinageServicing,
         selectedCurrencyManager: SelectedCurrencyManaging = SelectedCurrencyManager.shared,
         notificationCenter: NotificationCenter = .default,
         eventCenter: EventCenterProtocol = EventCenter.shared,
@@ -31,6 +34,7 @@ final class SettingsInteractor {
     ) {
         self.logger = logger
         self.mnemonicBackupHelper = mnemonicBackupHelper
+        self.coinageService = coinageService
         self.selectedCurrencyManager = selectedCurrencyManager
         self.notificationCenter = notificationCenter
         self.eventCenter = eventCenter
@@ -46,6 +50,7 @@ final class SettingsInteractor {
         blockedContactsTask?.cancel()
         privacyStrategyTask?.cancel()
         tabBarLabelsTask?.cancel()
+        paymentsBackupTask?.cancel()
     }
 }
 
@@ -130,6 +135,18 @@ private extension SettingsInteractor {
         }
     }
 
+    func subscribeToPaymentsBackupStatus() {
+        paymentsBackupTask = Task { [weak self, coinageService, logger] in
+            do {
+                for try await status in coinageService.subscribeAccountBackupStatus() {
+                    await self?.presenter?.didReceivePaymentsBackupStatus(status)
+                }
+            } catch {
+                logger.error("Payments backup status subscription error: \(error)")
+            }
+        }
+    }
+
     func subscribeToTabBarLabels() {
         tabBarLabelsTask = Task { [weak self, tabBarLabelsStore, logger] in
             do {
@@ -149,6 +166,7 @@ extension SettingsInteractor: SettingsInteractorInputProtocol {
     func setup() {
         subscribeToPrivacyStrategy()
         subscribeToTabBarLabels()
+        subscribeToPaymentsBackupStatus()
         configureAppVersion()
         subscribeToAvailabilityChanges()
         subscribeToBackupStatusChanges()
