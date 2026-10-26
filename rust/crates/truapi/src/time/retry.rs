@@ -1,5 +1,5 @@
-//! Retrying an operation until it succeeds: [`retry`] runs the attempts, and a
-//! [`Backoff`] is the usual pauses between them.
+//! Retrying an operation that keeps failing: [`retry`] runs the attempts until
+//! one stops them, and a [`Backoff`] is the usual pauses between them.
 
 use core::{ops::ControlFlow, time::Duration};
 
@@ -13,37 +13,19 @@ use super::Timer;
 /// the caller wants, and returns how long to wait on `timer` before the next
 /// attempt. Retrying never gives up on its own: an operation that should stop
 /// after some failures counts them in `attempt` and breaks.
-pub async fn retry<Done, Failure, Attempt>(
+pub async fn retry<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
-	mut attempt: impl FnMut() -> Attempt,
-	pause_after: impl FnMut(Failure) -> Duration,
-) -> Done
-where
-	Attempt: Future<Output = ControlFlow<Done, Failure>>,
-{
-	match attempt().await {
-		ControlFlow::Break(done) => done,
-		ControlFlow::Continue(failure) => retry_after(failure, timer, attempt, pause_after).await,
-	}
-}
-
-/// [`retry`] for an operation whose first attempt already failed with
-/// `failure`, so even the first attempt here waits for a pause.
-pub async fn retry_after<Done, Failure, Attempt>(
-	mut failure: Failure,
-	timer: &dyn Timer,
-	mut attempt: impl FnMut() -> Attempt,
+	mut attempt: impl FnMut() -> AttemptFuture,
 	mut pause_after: impl FnMut(Failure) -> Duration,
 ) -> Done
 where
-	Attempt: Future<Output = ControlFlow<Done, Failure>>,
+	AttemptFuture: Future<Output = ControlFlow<Done, Failure>>,
 {
 	loop {
-		timer.sleep(pause_after(failure)).await;
-		failure = match attempt().await {
+		match attempt().await {
 			ControlFlow::Break(done) => return done,
-			ControlFlow::Continue(failure) => failure,
-		};
+			ControlFlow::Continue(failure) => timer.sleep(pause_after(failure)).await,
+		}
 	}
 }
 
@@ -62,8 +44,12 @@ pub struct Backoff {
 }
 
 impl Backoff {
-	/// Pauses from `first`, doubling up to `longest`. `first` must be nonzero,
-	/// since a zero pause never grows, and at most `longest`.
+	/// Pauses from `first`, doubling up to `longest`.
+	///
+	/// # Panics
+	///
+	/// If `first` is zero, since a zero pause never grows, or longer than
+	/// `longest`.
 	pub const fn new(first: Duration, longest: Duration) -> Self {
 		assert!(
 			!first.is_zero() && first.as_nanos() <= longest.as_nanos(),
@@ -145,17 +131,6 @@ mod tests {
 	}
 
 	#[test]
-	fn retry_after_a_failure_waits_before_its_first_attempt() {
-		let timer = RecordingTimer::default();
-
-		let done = block_on(retry_after(0, &timer, breaking_at(1), |failure| {
-			Duration::from_secs(failure + 7)
-		}));
-
-		assert_eq!((done, timer.waits.into_inner()), (1, vec![Duration::from_secs(7)]));
-	}
-
-	#[test]
 	fn pauses_double_from_the_first_and_hold_at_the_longest() {
 		let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
 
@@ -169,6 +144,18 @@ mod tests {
 		let mut backoff = Backoff::new(Duration::from_secs(1), Duration::MAX);
 
 		assert_eq!(pauses(&mut backoff, 100).last(), Some(&Duration::MAX));
+	}
+
+	#[test]
+	#[should_panic(expected = "a backoff needs a nonzero first pause")]
+	fn a_zero_first_pause_is_refused() {
+		Backoff::new(Duration::ZERO, Duration::from_secs(5));
+	}
+
+	#[test]
+	#[should_panic(expected = "a backoff needs a nonzero first pause")]
+	fn a_first_pause_longer_than_the_longest_is_refused() {
+		Backoff::new(Duration::from_secs(10), Duration::from_secs(5));
 	}
 
 	#[test]

@@ -68,8 +68,8 @@ const WIRE_CODEC_VERSION: u32 = truapi::WIRE_CODEC_VERSION as u32;
 /// reaches the debugger instead of HTTP's port 80.
 const DEBUGGER_DEFAULT_PORT: u16 = 9231;
 
-/// Pauses between reconnects: from 200 ms, doubling on each failed dial up to
-/// 5 s.
+/// Pauses between attempts to reach the debugger, doubling for as long as no
+/// frame gets through.
 const RECONNECT_PAUSES: Backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
 
 /// Cap on a single dial + WS handshake; a port that accepts TCP but never
@@ -342,19 +342,12 @@ async fn writer_loop(
 ) {
 	let mut pauses = RECONNECT_PAUSES;
 	loop {
-		let forwarded = match dial(url.as_str(), &addrs).await {
-			Some(stream) => {
-				forward(stream, &mut inbox, &dropped, &pending_dropped, &queued_bytes).await
-			},
-			None => ControlFlow::Continue(false),
-		};
-		let ControlFlow::Continue(delivered) = forwarded else {
+		if let Some(stream) = dial(url.as_str(), &addrs).await &&
+			forward(stream, &mut inbox, &mut pauses, &dropped, &pending_dropped, &queued_bytes)
+				.await
+				.is_break()
+		{
 			return;
-		};
-		// Start over only after a *delivered* frame, so an accept-then-close
-		// server still backs off instead of spinning on zero-delay reconnects.
-		if delivered {
-			pauses.reset();
 		}
 		tokio::time::sleep(pauses.next_pause()).await;
 		// The sink was dropped while we were waiting to reconnect: give up.
@@ -364,17 +357,17 @@ async fn writer_loop(
 	}
 }
 
-/// Drain queued frames to `stream`. Breaks once the sink is dropped, and
-/// continues with whether any frame got through once the socket closes.
+/// Drain queued frames to `stream` until the socket closes, starting `pauses`
+/// over after each delivered frame. Breaks once the sink is dropped.
 async fn forward(
 	stream: WebSocketStream<TcpStream>,
 	inbox: &mut mpsc::Receiver<QueuedFrame>,
+	pauses: &mut Backoff,
 	dropped: &AtomicU64,
 	pending_dropped: &AtomicU64,
 	queued_bytes: &AtomicUsize,
-) -> ControlFlow<(), bool> {
+) -> ControlFlow<()> {
 	let (mut write, mut read) = stream.split();
-	let mut delivered = false;
 	// Drain queued frames to the wire, and also poll the read half so
 	// tokio-tungstenite answers server pings and observes a Close; being
 	// forward-only, any inbound message is ignored.
@@ -397,16 +390,19 @@ async fn forward(
 					// again (with this frame) so the next delivered
 					// envelope still reports the whole gap.
 					pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
-					return ControlFlow::Continue(delivered);
+					return ControlFlow::Continue(());
 				}
-				delivered = true;
+				// Start over only after a *delivered* frame, so an
+				// accept-then-close server still backs off instead of spinning
+				// on zero-delay reconnects.
+				pauses.reset();
 			}
 			inbound = read.next() => {
 				// Forward-only: any inbound message is ignored, and an error or
 				// the end of the stream means the socket closed.
 				let Some(Ok(_)) = inbound else {
 					debug!("truapi debug sink: read side closed, reconnecting");
-					return ControlFlow::Continue(delivered);
+					return ControlFlow::Continue(());
 				};
 			}
 		}
@@ -420,6 +416,34 @@ mod tests {
 
 	use tokio::{net::TcpListener, sync::oneshot};
 	use tokio_tungstenite::accept_async;
+
+	/// A debugger that accepts and at once drops every connection gets no frame,
+	/// so the sink keeps doubling its pause instead of redialing in a tight loop.
+	#[tokio::test]
+	async fn a_debugger_that_drops_every_connection_is_redialed_ever_more_slowly() {
+		const WINDOW: Duration = Duration::from_millis(1500);
+
+		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+		let port = listener.local_addr().unwrap().port();
+		let accepted = Arc::new(AtomicUsize::new(0));
+		let counted = accepted.clone();
+		tokio::spawn(async move {
+			loop {
+				let (stream, _peer) = listener.accept().await.unwrap();
+				counted.fetch_add(1, Ordering::Relaxed);
+				drop(accept_async(stream).await);
+			}
+		});
+
+		let _sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
+		tokio::time::sleep(WINDOW).await;
+
+		// Dials land at 0, 0.2, 0.6 and 1.4 s. Starting over after every
+		// connection would dial every 0.2 s, and no pause at all hundreds of
+		// times.
+		let dials = accepted.load(Ordering::Relaxed);
+		assert!((2..=4).contains(&dials), "{dials} dials in {WINDOW:?}");
+	}
 
 	#[tokio::test]
 	async fn emits_base64_envelope_with_product_vantage_dir() {

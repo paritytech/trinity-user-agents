@@ -45,7 +45,7 @@ use tokio_tungstenite::{
 use super::executor::shared_native_executor;
 use crate::{
 	FrameSink, ProductRuntime,
-	time::{Backoff, RealTimer, retry_after},
+	time::{Backoff, RealTimer, Timer, retry},
 };
 
 // Allow reconnect overlap without one execution exhausting the shared limit.
@@ -544,23 +544,25 @@ async fn accept_loop(
 	}
 }
 
-/// Bind `port` again for a listener that was lost. Losing it counts as the
-/// first failure, so even the first bind waits for a pause.
+/// Bind `port` again for a listener that was lost, pausing longer after each
+/// failed bind.
 async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
 	let mut pauses = RELISTEN_PAUSES;
-	retry_after(
-		(),
+	// Wait before the first bind too, so a listener that keeps getting lost is
+	// not bound again in a tight loop.
+	RealTimer.sleep(pauses.next_pause()).await;
+	retry(
 		&RealTimer,
 		|| {
 			ready(match bind_loopback(port).and_then(TcpListener::from_std) {
 				Ok(listener) => ControlFlow::Break(listener),
-				Err(err) => {
-					logger("truapi.ws_bridge.relisten_failed", &err.to_string());
-					ControlFlow::Continue(())
-				},
+				Err(err) => ControlFlow::Continue(err),
 			})
 		},
-		|()| pauses.next_pause(),
+		|err| {
+			logger("truapi.ws_bridge.relisten_failed", &err.to_string());
+			pauses.next_pause()
+		},
 	)
 	.await
 }

@@ -600,7 +600,7 @@ impl RuntimeServices {
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
 			let mut pauses = RESUME_RETRY_PAUSES;
-			let loaded = retry(
+			retry(
 				&RealTimer,
 				|| async {
 					let loaded = registry
@@ -617,11 +617,15 @@ impl RuntimeServices {
 						})
 						.await;
 					match loaded {
-						Ok(()) => ControlFlow::Break(Ok(())),
+						Ok(()) => {
+							registry.keep_expiring(&services);
+							ControlFlow::Break(())
+						},
 						// Left for the newer app that wrote them; retrying cannot
 						// read them.
 						Err(error @ FundingSessionError::NewerFormat { .. }) => {
-							ControlFlow::Break(Err(error))
+							tracing::warn!(%error, "funding stays unavailable");
+							ControlFlow::Break(())
 						},
 						Err(error) => ControlFlow::Continue(error),
 					}
@@ -633,10 +637,6 @@ impl RuntimeServices {
 				},
 			)
 			.await;
-			match loaded {
-				Ok(()) => registry.keep_expiring(&services),
-				Err(error) => tracing::warn!(%error, "funding stays unavailable"),
-			}
 		}));
 	}
 

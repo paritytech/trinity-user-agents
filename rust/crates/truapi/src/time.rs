@@ -29,4 +29,4 @@ mod retry;
 
 #[cfg(test)]
 pub use manual::ManualTimer;
-pub use retry::{Backoff, retry, retry_after};
+pub use retry::{Backoff, retry};

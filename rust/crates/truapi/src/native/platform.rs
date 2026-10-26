@@ -24,7 +24,7 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
-	time::{RealTimer, retry_after},
+	time::{RealTimer, Timer, retry},
 };
 
 use super::{
@@ -558,10 +558,13 @@ async fn lookup_until_found(
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
-	let mut retries = 0u32;
 	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
-	let found = retry_after(
-		(),
+	let mut next_pause = move || fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW);
+	// The lookup that missed was the first attempt, so even the first retry
+	// waits.
+	RealTimer.sleep(next_pause()).await;
+	let mut retries = 0u32;
+	let found = retry(
 		&RealTimer,
 		|| {
 			retries += 1;
@@ -575,7 +578,7 @@ async fn lookup_until_found(
 				}
 			}
 		},
-		|()| fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW),
+		|()| next_pause(),
 	)
 	.await;
 	if found.is_ok() {

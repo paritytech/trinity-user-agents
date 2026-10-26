@@ -1964,8 +1964,8 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
-/// Pauses between restarts of a paired responder, and between attempts to
-/// forget a pairing host that disconnected.
+/// Pauses between restarts of a paired responder, carried on by the attempts
+/// to forget a pairing host that disconnected.
 const RESPONDER_RETRY_PAUSES: Backoff =
 	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
@@ -1976,15 +1976,17 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let mut restarts = RESPONDER_RETRY_PAUSES;
+		let mut pauses = RESPONDER_RETRY_PAUSES;
 		retry(
 			&RealTimer,
 			|| async {
 				match runtime.resume_pairing(peer).await {
 					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
-					Ok(exit) => ControlFlow::Continue(SystemEvent::SigningHostExit {
-						outcome: format!("{exit:?}"),
-					}),
+					Ok(exit @ ResponderExit::SubscriptionEnded) => {
+						ControlFlow::Continue(SystemEvent::SigningHostExit {
+							outcome: format!("{exit:?}"),
+						})
+					},
 					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
 						reason: error.reason,
 					}),
@@ -1992,12 +1994,12 @@ fn spawn_supervised_responder(
 			},
 			|event| {
 				terminal_ui::output_event(event);
-				restarts.next_pause()
+				pauses.next_pause()
 			},
 		)
 		.await;
 		if let Some((catalog, profile)) = &persisted {
-			forget_disconnected_peer(&runtime, peer, catalog, profile).await;
+			forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
 		}
 		terminal_ui::output_event(SystemEvent::SigningHostExit {
 			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
@@ -2006,15 +2008,15 @@ fn spawn_supervised_responder(
 }
 
 /// Forget a pairing host that disconnected: remove it from the session's
-/// paired hosts, retrying until that is stored, and stop renewing its
-/// statement allowance.
+/// paired hosts, retrying after each of `pauses` until that is stored, and
+/// stop renewing its statement allowance.
 async fn forget_disconnected_peer(
 	runtime: &SigningHostRuntime,
 	peer: PairedSsoPeer,
 	catalog: &SessionCatalog,
 	profile: &SessionProfile,
+	pauses: &mut Backoff,
 ) {
-	let mut pauses = RESPONDER_RETRY_PAUSES;
 	retry(
 		&RealTimer,
 		|| {

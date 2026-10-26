@@ -2982,19 +2982,20 @@ fn funding_resume_is_retried_until_storage_recovers() {
 	services.resume_funding();
 	let mut resume = tasks.take().pop().expect("resume task");
 
-	let (while_failing, after_recovery) = futures::executor::block_on(async {
-		assert!(futures::poll!(&mut resume).is_pending());
+	let (waiting, while_failing, after_recovery) = futures::executor::block_on(async {
+		let waiting = futures::poll!(&mut resume).is_pending();
 		let while_failing = announced();
 		set_write_error(None);
 		resume.await;
-		(while_failing, announced())
+		(waiting, while_failing, announced())
 	});
 
-	assert_eq!((while_failing, after_recovery), (Vec::new(), vec![intent]));
+	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
 }
 
 // Sessions a newer app stored stay unreadable however often the load is
-// retried, so resume stops at once and leaves them for that app.
+// retried, so resume stops at once, arms no expiry sweep, and leaves them for
+// that app.
 #[test]
 fn funding_resume_stops_at_sessions_of_a_newer_format() {
 	let tasks = HeldTasks::default();
@@ -3013,9 +3014,10 @@ fn funding_resume_stops_at_sessions_of_a_newer_format() {
 	assert_eq!(
 		(
 			finished,
+			tasks.take().len(),
 			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
 		),
-		(true, Ok(Some(newer)))
+		(true, 0, Ok(Some(newer)))
 	);
 }
 
