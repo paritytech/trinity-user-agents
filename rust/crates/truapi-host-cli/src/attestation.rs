@@ -18,21 +18,23 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeSet, sync::Mutex};
-use subxt_rpcs::client::RpcClient;
 use tracing::{debug, warn};
-use truapi::host_logic::{
-	attestation::{build_lite_registration, signing_context_for},
-	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
-	product_account::{
-		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+use truapi::{
+	host_logic::{
+		attestation::{
+			SIGNING_CONTEXT_CONSTANT, build_lite_registration, signing_context_from_constant,
+		},
+		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
+		product_account::{
+			ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
+			derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+		},
 	},
+	statement_allowance as alloc,
 };
 
 use crate::{
-	accounts::IdentityDerivationError,
-	dotns_read::{AssetHubReader, runtime_version},
-	network::NetworkConfig,
+	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
 };
 
 /// Env var carrying an optional bearer token for the identity backend.
@@ -328,8 +330,9 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let (people_signing_context, asset_hub_signing_context) =
-		registration_signing_contexts(config, &reader).await?;
+	let people_signing_context = signing_context_of(&config.people_ws, PEOPLE_LITE_PALLET).await?;
+	let asset_hub_signing_context =
+		signing_context_of(&config.asset_hub_ws, DOTNS_GATEWAY_PALLET).await?;
 	let verifier = fetch_verifier(&client, &config.backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
@@ -356,25 +359,21 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 	Ok(lite_username)
 }
 
-/// The People and Asset Hub signing contexts the registration signatures go
-/// in. Each follows the runtime of the chain that checks it: People for the
-/// candidate and consumer registration signatures, Asset Hub for the dotNS
-/// reservation signature.
-async fn registration_signing_contexts(
-	config: &AttestConfig,
-	reader: &AssetHubReader,
-) -> Result<(Option<[u8; 32]>, Option<[u8; 32]>)> {
-	let people = RpcClient::from_insecure_url(&config.people_ws)
+/// The pallet that checks the candidate and consumer registration signatures.
+const PEOPLE_LITE_PALLET: &str = "PeopleLite";
+/// The pallet that checks the dotNS reservation signature.
+const DOTNS_GATEWAY_PALLET: &str = "DotnsGateway";
+
+/// The signing context `pallet` on the chain at `ws` checks account signatures
+/// in, read from its `SigningContext` constant. `None` means the message alone.
+async fn signing_context_of(ws: &str, pallet: &str) -> Result<Option<[u8; 32]>> {
+	let rpc = alloc::rpc::RpcClient::connect(ws)
 		.await
-		.with_context(|| format!("connect {}", config.people_ws))?;
-	let (people_name, people_version) =
-		runtime_version(&people).await.context("read People runtime version")?;
-	let (asset_hub_name, asset_hub_version) =
-		reader.runtime_version().await.context("read Asset Hub runtime version")?;
-	Ok((
-		signing_context_for(&people_name, people_version, &config.network_suffix),
-		signing_context_for(&asset_hub_name, asset_hub_version, &config.network_suffix),
-	))
+		.with_context(|| format!("connect {ws}"))?;
+	let metadata = alloc::fetch_metadata(&rpc)
+		.await
+		.with_context(|| format!("read {pallet} metadata from {ws}"))?;
+	Ok(signing_context_from_constant(metadata.constant(pallet, SIGNING_CONTEXT_CONSTANT)))
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the

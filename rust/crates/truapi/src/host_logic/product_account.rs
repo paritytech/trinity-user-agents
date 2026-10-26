@@ -67,19 +67,6 @@ pub fn product_context(product_id: &str, suffix: [u8; 32]) -> [u8; 32] {
 		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
 }
 
-/// The signing context of `product_id`: its product context with the suffix
-/// `"sig/"` followed by 28 zero bytes.
-///
-/// Individuality runtimes above spec version 3004000 check an account
-/// signature over a non-transaction message against this context followed by
-/// the message. The personhood product signs in
-/// `signing_context(&personhood_product_id(network_suffix))`.
-pub fn signing_context(product_id: &str) -> [u8; 32] {
-	let mut suffix = [0u8; 32];
-	suffix[..4].copy_from_slice(b"sig/");
-	product_context(product_id, suffix)
-}
-
 /// Substrate sr25519 signing-context string. Shared by every sr25519 signature
 /// the core produces: statement store, product raw signing, dotNS gateway.
 pub const SR25519_SIGNING_CONTEXT: &[u8] = b"substrate";
@@ -446,20 +433,6 @@ mod tests {
 		assert_eq!(
 			hex::encode(index_bytes(0)),
 			"0000000012e86013736c5498f050b03cdc16957dff0e422fb92ca77ec3ab168f"
-		);
-	}
-
-	#[test]
-	fn signing_context_matches_the_runtime() {
-		// The runtime's `indiv_support::context` derives these contexts. A
-		// mismatch would make every context signature fail on chain.
-		assert_eq!(
-			hex::encode(signing_context(&personhood_product_id("paseo"))),
-			"50a0143eac8dc44969947d41ad201c0717c0456425b2631fefdcfbd7b2b23d62"
-		);
-		assert_eq!(
-			hex::encode(signing_context(&personhood_product_id("testnet"))),
-			"65b1d8b42ca7c4e0f52317167611fcf167fb682fb226d02180f9a591ed1a067d"
 		);
 	}
 

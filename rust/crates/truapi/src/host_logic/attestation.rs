@@ -6,11 +6,12 @@
 //! consumer-registration signature. The backend submits the on-chain
 //! `register_lite_person` extrinsic; the host never signs a chain extrinsic.
 //!
-//! Individuality runtimes above spec version 3004000 check the account
-//! signatures over the personhood signing context followed by the message,
-//! and earlier ones over the message alone. [`signing_context_for`] picks the
-//! context from the verifying chain's runtime version. The ring-VRF proof
-//! always signs the message alone.
+//! An individuality runtime that publishes a `SigningContext` constant on the
+//! verifying pallet (`PeopleLite` on People, `DotnsGateway` on Asset Hub)
+//! checks the account signatures over that context followed by the message.
+//! A runtime without the constant checks the message alone.
+//! [`signing_context_from_constant`] reads the constant's value. The ring-VRF
+//! proof always signs the message alone.
 //!
 //! Byte layout mirrors signing-bot `src/core/attestation.ts` for backend
 //! parity. The registered account is the account whose secret signs here; the
@@ -27,8 +28,7 @@ use crate::host_logic::{
 	dotns_gateway::build_reservation_message,
 	product_account::{
 		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_lite_person_ring_vrf_entropy, personhood_product_id, product_public_key_to_address,
-		signing_context,
+		derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 	},
 	sso::pairing::{derive_identity_chat_private_key, x25519_public_key},
 };
@@ -42,26 +42,14 @@ use crate::host_logic::{
 const REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
 /// CHAT-RFC-0004 keypair type byte for an X25519 identifier key.
 const IDENTIFIER_KEY_TAG_X25519: u8 = 0x00;
-/// The last individuality spec version that checks account signatures over
-/// the message alone. Delete the plain form once every network runs a later
-/// release.
-const LAST_PLAIN_SPEC_VERSION: u32 = 3_004_000;
-/// The individuality runtimes that verify the registration signatures.
-const INDIVIDUALITY_SPEC_NAMES: [&str; 2] = ["next-people-paseo", "next-asset-hub-paseo"];
+/// The pallet constant an individuality pallet publishes its signing context in.
+pub const SIGNING_CONTEXT_CONSTANT: &str = "SigningContext";
 
-/// The personhood signing context a runtime with `spec_name` and
-/// `spec_version` checks account signatures in, on the network with
-/// `network_suffix`. `None` means the message alone.
-///
-/// Individuality runtimes above spec version 3004000 use the context. Earlier
-/// versions and other runtimes do not.
-pub fn signing_context_for(
-	spec_name: &str,
-	spec_version: u32,
-	network_suffix: &str,
-) -> Option<[u8; 32]> {
-	(INDIVIDUALITY_SPEC_NAMES.contains(&spec_name) && spec_version > LAST_PLAIN_SPEC_VERSION)
-		.then(|| signing_context(&personhood_product_id(network_suffix)))
+/// The signing context a `SigningContext` constant value denotes: its 32
+/// bytes. `None`, for an absent constant or one of another width, means the
+/// runtime checks the message alone.
+pub fn signing_context_from_constant(value: Option<&[u8]>) -> Option<[u8; 32]> {
+	value.and_then(|bytes| bytes.try_into().ok())
 }
 
 /// The bytes an account signs for `message`: `context` followed by `message`,
@@ -133,7 +121,7 @@ pub enum LiteRegistrationError {
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
 /// `people_signing_context` and `asset_hub_signing_context` come from
-/// [`signing_context_for`] on each chain.
+/// [`signing_context_from_constant`] on each chain's metadata.
 #[allow(clippy::too_many_arguments)]
 pub fn build_lite_registration(
 	entropy: &[u8],
@@ -450,8 +438,9 @@ mod tests {
 
 	#[test]
 	fn signatures_in_context_verify_only_with_the_context() {
-		// Above spec 3004000 the runtimes reject the plain message, so each
-		// account signature must cover the context of the chain that checks it.
+		// A runtime that publishes its signing context rejects the plain message,
+		// so each account signature must cover the context of the chain that
+		// checks it.
 		let verifier = [0x44u8; 32];
 		let people = [0x01u8; 32];
 		let asset_hub = [0x02u8; 32];
@@ -517,13 +506,10 @@ mod tests {
 	}
 
 	#[test]
-	fn signing_context_follows_the_individuality_spec_version() {
-		let context = signing_context(&personhood_product_id("paseo"));
-
-		assert_eq!(signing_context_for("next-people-paseo", 3_004_000, "paseo"), None);
-		assert_eq!(signing_context_for("next-people-paseo", 3_004_001, "paseo"), Some(context));
-		assert_eq!(signing_context_for("next-asset-hub-paseo", 3_004_001, "paseo"), Some(context));
-		// Other runtimes keep the plain message whatever their version.
-		assert_eq!(signing_context_for("people-paseo", 9_000_000, "paseo"), None);
+	fn signing_context_follows_the_published_constant() {
+		assert_eq!(signing_context_from_constant(Some(&[7u8; 32])), Some([7u8; 32]));
+		assert_eq!(signing_context_from_constant(None), None);
+		// A value of another width is not a context the runtime applies.
+		assert_eq!(signing_context_from_constant(Some(&[7u8; 31])), None);
 	}
 }
