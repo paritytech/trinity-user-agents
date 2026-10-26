@@ -1,110 +1,76 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import android.content.Context
-import android.content.pm.PackageInfo
-import android.content.pm.PackageManager
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
-import io.paritytech.polkadotapp.common.utils.FeatureOption
-import io.paritytech.polkadotapp.common.utils.isEnabled
-import io.sentry.SentryEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class HostWebViewCreatedTelemetryTest {
-    private val packageInfo = mockk<PackageInfo> {
-        versionName = "1.2.3"
-        every { longVersionCode } returns 123L
-    }
-    private val packageManager = mockk<PackageManager> {
-        every { getPackageInfo(PACKAGE_NAME, 0) } returns packageInfo
-    }
-    private val context = mockk<Context>()
-    private val timeProvider = mockk<HostMonotonicTimeProvider> {
-        every { nowMillis() } returns 456L
-    }
-
-    init {
-        every { context.packageName } returns PACKAGE_NAME
-        every { context.packageManager } returns packageManager
-    }
+    private val origin = HostEventOrigin(
+        appVariant = "gpNightly",
+        nativeAppVersion = "1.2.3",
+        platform = "android",
+        osVersion = "15",
+        appBuild = 123L,
+    )
 
     @Test
-    fun `event reports the bootstrap session id`() {
-        var captured: SentryEvent? = null
-        val reporter = HostWebViewCreatedTelemetry(
-            context = context,
-            timeProvider = timeProvider,
-            capture = HostWebViewCreatedEventCapture { event -> captured = event() },
-        )
+    fun `reports the WebView event through the shared host contract`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
 
         reporter.report("bootstrap-session-42")
 
-        assertEquals("bootstrap-session-42", captured?.getExtra("host.session_id"))
+        assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.name)
+        assertEquals("bootstrap-session-42", captured?.extras?.get("host.session_id"))
+        assertEquals("gpNightly", captured?.tags?.get("host.app_variant"))
+        assertEquals(123L, captured?.extras?.get("host.app_build"))
+        assertEquals(456L, captured?.extras?.get("event.monotonic_ms"))
     }
 
     @Test
-    fun `metadata remains lazy when capture is disabled`() {
+    fun `keeps WebView metadata lazy when capture is disabled`() {
+        var originRead = false
+        var timeRead = false
         val reporter = HostWebViewCreatedTelemetry(
-            context = context,
-            timeProvider = timeProvider,
-            capture = HostWebViewCreatedEventCapture { },
+            originProvider = HostEventOriginProvider {
+                originRead = true
+                origin
+            },
+            timeProvider = HostMonotonicTimeProvider {
+                timeRead = true
+                456L
+            },
+            capture = HostEventCapture { },
         )
 
         reporter.report("release-session")
 
-        verify(exactly = 0) { context.packageManager }
-        verify(exactly = 0) { timeProvider.nowMillis() }
-    }
-
-    @Test
-    fun `Sentry capture follows the host telemetry feature gate`() {
-        var eventCreated = false
-
-        SentryHostWebViewCreatedEventCapture().capture {
-            eventCreated = true
-            SentryEvent()
-        }
-
-        assertEquals(FeatureOption.HOST_TELEMETRY.isEnabled, eventCreated)
-    }
-
-    @Test
-    fun `event build and monotonic time remain numeric`() {
-        var captured: SentryEvent? = null
-        val reporter = HostWebViewCreatedTelemetry(
-            context = context,
-            timeProvider = timeProvider,
-            capture = HostWebViewCreatedEventCapture { event -> captured = event() },
-        )
-
-        reporter.report("session")
-
-        assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.message?.formatted)
-        assertEquals(123L, captured?.getExtra("host.app_build"))
-        assertEquals(456L, captured?.getExtra("event.monotonic_ms"))
-        assertTrue(captured?.getExtra("host.app_build") is Long)
-        assertTrue(captured?.getExtra("event.monotonic_ms") is Long)
+        assertFalse(originRead)
+        assertFalse(timeRead)
     }
 
     @Test
     fun `capture failure does not escape`() {
-        val capture = mockk<HostWebViewCreatedEventCapture>()
-        every { capture.capture(any()) } throws IllegalStateException("Sentry unavailable")
-        val reporter = HostWebViewCreatedTelemetry(
-            context = context,
-            timeProvider = timeProvider,
-            capture = capture,
-        )
+        var captureAttempted = false
+        val capture = HostEventCapture {
+            captureAttempted = true
+            throw IllegalStateException("Sentry unavailable")
+        }
+        val reporter = reporter(capture)
 
         reporter.report("session")
 
-        verify(exactly = 1) { capture.capture(any()) }
+        assertEquals(true, captureAttempted)
     }
 
-    private companion object {
-        const val PACKAGE_NAME = "io.paritytech.polkadotapp.nightly"
-    }
+    private fun reporter(capture: HostEventCapture) = HostWebViewCreatedTelemetry(
+        originProvider = HostEventOriginProvider { origin },
+        timeProvider = HostMonotonicTimeProvider { 456L },
+        capture = capture,
+    )
 }

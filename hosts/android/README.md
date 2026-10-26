@@ -104,9 +104,9 @@ CI_KEYSTORE_KEY_ALIAS=<alias>
 CI_KEYSTORE_KEY_PASS=<key password>
 ```
 
-Debug, nightly, and safetynet builds report one `host.process.started` event through Sentry after
-the app initializer pipeline starts. The event records the distribution/build variant and uses the
-generated TrUAPI package version without loading the native core during process startup.
+Debug, nightly, and safetynet builds report one `host.process.started` event through Sentry from
+the app initializer pipeline. Release builds stop at the shared host telemetry feature gate before
+collecting event metadata.
 
 Then provide the three files/services the build and the app depend on:
 

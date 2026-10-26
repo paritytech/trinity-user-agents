@@ -1,130 +1,116 @@
 package io.paritytech.polkadotapp.app.telemetry
 
 import android.os.Build
-import android.os.Process
+import android.os.SystemClock
 import io.paritytech.polkadotapp.app.BuildConfig
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
-import io.parity.truapi.BuildConfig as TrUAPIBuildConfig
 import io.sentry.Sentry
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
-
-internal data class HostProcessMetadata(
-    val appVersion: String,
-    val appBuild: Long,
-    val appVariant: String,
-    val platform: String,
-    val osVersion: String,
-    val truapiHostVersion: String,
-)
-
-internal data class HostProcessStartEvent(
-    val name: String,
-    val appLaunchId: UUID,
-    val processStartElapsedRealtime: Duration,
-    val metadata: HostProcessMetadata,
-)
-
-internal data class HostProcessSentryFields(
-    val tags: Map<String, String>,
-    val extras: Map<String, Any>,
-)
-
-internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
-    tags = mapOf(
-        "host.native_app_version" to metadata.appVersion,
-        "host.app_variant" to metadata.appVariant,
-        "host.platform" to metadata.platform,
-        "host.os_version" to metadata.osVersion,
-        "truapi.host_version" to metadata.truapiHostVersion,
-    ),
-    extras = mapOf(
-        "app.launch_id" to appLaunchId.toString(),
-        "host.app_build" to metadata.appBuild,
-        "event.monotonic_ms" to processStartElapsedRealtime.inWholeMilliseconds,
-    ),
-)
 
 internal fun appVariant(flavor: String, buildType: String): String =
     "$flavor${buildType.replaceFirstChar { it.titlecase() }}"
 
-internal fun interface HostProcessStartCapture {
-    fun capture(event: HostProcessStartEvent)
+internal fun interface HostLaunchIdProvider {
+    fun current(): UUID
 }
 
-internal fun interface HostProcessInitializerCapture {
-    fun capture(): Result<Unit>
+internal class AndroidHostLaunchIdProvider @Inject constructor() : HostLaunchIdProvider {
+    private val launchId by lazy(UUID::randomUUID)
+
+    override fun current(): UUID = launchId
 }
 
-internal fun captureHostProcessStartedIfEnabled(
-    enabled: Boolean,
-    capture: HostProcessInitializerCapture,
-): Result<Unit> = if (enabled) capture.capture() else Result.success(Unit)
+internal fun interface HostTelemetryEnabledProvider {
+    fun isEnabled(): Boolean
+}
 
-internal class HostProcessTelemetry(
-    private val appLaunchId: UUID,
-    private val processStartElapsedRealtime: () -> Duration,
-    private val metadata: () -> HostProcessMetadata,
-    private val capture: HostProcessStartCapture,
-) {
-    fun captureProcessStarted(): Result<Unit> = runCatching {
-        capture.capture(
-            HostProcessStartEvent(
-                name = PROCESS_STARTED_EVENT,
-                appLaunchId = appLaunchId,
-                processStartElapsedRealtime = processStartElapsedRealtime(),
-                metadata = metadata(),
-            )
-        )
-    }
+internal class FeatureOptionHostTelemetryEnabledProvider @Inject constructor() : HostTelemetryEnabledProvider {
+    override fun isEnabled(): Boolean = FeatureOption.HOST_TELEMETRY.isEnabled
+}
 
-    private companion object {
-        const val PROCESS_STARTED_EVENT = "host.process.started"
+internal fun interface SentryEventCapture {
+    fun capture(event: SentryEvent)
+}
+
+internal class AndroidSentryEventCapture @Inject constructor() : SentryEventCapture {
+    override fun capture(event: SentryEvent) {
+        Sentry.captureEvent(event)
     }
 }
 
-internal class AndroidHostProcessTelemetryInitializer @Inject constructor() : AppInitializer {
+internal class SentryHostEventCapture @Inject constructor(
+    private val enabledProvider: HostTelemetryEnabledProvider,
+    private val sentryCapture: SentryEventCapture,
+) : HostEventCapture {
+    override fun capture(event: () -> HostEvent) {
+        if (enabledProvider.isEnabled()) {
+            sentryCapture.capture(event().toSentryEvent())
+        }
+    }
+}
+
+internal class AndroidHostMonotonicTimeProvider @Inject constructor() : HostMonotonicTimeProvider {
+    override fun nowMillis(): Long = SystemClock.elapsedRealtime()
+}
+
+internal class AndroidHostEventOriginProvider @Inject constructor() : HostEventOriginProvider {
+    override fun current() = HostEventOrigin(
+        appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
+        nativeAppVersion = BuildConfig.VERSION_NAME,
+        platform = "android",
+        osVersion = Build.VERSION.RELEASE,
+        appBuild = BuildConfig.VERSION_CODE.toLong(),
+    )
+}
+
+internal class AndroidHostProcessTelemetryInitializer @Inject constructor(
+    private val originProvider: HostEventOriginProvider,
+    private val timeProvider: HostMonotonicTimeProvider,
+    private val launchIdProvider: HostLaunchIdProvider,
+    private val capture: HostEventCapture,
+) : AppInitializer {
     context(scope: ComputationalScope)
-    override fun initialize(): Result<Unit> {
-        // AppInitializerPipeline owns failure logging and continues with the remaining initializers.
-        return captureHostProcessStartedIfEnabled(
-            enabled = FeatureOption.HOST_PROCESS_TELEMETRY.isEnabled,
-        ) {
-            HostProcessTelemetry(
-                appLaunchId = UUID.randomUUID(),
-                processStartElapsedRealtime = { Process.getStartElapsedRealtime().milliseconds },
-                metadata = {
-                    HostProcessMetadata(
-                        appVersion = BuildConfig.VERSION_NAME,
-                        appBuild = BuildConfig.VERSION_CODE.toLong(),
-                        appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
-                        platform = "android",
-                        osVersion = Build.VERSION.RELEASE,
-                        truapiHostVersion = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
-                    )
-                },
-                capture = ::captureWithSentry,
-            ).captureProcessStarted()
+    override fun initialize(): Result<Unit> = runCatching {
+        capture.capture {
+            originProvider.current().processStarted(
+                launchId = launchIdProvider.current(),
+                monotonicMs = timeProvider.nowMillis(),
+            )
         }
     }
+}
 
-    private fun captureWithSentry(event: HostProcessStartEvent) {
-        val sentryEvent = SentryEvent().apply {
-            message = Message().apply { formatted = event.name }
-            level = SentryLevel.INFO
-            logger = "host.telemetry"
-            val fields = event.sentryFields()
-            for ((key, value) in fields.tags) setTag(key, value)
-            for ((key, value) in fields.extras) setExtra(key, value)
-        }
-        Sentry.captureEvent(sentryEvent)
-    }
+private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = HostEvent(
+    name = "host.process.started",
+    tags = mapOf(
+        "host.platform" to platform,
+        "host.app_variant" to appVariant,
+        "host.native_app_version" to nativeAppVersion,
+        "host.os_version" to osVersion,
+    ),
+    extras = mapOf(
+        "app.launch_id" to launchId.toString(),
+        "event.monotonic_ms" to monotonicMs,
+        "host.app_build" to appBuild,
+    ),
+)
+
+private fun HostEvent.toSentryEvent() = SentryEvent().apply {
+    message = Message().apply { formatted = name }
+    level = SentryLevel.INFO
+    logger = "host.telemetry"
+    this@toSentryEvent.tags.forEach(::setTag)
+    this@toSentryEvent.extras.forEach(::setExtra)
 }

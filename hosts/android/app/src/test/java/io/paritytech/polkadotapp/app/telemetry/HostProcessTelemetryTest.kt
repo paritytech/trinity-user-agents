@@ -1,145 +1,116 @@
 package io.paritytech.polkadotapp.app.telemetry
 
-import io.paritytech.polkadotapp.test_shared.any
+import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.sentry.SentryEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentCaptor
-import org.mockito.Mockito.doThrow
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
 import java.util.UUID
-import kotlin.time.Duration.Companion.milliseconds
 
 class HostProcessTelemetryTest {
-    private val metadata = HostProcessMetadata(
-        appVersion = "1.2.3",
-        appBuild = 42,
-        appVariant = "nightly",
+    private val origin = HostEventOrigin(
+        appVariant = "gpNightly",
+        nativeAppVersion = "1.2.3",
         platform = "android",
         osVersion = "15",
-        truapiHostVersion = "0.24.0",
+        appBuild = 42L,
     )
+    private val launchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
 
     @Test
-    fun `captures one event with stable launch id and numeric process start time when process starts`() {
-        val expectedLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
-        val capture = mock(HostProcessStartCapture::class.java)
-        val telemetry = HostProcessTelemetry(
-            appLaunchId = expectedLaunchId,
-            processStartElapsedRealtime = { 1_234.milliseconds },
-            metadata = { metadata },
-            capture = capture,
-        )
+    fun `captures the process event with the Android host contract`() {
+        var captured: HostEvent? = null
+        val initializer = initializer(capture = HostEventCapture { captured = it() })
 
-        val result = telemetry.captureProcessStarted()
+        val result = with(computationalScope()) { initializer.initialize() }
 
         assertSuccess(result)
-        verify(capture).capture(
-            HostProcessStartEvent(
+        assertEquals(
+            HostEvent(
                 name = "host.process.started",
-                appLaunchId = expectedLaunchId,
-                processStartElapsedRealtime = 1_234.milliseconds,
-                metadata = metadata,
+                tags = mapOf(
+                    "host.platform" to "android",
+                    "host.app_variant" to "gpNightly",
+                    "host.native_app_version" to "1.2.3",
+                    "host.os_version" to "15",
+                ),
+                extras = mapOf(
+                    "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
+                    "event.monotonic_ms" to 1_234L,
+                    "host.app_build" to 42L,
+                ),
             ),
-            captured.single(),
+            captured,
         )
     }
 
     @Test
-    fun `uses canonical names and native numeric values when mapping Sentry fields`() {
-        val fields = HostProcessStartEvent(
-            name = "host.process.started",
-            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
-            processStartElapsedRealtime = 1_234.milliseconds,
-            metadata = metadata,
-        ).sentryFields()
+    fun `does not create or capture an event when host telemetry is disabled`() {
+        var captures = 0
+        val capture = SentryHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { false },
+            sentryCapture = SentryEventCapture { captures += 1 },
+        )
 
-        assertEquals(
-            mapOf(
-                "host.native_app_version" to "1.2.3",
-                "host.app_variant" to "nightly",
-                "host.platform" to "android",
-                "host.os_version" to "15",
-                "truapi.host_version" to "0.24.0",
-            ),
-            fields.tags,
-        )
-        assertEquals(
-            mapOf(
-                "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
-                "host.app_build" to 42L,
-                "event.monotonic_ms" to 1_234L,
-            ),
-            fields.extras,
-        )
+        capture.capture { error("event metadata must stay lazy") }
+
+        assertEquals(0, captures)
     }
 
     @Test
-    fun `does not invoke capture when telemetry is disabled`() {
-        val capture = mock(HostProcessInitializerCapture::class.java)
+    fun `maps host event fields into one Sentry event when host telemetry is enabled`() {
+        var sentryEvent: SentryEvent? = null
+        val capture = SentryHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { sentryEvent = it },
+        )
 
-        val result = captureHostProcessStartedIfEnabled(enabled = false, capture = capture)
+        capture.capture {
+            HostEvent(
+                name = "host.process.started",
+                tags = mapOf("host.platform" to "android"),
+                extras = mapOf("host.app_build" to 42L),
+            )
+        }
 
-        assertSuccess(result)
-        verifyNoInteractions(capture)
+        assertEquals("host.process.started", sentryEvent?.message?.formatted)
+        assertEquals("android", sentryEvent?.getTag("host.platform"))
+        assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
     }
 
     @Test
-    fun `returns failures for initializer logging when metadata or capture throws`() {
-        val metadataError = IllegalStateException("native version unavailable")
-        val metadataCapture = mock(HostProcessStartCapture::class.java)
-        val metadataFailure = HostProcessTelemetry(
-            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
-            processStartElapsedRealtime = { 1.milliseconds },
-            metadata = { throw metadataError },
-            capture = metadataCapture,
-        )
-        val captureError = IllegalStateException("Sentry unavailable")
-        val capture = mock(HostProcessStartCapture::class.java)
-        doThrow(captureError).`when`(capture).capture(any())
-        val captureFailure = HostProcessTelemetry(
-            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
-            processStartElapsedRealtime = { 1.milliseconds },
-            metadata = { metadata },
-            capture = capture,
-        )
+    fun `returns capture failure for the initializer pipeline to log`() {
+        val error = IllegalStateException("Sentry unavailable")
+        val capture = HostEventCapture { throw error }
+        val initializer = initializer(capture)
 
-        val metadataResult = metadataFailure.captureProcessStarted()
-        val captureResult = captureFailure.captureProcessStarted()
+        val result = with(computationalScope()) { initializer.initialize() }
 
-        assertSame(metadataError, metadataResult.exceptionOrNull())
-        assertSame(captureError, captureResult.exceptionOrNull())
-        verifyNoInteractions(metadataCapture)
+        assertSame(error, result.exceptionOrNull())
     }
 
     @Test
-    fun `reuses launch id when telemetry captures twice`() {
-        val capture = mock(HostProcessStartCapture::class.java)
-        val expectedLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
-        val telemetry = HostProcessTelemetry(
-            appLaunchId = expectedLaunchId,
-            processStartElapsedRealtime = { 1.milliseconds },
-            metadata = { metadata },
-            capture = capture,
-        )
-
-        telemetry.captureProcessStarted()
-        telemetry.captureProcessStarted()
-
-        val events = ArgumentCaptor.forClass(HostProcessStartEvent::class.java)
-        verify(capture, times(2)).capture(events.capture())
-        assertSame(events.allValues[0].appLaunchId, events.allValues[1].appLaunchId)
-    }
-
-    @Test
-    fun `reports distribution flavor when build type is nightly`() {
+    fun `reports distribution flavor as part of the app variant`() {
         assertEquals("gpNightly", appVariant(flavor = "gp", buildType = "nightly"))
         assertEquals("vanillaNightly", appVariant(flavor = "vanilla", buildType = "nightly"))
     }
+
+    private fun initializer(capture: HostEventCapture) = AndroidHostProcessTelemetryInitializer(
+        originProvider = HostEventOriginProvider { origin },
+        timeProvider = HostMonotonicTimeProvider { 1_234L },
+        launchIdProvider = HostLaunchIdProvider { launchId },
+        capture = capture,
+    )
+
+    private fun computationalScope() = ComputationalScope(CoroutineScope(Dispatchers.Unconfined))
 
     private fun assertSuccess(result: Result<*>) {
         assertTrue("expected Result.success but was ${result.exceptionOrNull()}", result.isSuccess)
