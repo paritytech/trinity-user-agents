@@ -19,6 +19,7 @@ use crate::{runtime::AuthorityError, store::DbError};
 pub struct HandoffTag(pub Vec<u8>);
 
 /// Keys of one purse to hand off together under one tag.
+#[derive(Clone)]
 pub struct HandoffRequest {
 	/// The purse every key is handed off from.
 	pub from: PurseId,
@@ -30,13 +31,13 @@ pub struct HandoffRequest {
 
 /// Why a handoff did not happen. Nothing was written.
 #[derive(Debug, thiserror::Error)]
-pub enum HandOffError<E> {
+pub enum HandoffError<E> {
 	/// The handoff names no key.
 	#[error("a handoff needs at least one item, got none")]
 	NoItems,
 	/// A handoff was already recorded under the same tag.
-	#[error("a handoff with this tag is already recorded")]
-	TagInUse,
+	#[error("a handoff with tag {} is already recorded", hex::encode(&.0.0))]
+	TagInUse(HandoffTag),
 	/// A key is not in the purse, holds no NFT, or is already spent.
 	#[error(transparent)]
 	Item(#[from] ItemRefusal),
@@ -53,12 +54,12 @@ pub enum HandOffError<E> {
 
 /// The slot of each key of `request`, in order, when the tag is unused and
 /// every key is idle in its purse.
-pub fn handoff_slots<E>(
+pub fn idle_handoff_slots<E>(
 	conn: &Connection,
 	request: &HandoffRequest,
-) -> Result<Vec<ItemSlot>, HandOffError<E>> {
+) -> Result<Vec<ItemSlot>, HandoffError<E>> {
 	if dao::handoff_tag_in_use(conn, &request.tag)? {
-		return Err(HandOffError::TagInUse);
+		return Err(HandoffError::TagInUse(request.tag.clone()));
 	}
 	let items = idle_items(conn, request.from, &request.keys)??;
 	Ok(items.into_iter().map(|item| item.slot).collect())
@@ -69,8 +70,8 @@ pub fn handoff_slots<E>(
 pub fn record_handoff<E>(
 	tx: &rusqlite::Transaction<'_>,
 	request: &HandoffRequest,
-) -> Result<(), HandOffError<E>> {
-	handoff_slots::<E>(tx, request)?;
+) -> Result<(), HandoffError<E>> {
+	idle_handoff_slots::<E>(tx, request)?;
 	let keys: Vec<ItemKey> = request.keys.iter().copied().collect();
 	Ok(dao::insert_handoffs(tx, &keys, &request.tag)?)
 }

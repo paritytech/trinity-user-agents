@@ -18,8 +18,9 @@ final class TrUAPIEncryptedStorage: @unchecked Sendable {
     /// (locked before first unlock, say) throws, so the core never mistakes it
     /// for a lost secret.
     func read(key: Data) throws -> Data? {
+        let identifier = identifier(for: key)
         do {
-            return try keychain.fetchKey(for: identifier(for: key))
+            return try keychain.fetchKey(for: identifier)
         } catch KeystoreError.noKeyFound {
             return nil
         }
@@ -27,7 +28,8 @@ final class TrUAPIEncryptedStorage: @unchecked Sendable {
 
     /// Stores `value`, replacing an earlier value under the same key.
     func write(key: Data, value: Data) throws {
-        try keychain.saveKey(value, with: identifier(for: key))
+        let identifier = identifier(for: key)
+        try keychain.saveKey(value, with: identifier)
     }
 
     private func identifier(for key: Data) -> String {

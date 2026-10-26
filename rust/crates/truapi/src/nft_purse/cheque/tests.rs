@@ -1,15 +1,14 @@
 use core::num::NonZeroU32;
 
 use futures::executor::block_on;
-use parity_scale_codec::Decode;
 use tempfile::TempDir;
 use truapi::latest::{NftPurseReceiveKey, X25519PublicKey};
 
 use super::*;
 use crate::{
-	host_logic::x25519_seal::{AEAD_NONCE_LEN, SealedBox, generate_x25519_keypair, open_sealed},
+	host_logic::x25519_seal::{AEAD_NONCE_LEN, generate_x25519_keypair},
 	nft::{HeldItem, ItemRefusal, PageRequest},
-	nft_purse::test_purses,
+	nft_purse::{keys_in_cheque, test_purses},
 	store::open_temporary_core_db,
 };
 
@@ -34,12 +33,12 @@ fn creator(id: &str) -> ProductId {
 	ProductId::for_test(id)
 }
 
-fn cheque_of(
+fn create_test_cheque(
 	purses: &NftPurses,
 	product: &str,
 	to: &NftPurseChequeDestination,
 	keys: &[ItemKey],
-) -> Result<NftPurseCheque, HandOffError<SealError>> {
+) -> Result<NftPurseCheque, HandoffError<SealError>> {
 	let items = keys.iter().copied().collect();
 	block_on(purses.create_cheque(&creator(product), FROM, to, items))
 }
@@ -47,27 +46,6 @@ fn cheque_of(
 fn available_keys(purses: &NftPurses) -> Vec<ItemKey> {
 	let page = PageRequest { index: 0, size: NonZeroU32::new(100).unwrap() };
 	block_on(purses.ledger.available_items(FROM, page)).unwrap().items
-}
-
-/// What the receiver does in `deposit`: splits off the ephemeral key, opens
-/// the rest with its secret and decodes one 64-byte secret per item.
-fn open_cheque(secret: [u8; 32], cheque: &NftPurseCheque) -> Vec<[u8; 64]> {
-	let (ephemeral, encrypted) = cheque.encrypted_secrets.split_at(32);
-	let sealed = SealedBox {
-		ephemeral_public: ephemeral.try_into().unwrap(),
-		encrypted: encrypted.to_vec(),
-	};
-	let plaintext = open_sealed(secret, &sealed).unwrap();
-	Vec::<[u8; 64]>::decode(&mut plaintext.as_slice()).unwrap()
-}
-
-/// The key each secret rebuilds.
-fn keys_of(secrets: &[[u8; 64]]) -> Vec<ItemKey> {
-	let key_of = |secret: &[u8; 64]| {
-		let public = schnorrkel::SecretKey::from_bytes(secret).unwrap().to_public();
-		ItemKey(public.to_bytes())
-	};
-	secrets.iter().map(key_of).collect()
 }
 
 /// Other hosts derive the same id from the receive key to find the cheque,
@@ -93,16 +71,19 @@ fn the_receive_key_holder_opens_the_cheque_and_rebuilds_every_listed_key() {
 	let (secret, public) = generate_x25519_keypair().unwrap();
 	let to = NftPurseChequeDestination::Ephemeral(NftPurseReceiveKey(public));
 
-	let cheque = cheque_of(&purses, "tickets.dot", &to, &keys).unwrap();
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
 
-	let listed: Vec<ItemKey> = cheque.items.iter().map(|key| ItemKey(key.0)).collect();
 	let mut sorted = keys.clone();
 	sorted.sort();
-	assert_eq!(listed, sorted);
-	assert_eq!(keys_of(&open_cheque(secret, &cheque)), listed);
-	assert_eq!(cheque.id, cheque_id_for(&to));
-	assert_eq!(cheque.recipient, NftPurseChequeRecipient::Ephemeral(NftPurseReceiveKey(public)));
-	assert_eq!(cheque.version, 0);
+	let expected = NftPurseCheque {
+		version: 0,
+		id: cheque_id_for(&to),
+		recipient: NftPurseChequeRecipient::Ephemeral(NftPurseReceiveKey(public)),
+		items: sorted.iter().map(|key| NftPurseItemKey(key.0)).collect(),
+		encrypted_secrets: cheque.encrypted_secrets.clone(),
+	};
+	assert_eq!(cheque, expected);
+	assert_eq!(keys_in_cheque(secret, &cheque), sorted);
 	assert_eq!(available_keys(&purses), vec![]);
 }
 
@@ -114,7 +95,7 @@ fn encrypted_secrets_are_the_ephemeral_key_the_nonce_and_the_ciphertext() {
 	let (_, public) = generate_x25519_keypair().unwrap();
 	let to = NftPurseChequeDestination::Ephemeral(NftPurseReceiveKey(public));
 
-	let cheque = cheque_of(&purses, "tickets.dot", &to, &keys).unwrap();
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
 
 	let plaintext_len = 1 + 2 * 64;
 	assert_eq!(cheque.encrypted_secrets.len(), 32 + AEAD_NONCE_LEN + plaintext_len + 16);
@@ -130,11 +111,17 @@ fn a_static_cheque_keeps_its_given_id_and_opens_with_the_static_key() {
 	let to =
 		NftPurseChequeDestination::Static { encryption_key: X25519PublicKey(public), cheque_id };
 
-	let cheque = cheque_of(&purses, "tickets.dot", &to, &keys).unwrap();
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
 
-	assert_eq!(cheque.id, cheque_id);
-	assert_eq!(cheque.recipient, NftPurseChequeRecipient::Static);
-	assert_eq!(keys_of(&open_cheque(secret, &cheque)), keys);
+	let expected = NftPurseCheque {
+		version: 0,
+		id: cheque_id,
+		recipient: NftPurseChequeRecipient::Static,
+		items: vec![NftPurseItemKey(keys[0].0)],
+		encrypted_secrets: cheque.encrypted_secrets.clone(),
+	};
+	assert_eq!(cheque, expected);
+	assert_eq!(keys_in_cheque(secret, &cheque), keys);
 }
 
 /// A cheque id names one cheque of one product: a second cheque under it is
@@ -146,12 +133,12 @@ fn a_cheque_id_is_unique_per_creating_product() {
 	let cheque_id = NftPurseChequeId([9; 32]);
 	let to =
 		NftPurseChequeDestination::Static { encryption_key: X25519PublicKey(public), cheque_id };
-	cheque_of(&purses, "tickets.dot", &to, &keys[..1]).unwrap();
+	create_test_cheque(&purses, "tickets.dot", &to, &keys[..1]).unwrap();
 
-	let again = cheque_of(&purses, "tickets.dot", &to, &keys[1..2]);
-	let other_product = cheque_of(&purses, "other.dot", &to, &keys[2..]);
+	let again = create_test_cheque(&purses, "tickets.dot", &to, &keys[1..2]);
+	let other_product = create_test_cheque(&purses, "other.dot", &to, &keys[2..]);
 
-	assert!(matches!(again, Err(HandOffError::TagInUse)));
+	assert!(matches!(again, Err(HandoffError::TagInUse(_))));
 	assert!(other_product.is_ok());
 }
 
@@ -165,9 +152,9 @@ fn a_cheque_to_a_low_order_key_is_refused_and_spends_nothing() {
 		cheque_id: NftPurseChequeId([9; 32]),
 	};
 
-	let refused = cheque_of(&purses, "tickets.dot", &to, &keys);
+	let refused = create_test_cheque(&purses, "tickets.dot", &to, &keys);
 
-	assert!(matches!(refused, Err(HandOffError::Seal(SealError::LowOrderKey))));
+	assert!(matches!(refused, Err(HandoffError::Seal(SealError::LowOrderKey(_)))));
 	assert_eq!(available_keys(&purses), keys);
 }
 
@@ -179,11 +166,11 @@ fn an_item_in_a_cheque_cannot_go_into_another() {
 	let (_, public) = generate_x25519_keypair().unwrap();
 	let first = NftPurseChequeDestination::Ephemeral(NftPurseReceiveKey(public));
 	let second = NftPurseChequeDestination::Ephemeral(NftPurseReceiveKey([5; 32]));
-	cheque_of(&purses, "tickets.dot", &first, &keys).unwrap();
+	create_test_cheque(&purses, "tickets.dot", &first, &keys).unwrap();
 
-	let refused = cheque_of(&purses, "tickets.dot", &second, &keys);
+	let refused = create_test_cheque(&purses, "tickets.dot", &second, &keys);
 
 	assert!(
-		matches!(refused, Err(HandOffError::Item(ItemRefusal::Unavailable(key))) if key == keys[0])
+		matches!(refused, Err(HandoffError::Item(ItemRefusal::Unavailable(key))) if key == keys[0])
 	);
 }

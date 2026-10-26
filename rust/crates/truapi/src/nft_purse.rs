@@ -18,6 +18,8 @@ use truapi::latest::{
 };
 
 pub use cheque::cheque_recipient;
+#[cfg(test)]
+pub use cheque::{cheque_id_for, keys_in_cheque};
 pub use operation::drain_needs_confirmation;
 pub use receive_key::CreateReceiveKeyError;
 

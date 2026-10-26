@@ -46,13 +46,9 @@ class EncryptedHostStorage(
  * not to a product, and scoping it per product would make every product demand
  * its own pairing. The core disambiguates internally through the SCALE-encoded
  * `CoreStorageKey` it passes here.
- *
- * [namespace] keeps separate stores apart: the core's encrypted storage, which
- * holds NFT receive key secrets, lives under [ENCRYPTED_STORAGE_NAMESPACE].
  */
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,
-    private val namespace: String = CORE_NAMESPACE,
 ) : HostCoreStorage {
     override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
 
@@ -66,13 +62,40 @@ class EncryptedHostCoreStorage(
             .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
     }
 
-    private fun qualify(key: ByteArray) = "$namespace/${key.toHex()}"
+    private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
 
-    companion object {
-        private const val CORE_NAMESPACE = "truapi/core"
+    private companion object {
+        const val CORE_NAMESPACE = "truapi/core"
+    }
+}
 
-        /** Namespace of the core's encrypted storage, apart from its core storage slots. */
-        const val ENCRYPTED_STORAGE_NAMESPACE = "truapi/encrypted"
+/**
+ * Values the core keeps encrypted at rest, such as the secrets of NFT receive
+ * keys, apart from its core storage slots. Shared preferences are excluded from
+ * backups, and the AndroidKeyStore key wrapping them never leaves the device.
+ *
+ * Unlike core storage, a stored value that no longer decrypts is an error, not
+ * a miss: the core must not mistake an unreadable secret for an unknown key.
+ */
+class EncryptedHostValues(
+    private val preferences: EncryptedPreferences,
+) {
+    suspend fun read(key: ByteArray): ByteArray? {
+        val field = qualify(key)
+        if (!preferences.hasKey(field)) return null
+        return readValue(preferences, field)
+            ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
+    }
+
+    suspend fun write(key: ByteArray, value: ByteArray) {
+        writeValue(preferences, qualify(key), value)
+            ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
+    }
+
+    private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"
+
+    private companion object {
+        const val ENCRYPTED_NAMESPACE = "truapi/encrypted"
     }
 }
 

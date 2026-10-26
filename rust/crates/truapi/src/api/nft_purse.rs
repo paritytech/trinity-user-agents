@@ -178,7 +178,9 @@ pub trait NftPurse: Send + Sync {
 	/// second cheque with the same id gets `OperationExists`.
 	/// `encrypted_secrets` is the ephemeral X25519 key, then the 12-byte nonce,
 	/// then the ChaCha20-Poly1305 ciphertext of the SCALE-encoded 64-byte
-	/// sr25519 secrets in `items` order.
+	/// sr25519 secrets in `items` order, each as schnorrkel's
+	/// `SecretKey::to_bytes` writes it (scalar, then nonce), not the
+	/// ed25519-expanded form.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.createCheque({

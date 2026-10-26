@@ -7,7 +7,7 @@ use futures::{StreamExt, stream::BoxStream};
 
 use super::{
 	dao,
-	handoff::{HandOffError, HandoffRequest, handoff_slots, record_handoff},
+	handoff::{HandoffError, HandoffRequest, idle_handoff_slots, record_handoff},
 	holding::{HeldItem, record_holdings},
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets},
@@ -180,16 +180,16 @@ impl NftLedger {
 		&self,
 		request: HandoffRequest,
 		seal: Seal,
-	) -> Result<T, HandOffError<E>>
+	) -> Result<T, HandoffError<E>>
 	where
 		Seal: FnOnce(&[ItemSecret]) -> Result<T, E>,
 		E: Send + 'static,
 	{
 		if request.keys.is_empty() {
-			return Err(HandOffError::NoItems);
+			return Err(HandoffError::NoItems);
 		}
 		let secrets = self.secrets_of(&request).await?;
-		let sealed = seal(&secrets).map_err(HandOffError::Seal)?;
+		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
 			.write_unless_refused(move |tx| Ok(record_handoff(tx, &request)))
@@ -201,14 +201,10 @@ impl NftLedger {
 	async fn secrets_of<E: Send + 'static>(
 		&self,
 		request: &HandoffRequest,
-	) -> Result<Vec<ItemSecret>, HandOffError<E>> {
-		let read_request = HandoffRequest {
-			from: request.from,
-			keys: request.keys.clone(),
-			tag: request.tag.clone(),
-		};
-		let slots = self.db.read(move |conn| Ok(handoff_slots(conn, &read_request))).await??;
-		self.secrets.item_secrets(&slots).map_err(HandOffError::Secrets)
+	) -> Result<Vec<ItemSecret>, HandoffError<E>> {
+		let read_request = request.clone();
+		let slots = self.db.read(move |conn| Ok(idle_handoff_slots(conn, &read_request))).await??;
+		self.secrets.item_secrets(&slots).map_err(HandoffError::Secrets)
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

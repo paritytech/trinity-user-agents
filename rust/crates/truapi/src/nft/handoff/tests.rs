@@ -38,7 +38,7 @@ fn held_items(count: u32) -> HeldItems {
 	held_items_with(count, test_ledger_deps)
 }
 
-fn request(keys: &[ItemKey], tag: &[u8]) -> HandoffRequest {
+fn handoff_request(keys: &[ItemKey], tag: &[u8]) -> HandoffRequest {
 	HandoffRequest {
 		from: FROM,
 		keys: keys.iter().copied().collect(),
@@ -55,12 +55,12 @@ fn public_keys_of(secrets: &[ItemSecret]) -> Result<Vec<ItemKey>, schnorrkel::Si
 	secrets.iter().map(public_key).collect()
 }
 
-fn hand_off_keys(
+fn hand_off_rebuilding_keys(
 	items: &HeldItems,
 	keys: &[ItemKey],
 	tag: &[u8],
-) -> Result<Vec<ItemKey>, HandOffError<schnorrkel::SignatureError>> {
-	block_on(items.ledger.hand_off(request(keys, tag), public_keys_of))
+) -> Result<Vec<ItemKey>, HandoffError<schnorrkel::SignatureError>> {
+	block_on(items.ledger.hand_off(handoff_request(keys, tag), public_keys_of))
 }
 
 fn available_keys(items: &HeldItems) -> Vec<ItemKey> {
@@ -85,7 +85,7 @@ fn the_seal_gets_the_secret_of_each_key_in_key_order() {
 	let mut sorted = items.keys.clone();
 	sorted.sort();
 
-	let rebuilt = hand_off_keys(&items, &items.keys, b"cheque").unwrap();
+	let rebuilt = hand_off_rebuilding_keys(&items, &items.keys, b"cheque").unwrap();
 
 	assert_eq!(rebuilt, sorted);
 }
@@ -95,13 +95,13 @@ fn the_seal_gets_the_secret_of_each_key_in_key_order() {
 #[test]
 fn a_handed_off_key_is_not_available_and_cannot_be_handed_off_again() {
 	let items = held_items(2);
-	hand_off_keys(&items, &items.keys[..1], b"first").unwrap();
+	hand_off_rebuilding_keys(&items, &items.keys[..1], b"first").unwrap();
 
-	let again = hand_off_keys(&items, &items.keys[..1], b"second");
+	let again = hand_off_rebuilding_keys(&items, &items.keys[..1], b"second");
 
 	assert_eq!(available_keys(&items), items.keys[1..].to_vec());
 	assert!(
-		matches!(again, Err(HandOffError::Item(ItemRefusal::Unavailable(key))) if key == items.keys[0])
+		matches!(again, Err(HandoffError::Item(ItemRefusal::Unavailable(key))) if key == items.keys[0])
 	);
 }
 
@@ -110,11 +110,11 @@ fn a_handed_off_key_is_not_available_and_cannot_be_handed_off_again() {
 #[test]
 fn a_tag_in_use_is_refused_and_writes_nothing() {
 	let items = held_items(2);
-	hand_off_keys(&items, &items.keys[..1], b"cheque").unwrap();
+	hand_off_rebuilding_keys(&items, &items.keys[..1], b"cheque").unwrap();
 
-	let again = hand_off_keys(&items, &items.keys[1..], b"cheque");
+	let again = hand_off_rebuilding_keys(&items, &items.keys[1..], b"cheque");
 
-	assert!(matches!(again, Err(HandOffError::TagInUse)));
+	assert!(matches!(again, Err(HandoffError::TagInUse(_))));
 	assert_eq!(handoff_rows(&items), 1);
 }
 
@@ -125,9 +125,9 @@ fn a_refused_seal_writes_nothing() {
 	let items = held_items(1);
 	let refuse = |_: &[ItemSecret]| Err::<(), _>("no recipient");
 
-	let refused = block_on(items.ledger.hand_off(request(&items.keys, b"cheque"), refuse));
+	let refused = block_on(items.ledger.hand_off(handoff_request(&items.keys, b"cheque"), refuse));
 
-	assert!(matches!(refused, Err(HandOffError::Seal("no recipient"))));
+	assert!(matches!(refused, Err(HandoffError::Seal("no recipient"))));
 	assert_eq!(available_keys(&items), items.keys);
 	assert_eq!(handoff_rows(&items), 0);
 }
@@ -143,11 +143,11 @@ fn a_key_not_held_in_the_purse_is_refused_before_sealing() {
 	let refused = block_on(
 		items
 			.ledger
-			.hand_off(request(&[items.keys[0], not_held], b"cheque"), never_called),
+			.hand_off(handoff_request(&[items.keys[0], not_held], b"cheque"), never_called),
 	);
 
 	assert!(
-		matches!(refused, Err(HandOffError::Item(ItemRefusal::NotFound(key))) if key == not_held)
+		matches!(refused, Err(HandoffError::Item(ItemRefusal::NotFound(key))) if key == not_held)
 	);
 	assert_eq!(handoff_rows(&items), 0);
 }
@@ -168,9 +168,9 @@ fn a_signed_out_host_hands_nothing_off() {
 	let signed_out = |db| NftLedgerDeps { secrets: Arc::new(SignedOut), ..test_ledger_deps(db) };
 	let items = held_items_with(1, signed_out);
 
-	let refused = hand_off_keys(&items, &items.keys, b"cheque");
+	let refused = hand_off_rebuilding_keys(&items, &items.keys, b"cheque");
 
-	assert!(matches!(refused, Err(HandOffError::Secrets(AuthorityError::Disconnected))));
+	assert!(matches!(refused, Err(HandoffError::Secrets(AuthorityError::Disconnected))));
 	assert_eq!(handoff_rows(&items), 0);
 }
 
@@ -189,12 +189,36 @@ fn a_key_spent_while_sealing_is_refused_by_the_write() {
 		Ok::<_, rusqlite::Error>(secrets.len())
 	};
 
-	let refused =
-		block_on(items.ledger.hand_off(request(&items.keys, b"cheque"), spend_while_sealing));
+	let refused = block_on(
+		items
+			.ledger
+			.hand_off(handoff_request(&items.keys, b"cheque"), spend_while_sealing),
+	);
 
 	assert!(
-		matches!(refused, Err(HandOffError::Item(ItemRefusal::Unavailable(spent))) if spent == key)
+		matches!(refused, Err(HandoffError::Item(ItemRefusal::Unavailable(spent))) if spent == key)
 	);
+	assert_eq!(handoff_rows(&items), 1);
+}
+
+/// Two cheques with one id can be sealed at once. The write checks the tag
+/// again, so only the first is recorded.
+#[test]
+fn a_tag_used_while_sealing_is_refused_by_the_write() {
+	let items = held_items(2);
+	let path = items.dir.path().join(CORE_DB_FILE);
+	let other_key = items.keys[1];
+	let use_tag_while_sealing = move |secrets: &[ItemSecret]| {
+		let conn = Connection::open(&path)?;
+		let sql = "INSERT INTO nft_consumption (key, kind, handoff_tag) VALUES (?1, 'HANDOFF', ?2)";
+		conn.execute(sql, rusqlite::params![other_key.0, b"cheque".as_slice()])?;
+		Ok::<_, rusqlite::Error>(secrets.len())
+	};
+
+	let request = handoff_request(&items.keys[..1], b"cheque");
+	let refused = block_on(items.ledger.hand_off(request, use_tag_while_sealing));
+
+	assert!(matches!(refused, Err(HandoffError::TagInUse(_))));
 	assert_eq!(handoff_rows(&items), 1);
 }
 
@@ -203,7 +227,7 @@ fn a_key_spent_while_sealing_is_refused_by_the_write() {
 fn a_handoff_of_no_keys_is_refused() {
 	let items = held_items(1);
 
-	let refused = hand_off_keys(&items, &[], b"cheque");
+	let refused = hand_off_rebuilding_keys(&items, &[], b"cheque");
 
-	assert!(matches!(refused, Err(HandOffError::NoItems)));
+	assert!(matches!(refused, Err(HandoffError::NoItems)));
 }

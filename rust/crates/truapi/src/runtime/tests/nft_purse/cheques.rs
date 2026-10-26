@@ -160,8 +160,14 @@ fn a_cheque_from_an_own_purse_needs_no_confirmation_and_spends_its_items() {
 	let cheque = cheque.unwrap();
 	let mut sorted = items;
 	sorted.sort_by_key(|key| key.0);
-	assert_eq!(cheque.items, sorted);
-	assert_eq!(cheque.recipient, v01::NftPurseChequeRecipient::Ephemeral(receive_key));
+	let expected = v01::NftPurseCheque {
+		version: 0,
+		id: crate::nft_purse::cheque_id_for(&to_receive_key(receive_key)),
+		recipient: v01::NftPurseChequeRecipient::Ephemeral(receive_key),
+		items: sorted,
+		encrypted_secrets: cheque.encrypted_secrets.clone(),
+	};
+	assert_eq!(cheque, expected);
 	assert_eq!(query(&purses.host, TICKETS, 10), Ok(empty_page()));
 	assert_eq!(drain_reviews(&platform), vec![]);
 }
@@ -258,7 +264,10 @@ fn a_cheque_to_a_low_order_static_key_answers_other_and_spends_nothing() {
 
 	let refused = create_cheque(&purses.host, TICKETS, to, items.clone());
 
-	let reason = "sealing the item secrets failed: invalid X25519 public key".to_owned();
+	let reason = format!(
+		"sealing the item secrets failed: invalid X25519 public key {}: a low-order point",
+		hex::encode([0; 32])
+	);
 	let other = v01::NftPurseCreateChequeError::Other(v01::GenericError { reason });
 	assert_eq!(refused, Err(cheque_refusal(other)));
 	let page = query(&purses.host, TICKETS, 10).unwrap();

@@ -11,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 
 class EncryptedTrUAPIStorageTest {
     private val prefs = FakeEncryptedPreferences()
@@ -106,15 +107,27 @@ class EncryptedTrUAPIStorageTest {
 
     /** Receive key secrets must not collide with, or be cleared as, a core storage slot of the same key. */
     @Test
-    fun `encrypted storage keeps its values apart from core storage`() = runTest {
+    fun `encrypted values stay apart from core storage`() = runTest {
         val core = EncryptedHostCoreStorage(prefs)
-        val encrypted = EncryptedHostCoreStorage(prefs, namespace = EncryptedHostCoreStorage.ENCRYPTED_STORAGE_NAMESPACE)
+        val encrypted = EncryptedHostValues(prefs)
 
         core.write(byteArrayOf(1), byteArrayOf(10))
         encrypted.write(byteArrayOf(1), byteArrayOf(20))
         core.clear(byteArrayOf(1))
 
         assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
+    }
+
+    /** An unknown receive key and an unreadable secret must not look alike to the core. */
+    @Test
+    fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        prefs.corrupt()
+
+        assertNull(encrypted.read(byteArrayOf(2)))
+        val failure = runCatching { encrypted.read(byteArrayOf(1)) }.exceptionOrNull()
+        assertTrue(failure is HostRejection)
     }
 }
 

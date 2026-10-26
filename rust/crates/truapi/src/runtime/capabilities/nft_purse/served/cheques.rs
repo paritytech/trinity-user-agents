@@ -8,7 +8,7 @@ use truapi::{CallContext, CallError, latest};
 use super::{host_failure, operations::Drain};
 use crate::{
 	host_logic::x25519_seal::SealError,
-	nft::{HandOffError, ItemKey, ItemRefusal, PurseId},
+	nft::{HandoffError, ItemKey, ItemRefusal, PurseId},
 	nft_purse::{CreateReceiveKeyError, cheque_recipient},
 	platform::NftPurseDrainDestination,
 	runtime::ProductRuntimeHost,
@@ -27,8 +27,10 @@ impl ProductRuntimeHost {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
 		let into = PurseId(request.into.0);
-		let created = purses.create_receive_key(self.connection.product_id(), into).await;
-		let key = created.map_err(create_receive_key_failure)?;
+		let key = purses
+			.create_receive_key(self.connection.product_id(), into)
+			.await
+			.map_err(create_receive_key_failure)?;
 		Ok(latest::HostNftPurseCreateReceiveKeyResponse { key })
 	}
 
@@ -58,8 +60,10 @@ impl ProductRuntimeHost {
 		let denied = latest::HostNftPurseCreateChequeError::Denied;
 		self.confirm_drain(cx, drain, denied).await?;
 		let caller = self.connection.product_id();
-		let cheque = purses.create_cheque(caller, from, &to, items).await;
-		let cheque = cheque.map_err(create_cheque_failure)?;
+		let cheque = purses
+			.create_cheque(caller, from, &to, items)
+			.await
+			.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 }
@@ -67,18 +71,18 @@ impl ProductRuntimeHost {
 /// The product's refusals as its domain errors, everything else as the
 /// host's failure. A low-order recipient key is the product's.
 fn create_cheque_failure(
-	error: HandOffError<SealError>,
+	error: HandoffError<SealError>,
 ) -> CallError<latest::HostNftPurseCreateChequeError> {
 	let refusal = match error {
-		HandOffError::NoItems => latest::HostNftPurseCreateChequeError::NoItems,
-		HandOffError::TagInUse => latest::HostNftPurseCreateChequeError::OperationExists,
-		HandOffError::Item(ItemRefusal::NotFound(_)) => {
+		HandoffError::NoItems => latest::HostNftPurseCreateChequeError::NoItems,
+		HandoffError::TagInUse(_) => latest::HostNftPurseCreateChequeError::OperationExists,
+		HandoffError::Item(ItemRefusal::NotFound(_)) => {
 			latest::HostNftPurseCreateChequeError::ItemNotFound
 		},
-		HandOffError::Item(ItemRefusal::Unavailable(_)) => {
+		HandoffError::Item(ItemRefusal::Unavailable(_)) => {
 			latest::HostNftPurseCreateChequeError::ItemUnavailable
 		},
-		HandOffError::Seal(SealError::LowOrderKey) => {
+		HandoffError::Seal(SealError::LowOrderKey(_)) => {
 			let reason = latest::GenericError { reason: error.to_string() };
 			latest::HostNftPurseCreateChequeError::Other(reason)
 		},

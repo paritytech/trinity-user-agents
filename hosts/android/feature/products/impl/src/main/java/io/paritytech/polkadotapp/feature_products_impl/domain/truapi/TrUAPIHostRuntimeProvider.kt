@@ -221,11 +221,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
-        // Shared preferences are excluded from backups, and the AndroidKeyStore key wrapping them never leaves the device.
-        private val encryptedStorage = EncryptedHostCoreStorage(
-            encryptedPreferences,
-            namespace = EncryptedHostCoreStorage.ENCRYPTED_STORAGE_NAMESPACE,
-        )
+        private val encryptedStorage = EncryptedHostValues(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

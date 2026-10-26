@@ -94,7 +94,7 @@ impl ItemSecret {
 	}
 }
 
-/// Exports item secrets, so items can be handed off in a cheque. Only
+/// Exports item secrets, so items can be handed off. Only
 /// `NftLedger::hand_off` calls it.
 pub trait ItemSecrets: Send + Sync {
 	/// The secret of each of `slots`, in order. Fails without a session.

@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 use super::NftPurses;
 use crate::{
 	host_logic::x25519_seal::{SealError, SealedBox, seal_to},
-	nft::{HandOffError, HandoffRequest, HandoffTag, ItemKey, ItemSecret, PurseId},
+	nft::{HandoffError, HandoffRequest, HandoffTag, ItemKey, ItemSecret, PurseId},
 	platform::ProductId,
 };
 
@@ -29,7 +29,8 @@ const CHEQUE_ID_DOMAIN: &[u8] = b"nft-purse/cheque-id";
 pub fn cheque_id_for(destination: &NftPurseChequeDestination) -> NftPurseChequeId {
 	match destination {
 		NftPurseChequeDestination::Ephemeral(key) => {
-			NftPurseChequeId(blake2_256(&[CHEQUE_ID_DOMAIN, &key.0].concat()))
+			let preimage = [CHEQUE_ID_DOMAIN, &key.0].concat();
+			NftPurseChequeId(blake2_256(&preimage))
 		},
 		NftPurseChequeDestination::Static { cheque_id, .. } => *cheque_id,
 	}
@@ -46,7 +47,7 @@ impl NftPurses {
 		from: PurseId,
 		to: &NftPurseChequeDestination,
 		items: BTreeSet<ItemKey>,
-	) -> Result<NftPurseCheque, HandOffError<SealError>> {
+	) -> Result<NftPurseCheque, HandoffError<SealError>> {
 		let id = cheque_id_for(to);
 		let tag = handoff_tag(creator, &id);
 		let request = HandoffRequest { from, keys: items.clone(), tag };
@@ -68,8 +69,9 @@ fn seal_cheque(
 	items: &BTreeSet<ItemKey>,
 	secrets: &[ItemSecret],
 ) -> Result<NftPurseCheque, SealError> {
-	let plaintext: Vec<[u8; 64]> = secrets.iter().map(|secret| *secret.as_bytes()).collect();
-	let plaintext = Zeroizing::new(plaintext.encode());
+	let secret_bytes: Zeroizing<Vec<[u8; 64]>> =
+		Zeroizing::new(secrets.iter().map(|secret| *secret.as_bytes()).collect());
+	let plaintext = Zeroizing::new(secret_bytes.encode());
 	let sealed = seal_to(recipient_key(to), &plaintext)?;
 	Ok(NftPurseCheque {
 		version: CHEQUE_VERSION,
@@ -99,6 +101,25 @@ pub fn cheque_recipient(to: &NftPurseChequeDestination) -> NftPurseChequeRecipie
 /// `ephemeral public key ‖ nonce ‖ ciphertext`.
 fn encrypted_secrets(sealed: SealedBox) -> Vec<u8> {
 	[sealed.ephemeral_public.as_slice(), &sealed.encrypted].concat()
+}
+
+/// The item key each secret in `cheque` rebuilds, opened with the
+/// recipient's X25519 `secret`, as a receiver's deposit does.
+#[cfg(test)]
+pub fn keys_in_cheque(secret: [u8; 32], cheque: &NftPurseCheque) -> Vec<ItemKey> {
+	use parity_scale_codec::Decode;
+
+	let (ephemeral, encrypted) = cheque.encrypted_secrets.split_at(32);
+	let ephemeral_public = ephemeral.try_into().expect("an ephemeral key has 32 bytes");
+	let sealed = SealedBox { ephemeral_public, encrypted: encrypted.to_vec() };
+	let plaintext = crate::host_logic::x25519_seal::open_sealed(secret, &sealed)
+		.expect("the recipient opens the cheque");
+	let secrets = Vec::<[u8; 64]>::decode(&mut plaintext.as_slice()).expect("secrets decode");
+	let key_of = |secret: &[u8; 64]| {
+		let public = schnorrkel::SecretKey::from_bytes(secret).expect("a secret key").to_public();
+		ItemKey(public.to_bytes())
+	};
+	secrets.iter().map(key_of).collect()
 }
 
 #[cfg(test)]

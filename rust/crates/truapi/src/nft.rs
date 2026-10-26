@@ -19,7 +19,7 @@ mod standing;
 #[cfg(test)]
 mod testing;
 
-pub use handoff::{HandOffError, HandoffRequest, HandoffTag};
+pub use handoff::{HandoffError, HandoffRequest, HandoffTag};
 pub use holding::HeldItem;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{

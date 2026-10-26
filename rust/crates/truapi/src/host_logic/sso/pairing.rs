@@ -673,7 +673,10 @@ mod tests {
 				.unwrap_err()
 				.contains("too short")
 		);
-		assert_eq!(shared_secret([1; 32], [0; 32]).unwrap_err(), "invalid X25519 public key");
+		assert_eq!(
+			shared_secret([1; 32], [0; 32]).unwrap_err(),
+			format!("invalid X25519 public key {}: a low-order point", hex::encode([0; 32]))
+		);
 	}
 
 	#[test]

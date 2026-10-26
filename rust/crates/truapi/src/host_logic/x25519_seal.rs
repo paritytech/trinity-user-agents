@@ -24,8 +24,8 @@ pub enum SealError {
 	#[error("failed to generate randomness: {0}")]
 	Random(#[from] getrandom::Error),
 	/// The peer key is a low-order point, so the shared secret would be all zeros.
-	#[error("invalid X25519 public key")]
-	LowOrderKey,
+	#[error("invalid X25519 public key {}: a low-order point", hex::encode(.0))]
+	LowOrderKey([u8; 32]),
 	/// The encrypted bytes cannot hold a nonce and a tag.
 	#[error("encrypted message is too short: {0} bytes, expected at least {min}", min = AEAD_NONCE_LEN + AEAD_TAG_LEN)]
 	TooShort(usize),
@@ -57,21 +57,21 @@ pub fn seal_to(recipient: [u8; 32], plaintext: &[u8]) -> Result<SealedBox, SealE
 
 /// [`seal_to`] with a given ephemeral secret and nonce, so the output is
 /// fixed. Both must be fresh for every message.
-pub fn seal_with(
+fn seal_with(
 	ephemeral_secret: [u8; 32],
 	nonce: [u8; AEAD_NONCE_LEN],
 	recipient: [u8; 32],
 	plaintext: &[u8],
 ) -> Result<SealedBox, SealError> {
-	let key = aead_key(&shared_secret(ephemeral_secret, recipient)?);
-	let encrypted = encrypt_with_nonce(key, plaintext, nonce)?;
+	let shared = shared_secret(ephemeral_secret, recipient)?;
+	let encrypted = encrypt_with_nonce(aead_key(&shared), plaintext, nonce)?;
 	Ok(SealedBox { ephemeral_public: x25519_public_key(ephemeral_secret), encrypted })
 }
 
 /// Decrypts what [`seal_to`] produced for the public key of `secret`.
 pub fn open_sealed(secret: [u8; 32], sealed: &SealedBox) -> Result<Vec<u8>, SealError> {
-	let key = aead_key(&shared_secret(secret, sealed.ephemeral_public)?);
-	decrypt(key, &sealed.encrypted)
+	let shared = shared_secret(secret, sealed.ephemeral_public)?;
+	decrypt(aead_key(&shared), &sealed.encrypted)
 }
 
 /// The X25519 shared secret of `own_secret_key` and `peer_public_key`.
@@ -83,7 +83,7 @@ pub fn shared_secret(
 	let secret = StaticSecret::from(own_secret_key);
 	let shared = secret.diffie_hellman(&PublicKey::from(peer_public_key));
 	if !shared.was_contributory() {
-		return Err(SealError::LowOrderKey);
+		return Err(SealError::LowOrderKey(peer_public_key));
 	}
 	Ok(shared.to_bytes())
 }
@@ -95,13 +95,6 @@ pub fn aead_key(shared_secret: &[u8; 32]) -> [u8; 32] {
 	hkdf.expand(&[], &mut key)
 		.expect("32 bytes is a valid HKDF-SHA256 output length; qed");
 	key
-}
-
-/// Encrypts `plaintext` under `key` with a random nonce.
-pub fn encrypt(key: [u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
-	let mut nonce = [0u8; AEAD_NONCE_LEN];
-	getrandom::getrandom(&mut nonce)?;
-	encrypt_with_nonce(key, plaintext, nonce)
 }
 
 /// Encrypts `plaintext` under `key` with the given `nonce`.
@@ -180,7 +173,7 @@ mod tests {
 	/// is refused before anything is encrypted.
 	#[test]
 	fn sealing_to_a_low_order_key_is_refused() {
-		assert_eq!(seal_to([0; 32], b"secret"), Err(SealError::LowOrderKey));
+		assert_eq!(seal_to([0; 32], b"secret"), Err(SealError::LowOrderKey([0; 32])));
 	}
 
 	/// Bytes that cannot hold a nonce and a tag are reported as too short

@@ -412,6 +412,7 @@ mod operations {
 		pub host: ProductRuntimeHost,
 	}
 
+	/// [`Purses`] over in-memory encrypted storage.
 	pub fn product_purses(platform: Arc<StubPlatform>) -> Purses {
 		product_purses_over(platform, Arc::new(MemoryEncryptedStorage::default()))
 	}
@@ -449,6 +450,7 @@ mod operations {
 			block_on(self.ledger.create_purse("Recovered".to_owned(), PurseTag::default())).unwrap()
 		}
 
+		/// A host for [`OTHER_PRODUCT`] over the same services.
 		pub fn other_product(&self) -> ProductRuntimeHost {
 			payment_host(&self.services, OTHER_PRODUCT, true)
 		}

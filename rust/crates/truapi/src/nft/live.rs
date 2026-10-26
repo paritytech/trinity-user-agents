@@ -36,18 +36,14 @@ use crate::{
 	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::{
-		product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
-		x25519_seal::{SealedBox, open_sealed},
-	},
+	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
 	nft::HoldingTracker,
-	nft_purse::{NftPurses, NftPursesDeps},
+	nft_purse::{NftPurses, NftPursesDeps, keys_in_cheque},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
 	time::RealTimer,
 };
-use parity_scale_codec::Decode;
-use truapi::latest::{NftPurseCheque, NftPurseChequeDestination};
+use truapi::latest::NftPurseChequeDestination;
 
 const DEV_PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
 const ALICE_HEX: &str = "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d";
@@ -318,6 +314,13 @@ async fn items_minted_into_host_keys_rebalance_into_another_purse() {
 	}
 }
 
+/// The product-facing purse calls over the live ledger, with receive key
+/// secrets kept in `encrypted`.
+fn live_product_purses(purses: &LivePurses, encrypted: Arc<MemoryEncryptedStorage>) -> NftPurses {
+	let ledger = purses.ledger.clone();
+	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted })
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a live Asset Hub and a funded collection owner"]
 async fn items_minted_into_host_keys_open_from_a_cheque_to_a_receive_key() {
@@ -326,29 +329,17 @@ async fn items_minted_into_host_keys_open_from_a_cheque_to_a_receive_key() {
 	let owner = CollectionOwner::from_env(chain.clone(), genesis);
 	let purses = live_purses(&chain, genesis);
 	let encrypted = Arc::new(MemoryEncryptedStorage::default());
-	let deps = NftPursesDeps {
-		ledger: purses.ledger.clone(),
-		db: purses.db.clone(),
-		encrypted: encrypted.clone(),
-	};
-	let product_purses = NftPurses::new(deps);
-	let product = ProductId::for_test("live.dot");
-	let from = product_purses.create_purse(&product, "from".into()).await.unwrap();
+	let product_purses = live_product_purses(&purses, encrypted.clone());
+	let from = product_purses.create_purse(&live_product(), "from".into()).await.unwrap();
 	let count = NonZeroU32::new(ITEM_COUNT).unwrap();
 	let items = purses.ledger.allocate_items(from, count).await.unwrap();
 	let collection = owner.create_collection().await;
 
+	let round_trip =
+		ChequeRoundTrip { owner: &owner, ledger: &purses.ledger, purses: &product_purses };
+	let handing_off = round_trip.run(collection, from, &items, &encrypted);
 	let handed_off =
-		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(cheque_round_trip(
-			&owner,
-			&purses.ledger,
-			&product_purses,
-			collection,
-			from,
-			&items,
-			&encrypted,
-		)))
-		.await;
+		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(handing_off)).await;
 
 	owner.clean_up(collection, &items).await;
 	if let Err(panic) = handed_off {
@@ -356,52 +347,49 @@ async fn items_minted_into_host_keys_open_from_a_cheque_to_a_receive_key() {
 	}
 }
 
-/// Mints into `items`, waits for the tracker to list them, hands them off in a
-/// cheque to a fresh receive key, and checks that the receive key's secret
-/// opens it into the secrets of the keys that hold the NFTs on chain.
-async fn cheque_round_trip(
-	owner: &CollectionOwner,
-	ledger: &NftLedger,
-	purses: &NftPurses,
-	collection: u32,
-	from: PurseId,
-	items: &[ItemKey],
-	encrypted: &MemoryEncryptedStorage,
-) {
-	owner.mint_into(collection, items).await;
-	let expected: BTreeSet<_> = items.iter().copied().collect();
-	wait_for("the minted items", || async {
-		(available_keys(ledger, from).await == expected).then_some(())
-	})
-	.await;
-
-	let product = ProductId::for_test("live.dot");
-	let receive_key = purses.create_receive_key(&product, from).await.unwrap();
-	let to = NftPurseChequeDestination::Ephemeral(receive_key);
-	let cheque = purses.create_cheque(&product, from, &to, expected.clone()).await.unwrap();
-
-	let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
-	let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
-	let opened = keys_opened_from(secret, &cheque);
-	assert_eq!(opened.iter().copied().collect::<BTreeSet<_>>(), expected);
-	assert_eq!(owner.instances_held_by(&opened).await.len(), items.len());
-	assert_eq!(available_keys(ledger, from).await, BTreeSet::new());
+/// The product the live cheque test acts as.
+fn live_product() -> ProductId {
+	ProductId::for_test("live.dot")
 }
 
-/// The item key each secret in `cheque` rebuilds, opened with `secret`.
-fn keys_opened_from(secret: [u8; 32], cheque: &NftPurseCheque) -> Vec<ItemKey> {
-	let (ephemeral, encrypted) = cheque.encrypted_secrets.split_at(32);
-	let sealed = SealedBox {
-		ephemeral_public: ephemeral.try_into().unwrap(),
-		encrypted: encrypted.to_vec(),
-	};
-	let plaintext = open_sealed(secret, &sealed).expect("the receive key opens the cheque");
-	let secrets = Vec::<[u8; 64]>::decode(&mut plaintext.as_slice()).expect("secrets decode");
-	let key_of = |secret: &[u8; 64]| {
-		let public = schnorrkel::SecretKey::from_bytes(secret).unwrap().to_public();
-		ItemKey(public.to_bytes())
-	};
-	secrets.iter().map(key_of).collect()
+/// What the cheque round trip runs over.
+struct ChequeRoundTrip<'a> {
+	owner: &'a CollectionOwner,
+	ledger: &'a NftLedger,
+	purses: &'a NftPurses,
+}
+
+impl ChequeRoundTrip<'_> {
+	/// Mints into `items`, waits for the tracker to list them, hands them off
+	/// in a cheque to a fresh receive key, and checks that the receive key's
+	/// secret opens it into the secrets of the keys holding the NFTs on chain.
+	async fn run(
+		&self,
+		collection: u32,
+		from: PurseId,
+		items: &[ItemKey],
+		encrypted: &MemoryEncryptedStorage,
+	) {
+		self.owner.mint_into(collection, items).await;
+		let expected: BTreeSet<_> = items.iter().copied().collect();
+		wait_for("the minted items", || async {
+			(available_keys(self.ledger, from).await == expected).then_some(())
+		})
+		.await;
+
+		let product = live_product();
+		let receive_key = self.purses.create_receive_key(&product, from).await.unwrap();
+		let to = NftPurseChequeDestination::Ephemeral(receive_key);
+		let cheque =
+			self.purses.create_cheque(&product, from, &to, expected.clone()).await.unwrap();
+
+		let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
+		let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
+		let opened = keys_in_cheque(secret, &cheque);
+		assert_eq!(opened.iter().copied().collect::<BTreeSet<_>>(), expected);
+		assert_eq!(self.owner.instances_held_by(&opened).await.len(), items.len());
+		assert_eq!(available_keys(self.ledger, from).await, BTreeSet::new());
+	}
 }
 
 /// Mints into `items`, waits for the tracker to list them, rebalances them
