@@ -12,7 +12,15 @@ struct FundingAmountView: View {
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: title, leadingTitle: true, onBack: nil) {
-                FundingCircleButton(systemImage: "clock.arrow.circlepath", action: model.close)
+                FundingCircleButton(systemImage: "clock.arrow.circlepath", action: model.showHistory)
+                    .overlay(alignment: .topTrailing) {
+                        // A session of this direction is still running.
+                        if FundingActivityCenter.shared.inFlight.contains(where: { $0.direction == model.direction }) {
+                            Circle()
+                                .fill(Color.fgError)
+                                .frame(width: 8, height: 8)
+                        }
+                    }
             }
 
             FundingRailTabs(selected: model.rail, available: model.availableRails) { rail in

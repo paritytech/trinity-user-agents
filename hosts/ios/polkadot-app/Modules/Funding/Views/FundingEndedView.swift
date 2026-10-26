@@ -236,7 +236,7 @@ private extension FundingEndedView {
         case .failed(.refunded):
             return String(localized: .Funding.activityRefunded)
         case .failed:
-            guard step == .payment else { return title(step) }
+            guard step == .received else { return title(step) }
             if ended.direction == .out { return String(localized: .Funding.endedStepSendingFailed) }
             if ended.isDeclined { return String(localized: .Funding.endedStepPaymentDeclined) }
             return String(localized: .Funding.endedStepPaymentFailed)
@@ -252,8 +252,12 @@ private extension FundingEndedView {
             if let refunded = ended.record.refundedAmount {
                 return String(localized: .Funding.endedWithdrawRefunded(amount: cash.label(cash.decimal(refunded))))
             }
-            if ended.record.rail == .crypto { return String(localized: .Funding.progressPayoutFailed(reason: reason)) }
-            return String(localized: .Funding.endedPayoutFailed)
+            switch ended.record.rail {
+            case .crypto: return String(localized: .Funding.progressPayoutFailed(reason: reason))
+            case .card: return String(localized: .Funding.endedPayoutFailedCard)
+            case .bank,
+                 nil: return String(localized: .Funding.endedPayoutFailed)
+            }
         case .failed(.cancelled):
             if let refunded = ended.record.refundedAmount {
                 return String(localized: .Funding.activityRefundedAmount(amount: cash.label(cash.decimal(refunded))))

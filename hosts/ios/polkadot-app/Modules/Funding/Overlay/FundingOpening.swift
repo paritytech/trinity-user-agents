@@ -3,7 +3,8 @@ import TrUAPIHost
 import UIKitExt
 
 /// Opens a funding session on the host's own behalf, as the CASH card does.
-/// Answers the session id, or `nil` when the user dismissed the overlay.
+/// Answers the session id, or `nil` when the user dismissed the overlay or
+/// was shown the sessions still in flight instead.
 protocol FundingOpening: Sendable {
     func openFunding(direction: FundingDirection) async throws -> String?
 }
@@ -24,9 +25,15 @@ enum FundingOpeningError: Error, ErrorContentConvertible {
 
 struct RuntimeFundingOpener: FundingOpening {
     let runtimeProvider: TrUAPIHostRuntimeProviding?
+    /// Shows the sessions in flight in a direction, answering false when
+    /// there are none.
+    var showPending: @Sendable (FundingDirection) async -> Bool = { direction in
+        await FundingActivityCenter.shared.showPending(direction: direction)
+    }
 
     func openFunding(direction: FundingDirection) async throws -> String? {
         guard let runtimeProvider else { throw FundingOpeningError.runtimeUnavailable }
+        if await showPending(direction) { return nil }
 
         do {
             return try await runtimeProvider.sharedRuntime().openFunding(direction: direction)

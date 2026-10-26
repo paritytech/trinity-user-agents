@@ -128,6 +128,8 @@ private extension FundingActivityStatusTests {
     ) -> FundingProgress {
         FundingProgress(
             steps: [FundingProgressStep(step: .started, reachedAtMs: Self.openedAtMs)],
+            band: .awaitingPayment,
+            lastHeardAtMs: nil,
             failedAtMs: nil,
             transactionId: nil,
             reference: nil,

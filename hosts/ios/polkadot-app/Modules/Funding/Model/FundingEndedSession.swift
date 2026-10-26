@@ -95,24 +95,24 @@ extension FundingEndedSession {
         reportedSteps?.map(\.step) ?? Self.steps(direction: direction, rail: record.rail)
     }
 
-    /// The step the session stopped on: the first one a failed session did
-    /// not reach, or the payout when it failed.
+    /// The milestone the session stopped on: the first one a failed session
+    /// did not reach, or Sent when the payout failed.
     var stoppedAt: Int? {
         switch outcome {
         case .succeeded:
             nil
         case .payoutFailed:
-            steps.firstIndex(of: .payout) ?? steps.indices.last
+            steps.firstIndex(of: .sent) ?? steps.indices.last
         case .failed:
-            firstUnreached ?? steps.firstIndex(of: .payment)
+            firstUnreached ?? steps.firstIndex(of: .received)
         }
     }
 
-    /// The step a released withdrawal waits on: the first one the provider
-    /// has not reported, which is the payout once it has converted.
+    /// The milestone a released withdrawal waits on: the first one the
+    /// provider has not reached, which is the payout.
     var waitingAt: Int? {
         guard payoutState == .pending else { return nil }
-        return firstUnreached ?? steps.firstIndex(of: .payout)
+        return firstUnreached ?? steps.firstIndex(of: .sent)
     }
 
     /// The card or bank turned the payment down.
@@ -126,18 +126,12 @@ private extension FundingEndedSession {
         reportedSteps?.firstIndex { $0.reachedAtMs == nil }
     }
 
-    /// The steps the core reports for a session of this direction and rail,
-    /// for a record the core has dropped.
-    static func steps(direction: FundingDirection, rail: FundingRail?) -> [FundingStep] {
-        switch (direction, rail) {
-        case (.out, _):
-            [.started, .payment, .sent, .conversion, .payout]
-        case (.in, .bank):
-            [.started, .payment, .added]
-        case (.in, .card),
-             (.in, .crypto),
-             (.in, nil):
-            [.started, .payment, .approved, .conversion, .added]
+    /// The milestones the core reports for a session of this direction, for
+    /// a record the core has dropped.
+    static func steps(direction: FundingDirection, rail _: FundingRail?) -> [FundingStep] {
+        switch direction {
+        case .out: [.started, .received, .sent]
+        case .in: [.started, .received, .added]
         }
     }
 }

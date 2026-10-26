@@ -3,88 +3,56 @@ import PolkadotUI
 import SwiftUI
 import TrUAPIHost
 
-/// The Purse's history, by day. What is in flight sits in
-/// ``FundingInProgressDock`` instead.
-struct FundingActivityView: View {
+/// Top-ups and withdrawals on one screen: those in flight under In progress,
+/// the ended ones under Completed, newest first. A row opens its session.
+struct FundingHistoryView: View {
     let cash: FundingCash
-    /// The balance now, which each day's closing balance is worked back from.
-    var currentBalance: Decimal?
     var center: FundingActivityCenter = .shared
+    var onBack: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DSSpacings.large) {
-            ForEach(Array(days.enumerated()), id: \.element.title) { index, day in
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(verbatim: day.title)
-                        .typography(.bodyLargeEmphasized)
-                        .foregroundStyle(.fgPrimary)
-                        .padding(.bottom, DSSpacings.small)
-                        .background { dayMark(day, balance: closingBalances[safe: index]) }
-                    ForEach(day.items) { item in
-                        FundingActivityRow(
-                            item: item,
-                            cash: cash,
-                            showsDivider: item.id != day.items.last?.id,
-                            arrives: center.isArriving(item.id)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture { center.showEnded(intent: item.id) }
+        VStack(spacing: DSSpacings.mediumIncreased) {
+            FundingScreenHeader(title: String(localized: .Funding.historyTitle), onBack: onBack)
+
+            if center.inFlight.isEmpty, center.history.isEmpty {
+                Text(.Funding.historyEmpty)
+                    .typography(.bodyMedium)
+                    .foregroundStyle(.fgSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, DSSpacings.large)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: DSSpacings.large) {
+                        section(String(localized: .Funding.activityInProgress), items: center.inFlight)
+                        section(String(localized: .Funding.activityCompleted), items: center.history)
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, center.inFlight.isEmpty ? 0 : FundingInProgressDock.reservedHeight)
         .task { await follow() }
     }
-}
 
-private extension FundingActivityView {
-    struct Day {
-        let title: String
-        let isToday: Bool
-        let items: [FundingActivityItem]
-    }
-
-    var days: [Day] {
-        var result: [Day] = []
-        for item in center.history {
-            let title = FundingActivityDate.day(item.date)
-            if let last = result.last, last.title == title {
-                result[result.count - 1] = Day(title: title, isToday: last.isToday, items: last.items + [item])
-            } else {
-                result.append(Day(title: title, isToday: Calendar.current.isDateInToday(item.date), items: [item]))
+    @ViewBuilder
+    private func section(_ title: String, items: [FundingActivityItem]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: DSSpacings.small) {
+                Text(verbatim: title)
+                    .typography(.bodyLargeEmphasized)
+                    .foregroundStyle(.fgPrimary)
+                ForEach(items) { item in
+                    FundingActivityRow(item: item, cash: cash, arrives: center.isArriving(item.id))
+                        .contentShape(Rectangle())
+                        .onTapGesture { center.openDetail(item) }
+                }
             }
         }
-        return result
     }
 
-    var closingBalances: [Decimal] {
-        guard let currentBalance else { return [] }
-
-        let deltas = days.map { day in day.items.reduce(Decimal(0)) { $0 + $1.balanceChange(cash: cash) } }
-        return FundingDayBalances.closing(current: currentBalance, dayChanges: deltas)
-    }
-
-    func dayMark(_ day: Day, balance: Decimal?) -> some View {
-        GeometryReader { proxy in
-            Color.clear.preference(
-                key: PurseScroll.DaysKey.self,
-                value: [
-                    PurseScroll.DayMark(
-                        title: day.title,
-                        isToday: day.isToday,
-                        balance: balance,
-                        top: proxy.frame(in: .named(PurseScroll.space)).minY
-                    )
-                ]
-            )
-        }
-    }
-
-    /// Refreshes while the card is open, so a step reached without a status
+    /// Refreshes while the screen is open, so a step reached without a status
     /// change still shows.
-    func follow() async {
+    private func follow() async {
         while !Task.isCancelled {
             center.refresh()
             try? await Task.sleep(for: .seconds(10))
@@ -92,83 +60,97 @@ private extension FundingActivityView {
     }
 }
 
-/// The balance each history day closed on, newest day first: the balance now,
-/// less what every later day changed.
-enum FundingDayBalances {
-    static func closing(current: Decimal, dayChanges: [Decimal]) -> [Decimal] {
-        var balance = current
-        return dayChanges.map { change in
-            defer { balance -= change }
-            return balance
+/// What is in flight in one direction, shown when Get or Send money out is
+/// tapped while a session is still running: the sessions, a way to the
+/// history, and a button to start another.
+struct FundingPendingView: View {
+    let direction: FundingDirection
+    let cash: FundingCash
+    var center: FundingActivityCenter = .shared
+    var onHistory: () -> Void
+    var onNew: () -> Void
+
+    var body: some View {
+        VStack(spacing: DSSpacings.mediumIncreased) {
+            HStack {
+                Text(verbatim: title)
+                    .typography(.bodyLargeEmphasized)
+                    .foregroundStyle(.fgPrimary)
+                Spacer()
+                Button(action: onHistory) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.fgPrimary)
+                        .frame(width: 36, height: 36)
+                        .background(.bgSurfaceNested, in: Circle())
+                }
+                .accessibilityLabel(Text(.Funding.historyOpen))
+            }
+
+            ScrollView {
+                VStack(spacing: DSSpacings.small) {
+                    ForEach(items) { item in
+                        FundingActivityRow(item: item, cash: cash)
+                            .contentShape(Rectangle())
+                            .onTapGesture { center.openDetail(item) }
+                    }
+                }
+            }
+
+            FundingPrimaryButton(title: buttonTitle, action: onNew)
         }
     }
-}
 
-extension FundingActivityItem {
-    /// How much the session changed the balance once it ended.
-    func balanceChange(cash: FundingCash) -> Decimal {
-        guard let amount else { return 0 }
+    private var items: [FundingActivityItem] {
+        center.inFlight.filter { $0.direction == direction }
+    }
 
-        switch status {
-        case .toppedUp: return cash.decimal(amount)
-        case .sent: return -cash.decimal(amount)
-        case .inProgress,
-             .refunded,
-             .payoutFailed,
-             .cancelled,
-             .failed: return 0
-        }
+    private var title: String {
+        direction == .in ? String(localized: .Funding.activityToppingUp) : String(localized: .Funding.activitySending)
+    }
+
+    private var buttonTitle: String {
+        direction == .in ? String(localized: .Funding.pendingNewTopUp) : String(localized: .Funding.pendingSendOut)
     }
 }
 
-private extension Array {
-    subscript(safe index: Int) -> Element? {
-        indices.contains(index) ? self[index] : nil
-    }
-}
-
+/// One session in a list: its amount, what it is doing or when it ended, and
+/// the rail it went by.
 struct FundingActivityRow: View {
     let item: FundingActivityItem
     let cash: FundingCash
-    var showsDivider = true
-    /// How many sessions are in flight, drawn in the icon of the one on top.
-    var stackCount: Int?
     /// Just finished: the row arrives and its icon plays the completion.
     var arrives = false
 
-    static let height: CGFloat = 76
-    private static let iconSize: CGFloat = 48
+    private static let iconSize: CGFloat = 20
 
     var body: some View {
         let content = FundingActivityRowContent(item: item, cash: cash)
-        HStack(spacing: DSSpacings.medium) {
-            FundingActivityIcon(icon: content.icon, stackCount: stackCount, animatesCompletion: arrives)
+        HStack(alignment: .top, spacing: DSSpacings.small) {
+            FundingActivityIcon(icon: content.icon, animatesCompletion: arrives)
                 .frame(width: Self.iconSize, height: Self.iconSize)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: DSSpacings.smallIncreased) {
-                    Text(content.title)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    Text(verbatim: content.amount)
-                        .foregroundStyle(content.amountTone.color)
-                        .lineLimit(1)
-                }
-                .typography(.bodyLargeEmphasized)
-                .foregroundStyle(.fgPrimary)
+                Text(verbatim: content.title)
+                    .typography(.bodyMediumEmphasized)
+                    .foregroundStyle(content.titleTone.color)
+                    .lineLimit(1)
                 Text(content.subtitle)
                     .typography(.bodySmall)
                     .foregroundStyle(content.isSubtitleWarning ? Color.fgWarning : Color.fgSecondary)
                     .lineLimit(1)
             }
-        }
-        .frame(minHeight: Self.height)
-        .overlay(alignment: .bottom) {
-            if showsDivider {
-                Divider()
-                    .overlay(Color.strokePrimary)
-                    .padding(.leading, Self.iconSize + DSSpacings.medium)
+            Spacer(minLength: DSSpacings.small)
+            if let pill = content.pill {
+                Text(verbatim: pill)
+                    .typography(.labelSmall)
+                    .foregroundStyle(.fgSecondary)
+                    .padding(.horizontal, DSSpacings.small)
+                    .padding(.vertical, 2)
+                    .background(.bgSurfaceNested, in: Capsule())
             }
         }
+        .padding(DSSpacings.medium)
+        .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
         .modifier(FundingArrival(isArriving: arrives))
     }
 }
@@ -197,20 +179,23 @@ struct FundingActivityRowContent: Equatable {
     }
 
     let icon: Icon
+    /// The amount: unsigned in flight and once nothing moved, signed once
+    /// value moved.
     let title: String
+    let titleTone: Tone
     let subtitle: String
     let isSubtitleWarning: Bool
-    let amount: String
-    let amountTone: Tone
+    /// The rail, in the pill on the right.
+    let pill: String?
 
     init(item: FundingActivityItem, cash: FundingCash, now: Date = Date(), calendar: Calendar = .current) {
         let isDelayed = item.isDelayed
         icon = Self.icon(item, isDelayed: isDelayed)
-        title = Self.title(item)
-        subtitle = Self.subtitle(item, cash: cash, now: now, calendar: calendar)
+        title = Self.title(item, cash: cash)
+        titleTone = Self.tone(item)
+        subtitle = Self.subtitle(item, now: now, calendar: calendar)
         isSubtitleWarning = isDelayed
-        amount = Self.amount(item, cash: cash)
-        amountTone = Self.tone(item)
+        pill = item.rail?.title
     }
 }
 
@@ -227,164 +212,88 @@ private extension FundingActivityRowContent {
         }
     }
 
-    static func title(_ item: FundingActivityItem) -> String {
-        switch item.status {
-        case .inProgress:
-            if item.direction == .in {
-                String(localized: .Funding.activityToppingUp)
-            } else {
-                String(localized: .Funding.activitySending)
-            }
-        case .toppedUp: String(localized: .Funding.activityToppedUp)
-        case .sent: String(localized: .Funding.activitySent)
-        case .refunded: String(localized: .Funding.activityRefunded)
-        case .payoutFailed: String(localized: .Funding.activityPayoutFailed)
-        case .cancelled: String(localized: .Funding.activityCancelled)
-        case .failed:
-            if item.direction == .in {
-                String(localized: .Funding.activityTopUpFailed)
-            } else {
-                String(localized: .Funding.activityWithdrawFailed)
-            }
-        }
-    }
-
-    static func subtitle(_ item: FundingActivityItem, cash: FundingCash, now: Date, calendar: Calendar) -> String {
-        let moment = moment(item, now: now, calendar: calendar)
-        switch item.status {
-        case let .failed(failure):
-            return failure.reasonText
-        case let .inProgress(status):
-            return inProgressText(status, cash: cash) ?? moment
-        case .toppedUp,
-             .sent,
-             .refunded,
-             .payoutFailed,
-             .cancelled:
-            return moment
-        }
-    }
-
-    /// "{Rail} · {moment}", or the moment alone when the rail is unknown.
-    static func moment(_ item: FundingActivityItem, now: Date, calendar: Calendar) -> String {
-        let when = FundingActivityDate.moment(item.date, now: now, calendar: calendar)
-        guard let rail = item.rail else { return when }
-        return "\(rail.title) · \(when)"
-    }
-
-    static func inProgressText(_ status: FundingStatus, cash: FundingCash) -> String? {
-        FundingCancelPresentation.line(for: status, compact: true)?.text
-            ?? waitingText(status)
-            ?? movingText(status, cash: cash)
-    }
-
-    /// The line for a session waiting on the user or the provider.
-    static func waitingText(_ status: FundingStatus) -> String? {
-        switch status {
-        case .waitingForPayment: String(localized: .Funding.activityWaitingPayment)
-        case .waitingForTransfer: String(localized: .Funding.activityWaitingTransfer)
-        case .waitingForDeposit: String(localized: .Funding.activityWaitingDeposit)
-        case .retrying: String(localized: .Funding.activityRetrying)
-        case .retryingPayout: String(localized: .Funding.activityRetryingPayout)
-        case .takingLonger: String(localized: .Funding.activityDelayed)
-        default: nil
-        }
-    }
-
-    /// The line for a session whose value is on its way.
-    static func movingText(_ status: FundingStatus, cash: FundingCash) -> String? {
-        switch status {
-        case .convertingToCash: String(localized: .Funding.activityConverting(symbol: cash.symbol))
-        case .transactionInitiated: String(localized: .Funding.activityInitiated)
-        case .preparingPayout: String(localized: .Funding.activityPreparingPayout)
-        case let .convertingTo(asset): String(localized: .Funding.activityConvertingOut(asset: asset))
-        default: nil
-        }
-    }
-
-    /// Signed while value moves or once it has, unsigned once nothing moved.
-    static func amount(_ item: FundingActivityItem, cash: FundingCash) -> String {
+    static func title(_ item: FundingActivityItem, cash: FundingCash) -> String {
         guard let units = item.amount else { return "" }
 
         let value = cash.decimal(units)
         switch item.status {
-        case .refunded,
+        case .toppedUp,
+             .sent:
+            return cash.signed(value, direction: item.direction)
+        case .inProgress where item.direction == .out:
+            return cash.signed(value, direction: .out)
+        case .inProgress,
+             .refunded,
              .payoutFailed,
              .cancelled,
              .failed:
             return cash.label(value)
-        case .inProgress,
-             .toppedUp,
-             .sent:
-            return cash.signed(value, direction: item.direction)
         }
     }
 
     static func tone(_ item: FundingActivityItem) -> Tone {
         switch item.status {
         case .toppedUp: .success
-        case .sent: .primary
-        case .inProgress,
-             .refunded,
+        case .sent,
+             .inProgress: .primary
+        case .refunded,
              .payoutFailed,
              .cancelled,
              .failed: .secondary
         }
     }
+
+    static func subtitle(_ item: FundingActivityItem, now: Date, calendar: Calendar) -> String {
+        let moment = FundingActivityDate.moment(item.date, now: now, calendar: calendar)
+        switch item.status {
+        case let .inProgress(status):
+            return FundingWording.inFlight(status, direction: item.direction)
+        case .toppedUp,
+             .sent:
+            return moment
+        case .refunded:
+            return String(localized: .Funding.activityRefundedAt(moment: moment))
+        case .payoutFailed:
+            return String(localized: .Funding.activityPayoutFailedAt(moment: moment))
+        case .cancelled:
+            return String(localized: .Funding.activityCancelledAt(moment: moment))
+        case .failed(.expired):
+            return String(localized: .Funding.activityExpiredAt(moment: moment))
+        case .failed:
+            return String(localized: .Funding.activityPaymentFailedAt(moment: moment))
+        }
+    }
 }
 
-/// A row's 48pt icon: a spinner while in flight, a card with an arrow once
-/// value moved, a cross once it failed.
+/// A row's icon: a ring while in flight (amber when slow), an arrow once value
+/// moved, a cross once it failed.
 struct FundingActivityIcon: View {
     let icon: FundingActivityRowContent.Icon
-    var stackCount: Int?
-    /// Plays the spinner turning into what happened, for a row that has just
+    /// Plays the ring turning into what happened, for a row that has just
     /// arrived.
     var animatesCompletion = false
 
     var body: some View {
-        ZStack {
-            Circle().fill(background)
-            glyph
-        }
-    }
-
-    @ViewBuilder
-    private var glyph: some View {
         switch icon {
         case let .pending(delayed):
-            if let stackCount {
-                FundingCountRing(count: stackCount)
-            } else {
-                ProgressView()
-                    .tint(delayed ? Color.fgWarning : Color.fgPrimary)
-            }
+            ProgressView()
+                .controlSize(.mini)
+                .tint(delayed ? Color.fgWarning : Color.fgSecondary)
         case .received:
             FundingCompletionGlyph(kind: .received, animated: animatesCompletion)
-                .foregroundStyle(.fgPrimaryInverted)
+                .foregroundStyle(.fgSuccess)
         case .sent:
             FundingCompletionGlyph(kind: .sent, animated: animatesCompletion)
-                .foregroundStyle(.fgPrimary)
+                .foregroundStyle(.fgSecondary)
         case .failed:
             FundingCompletionGlyph(kind: .failed, animated: animatesCompletion)
                 .foregroundStyle(.fgError)
         }
     }
-
-    private var background: Color {
-        switch icon {
-        case let .pending(delayed): delayed ? Color.bgStatusWarning.opacity(0.24) : Color.bgSurfaceNested
-        case .received: .bgActionPrimary
-        case .sent: .bgSurfaceNested
-        case .failed: Color.bgStatusError.opacity(0.24)
-        }
-    }
 }
 
-/// The history's dates. A row's moment reads "Today at 08:25", "Yesterday at
-/// 18:40", "4 Oct at 16:20", and "4 Oct 2025" for an earlier year; a day's
-/// heading reads "Today", "Yesterday", "Sunday 4 October", and "Saturday 4
-/// October 2025" for an earlier year.
+/// When a row's session ended: "Today at 12:45", "Yesterday at 12:45",
+/// "Jun 12 at 16:40", and "Jun 12, 2025" in an earlier year.
 enum FundingActivityDate {
     static func moment(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         let time = date.formatted(date: .omitted, time: .shortened)
@@ -395,19 +304,9 @@ enum FundingActivityDate {
             return String(localized: .Funding.dateYesterdayAt(time: time))
         }
         if calendar.isDate(date, equalTo: now, toGranularity: .year) {
-            return String(localized: .Funding.dateDayAt(day: format(date, "d MMM", calendar: calendar), time: time))
+            return String(localized: .Funding.dateDayAt(day: format(date, "MMM d", calendar: calendar), time: time))
         }
-        return format(date, "d MMM yyyy", calendar: calendar)
-    }
-
-    /// The heading a day's rows sit under.
-    static func day(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
-        if calendar.isDate(date, inSameDayAs: now) { return String(localized: .Funding.dateToday) }
-        if isYesterday(date, now: now, calendar: calendar) { return String(localized: .Funding.dateYesterday) }
-        if calendar.isDate(date, equalTo: now, toGranularity: .year) {
-            return format(date, "EEEE d MMMM", calendar: calendar)
-        }
-        return format(date, "EEEE d MMMM yyyy", calendar: calendar)
+        return format(date, "MMM d, yyyy", calendar: calendar)
     }
 
     private static func isYesterday(_ date: Date, now: Date, calendar: Calendar) -> Bool {

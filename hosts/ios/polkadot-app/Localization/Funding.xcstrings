@@ -23,17 +23,6 @@
         }
       }
     },
-    "activity.converting" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Converting to %1$(symbol)@"
-          }
-        }
-      }
-    },
     "activity.convertingOut" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -62,7 +51,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Taking a little longer"
+            "value" : "Delayed, don't pay again"
           }
         }
       }
@@ -73,7 +62,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Transaction initiated"
+            "value" : "Withdrawal initiated"
           }
         }
       }
@@ -84,40 +73,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "In Progress"
-          }
-        }
-      }
-    },
-    "activity.payoutFailed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payout failed"
-          }
-        }
-      }
-    },
-    "activity.refunded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refunded"
-          }
-        }
-      }
-    },
-    "activity.refundedAmount" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refunded %1$(amount)@"
+            "value" : "In progress"
           }
         }
       }
@@ -128,7 +84,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Provider is retrying your payment"
+            "value" : "The provider is retrying. Don't pay again"
           }
         }
       }
@@ -139,7 +95,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Provider is retrying the payout"
+            "value" : "The provider is retrying the payout"
           }
         }
       }
@@ -155,28 +111,6 @@
         }
       }
     },
-    "activity.sent" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sent"
-          }
-        }
-      }
-    },
-    "activity.toppedUp" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Topped up"
-          }
-        }
-      }
-    },
     "activity.toppingUp" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -188,35 +122,13 @@
         }
       }
     },
-    "activity.topUpFailed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Top-up failed"
-          }
-        }
-      }
-    },
     "activity.waitingTransfer" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Waiting for transfer"
-          }
-        }
-      }
-    },
-    "activity.withdrawFailed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Withdrawal failed"
+            "value" : "Waiting for your transfer"
           }
         }
       }
@@ -441,17 +353,6 @@
         }
       }
     },
-    "date.today" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Today"
-          }
-        }
-      }
-    },
     "date.todayAt" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -459,17 +360,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Today at %1$(time)@"
-          }
-        }
-      }
-    },
-    "date.yesterday" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Yesterday"
           }
         }
       }
@@ -1123,17 +1013,6 @@
         }
       }
     },
-    "summary.youSend" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You send"
-          }
-        }
-      }
-    },
     "token.networkSelected" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1398,39 +1277,6 @@
         }
       }
     },
-    "progress.stepPayment" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payment"
-          }
-        }
-      }
-    },
-    "progress.stepApproved" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Approved"
-          }
-        }
-      }
-    },
-    "progress.stepConversion" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Conversion"
-          }
-        }
-      }
-    },
     "progress.stepAdded" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1442,17 +1288,6 @@
         }
       }
     },
-    "progress.stepSending" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sending"
-          }
-        }
-      }
-    },
     "progress.stepReceived" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1460,39 +1295,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Received"
-          }
-        }
-      }
-    },
-    "progress.stepPreparing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Preparing"
-          }
-        }
-      }
-    },
-    "progress.stepPayout" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payout"
-          }
-        }
-      }
-    },
-    "progress.youPaid" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You paid inc. fees"
           }
         }
       }
@@ -1613,7 +1415,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your bank declined the payment. Check your card details or try another card."
+            "value" : "Your bank declined the payment. No money was taken."
           }
         }
       }
@@ -1888,7 +1690,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upcoming receiving"
+            "value" : "Waiting for your payment"
           }
         }
       }
@@ -1899,7 +1701,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Upcoming receiving"
+            "value" : "Waiting for your deposit"
           }
         }
       }
@@ -1910,7 +1712,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Preparing payout"
+            "value" : "Preparing your payout"
           }
         }
       }
@@ -1955,17 +1757,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Move %1$(symbol)@ to your bank, crypto wallet or contacts"
-          }
-        }
-      }
-    },
-    "activity.cancelled" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancelled"
           }
         }
       }
@@ -2175,6 +1966,523 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "There's no offer to accept right now."
+          }
+        }
+      }
+    },
+    "activity.onItsWay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "On its way"
+          }
+        }
+      }
+    },
+    "activity.adding" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adding to your balance"
+          }
+        }
+      }
+    },
+    "activity.delayedOut" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taking longer than usual"
+          }
+        }
+      }
+    },
+    "activity.completed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completed"
+          }
+        }
+      }
+    },
+    "activity.paymentFailedAt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payment failed · %1$(moment)@"
+          }
+        }
+      }
+    },
+    "activity.expiredAt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expired · %1$(moment)@"
+          }
+        }
+      }
+    },
+    "activity.refundedAt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded · %1$(moment)@"
+          }
+        }
+      }
+    },
+    "activity.payoutFailedAt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payout failed · %1$(moment)@"
+          }
+        }
+      }
+    },
+    "activity.cancelledAt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelled · %1$(moment)@"
+          }
+        }
+      }
+    },
+    "history.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History"
+          }
+        }
+      }
+    },
+    "history.empty" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing here yet. Your top-ups will appear as you make them."
+          }
+        }
+      }
+    },
+    "history.open" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "History"
+          }
+        }
+      }
+    },
+    "pending.newTopUp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New top-up"
+          }
+        }
+      }
+    },
+    "pending.sendOut" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send money out"
+          }
+        }
+      }
+    },
+    "progress.stepReceivedOut" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received by provider"
+          }
+        }
+      }
+    },
+    "progress.stepSent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent"
+          }
+        }
+      }
+    },
+    "progress.youSent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You sent inc. fees"
+          }
+        }
+      }
+    },
+    "band.waitingPayment" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for your payment"
+          }
+        }
+      }
+    },
+    "band.waitingDeposit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for your deposit"
+          }
+        }
+      }
+    },
+    "band.checking" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checking your payment"
+          }
+        }
+      }
+    },
+    "band.confirmingDeposit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirming your %1$(asset)@ deposit"
+          }
+        }
+      }
+    },
+    "band.onItsWay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your money is on its way"
+          }
+        }
+      }
+    },
+    "band.adding" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adding %1$(amount)@ to your balance"
+          }
+        }
+      }
+    },
+    "band.added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(amount)@ added to your balance"
+          }
+        }
+      }
+    },
+    "band.converting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Converting your Cash"
+          }
+        }
+      }
+    },
+    "band.preparingPayout" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider is preparing your payout"
+          }
+        }
+      }
+    },
+    "band.exchanging" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Exchanging your money for %1$(asset)@"
+          }
+        }
+      }
+    },
+    "band.sendingRail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending the money to your %1$(rail)@"
+          }
+        }
+      }
+    },
+    "band.sendingAsset" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending your %1$(asset)@"
+          }
+        }
+      }
+    },
+    "band.sentRail" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent to your %1$(rail)@"
+          }
+        }
+      }
+    },
+    "band.sentAsset" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your %1$(asset)@ is on its way to your wallet"
+          }
+        }
+      }
+    },
+    "band.retrying" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider is retrying. Don't pay again."
+          }
+        }
+      }
+    },
+    "band.retryingBank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider is retrying. Don't send the money again."
+          }
+        }
+      }
+    },
+    "band.retryingPayout" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider is retrying the payout"
+          }
+        }
+      }
+    },
+    "band.delayed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delayed. Your top-up will continue automatically, don't pay again."
+          }
+        }
+      }
+    },
+    "band.delayedOut" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taking longer than usual. It will continue automatically."
+          }
+        }
+      }
+    },
+    "band.railCard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "card"
+          }
+        }
+      }
+    },
+    "band.railBank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "bank"
+          }
+        }
+      }
+    },
+    "live.checked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Checked with the provider %1$(time)@ ago"
+          }
+        }
+      }
+    },
+    "live.reconnecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trying to reconnect"
+          }
+        }
+      }
+    },
+    "cancel.bodyBank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If you've already sent the transfer, don't cancel, as your money will still arrive. Only cancel if you haven't paid yet."
+          }
+        }
+      }
+    },
+    "summary.fromBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From your balance inc. fees"
+          }
+        }
+      }
+    },
+    "country.payoutRefused" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payouts here aren't supported"
+          }
+        }
+      }
+    },
+    "ended.payoutFailedCard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your card didn't accept the payout. Check your card details or try another card."
+          }
+        }
+      }
+    },
+    "activity.payoutFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payout failed"
+          }
+        }
+      }
+    },
+    "activity.refunded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded"
+          }
+        }
+      }
+    },
+    "activity.refundedAmount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded %1$(amount)@"
           }
         }
       }

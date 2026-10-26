@@ -169,7 +169,7 @@ private extension FundingDepositView {
         guard model.hasStarted else { return false }
 
         let ended = model.session.map { !$0.stage.isOpen } ?? false
-        return ended || model.hasReached(.payment)
+        return ended || model.hasReached(.received)
     }
 
     static func shortened(_ address: String) -> String {
@@ -213,7 +213,7 @@ struct FundingCancelConfirmView: View {
             Text(model.direction == .in ? .Funding.cancelTitle : .Funding.cancelTitleWithdraw)
                 .typography(.headlineMedium)
                 .foregroundStyle(.fgPrimary)
-            Text(isUnpaidDeposit ? .Funding.cancelBody : .Funding.cancelBodyProvider)
+            Text(message)
                 .typography(.bodyMedium)
                 .foregroundStyle(.fgPrimary)
                 .multilineTextAlignment(.center)
@@ -230,7 +230,8 @@ struct FundingCancelConfirmView: View {
         }
     }
 
-    private var isUnpaidDeposit: Bool {
-        model.direction == .in && model.rail == .crypto && !model.hasReached(.payment)
+    private var message: LocalizedStringResource {
+        guard model.isUnpaidTopUp else { return .Funding.cancelBodyProvider }
+        return model.rail == .bank ? .Funding.cancelBodyBank : .Funding.cancelBody
     }
 }

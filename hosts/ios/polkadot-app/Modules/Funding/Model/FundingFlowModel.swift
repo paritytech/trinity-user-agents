@@ -82,6 +82,8 @@ final class FundingFlowModel {
     var onClose: (() -> Void)?
     /// Takes the overlay down and opens a new session the same way.
     var onStartOver: (() -> Void)?
+    /// Leaves the overlay for the history of every session.
+    var onHistory: (() -> Void)?
 
     let runtime: FundingRuntime
     let branding: FundingProviderBranding
@@ -192,13 +194,23 @@ extension FundingFlowModel {
     /// discards the session on; after it the session runs on without the
     /// overlay, and only ``requestCancel()`` ends it.
     func close() {
+        leave()
+        onClose?()
+    }
+
+    /// Leaves the overlay, as ``close()`` does, for the history.
+    func showHistory() {
+        leave()
+        onHistory?()
+    }
+
+    private func leave() {
         quoteTask?.cancel()
         balanceTask?.cancel()
         if !hasStarted {
             runtime.stopFundingQuotes(intent: intent)
             onOutcome?(.dismissed)
         }
-        onClose?()
     }
 
     /// An ended session leaves for a new one in the same direction, from the
@@ -222,7 +234,11 @@ extension FundingFlowModel {
         Task {
             defer { isCancelling = false }
             do {
-                let outcome = try await runtime.cancelFunding(intent: intent)
+                var outcome = try await runtime.cancelFunding(intent: intent)
+                if outcome == .requested, isUnpaidTopUp {
+                    // Nothing was paid, so the second cancel ends the session.
+                    outcome = try await runtime.cancelFunding(intent: intent)
+                }
                 switch FundingCancelPresentation.after(outcome) {
                 case .close:
                     close()
@@ -235,6 +251,12 @@ extension FundingFlowModel {
                 leaveCancelConfirm(toast: String(localized: .Funding.errorCancelFailed))
             }
         }
+    }
+
+    /// A bank or crypto top-up whose payment the provider has not seen:
+    /// cancelling ends it outright, and money sent anyway still arrives.
+    var isUnpaidTopUp: Bool {
+        direction == .in && rail != .card && !hasReached(.received)
     }
 
     /// The provider's terms for cancelling, while it waits for the user.
@@ -286,7 +308,7 @@ extension FundingFlowModel {
         hasStarted = true
         refreshSession()
         path = [.progress]
-        if showsDepositFirst, session.stage.isOpen, !hasReached(.payment) { path.append(.deposit) }
+        if showsDepositFirst, session.stage.isOpen, !hasReached(.received) { path.append(.deposit) }
     }
 
     /// Back to the progress screen, from the deposit screen over it or from

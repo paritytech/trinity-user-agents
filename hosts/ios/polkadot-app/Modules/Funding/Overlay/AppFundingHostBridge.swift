@@ -29,6 +29,13 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     /// Shows an ended session's detail screen, from what the core still
     /// holds of it or else from the host's record.
     func showEnded(_ record: FundingRecord)
+
+    /// Shows the sessions in flight in `direction`, with a way to start
+    /// another.
+    func showPending(direction: FundingDirection)
+
+    /// Shows every session, in flight and ended.
+    func showHistory()
 }
 
 /// The runtime's funding overlay. Installed once, before any product

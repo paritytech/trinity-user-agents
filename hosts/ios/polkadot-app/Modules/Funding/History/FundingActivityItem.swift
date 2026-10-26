@@ -86,6 +86,7 @@ extension FundingStatus {
              .waitingForPayment,
              .waitingForDeposit,
              .convertingToCash,
+             .addingToBalance,
              .transactionInitiated,
              .convertingTo,
              .preparingPayout,

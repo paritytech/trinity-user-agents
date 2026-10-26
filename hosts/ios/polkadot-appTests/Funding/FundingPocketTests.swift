@@ -16,32 +16,29 @@ struct FundingPocketTests {
     private var now: Date { Date(timeIntervalSince1970: 1_792_324_800) }
 
     @Test
-    func rowsWordEachEndingAsThePrototypeDoes() {
+    func rowsTitleTheAmountSignedOnceValueMoved() {
         let toppedUp = content(.toppedUp, direction: .in, rail: .card)
         let sent = content(.sent, direction: .out, rail: .crypto)
         let payoutFailed = content(.payoutFailed(refunded: "5000"), direction: .out, rail: .bank)
         let failed = content(.failed(.declined), direction: .in, rail: .card)
 
-        #expect(toppedUp.title == "Topped up")
-        #expect(toppedUp.amount == "+$50 CASH")
-        #expect(toppedUp.amountTone == .success)
+        #expect(toppedUp.title == "+$50 CASH")
+        #expect(toppedUp.titleTone == .success)
         #expect(toppedUp.icon == .received)
-        #expect(toppedUp.subtitle.hasPrefix("Card · Today at "))
+        #expect(toppedUp.subtitle.hasPrefix("Today at "))
+        #expect(toppedUp.pill == "Card")
 
-        #expect(sent.title == "Sent")
-        #expect(sent.amount == "-$50 CASH")
-        #expect(sent.amountTone == .primary)
+        #expect(sent.title == "-$50 CASH")
+        #expect(sent.titleTone == .primary)
         #expect(sent.icon == .sent)
 
-        #expect(payoutFailed.title == "Payout failed")
-        #expect(payoutFailed.amount == "$50 CASH")
-        #expect(payoutFailed.amountTone == .secondary)
+        #expect(payoutFailed.title == "$50 CASH")
+        #expect(payoutFailed.titleTone == .secondary)
         #expect(payoutFailed.icon == .failed)
-        #expect(payoutFailed.subtitle.hasPrefix("Bank · Today at "))
+        #expect(payoutFailed.subtitle.hasPrefix("Payout failed · Today at "))
 
-        #expect(failed.title == "Top-up failed")
-        #expect(failed.subtitle == "Payment declined")
-        #expect(failed.amount == "$50 CASH")
+        #expect(failed.title == "$50 CASH")
+        #expect(failed.subtitle.hasPrefix("Payment failed · Today at "))
     }
 
     @Test
@@ -51,80 +48,74 @@ struct FundingPocketTests {
         let retrying = content(.inProgress(.retrying), direction: .in, rail: .card)
         let payout = content(.inProgress(.retryingPayout), direction: .out, rail: .bank)
 
-        #expect(card.title == "Topping up")
-        #expect(card.subtitle == "Upcoming receiving")
-        #expect(card.amount == "+$50 CASH")
-        #expect(card.amountTone == .secondary)
+        #expect(card.title == "$50 CASH")
+        #expect(card.subtitle == "Waiting for your payment")
+        #expect(card.titleTone == .primary)
         #expect(card.icon == .pending(delayed: false))
-        #expect(crypto.subtitle == "Upcoming receiving")
-        #expect(retrying.subtitle == "Provider is retrying your payment")
+        #expect(crypto.subtitle == "Waiting for your deposit")
+        #expect(retrying.subtitle == "The provider is retrying. Don't pay again")
         #expect(retrying.isSubtitleWarning)
         #expect(retrying.icon == .pending(delayed: true))
-        #expect(payout.title == "Sending")
-        #expect(payout.subtitle == "Provider is retrying the payout")
-        #expect(payout.amount == "-$50 CASH")
+        #expect(payout.title == "-$50 CASH")
+        #expect(payout.subtitle == "The provider is retrying the payout")
+        #expect(payout.pill == "Bank")
     }
 
     @Test
-    func dayHeadingsNameTheWeekdayAndMonth() {
+    func rowMomentsNameTheDay() {
         let day: TimeInterval = 86_400
 
-        #expect(FundingActivityDate.day(now, now: now, calendar: calendar) == "Today")
-        #expect(FundingActivityDate.day(now - day, now: now, calendar: calendar) == "Yesterday")
-        #expect(FundingActivityDate.day(now - 14 * day, now: now, calendar: calendar) == "Sunday 4 October")
-        #expect(FundingActivityDate.day(now - 379 * day, now: now, calendar: calendar) == "Saturday 4 October 2025")
+        #expect(FundingActivityDate.moment(now, now: now, calendar: calendar).hasPrefix("Today at "))
+        #expect(FundingActivityDate.moment(now - day, now: now, calendar: calendar).hasPrefix("Yesterday at "))
+        #expect(FundingActivityDate.moment(now - 14 * day, now: now, calendar: calendar).hasPrefix("Oct 4 at "))
+        #expect(FundingActivityDate.moment(now - 379 * day, now: now, calendar: calendar) == "Oct 4, 2025")
     }
 
     @Test
-    func rowMomentsKeepTheShortDate() {
-        let day: TimeInterval = 86_400
-
-        #expect(FundingActivityDate.moment(now - 379 * day, now: now, calendar: calendar) == "4 Oct 2025")
-        #expect(FundingActivityDate.moment(now - 14 * day, now: now, calendar: calendar).hasPrefix("4 Oct at "))
+    func theLiveLineTurnsToReconnectingAfterAMinute() {
+        #expect(FundingLiveLine.text(heardAt: now - 12, now: now) == "Checked with the provider 12s ago")
+        #expect(FundingLiveLine.text(heardAt: now - 60, now: now) == "Trying to reconnect")
     }
 
     @Test
-    func eachDayClosesOnTheBalanceBeforeLaterDays() {
-        #expect(
-            FundingDayBalances.closing(current: 424.13, dayChanges: [-25, 85.25, 0])
-                == [424.13, 449.13, 363.88]
-        )
+    func theTimelineDotFollowsTheBand() {
+        #expect(FundingStepBar.between(.awaitingPayment) == 1)
+        #expect(FundingStepBar.between(.checkingPayment) == 2)
+        #expect(FundingStepBar.between(.onItsWay) == 1)
+        #expect(FundingStepBar.between(.adding) == 2)
+        #expect(FundingStepBar.between(.sending) == 2)
+        #expect(FundingStepBar.between(nil) == 1)
     }
 
     @Test
-    func onlyToppedUpAndSentChangeTheBalance() {
-        #expect(item(.toppedUp, direction: .in).balanceChange(cash: cash) == 50)
-        #expect(item(.sent, direction: .out).balanceChange(cash: cash) == -50)
-        #expect(item(.payoutFailed(refunded: nil), direction: .out).balanceChange(cash: cash) == 0)
-        #expect(item(.inProgress(.transactionInitiated), direction: .out).balanceChange(cash: cash) == 0)
+    func bandLinesFollowTheCoreDocs() {
+        let adding = FundingWording.band(.adding, direction: .in, rail: .card, asset: nil, amount: "$50 CASH")
+        let retrying = FundingWording.band(.retrying, direction: .in, rail: .bank, asset: nil, amount: nil)
+        let sent = FundingWording.band(.sent, direction: .out, rail: .card, asset: nil, amount: nil)
+        let delayed = FundingWording.band(.delayed, direction: .out, rail: .bank, asset: nil, amount: nil)
+
+        #expect(adding?.text == "Adding $50 CASH to your balance")
+        #expect(adding?.isWarning == false)
+        #expect(retrying?.text == "The provider is retrying. Don't send the money again.")
+        #expect(retrying?.isWarning == true)
+        #expect(sent?.text == "Sent to your card")
+        #expect(delayed?.text == "Taking longer than usual. It will continue automatically.")
+        #expect(FundingWording.band(.cancel, direction: .in, rail: .card, asset: nil, amount: nil) == nil)
     }
 
     @Test
-    func theDockFrontsADelayedSessionThenTheNewest() {
-        let older = item(.inProgress(.waitingForPayment), direction: .in, id: "older", date: now - 60)
-        let newer = item(.inProgress(.transactionInitiated), direction: .out, id: "newer", date: now)
-        let delayed = item(.inProgress(.retrying), direction: .in, id: "delayed", date: now - 600)
-
-        #expect(FundingInProgressDock.ordered([older, newer]).map(\.id) == ["newer", "older"])
-        #expect(FundingInProgressDock.ordered([older, newer, delayed]).map(\.id) == ["delayed", "newer", "older"])
+    func aTopUpCancelledBeforePayingLeavesTheHistory() {
+        #expect(record(.failed(.cancelled), settled: nil).isCancelledUnpaid)
+        #expect(!record(.failed(.cancelled), settled: "5000").isCancelledUnpaid)
+        #expect(!record(.failed(.declined), settled: nil).isCancelledUnpaid)
     }
 
     @Test
     func theStickyBarShowsOnceTheCardHasGone() {
         let card = PurseScroll.Card(bottom: 20, balance: 424.13)
-        let today = PurseScroll.DayMark(title: "Today", isToday: true, balance: 424.13, top: -200)
-        let yesterday = PurseScroll.DayMark(title: "Yesterday", isToday: false, balance: 449.13, top: 30)
-        let older = PurseScroll.DayMark(title: "Sunday 4 October", isToday: false, balance: 363.88, top: 400)
 
-        #expect(PurseScroll.bar(card: PurseScroll.Card(bottom: 120, balance: 1), days: [today]) == nil)
-        #expect(
-            PurseScroll.bar(card: card, days: [today])
-                == PurseScroll.Bar(label: .currentBalance, balance: 424.13)
-        )
-        #expect(
-            PurseScroll.bar(card: card, days: [today, yesterday, older])
-                == PurseScroll.Bar(label: .day("Yesterday"), balance: 449.13)
-        )
+        #expect(PurseScroll.bar(card: PurseScroll.Card(bottom: 120, balance: 1)) == nil)
+        #expect(PurseScroll.bar(card: card) == PurseScroll.Bar(balance: 424.13))
     }
 
     @Test
@@ -140,16 +131,14 @@ private extension FundingPocketTests {
     func item(
         _ status: FundingActivityItem.Status,
         direction: FundingDirection,
-        rail: FundingRail? = .card,
-        id: String = "fs_1",
-        date: Date? = nil
+        rail: FundingRail? = .card
     ) -> FundingActivityItem {
         FundingActivityItem(
-            id: id,
+            id: "fs_1",
             direction: direction,
             rail: rail,
             amount: "5000",
-            date: date ?? now,
+            date: now,
             status: status
         )
     }
@@ -164,6 +153,29 @@ private extension FundingPocketTests {
             cash: cash,
             now: now,
             calendar: calendar
+        )
+    }
+
+    func record(_ outcome: FundingRecord.Outcome, settled: String?) -> FundingRecord {
+        FundingRecord(
+            intent: "fs_1",
+            direction: .in,
+            rail: .bank,
+            asset: nil,
+            providerId: nil,
+            requestedAmount: "5000",
+            settledAmount: settled,
+            paidAmount: nil,
+            paidAsset: nil,
+            paidDecimals: nil,
+            paidNetwork: nil,
+            outcome: outcome,
+            payout: nil,
+            refundedAmount: nil,
+            transactionId: nil,
+            reference: nil,
+            openedAt: now,
+            settledAt: now
         )
     }
 }

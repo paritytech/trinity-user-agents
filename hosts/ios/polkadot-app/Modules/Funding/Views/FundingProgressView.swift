@@ -45,13 +45,21 @@ private extension FundingProgressView {
         model.session.map { FundingActivityItem(session: $0, progress: model.progress) }
     }
 
-    /// Slower than its quote said, which the core reports as taking longer.
-    var isDelayed: Bool {
-        model.progress?.status == .takingLonger
+    /// The band line, worded for the session's rail and amount.
+    var band: (text: String, isWarning: Bool)? {
+        guard let progress = model.progress else { return nil }
+        return FundingWording.band(
+            progress.band,
+            direction: model.direction,
+            rail: model.rail,
+            asset: model.asset,
+            amount: amountUnits.map { model.cash.label(model.cash.decimal($0)) }
+        )
     }
 
-    var isRetrying: Bool {
-        model.progress?.retrying == true
+    /// Retrying or delayed: the session's dot and line turn amber.
+    var isSlow: Bool {
+        model.progress.map { [.retrying, .delayed].contains($0.band) } ?? false
     }
 
     var amountUnits: U128? {
@@ -67,7 +75,7 @@ private extension FundingProgressView {
                 if step.reachedAtMs != nil {
                     .done
                 } else if index == firstUnreached {
-                    .current(isAmber: isDelayed || isRetrying)
+                    .current(isAmber: isSlow)
                 } else {
                     .upcoming
                 }
@@ -80,8 +88,7 @@ private extension FundingProgressView {
         Binding(get: { model.cancelOffer != nil }, set: { _ in })
     }
 
-    /// The line under the steps: where a cancel stands, why it is slow, or
-    /// for a bank transfer not seen yet, that it is on its way.
+    /// The line under the steps: where a cancel stands, else the band's.
     var note: (text: String, color: Color)? {
         if let status = model.progress?.status, let line = FundingCancelPresentation.line(
             for: status,
@@ -92,12 +99,7 @@ private extension FundingProgressView {
         if let status = model.progress?.status, FundingCancelPresentation.cancelCameTooLate(status) {
             return (String(localized: .Funding.cancelCameTooLate), .fgWarning)
         }
-        if isRetrying { return (String(localized: .Funding.activityRetrying), .fgWarning) }
-        if isDelayed { return (String(localized: .Funding.activityDelayed), .fgWarning) }
-        if model.direction == .in, model.rail == .bank, !model.hasReached(.payment) {
-            return (String(localized: .Funding.progressBankNote), .fgSecondary)
-        }
-        return nil
+        return band.map { ($0.text, $0.isWarning ? .fgWarning : .fgSecondary) }
     }
 
     var quotedSendAmount: String? {
@@ -135,7 +137,7 @@ private extension FundingProgressView {
         VStack(spacing: DSSpacings.small) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.fgPrimary)
+                .foregroundStyle(isSlow ? Color.fgWarning : Color.fgPrimary)
                 .frame(width: 40, height: 40)
                 .background(.bgSurfaceMain, in: Circle())
             if let units = amountUnits {
@@ -155,19 +157,24 @@ private extension FundingProgressView {
 
     var stepCard: some View {
         VStack(spacing: 0) {
-            FundingStepBar(steps: steps)
+            FundingStepBar(steps: steps, between: FundingStepBar.between(model.progress?.band))
                 .padding(.horizontal, DSSpacings.mediumIncreased)
                 .padding(.vertical, DSSpacings.medium)
                 .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
             if let note {
-                Text(verbatim: note.text)
-                    .typography(.bodySmall)
-                    .foregroundStyle(note.color)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, DSSpacings.medium)
-                    .padding(.vertical, DSSpacings.smallIncreased)
+                VStack(spacing: 2) {
+                    Text(verbatim: note.text)
+                        .typography(.bodySmall)
+                        .foregroundStyle(note.color)
+                    if let heardAtMs = model.progress?.lastHeardAtMs {
+                        FundingLiveLine(heardAt: Date(milliseconds: heardAtMs))
+                    }
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, DSSpacings.medium)
+                .padding(.vertical, DSSpacings.smallIncreased)
             }
         }
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.large))
@@ -178,11 +185,13 @@ private extension FundingProgressView {
         VStack(spacing: DSSpacings.extraSmall) {
             switch (model.direction, model.rail) {
             case (.in, .card):
-                feesRow(String(localized: .Funding.progressYouPaid), quotedSendAmount)
+                feesRow(String(localized: .Funding.progressYouSent), quotedSendAmount)
+                arrivesRow
             case (.in, .bank):
                 bankRows
             case (.in, .crypto):
                 cryptoRow
+                arrivesRow
             case (.out, _):
                 feesRow(
                     String(localized: .Funding.summaryWithdrawCaption),
@@ -193,23 +202,27 @@ private extension FundingProgressView {
         }
     }
 
+    /// "Send this exact amount" until the transfer is seen, then what was sent.
+    var bankAmountTitle: String {
+        model.hasReached(.received)
+            ? String(localized: .Funding.progressYouSent)
+            : String(localized: .Funding.summaryBankCaption)
+    }
+
     @ViewBuilder
     var bankRows: some View {
         if case let .bank(amount, currency, decimals, beneficiary, account, bankCode, reference, _)? =
             model.progress?.deposit {
-            feesRow(
-                String(localized: .Funding.summaryBankCaption),
-                FundingAssetUnit(code: currency, decimals: decimals).format(amount)
-            )
+            feesRow(bankAmountTitle, FundingAssetUnit(code: currency, decimals: decimals).format(amount))
             beneficiary.map { copyRow(String(localized: .Funding.depositBeneficiary), $0) }
             account.map { copyRow(String(localized: .Funding.depositAccount), $0) }
             bankCode.map { copyRow(String(localized: .Funding.depositBankCode), $0) }
             copyRow(String(localized: .Funding.depositReference), reference)
         } else {
-            feesRow(String(localized: .Funding.summaryBankCaption), quotedSendAmount)
+            feesRow(bankAmountTitle, quotedSendAmount)
             if let reference = model.progress?.reference {
                 copyRow(String(localized: .Funding.depositReference), reference)
-            } else if !model.hasReached(.payment) {
+            } else if !model.hasReached(.received) {
                 pending(.Funding.depositPreparing)
             }
         }
@@ -219,7 +232,7 @@ private extension FundingProgressView {
     /// While the funds are not seen, the way back to the address to pay.
     @ViewBuilder
     var cryptoRow: some View {
-        if !model.hasReached(.payment) {
+        if !model.hasReached(.received) {
             if case let .crypto(_, _, asset, amount, decimals, exact, _, _)? = model.progress?.deposit {
                 FundingValueRow(
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
@@ -233,11 +246,19 @@ private extension FundingProgressView {
         }
     }
 
+    /// When the money lands; a top-up's Cash follows the rate on arrival.
     @ViewBuilder
     var arrivesRow: some View {
         if let eta = model.chosenQuote?.etaSecs {
-            FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                value(FundingEta.text(seconds: eta))
+            VStack(alignment: .trailing, spacing: 2) {
+                FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
+                    value(FundingEta.text(seconds: eta))
+                }
+                if model.direction == .in, model.rail != .card {
+                    Text(.Funding.summaryBankRateNote(symbol: model.cash.symbol))
+                        .typography(.captionSmall)
+                        .foregroundStyle(.fgSecondary)
+                }
             }
         }
     }
@@ -294,8 +315,10 @@ private extension FundingProgressView {
     }
 }
 
-/// The steps of a session in a row: done steps a green check joined in green,
-/// the current one a spinner, upcoming ones grey, and a failed one red.
+/// A session's timeline: its three milestones, labelled, with two dots
+/// between each that fill as the session moves. Done milestones are a green
+/// check joined in green, the dot the session is at is white (amber when it is
+/// slow), upcoming ones grey, and a failed milestone red.
 struct FundingStepBar: View {
     enum State: Equatable {
         case done
@@ -310,23 +333,31 @@ struct FundingStepBar: View {
     }
 
     let steps: [Step]
+    /// How far the session is past the last done milestone: 0 at it, then 1
+    /// or 2 for the dots towards the next.
+    var between = 1
 
-    private static let size: CGFloat = 28
+    private static let size: CGFloat = 22
+    private static let dot: CGFloat = 8
 
-    /// A step's name: a withdrawal's read as the money leaves, reaches the
-    /// provider, is prepared and paid out.
+    /// Which dot towards the next milestone a band stands at.
+    static func between(_ band: FundingBand?) -> Int {
+        switch band {
+        case .checkingPayment,
+             .adding,
+             .sending: 2
+        default: 1
+        }
+    }
+
+    /// A milestone's name; a withdrawal's second one is the provider's.
     static func title(_ step: FundingStep, direction: FundingDirection) -> String {
-        let out = direction == .out
-        let payment: LocalizedStringResource = out ? .Funding.progressStepSending : .Funding.progressStepPayment
-        let conversion: LocalizedStringResource = out ? .Funding.progressStepPreparing : .Funding.progressStepConversion
-        return switch step {
+        switch step {
         case .started: String(localized: .Funding.progressStepStarted)
-        case .payment: String(localized: payment)
-        case .approved: String(localized: .Funding.progressStepApproved)
-        case .conversion: String(localized: conversion)
+        case .received:
+            String(localized: direction == .out ? .Funding.progressStepReceivedOut : .Funding.progressStepReceived)
         case .added: String(localized: .Funding.progressStepAdded)
-        case .sent: String(localized: .Funding.progressStepReceived)
-        case .payout: String(localized: .Funding.progressStepPayout)
+        case .sent: String(localized: .Funding.progressStepSent)
         }
     }
 
@@ -334,7 +365,7 @@ struct FundingStepBar: View {
         HStack(spacing: 0) {
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                 if index > 0 {
-                    connector(to: step.state)
+                    segment(into: step.state)
                 }
                 mark(step.state)
                     .overlay(alignment: .top) {
@@ -348,25 +379,27 @@ struct FundingStepBar: View {
             }
         }
         .padding(.bottom, 20)
-        .padding(.horizontal, DSSpacings.small)
+        .padding(.horizontal, DSSpacings.medium)
         .animation(.easeInOut, value: steps)
+        .animation(.easeInOut, value: between)
     }
 }
 
 private extension FundingStepBar {
+    enum DotState {
+        case done
+        case current(isAmber: Bool)
+        case upcoming
+    }
+
     @ViewBuilder
     func mark(_ state: State) -> some View {
         switch state {
         case .done:
             symbol("checkmark", color: .white)
                 .background(Color.fgSuccess, in: Circle())
-        case let .current(isAmber):
-            ProgressView()
-                .controlSize(.small)
-                .tint(Color.fgPrimaryInverted)
-                .frame(width: Self.size, height: Self.size)
-                .background(isAmber ? Color.fgWarning : Color.fgPrimary, in: Circle())
-        case .upcoming:
+        case .current,
+             .upcoming:
             symbol("checkmark", color: .fgTertiary)
                 .background(Color.bgSurfaceNested, in: Circle())
         case .failed:
@@ -377,41 +410,98 @@ private extension FundingStepBar {
 
     func symbol(_ name: String, color: Color) -> some View {
         Image(systemName: name)
-            .font(.system(size: 12, weight: .bold))
+            .font(.system(size: 10, weight: .bold))
             .foregroundStyle(color)
             .frame(width: Self.size, height: Self.size)
     }
 
-    /// Green into a done step, half green into the current one, grey after.
-    func connector(to state: State) -> some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.bgSurfaceNested)
-                Capsule()
-                    .fill(Color.fgSuccess)
-                    .frame(width: proxy.size.width * fill(state))
-            }
+    /// The line and two dots leading into a milestone in `state`.
+    func segment(into state: State) -> some View {
+        let dots = dots(into: state)
+        return HStack(spacing: 0) {
+            line(filled: dots[0].isFilled)
+            dotMark(dots[0])
+            line(filled: dots[1].isFilled)
+            dotMark(dots[1])
+            line(filled: state == .done)
         }
-        .frame(height: 3)
-        .padding(.horizontal, DSSpacings.extraSmall)
     }
 
-    func fill(_ state: State) -> CGFloat {
+    /// The two dots before a milestone: both done once it is reached, the
+    /// session's position on the way to the current one, grey after it.
+    func dots(into state: State) -> [DotState] {
         switch state {
-        case .done: 1
-        case .current: 0.5
+        case .done:
+            [.done, .done]
+        case let .current(isAmber):
+            (0 ..< 2).map { index in
+                if index < between - 1 { return .done }
+                return index == max(between - 1, 0) ? .current(isAmber: isAmber) : .upcoming
+            }
         case .upcoming,
-             .failed: 0
+             .failed:
+            [.upcoming, .upcoming]
         }
+    }
+
+    func dotMark(_ state: DotState) -> some View {
+        Circle()
+            .fill(dotColor(state))
+            .frame(width: Self.dot, height: Self.dot)
+    }
+
+    func dotColor(_ state: DotState) -> Color {
+        switch state {
+        case .done: .fgSuccess
+        case let .current(isAmber): isAmber ? .fgWarning : .fgPrimary
+        case .upcoming: .bgSurfaceNested
+        }
+    }
+
+    func line(filled: Bool) -> some View {
+        Rectangle()
+            .fill(filled ? Color.fgSuccess : Color.bgSurfaceNested)
+            .frame(height: 2)
+            .frame(maxWidth: .infinity)
     }
 
     func labelColor(_ state: State) -> Color {
         switch state {
         case .done: .fgSuccess
-        case let .current(isAmber): isAmber ? .fgWarning : .fgPrimary
-        case .upcoming: .fgTertiary
+        case .current,
+             .upcoming: .fgTertiary
         case .failed: .fgError
         }
+    }
+}
+
+private extension FundingStepBar.DotState {
+    var isFilled: Bool {
+        if case .done = self { return true }
+        return false
+    }
+}
+
+/// When the provider was last heard from, kept current while on screen:
+/// "Checked with the provider 12s ago", then "Trying to reconnect" once a
+/// minute has passed without word.
+struct FundingLiveLine: View {
+    let heardAt: Date
+
+    static let staleAfter: TimeInterval = 60
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 3)) { context in
+            Text(verbatim: Self.text(heardAt: heardAt, now: context.date))
+                .typography(.captionSmall)
+                .foregroundStyle(.fgTertiary)
+        }
+    }
+
+    static func text(heardAt: Date, now: Date) -> String {
+        let elapsed = max(0, now.timeIntervalSince(heardAt))
+        guard elapsed < staleAfter else { return String(localized: .Funding.liveReconnecting) }
+        return String(localized: .Funding.liveChecked(time: "\(Int(elapsed))s"))
     }
 }
 

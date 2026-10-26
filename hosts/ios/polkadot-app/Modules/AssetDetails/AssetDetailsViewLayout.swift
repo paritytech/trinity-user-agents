@@ -12,8 +12,6 @@ struct AssetDetailsView: View {
     /// How visible the page's own card is: the wallet draws the card itself
     /// while it shrinks into the header, so this one stands aside.
     var cardOpacity: Double = 1
-    /// The funding lists the open Purse draws.
-    var fundingCenter: FundingActivityCenter
     var cash: FundingCash
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,7 +30,6 @@ struct AssetDetailsView: View {
         overscroll: CGFloat = 0,
         onCollapse: (() -> Void)? = nil,
         cardOpacity: Double = 1,
-        fundingCenter: FundingActivityCenter,
         cash: FundingCash
     ) {
         _viewModel = State(initialValue: viewModel)
@@ -41,7 +38,6 @@ struct AssetDetailsView: View {
         self.overscroll = overscroll
         self.onCollapse = onCollapse
         self.cardOpacity = cardOpacity
-        self.fundingCenter = fundingCenter
         self.cash = cash
     }
 
@@ -118,11 +114,6 @@ struct AssetDetailsView: View {
                     }
                 #endif
             }
-            FundingActivityView(
-                cash: cash,
-                currentBalance: viewModel.coinageBreakdown?.amounts.total,
-                center: fundingCenter
-            )
 
             #if DEBUG || TESTNET_FEATURE
                 HStack {

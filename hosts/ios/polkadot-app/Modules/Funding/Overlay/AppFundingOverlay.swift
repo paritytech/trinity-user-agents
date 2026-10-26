@@ -70,6 +70,14 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     func showEnded(_ record: FundingRecord) {
         Task { @MainActor in coordinator?.showEnded(record) }
     }
+
+    func showPending(direction: FundingDirection) {
+        Task { @MainActor in coordinator?.showPending(direction: direction) }
+    }
+
+    func showHistory() {
+        Task { @MainActor in coordinator?.showHistory() }
+    }
 }
 
 private extension AppFundingOverlay {
@@ -169,6 +177,31 @@ final class FundingOverlayCoordinator {
         sheet.onStartOver = { [weak self, weak sheet] in
             sheet?.dismissIfPresented { self?.startOver(direction: record.direction) }
         }
+        _ = environment.present(sheet)
+    }
+
+    /// The sessions in flight in `direction`, over whatever is on screen. A
+    /// new session starts once the sheet is gone.
+    func showPending(direction: FundingDirection) {
+        let sheet = FundingListSheetController()
+        sheet.show(FundingPendingView(
+            direction: direction,
+            cash: environment.cash,
+            onHistory: { [weak self] in self?.showHistory() },
+            onNew: { [weak self, weak sheet] in
+                sheet?.dismissIfPresented { self?.startOver(direction: direction) }
+            }
+        ))
+        _ = environment.present(sheet)
+    }
+
+    /// Every session, in flight and ended.
+    func showHistory() {
+        let sheet = FundingListSheetController()
+        sheet.show(FundingHistoryView(
+            cash: environment.cash,
+            onBack: { [weak sheet] in sheet?.dismissIfPresented {} }
+        ))
         _ = environment.present(sheet)
     }
 
@@ -277,6 +310,10 @@ private extension FundingOverlayCoordinator {
             self?.flows[intent] = nil
             sheet?.dismissIfPresented { self?.startOver(direction: direction) }
         }
+        model.onHistory = { [weak self, weak sheet] in
+            self?.flows[intent] = nil
+            sheet?.dismissIfPresented { self?.showHistory() }
+        }
         flows[intent] = model
 
         if !environment.present(sheet) {
@@ -354,6 +391,36 @@ final class FundingSheetController: UIHostingController<FundingSheetView>, UIAda
 
     func presentationControllerDidDismiss(_: UIPresentationController) {
         model.close()
+    }
+}
+
+/// A list of sessions, on the same sheet as the overlay.
+final class FundingListSheetController: UIHostingController<AnyView> {
+    init() {
+        super.init(rootView: AnyView(EmptyView()))
+        presentAsFundingSheet()
+    }
+
+    @available(*, unavailable)
+    @MainActor dynamic required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+    }
+
+    func show(_ content: some View) {
+        rootView = AnyView(content.fundingScreen())
+    }
+
+    func dismissIfPresented(completion: @escaping () -> Void) {
+        guard presentingViewController != nil, !isBeingDismissed else {
+            completion()
+            return
+        }
+        dismiss(animated: true, completion: completion)
     }
 }
 

@@ -201,3 +201,12 @@ protocol FundingHistoryStoring: Sendable {
     func records() async throws -> [FundingRecord]
     func save(_ record: FundingRecord) async throws
 }
+
+extension FundingRecord {
+    /// Cancelled before any money moved: the history leaves it out, as the
+    /// user called it off before paying. A payment that arrives anyway opens
+    /// the session again, and it comes back as received.
+    var isCancelledUnpaid: Bool {
+        outcome == .failed(.cancelled) && settledAmount == nil && refundedAmount == nil
+    }
+}

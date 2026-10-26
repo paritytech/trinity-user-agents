@@ -147,7 +147,7 @@ private extension FundingSummaryView {
             if model.direction == .in {
                 String(localized: .Funding.summaryMinPayout)
             } else {
-                String(localized: .Funding.summaryYouSend)
+                String(localized: .Funding.summaryFromBalance)
             }
 
         return FundingValueRow(title: title) {

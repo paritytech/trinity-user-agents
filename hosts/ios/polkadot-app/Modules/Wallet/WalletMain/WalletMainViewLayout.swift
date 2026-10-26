@@ -3,8 +3,6 @@ import PolkadotUI
 
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
-    /// The funding lists the open Purse draws.
-    var fundingCenter: FundingActivityCenter = .shared
     var cash: FundingCash = .current
     @State private var viewHeight: CGFloat = 0
     private let collectiblesPeekHeight: CGFloat = 90
@@ -17,7 +15,6 @@ struct WalletView: View {
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
     @State private var purseCard: PurseScroll.Card?
-    @State private var purseDays: [PurseScroll.DayMark] = []
     @State private var scrollOffset: CGFloat?
     @State private var navigationBar: CGRect?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -58,10 +55,8 @@ struct WalletView: View {
         .background { NavigationBarFrameReader { navigationBar = $0 } }
         .onPreferenceChange(PurseScroll.CardKey.self) { purseCard = $0 }
         .onChange(of: purseCollapse) { _, progress in viewModel.onPurseCollapse?(progress) }
-        .onPreferenceChange(PurseScroll.DaysKey.self) { purseDays = $0 }
         .overlay(alignment: .top) { purseStickyBar }
         .overlay { purseHeaderCard }
-        .overlay(alignment: .bottom) { purseDock }
         .modifier(
             ConditionalOverlayModifier(
                 available: viewModel.isCollectiblesAvailable,
@@ -123,7 +118,6 @@ struct WalletView: View {
             overscroll: overscroll,
             onCollapse: { viewModel.onCollapse?() },
             cardOpacity: purseCardOpacity,
-            fundingCenter: fundingCenter,
             cash: cash
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
@@ -251,15 +245,8 @@ private extension WalletView {
 
     @ViewBuilder
     var purseStickyBar: some View {
-        if isPurseOpen, let bar = PurseScroll.bar(card: purseCard, days: purseDays) {
+        if isPurseOpen, let bar = PurseScroll.bar(card: purseCard) {
             PurseStickyBar(bar: bar, cash: cash)
-        }
-    }
-
-    @ViewBuilder
-    var purseDock: some View {
-        if isPurseOpen {
-            FundingInProgressDock(cash: cash, center: fundingCenter)
         }
     }
 }

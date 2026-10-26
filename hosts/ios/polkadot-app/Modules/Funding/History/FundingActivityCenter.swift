@@ -55,6 +55,31 @@ final class FundingActivityCenter {
         Self.attached.withLock { $0.overlay }?.showEnded(record)
     }
 
+    /// Shows a row's session: in flight on its progress screen, ended on its
+    /// detail screen.
+    func openDetail(_ item: FundingActivityItem) {
+        if item.isInProgress {
+            open(intent: item.id)
+        } else {
+            showEnded(intent: item.id)
+        }
+    }
+
+    /// Shows the sessions in flight in `direction` before starting another.
+    /// Returns false, showing nothing, when none is.
+    func showPending(direction: FundingDirection) -> Bool {
+        guard inFlight.contains(where: { $0.direction == direction }),
+              let overlay = Self.attached.withLock({ $0.overlay })
+        else { return false }
+        overlay.showPending(direction: direction)
+        return true
+    }
+
+    /// Shows every session, in flight and ended.
+    func showHistory() {
+        Self.attached.withLock { $0.overlay }?.showHistory()
+    }
+
     /// Reads the core's sessions again and settles the ended ones. Calls that
     /// arrive while one is running are folded into one more pass.
     func refresh() {
@@ -163,7 +188,7 @@ private extension FundingActivityCenter {
         self.records = Dictionary(records.map { ($0.intent, $0) }) { _, latest in latest }
         let inFlightIds = Set(inFlight.map(\.id))
         history = records
-            .filter { !inFlightIds.contains($0.intent) }
+            .filter { !inFlightIds.contains($0.intent) && !$0.isCancelledUnpaid }
             .sorted { $0.settledAt > $1.settledAt }
             .map(FundingActivityItem.init(record:))
     }
