@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use crate::platform::{
-	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
+	AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
 	PermissionAuthorizationRequest, ProductExecutionKind,
 };
 use parity_scale_codec::{Decode, Encode};
@@ -4367,8 +4367,9 @@ fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
 	);
 }
 
+/// Allow once covers the product's later disclosures without writing a decision.
 #[test]
-fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
+fn get_account_allow_once_answers_later_disclosures_without_saving() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform {
 			permission_confirmation_decisions: Mutex::new(
@@ -4388,27 +4389,19 @@ fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
 		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 			product_account_id: account_id("other.dot", 0),
 		});
-		let response = host.get_account(&CallContext::default(), request.clone()).await.unwrap();
-		let HostAccountGetResponse::V1(response) = response;
+		let mut disclosed = Vec::new();
+		for _ in 0..3 {
+			let HostAccountGetResponse::V1(response) =
+				host.get_account(&CallContext::default(), request.clone()).await.unwrap();
+			disclosed.push(response.account.public_key);
+		}
 		let saved = platform
 			.read_core_storage(CoreStorageKey::account_access_authorization("myapp", "other"))
 			.await
 			.unwrap();
-		let mut rejected = Vec::new();
-		for _ in 0..2 {
-			rejected.push(matches!(
-				host.get_account(&CallContext::default(), request.clone()).await,
-				Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected)))
-			));
-		}
 		assert_eq!(
-			(
-				response.account.public_key,
-				saved,
-				rejected,
-				platform.account_access_reviews.lock().unwrap().len(),
-			),
-			(test_product_account_public("other.dot", 0).to_vec(), None, vec![true, true], 2,),
+			(disclosed, saved, platform.account_access_reviews.lock().unwrap().len(),),
+			(vec![test_product_account_public("other.dot", 0).to_vec(); 3], None, 1,),
 		);
 	});
 }
@@ -7385,6 +7378,43 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
 		vec![AuthState::Disconnected],
 		"a reset must still tell the host where it stands"
+	);
+}
+
+/// Ending the paired session reaches the host that keeps its grants, which
+/// forgets what was allowed once, as a wallet change does on a signing host.
+#[test]
+fn a_paired_disconnect_forgets_allow_once() {
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: Mutex::new(
+			[
+				crate::platform::PermissionDecision::AllowOnce,
+				crate::platform::PermissionDecision::Deny,
+			]
+			.into(),
+		),
+		..Default::default()
+	});
+	let (host, pairing) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+	let sso = pairing.session().clone();
+	let get_other_account = || {
+		let session = sso_session_info();
+		install_pairing_session(&host, session.clone());
+		cache_test_product_subtree(&host, &session, "other.dot");
+		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: account_id("other.dot", 0),
+		});
+		futures::executor::block_on(host.get_account(&CallContext::default(), request)).is_ok()
+	};
+	let first = get_other_account();
+
+	futures::executor::block_on(HostSession::disconnect(sso.as_ref()));
+	let after_disconnect = get_other_account();
+
+	assert_eq!(
+		(first, after_disconnect, platform.account_access_reviews.lock().unwrap().len()),
+		(true, false, 2),
 	);
 }
 

@@ -10,7 +10,7 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
-		ClaimBlocker, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
+		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
 		account_alias_key, claim_blocker, classify_labels, discover_pop_controller,
 		encode_revive_call, label_available, lite_label_owner_key, resolve_labels,
 		timestamp_now_key, view_output,
@@ -88,16 +88,15 @@ impl AssetHubReader {
 	/// when none of its labels is a username.
 	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<Option<DotnsIdentity>> {
 		let controller = self.pop_controller().await?;
-		let labels =
-			resolve_labels(self, &controller, account).await.map_err(anyhow::Error::msg)?;
-		classify_labels(self, &controller, labels).await.map_err(anyhow::Error::msg)
+		let labels = resolve_labels(self, &controller, account).await?;
+		Ok(classify_labels(self, &controller, labels).await?)
 	}
 
 	/// Whether the registrar would still mint `label` under the network TLD.
 	/// `false` once the name is registered, whichever flow minted it.
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
 		let controller = self.pop_controller().await?;
-		label_available(self, &controller, label).await.map_err(anyhow::Error::msg)
+		Ok(label_available(self, &controller, label).await?)
 	}
 
 	/// Why a gateway claim of `label` by `claimant` would revert on the name's
@@ -109,9 +108,7 @@ impl AssetHubReader {
 	) -> Result<Option<ClaimBlocker>> {
 		let controller = self.pop_controller().await?;
 		let now = self.timestamp_secs().await?;
-		claim_blocker(self, &controller, label, claimant, now)
-			.await
-			.map_err(anyhow::Error::msg)
+		Ok(claim_blocker(self, &controller, label, claimant, now).await?)
 	}
 
 	/// `DotnsPopController` address, resolved once per reader. The env override
@@ -141,8 +138,7 @@ impl AssetHubReader {
 			}
 		}
 		discover_pop_controller(self)
-			.await
-			.map_err(anyhow::Error::msg)?
+			.await?
 			.or(self.pop_controller_fallback)
 			.with_context(|| {
 				format!(
@@ -212,8 +208,10 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 
 #[async_trait]
 impl DotnsTransport for AssetHubReader {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.raw_storage(&key).await.map_err(|err| format!("{err:#}"))
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.raw_storage(&key)
+			.await
+			.map_err(|err| DotnsError::Storage(format!("{err:#}")))
 	}
 
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
