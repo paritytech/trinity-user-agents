@@ -342,14 +342,14 @@ async fn writer_loop(
 ) {
 	let mut pauses = RECONNECT_PAUSES;
 	loop {
-		let delivered = match dial(url.as_str(), &addrs).await {
+		let forwarded = match dial(url.as_str(), &addrs).await {
 			Some(stream) => {
-				match forward(stream, &mut inbox, &dropped, &pending_dropped, &queued_bytes).await {
-					ControlFlow::Break(()) => return,
-					ControlFlow::Continue(delivered) => delivered,
-				}
+				forward(stream, &mut inbox, &dropped, &pending_dropped, &queued_bytes).await
 			},
-			None => false,
+			None => ControlFlow::Continue(false),
+		};
+		let ControlFlow::Continue(delivered) = forwarded else {
+			return;
 		};
 		// Start over only after a *delivered* frame, so an accept-then-close
 		// server still backs off instead of spinning on zero-delay reconnects.
@@ -380,36 +380,35 @@ async fn forward(
 	// forward-only, any inbound message is ignored.
 	loop {
 		tokio::select! {
-			queued = inbox.recv() => match queued {
-				Some(QueuedFrame { line, shed }) => {
-					// Off the queue now: release its bytes from the budget
-					// before the (moving) send so the counter can't drift.
-					queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
-					match write.send(Message::Text(line)).await {
-						Ok(()) => delivered = true,
-						Err(_) => {
-							debug!("truapi debug sink: socket closed, reconnecting");
-							// The in-flight line is lost across this reconnect.
-							dropped.fetch_add(1, Ordering::Relaxed);
-							// It carried `shed` earlier drops that therefore
-							// never reached the debugger: make them pending
-							// again (with this frame) so the next delivered
-							// envelope still reports the whole gap.
-							pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
-							return ControlFlow::Continue(delivered);
-						}
-					}
-				}
+			queued = inbox.recv() => {
 				// All senders dropped: the sink is gone, so is the host. Done.
-				None => return ControlFlow::Break(()),
-			},
-			inbound = read.next() => match inbound {
-				Some(Ok(_)) => {} // forward-only: ignore any inbound message
-				Some(Err(_)) | None => {
-					debug!("truapi debug sink: read side closed, reconnecting");
+				let Some(QueuedFrame { line, shed }) = queued else {
+					return ControlFlow::Break(());
+				};
+				// Off the queue now: release its bytes from the budget
+				// before the (moving) send so the counter can't drift.
+				queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
+				if write.send(Message::Text(line)).await.is_err() {
+					debug!("truapi debug sink: socket closed, reconnecting");
+					// The in-flight line is lost across this reconnect.
+					dropped.fetch_add(1, Ordering::Relaxed);
+					// It carried `shed` earlier drops that therefore
+					// never reached the debugger: make them pending
+					// again (with this frame) so the next delivered
+					// envelope still reports the whole gap.
+					pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
 					return ControlFlow::Continue(delivered);
 				}
-			},
+				delivered = true;
+			}
+			inbound = read.next() => {
+				// Forward-only: any inbound message is ignored, and an error or
+				// the end of the stream means the socket closed.
+				let Some(Ok(_)) = inbound else {
+					debug!("truapi debug sink: read side closed, reconnecting");
+					return ControlFlow::Continue(delivered);
+				};
+			}
 		}
 	}
 }

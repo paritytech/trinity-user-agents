@@ -1997,38 +1997,46 @@ fn spawn_supervised_responder(
 		)
 		.await;
 		if let Some((catalog, profile)) = &persisted {
-			let mut removals = RESPONDER_RETRY_PAUSES;
-			retry(
-				&RealTimer,
-				|| {
-					ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
-						Ok(_) => ControlFlow::Break(()),
-						Err(error) => ControlFlow::Continue(error),
-					})
-				},
-				|error| {
-					terminal_ui::output_event(SystemEvent::SigningHostError {
-						reason: format!("failed to remove disconnected paired device: {error}"),
-					});
-					removals.next_pause()
-				},
-			)
-			.await;
-			if let Err(error) =
-				runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
-			{
-				terminal_ui::output_event(SystemEvent::SigningHostError {
-					reason: format!(
-						"failed to stop renewing disconnected paired device: {}",
-						error.reason
-					),
-				});
-			}
+			forget_disconnected_peer(&runtime, peer, catalog, profile).await;
 		}
 		terminal_ui::output_event(SystemEvent::SigningHostExit {
 			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
 		});
 	})
+}
+
+/// Forget a pairing host that disconnected: remove it from the session's
+/// paired hosts, retrying until that is stored, and stop renewing its
+/// statement allowance.
+async fn forget_disconnected_peer(
+	runtime: &SigningHostRuntime,
+	peer: PairedSsoPeer,
+	catalog: &SessionCatalog,
+	profile: &SessionProfile,
+) {
+	let mut pauses = RESPONDER_RETRY_PAUSES;
+	retry(
+		&RealTimer,
+		|| {
+			ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
+				Ok(_) => ControlFlow::Break(()),
+				Err(error) => ControlFlow::Continue(error),
+			})
+		},
+		|error| {
+			terminal_ui::output_event(SystemEvent::SigningHostError {
+				reason: format!("failed to remove disconnected paired device: {error}"),
+			});
+			pauses.next_pause()
+		},
+	)
+	.await;
+	if let Err(error) = runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
+	{
+		terminal_ui::output_event(SystemEvent::SigningHostError {
+			reason: format!("failed to stop renewing disconnected paired device: {}", error.reason),
+		});
+	}
 }
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
