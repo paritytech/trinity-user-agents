@@ -53,8 +53,8 @@
     },
     {
       "path": "polkadot-app/Common/Services/ServiceCoordinator.swift",
-      "line": 608,
-      "message": "File Length Violation: File should contain 500 lines or less: currently contains 608 (file_length)"
+      "line": 671,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 671 (file_length)"
     },
     {
       "path": "polkadot-app/Common/Wallet/WalletCardViewModel.swift",
@@ -68,7 +68,7 @@
     },
     {
       "path": "polkadot-app/Modules/Chat/Helpers/ChatViewModelFactory.swift",
-      "line": 718,
+      "line": 720,
       "message": "Todo Violation: TODOs should be resolved (fetch info by content.assetId ...) (todo)"
     },
     {
@@ -93,8 +93,8 @@
     },
     {
       "path": "polkadot-app/Modules/Chat/Model/ChatMessage.swift",
-      "line": 762,
-      "message": "File Length Violation: File should contain 500 lines or less: currently contains 762 (file_length)"
+      "line": 772,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 772 (file_length)"
     },
     {
       "path": "polkadot-app/Modules/Chat/Model/RemoteChatMessage.swift",
@@ -118,8 +118,8 @@
     },
     {
       "path": "polkadot-app/Modules/ChatCall/Connection/CallEngine.swift",
-      "line": 675,
-      "message": "File Length Violation: File should contain 500 lines or less: currently contains 675 (file_length)"
+      "line": 867,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 867 (file_length)"
     },
     {
       "path": "polkadot-app/Modules/ChatCall/Connection/ChatPeerConnectionSignaler.swift",
@@ -128,7 +128,7 @@
     },
     {
       "path": "polkadot-app/Modules/ContactsList/Helpers/ContactsListViewModelFactory.swift",
-      "line": 280,
+      "line": 288,
       "message": "Todo Violation: TODOs should be resolved (Design a user-facing represent...) (todo)"
     },
     {
@@ -158,7 +158,7 @@
     },
     {
       "path": "polkadot-app/Modules/Deposit/Views/DepositViewLayout+SummaryView.swift",
-      "line": 104,
+      "line": 105,
       "message": "Todo Violation: TODOs should be resolved (Pass outside) (todo)"
     },
     {
@@ -172,11 +172,6 @@
       "message": "Todo Violation: TODOs should be resolved (Add statement account id to re...) (todo)"
     },
     {
-      "path": "polkadot-app/Modules/IncomingChatRequest/Services/ChatRequestServiceFactory.swift",
-      "line": 105,
-      "message": "Todo Violation: TODOs should be resolved (Implement alias signer when av...) (todo)"
-    },
-    {
       "path": "polkadot-app/Modules/PolkadotSignIn/LinkedDevices/LinkedDevicesPresenter.swift",
       "line": 41,
       "message": "Todo Violation: TODOs should be resolved (Navigate to how it works) (todo)"
@@ -188,12 +183,12 @@
     },
     {
       "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
-      "line": 28,
+      "line": 32,
       "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
     },
     {
       "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
-      "line": 49,
+      "line": 55,
       "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
     },
     {
@@ -208,7 +203,7 @@
     },
     {
       "path": "polkadot-app/Modules/Products/TrUAPI/RustHostRuntimeBridge.swift",
-      "line": 82,
+      "line": 96,
       "message": "Todo Violation: TODOs should be resolved (pass the real SSO host identit...) (todo)"
     }
   ]
