@@ -255,7 +255,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             productGameReminder.schedule(callingProductId, startsAt.toLong())
                 .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
 
-        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+        override suspend fun cancelReminder() = productGameReminder.cancelByProduct(callingProductId)
     }
 
     /**
