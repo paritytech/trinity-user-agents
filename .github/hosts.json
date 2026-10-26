@@ -79,7 +79,9 @@
       "Makefile",
       "Cargo.toml",
       "Cargo.lock",
-      ".github/workflows/ci.yml"
+      ".github/workflows/ios-app.yml",
+      ".github/actions/bootstrap-ios-core/",
+      ".github/actions/mac-preflight/"
     ],
     "kotlin": [
       "android/",

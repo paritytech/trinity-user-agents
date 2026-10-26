@@ -57,12 +57,13 @@ Swift.
 
 The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by
 the `TrUAPIHost package (Swift + WebKit)` job instead, which compiles the
-package tests against the iOS core the app jobs build from the pull request
-source, and runs the network permission suite in WKWebView. It runs on pull
-requests touching `ios/`, `Package.swift`, the `Makefile`, `js/container/`, or
-any of the crates the bindings are generated from (`truapi`,
-`truapi-provider`), which the `swift` package in `.github/hosts.json` names
-explicitly, since a protocol change no longer shows up as an `ios/` diff.
+package tests against the iOS core the app jobs share, built from the pull
+request source or reused from main when its inputs match, and runs the network
+permission suite in WKWebView. It runs on pull requests touching any input the
+`swift` package in `.github/hosts.json` names, among them `ios/`,
+`Package.swift`, `js/container/` and every crate the bindings are generated
+from, which the list has to name explicitly, since a protocol change no longer
+shows up as an `ios/` diff.
 The Android host job compiles `TrUAPIHost.kt` against generated bindings;
 CI's `iOS app` job, `ios-app.yml`, builds and tests the embedding app.
 

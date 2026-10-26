@@ -1,9 +1,9 @@
 name: iOS app
 
 # The iOS app's suite, called by ci.yml for a pull request that reaches the
-# app, by ios-main.yml for a push to main that does, and by on-label.yml for the
-# simulator preview. Every job here runs on the Parity
-# machines, which are persistent and shared, so neither caller starts it for a
+# app or the Swift packages, by ios-main.yml for a push to main that reaches the
+# app, and by on-label.yml for the simulator preview. Every job here runs on the
+# Parity machines, which are persistent and shared, so no caller starts it for a
 # pull request from a fork.
 #
 # A suite run builds the core once, then the device archive, the unit tests and
@@ -60,10 +60,12 @@ jobs:
   # TypeScript the host's container bundles, and most such changes leave both
   # byte for byte as they are. This job generates them on Linux and looks for
   # main's record that the iOS tests passed against exactly that output. When
-  # it finds one, the core build and the tests are skipped: the app compiles
-  # as it does on main, and only a runtime change the tests would catch is left
-  # for main's run and the nightly. A pull request that changes anything on the
-  # iOS side skips this check and runs everything.
+  # it finds one, the device archive and the tests are skipped: the app
+  # compiles as it does on main, and only a runtime change the tests would
+  # catch is left for main's run and the nightly. The package check still runs
+  # the core in WKWebView, so the core is reused from main or built for it,
+  # simulator slice only. A pull request that changes anything on the iOS side
+  # skips this check and runs everything.
   bindings:
     name: Check whether the app's bindings changed
     if: ${{ !inputs.preview && !startsWith(github.head_ref, 'release/') }}
@@ -231,11 +233,15 @@ jobs:
         if: env.REUSE != 'true'
         uses: ./hosts/ios/.github/actions/install
 
+      # The device slice only for a run that archives for a device. A preview
+      # and a package check alone build for the simulator, and a run that
+      # publishes the core for reuse is a push, which always archives.
       - name: Bootstrap the in-tree core
         if: env.REUSE != 'true'
         uses: ./.github/actions/bootstrap-ios-core
         with:
           save: "true"
+          sim-only: ${{ inputs.preview || needs.bindings.outputs.unchanged == 'true' }}
 
       # The package check links the provider's binary as well as the host's.
       # The app never reads this one: the root manifest resolves the provider

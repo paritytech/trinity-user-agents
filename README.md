@@ -544,8 +544,9 @@ macOS time no check needs, so `on-label.yml` builds it once the pull request is
 labelled `ios-simulator-build`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
-touching `ios/` or the core crates, and runs their network permission tests.
-Neither it nor the rest of the iOS app runs in the merge queue. The first time a
+touching their inputs, which the `swift` package in `.github/hosts.json` names,
+and runs their network permission tests. Like the rest of the iOS app it skips
+fork and Dependabot pull requests and the merge queue. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ios-simulator-build`, `ios-device-build` and
 `android-device-build`.
