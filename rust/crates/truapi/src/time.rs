@@ -1,5 +1,5 @@
-//! Waits: [`Timer`], which tests can control, and [`retry`], which retries an
-//! operation with pauses such as a [`Backoff`] between attempts.
+//! Waiting: [`Timer`] for waits that tests can control, and [`retry`] with
+//! [`Backoff`] for retrying an operation.
 
 use core::time::Duration;
 

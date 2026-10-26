@@ -2939,9 +2939,9 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
 }
 
-/// Open a session and cancel it, so it ends before the host records it. The
-/// expiry sweep the open armed is dropped, since it would wait out the
-/// session's deadline.
+/// Open a session and cancel it, so it ends before the host records it. Drops
+/// the expiry sweep that opening it scheduled, which would otherwise wait out
+/// the session's deadline.
 fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
@@ -2993,9 +2993,9 @@ fn funding_resume_is_retried_until_storage_recovers() {
 	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
 }
 
-// Sessions a newer app stored stay unreadable however often the load is
-// retried, so resume stops at once, arms no expiry sweep, and leaves them for
-// that app.
+// Retrying cannot read sessions a newer app stored, so resume stops
+// immediately, schedules no expiry sweep, and leaves the stored sessions
+// untouched.
 #[test]
 fn funding_resume_stops_at_sessions_of_a_newer_format() {
 	let tasks = HeldTasks::default();

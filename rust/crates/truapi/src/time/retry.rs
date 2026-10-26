@@ -1,16 +1,18 @@
-//! Retrying an operation that keeps failing: [`retry`] runs the attempts until
-//! one stops them, and a [`Backoff`] is the usual pauses between them.
+//! Retrying an operation that fails: [`retry`] runs the attempts, and
+//! [`Backoff`] supplies the pauses between them.
 
 use core::{ops::ControlFlow, time::Duration};
 
 use super::Timer;
 
-/// Runs `attempt` until it breaks, and returns what it broke with.
+/// Runs `attempt` until it returns `Break`, and returns the value it breaks
+/// with.
 ///
-/// An attempt continues with a failure worth retrying and breaks with anything
-/// else, including a failure no retry can mend. `pause_after` gets each such
-/// failure, may report it, and returns the wait on `timer` before the next
-/// attempt. To give up after some failures, `attempt` counts them and breaks.
+/// An attempt returns `Continue` with a failure worth retrying, and `Break`
+/// with anything else, including a failure that retrying cannot fix.
+/// `pause_after` receives each failure to retry, can log it, and returns how
+/// long to wait on `timer` before the next attempt. To give up after a number
+/// of failures, count them in `attempt` and return `Break`.
 pub async fn retry<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	mut attempt: impl FnMut() -> AttemptFuture,
@@ -27,11 +29,11 @@ where
 	}
 }
 
-/// Pauses that start at a first one and double up to a longest one, without
-/// end.
+/// An endless sequence of pauses that starts at a first pause and doubles up
+/// to a cap.
 ///
-/// They carry no jitter; add it before a backoff paces many clients that fail
-/// together against one server.
+/// It adds no jitter. Add jitter before using it for many clients that retry
+/// against the same server at the same time.
 #[derive(Debug)]
 pub struct Backoff {
 	first: Duration,
@@ -44,8 +46,7 @@ impl Backoff {
 	///
 	/// # Panics
 	///
-	/// If `first` is zero, since a zero pause never grows, or longer than
-	/// `longest`.
+	/// If `first` is zero, which would never grow, or is longer than `longest`.
 	pub const fn new(first: Duration, longest: Duration) -> Self {
 		assert!(
 			!first.is_zero() && first.as_nanos() <= longest.as_nanos(),
@@ -54,15 +55,16 @@ impl Backoff {
 		Self { first, longest, upcoming: first }
 	}
 
-	/// The pause before the next attempt. The one after it is twice as long,
-	/// up to the longest.
+	/// Returns the pause before the next attempt and doubles the following one,
+	/// up to the cap.
 	pub fn next_pause(&mut self) -> Duration {
 		let pause = self.upcoming;
 		self.upcoming = pause.saturating_mul(2).min(self.longest);
 		pause
 	}
 
-	/// Starts again from the first pause, once the operation made progress.
+	/// Starts again from the first pause. Call it once the operation makes
+	/// progress.
 	pub fn reset(&mut self) {
 		self.upcoming = self.first;
 	}
@@ -80,7 +82,7 @@ mod tests {
 
 	use super::*;
 
-	/// Ends every wait at once and records how long each one was.
+	/// Finishes every wait immediately and records its duration.
 	#[derive(Default)]
 	struct RecordingTimer {
 		waits: Mutex<Vec<Duration>>,
@@ -93,7 +95,8 @@ mod tests {
 		}
 	}
 
-	/// Continues with its attempt number until attempt `done_at`, which breaks.
+	/// Attempts that fail with their number until attempt `done_at`, which
+	/// succeeds with it.
 	fn breaking_at(done_at: u64) -> impl FnMut() -> Ready<ControlFlow<u64, u64>> {
 		let mut attempts = 0;
 		move || {

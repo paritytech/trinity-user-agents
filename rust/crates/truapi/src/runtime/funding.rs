@@ -557,7 +557,7 @@ pub enum OpenFundingError {
 	Present(GenericError),
 }
 
-// Pauses between retries of a failed load of the sessions on resume.
+// Pauses between retries when loading the sessions fails on resume.
 #[cfg(not(test))]
 const RESUME_RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
 #[cfg(test)]

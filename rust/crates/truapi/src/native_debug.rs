@@ -68,8 +68,8 @@ const WIRE_CODEC_VERSION: u32 = truapi::WIRE_CODEC_VERSION as u32;
 /// reaches the debugger instead of HTTP's port 80.
 const DEBUGGER_DEFAULT_PORT: u16 = 9231;
 
-/// Pauses between attempts to reach the debugger, doubling for as long as no
-/// frame gets through.
+/// Pauses between attempts to reach the debugger, doubling until a frame gets
+/// through.
 const RECONNECT_PAUSES: Backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
 
 /// Cap on a single dial + WS handshake; a port that accepts TCP but never
@@ -357,8 +357,8 @@ async fn writer_loop(
 	}
 }
 
-/// Drain queued frames to `stream` until the socket closes, starting `pauses`
-/// over after each delivered frame. Breaks once the sink is dropped.
+/// Drain queued frames to `stream` until the socket closes, resetting `pauses`
+/// after each delivered frame. Returns `Break` once the sink is dropped.
 async fn forward(
 	stream: WebSocketStream<TcpStream>,
 	inbox: &mut mpsc::Receiver<QueuedFrame>,
@@ -392,7 +392,7 @@ async fn forward(
 					pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
 					return ControlFlow::Continue(());
 				}
-				// Start over only after a *delivered* frame, so an
+				// Reset backoff only on a *delivered* frame, so an
 				// accept-then-close server still backs off instead of spinning
 				// on zero-delay reconnects.
 				pauses.reset();
@@ -415,8 +415,9 @@ mod tests {
 	use tokio::{net::TcpListener, sync::oneshot};
 	use tokio_tungstenite::accept_async;
 
-	/// A debugger that accepts and at once drops every connection gets no frame,
-	/// so the sink keeps doubling its pause instead of redialing in a tight loop.
+	/// A debugger that accepts and immediately drops every connection gets no
+	/// frame, so the sink keeps doubling its pause instead of redialing in a
+	/// tight loop.
 	#[tokio::test]
 	async fn a_debugger_that_drops_every_connection_is_redialed_ever_more_slowly() {
 		const WINDOW: Duration = Duration::from_millis(1500);
@@ -436,8 +437,8 @@ mod tests {
 		let _sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
 		tokio::time::sleep(WINDOW).await;
 
-		// Dials at 0, 0.2, 0.6 and 1.4 s. Starting over after every connection
-		// would dial eight times, and not pausing at all hundreds.
+		// Expect dials at 0, 0.2, 0.6 and 1.4 s. Resetting after every
+		// connection would give eight dials, and no pause would give hundreds.
 		let dials = accepted.load(Ordering::Relaxed);
 		assert!((2..=4).contains(&dials), "{dials} dials in {WINDOW:?}");
 	}
