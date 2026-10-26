@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -13,17 +14,22 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import coil.imageLoader
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
+import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import kotlin.math.abs
 
 /** The layout rules of `renderer.rs`, which iOS draws the same way. */
@@ -42,6 +48,38 @@ class JsWidgetLayoutTest {
         )
 
         assertEquals(80, boundsOf(success)?.left?.inDp())
+    }
+
+    @Test
+    fun aSpacerKeepsItsMinimumWhenItsRowIsShortOfRoom() {
+        draw(
+            JsWidget.Row(
+                modifiers = listOf(JsModifier.Size(width = 100)),
+                children = listOf(
+                    block(JsColor.FG_ERROR),
+                    JsWidget.Spacer(modifiers = listOf(JsModifier.Size(minWidth = 30))),
+                    JsWidget.Box(
+                        modifiers = listOf(JsModifier.Background(JsColor.FG_SUCCESS)),
+                        children = listOf(JsWidget.Text("enough words to want more room than the row has")),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(50, boundsOf(success)?.left?.inDp())
+    }
+
+    @Test
+    fun aRowWithOnlyAMinimumWidthKeepsItsChildrenAtTheStart() {
+        draw(
+            JsWidget.Row(
+                modifiers = listOf(JsModifier.Size(minWidth = 100)),
+                horizontalArrangement = JsArrangement.END,
+                children = listOf(block(JsColor.FG_SUCCESS)),
+            ),
+        )
+
+        assertEquals(0, boundsOf(success)?.left?.inDp())
     }
 
     @Test
@@ -95,11 +133,30 @@ class JsWidgetLayoutTest {
         assertEquals(listOf(40, 20), listOf(drawn.width().inDp(), drawn.height().inDp()))
     }
 
-    /** Draws `image` showing a red picture of this many pixels, and returns where it landed. */
+    /** A product can send any size of picture, and one is never drawn larger than the screen. */
+    @Test
+    fun aPictureLargerThanTheScreenIsDecodedNoLargerThanTheScreen() {
+        val metrics = context.resources.displayMetrics
+        val screen = maxOf(metrics.widthPixels, metrics.heightPixels)
+        val image = JsWidget.Image(source = JsImageSource.Archive("huge.png"), fit = JsImageFit.CONTAIN)
+
+        drawPicture(screen * 2, screen / 2, image)
+
+        val memory = checkNotNull(context.imageLoader.memoryCache)
+        val decodedWidths = memory.keys.mapNotNull { memory[it]?.bitmap?.width }
+        assertTrue("decoded $decodedWidths for a screen of $screen", decodedWidths.isNotEmpty() && decodedWidths.all { it <= screen })
+    }
+
+    /**
+     * Draws `image` showing a red picture of this many pixels, read from a PNG file as a product's
+     * images are, and returns where it landed.
+     */
     private fun drawPicture(width: Int, height: Int, image: JsWidget.Image): android.graphics.Rect {
         val picture = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         picture.eraseColor(android.graphics.Color.RED)
-        draw(image, images = JsImageResolver { picture })
+        val file = File(context.cacheDir, "${width}x$height.png")
+        file.outputStream().use { picture.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        draw(image, images = JsImageResolver { Uri.fromFile(file) })
         compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
 
         return checkNotNull(boundsOf(pureRed))
@@ -130,6 +187,8 @@ class JsWidgetLayoutTest {
         }
         return found?.apply { right += 1; bottom += 1 }
     }
+
+    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     private fun Int.inDp(): Int = Math.round(this / compose.density.density)
 

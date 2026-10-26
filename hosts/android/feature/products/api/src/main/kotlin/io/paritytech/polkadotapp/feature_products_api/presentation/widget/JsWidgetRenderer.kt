@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.request.ImageRequest
+import coil.size.Precision
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.FileNotFound
@@ -67,7 +68,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import timber.log.Timber
-import coil.size.Size as CoilSize
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
@@ -151,9 +151,16 @@ private fun JsImageRenderer(
                 val sizedSides = listOf(widget.modifiers.hasWidth(), widget.modifiers.hasHeight()).count { it }
                 // A picture drawn at its natural size is loaded whole, not at the size of the space around it.
                 val drawsNaturalSize = widget.fit == JsImageFit.NONE || sizedSides == 0
+                val metrics = LocalContext.current.resources.displayMetrics
                 AsyncImage(
                     model = if (drawsNaturalSize) {
-                        ImageRequest.Builder(LocalContext.current).data(current.model).size(CoilSize.ORIGINAL).build()
+                        // shortcut: a None picture larger than the screen is cropped from a smaller copy, so it shows
+                        // more of the picture than iOS; read the file's own size if a face ever needs that.
+                        ImageRequest.Builder(LocalContext.current)
+                            .data(current.model)
+                            .size(maxOf(metrics.widthPixels, metrics.heightPixels))
+                            .precision(Precision.INEXACT)
+                            .build()
                     } else {
                         current.model
                     },
@@ -296,11 +303,15 @@ private fun JsColumnRenderer(
     Column(
         modifier = modifier.then(widget.modifiers.toComposeModifier()),
         horizontalAlignment = widget.horizontalAlignment?.toComposeHorizontalAlignment() ?: Alignment.Start,
-        verticalArrangement = widget.verticalArrangement?.toComposeVerticalArrangement() ?: Arrangement.Top,
+        verticalArrangement = widget.verticalArrangement
+            ?.takeIf { widget.modifiers.hasHeight() }
+            ?.toComposeVerticalArrangement()
+            ?: Arrangement.Top,
     ) {
         widget.children.forEach { child ->
-            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedHeight()
-            JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
+            JsWidgetContent(widget = child)
+            // After the Spacer's own minimum, so a stack short of room still gives it that.
+            if (child is JsWidget.Spacer && !child.modifiers.fixedHeight()) Spacer(Modifier.weight(1f))
         }
     }
 }
@@ -322,11 +333,14 @@ private fun JsRowRenderer(
                 },
             ),
         verticalAlignment = widget.verticalAlignment?.toComposeVerticalAlignment() ?: Alignment.Top,
-        horizontalArrangement = widget.horizontalArrangement?.toComposeHorizontalArrangement() ?: Arrangement.Start,
+        horizontalArrangement = widget.horizontalArrangement
+            ?.takeIf { widget.modifiers.hasWidth() }
+            ?.toComposeHorizontalArrangement()
+            ?: Arrangement.Start,
     ) {
         widget.children.forEach { child ->
-            val flexible = child is JsWidget.Spacer && !child.modifiers.fixedWidth()
-            JsWidgetContent(widget = child, modifier = if (flexible) Modifier.weight(1f) else Modifier)
+            JsWidgetContent(widget = child)
+            if (child is JsWidget.Spacer && !child.modifiers.fixedWidth()) Spacer(Modifier.weight(1f))
         }
     }
 }
