@@ -92,17 +92,17 @@ struct WidgetNodeLayoutTests {
         #expect(drawn[white] == CGRect(x: 0, y: 0, width: 20, height: 20))
     }
 
-    @Test(arguments: [false, true])
-    func aButtonIsAsWideAsItsLabelUnlessSized(filled: Bool) async throws {
+    @Test(arguments: [nil, 100] as [CGFloat?])
+    func aButtonIsAsWideAsItsSpaceUnlessSized(width: CGFloat?) async throws {
         let button = CustomMessageWidgetNode(
             content: .button(.init(text: "Tap")),
-            modifiers: CustomMessageWidgetNode.Modifiers(fillWidth: filled)
+            modifiers: CustomMessageWidgetNode.Modifiers(width: width)
         )
 
         let drawn = try await WidgetNodeRaster.bounds(of: button, in: CGSize(width: 300, height: 60))
         let painted = drawn.filter { $0.key != WidgetNodeRaster.backdrop }.values.reduce(CGRect.null) { $0.union($1) }
 
-        #expect(filled ? painted.width == 300 : painted.width < 150)
+        #expect(painted.width == (width ?? 300))
     }
 
     @Test

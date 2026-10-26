@@ -520,7 +520,7 @@ pub enum RendererNode {
 		/// Child nodes.
 		children: Vec<RendererNode>,
 	},
-	/// Interactive button, as wide as its label unless sized.
+	/// Interactive button, as wide as the space it is given unless sized.
 	Button {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,

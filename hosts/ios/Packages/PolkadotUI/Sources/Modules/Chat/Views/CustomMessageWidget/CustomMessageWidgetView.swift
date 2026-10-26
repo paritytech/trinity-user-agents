@@ -381,7 +381,7 @@ private struct NodeButtonView: View {
             // Material's content padding, as on Android.
             Text(props.text)
                 .padding(.horizontal, 24)
-                .frame(maxWidth: modifiers.hasOwnWidth ? .infinity : nil)
+                .frame(maxWidth: .infinity)
         }
         .buttonStyle(buttonStyle(for: props.variant))
         .applyWidgetNodeModifiers(modifiers)
