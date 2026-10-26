@@ -20,8 +20,10 @@ use parity_scale_codec::Encode;
 use truapi::v01;
 
 use crate::{
-	DevicePairingObserver, PairedSsoPeer, host_internal::bulletin::preimage_key,
+	DevicePairingObserver, PairedSsoPeer,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	installation::{InstallationId, InstallationIdProvider},
 };
 
 use super::{
@@ -113,6 +115,14 @@ impl crate::durable::DurableWorkObserver for CallbackPlatform {
 impl DevicePairingObserver for CallbackPlatform {
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.callbacks.device_paired(device);
+	}
+}
+
+#[async_trait]
+impl InstallationIdProvider for CallbackPlatform {
+	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
+		let id = self.callbacks.current_installation().await?;
+		InstallationId::try_from(id)
 	}
 }
 

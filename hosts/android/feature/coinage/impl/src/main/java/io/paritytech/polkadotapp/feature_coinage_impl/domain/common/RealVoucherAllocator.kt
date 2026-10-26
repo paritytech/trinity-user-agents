@@ -8,12 +8,12 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyInde
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVoucher
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.data.derivation.VoucherRingDerivation
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.ExponentBoundsRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.validateValueExponent
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.validateValueExponents
-import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import kotlinx.coroutines.sync.Mutex
