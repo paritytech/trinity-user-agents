@@ -198,39 +198,55 @@ flowchart LR
 
 ## Rows
 
-Title · subtitle. Ended subtitle: `{Rail} · {moment}`.
+Title is the amount (`$50 CASH` in flight, `+$50 CASH` added, `-$50 CASH` out), rail pill on the right, subtitle below.
+History: In progress · Completed.
 
-| Status | Row |
+| Status | Subtitle |
 |---|---|
-| WaitingForPayment / WaitingForDeposit | Topping up · Upcoming receiving |
-| WaitingForTransfer | Topping up · Waiting for transfer |
-| ConvertingToCash | Topping up · Converting to Cash |
-| Retrying | Topping up · Provider is retrying your payment (amber) |
-| TransactionInitiated | Sending · Transaction initiated |
-| PreparingPayout / ConvertingTo | Sending · Preparing payout / Converting to {asset} |
-| RetryingPayout | Sending · Provider is retrying the payout (amber) |
-| TakingLonger | · Taking a little longer (amber) |
-| ToppedUp / Sent / PaidOutAfterCancel | Topped up / Sent · {Rail} · {moment} |
-| PayoutFailed / Cancelled / Refunded | Payout failed / Cancelled / Refunded · {Rail} · {moment} |
-| Failed | Top-up failed / Withdrawal failed · reason |
+| WaitingForPayment / WaitingForDeposit / WaitingForTransfer | Waiting for your payment / deposit / transfer |
+| ConvertingToCash · AddingToBalance | On its way · Adding to your balance |
+| Retrying | The provider is retrying. Don't pay again (amber) |
+| TransactionInitiated | Withdrawal initiated |
+| ConvertingTo / PreparingPayout | Converting to {asset}… / Preparing your payout |
+| RetryingPayout | The provider is retrying the payout (amber) |
+| TakingLonger | Delayed, don't pay again · out: Taking longer than usual (amber) |
+| ToppedUp / Sent / PaidOutAfterCancel | {moment} |
+| Refunded / PayoutFailed / Cancelled | Refunded / Payout failed / Cancelled · {moment} |
+| Failed | Expired · {moment} / Payment failed · {moment} |
 
-Source of truth: `FundingStatus` docs in `host_logic/funding.rs`.
+## Session sheet
+
+```
+        ⟳
+     $50 CASH
+ ●─•─•─●─•─•─○        Started · Received · Added      (out: Received by provider · Sent)
+ Checking your payment            band
+ Checked with the provider 3s ago  last_heard_at_ms · after 60 s: Trying to reconnect
+ Send this exact amount inc. fees   €50.55 ›
+ Reference                    5729 4183 6602 ⧉
+ Arrives  1–2 business days · Final Cash depends on the rate on arrival
+ [ Cancel ]   pending bank top-up → Cancel top-up? · Cancel / Keep it
+```
+
+| Band | Line |
+|---|---|
+| AwaitingPayment | Waiting for your payment · bank: "If you've sent the money from your bank, it's on its way to us…" |
+| CheckingPayment · OnItsWay | Checking your payment · Your money is on its way |
+| Adding · Added | Adding $50 CASH to your balance · $50 CASH added to your balance |
+| Converting · PreparingPayout · Sending · Sent | Converting your Cash · The provider is preparing your payout · Sending the money to your {rail} · Sent |
+| Retrying · Delayed | amber, "don't pay again" on top-ups |
+
+A bank top-up cancelled before paying takes a transfer that arrives within 7 days: it opens again and is added.
 
 ## Purse
 
 ```
-┌ Purse ─────────────────────┐   scroll: card → 60pt thumbnail in header
-│ [ leather card  $X CASH ]  │            + sticky "Current balance" bar
-│ [ Get ]        [ Send ]    │
-│ Total $X CASH  ●●●●●●      │   Clearing / Ready from coinage
-│ ▒▒▒░░░░░░  Clearing · Ready│
-│ Today                      │
-│  ○ Topped up       +$25    │   history by day
-│  ○ Sent            -$50    │
+┌ Purse ─────────────────────┐
+│ [ leather card  $X CASH ]  │
+│ [ ↑ Get ]      [ ↓ Send ]  │   Get: Topping up sheet if any in progress, else amount
+│ Total $X CASH  ●●●●●●      │   Send: contacts · Send money out → Sending sheet / amount
+│ ▒▒▒░░░░░░   Ready $X       │   ⟲ clock → History
 └────────────────────────────┘
-  ┌ in progress dock ──────┐     front: delayed, else newest
-  │ (2) Topping up   +$50  │     tap → panel
-  └────────────────────────┘
 ```
 
 ## Restart
