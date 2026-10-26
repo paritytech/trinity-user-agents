@@ -110,7 +110,9 @@ Optional — these gate reporting steps only, and a fork can leave them unset:
 
 `SENTRY_DSN` and `MELD_BASIC_AUTH_TOKEN` from the first table are also stored as
 GitHub Actions secrets, because CI runs `generate_secrets.sh` from
-`.github/actions/configure-secrets` instead of reading `env-vars.sh`.
+`.github/actions/configure-secrets` instead of reading `env-vars.sh`. The DSN is
+stored as `SENTRY_DSN_IOS`, since the Android app reports to its own Sentry
+project through `SENTRY_DSN_ANDROID`.
 
 Tester groups are a workflow variable rather than a secret: `FIREBASE_GROUPS` is
 set in `ios-firebase-debug-distribution.yml` (default `polkadotapp-ios`) and can be
@@ -171,6 +173,7 @@ Optional — an absent key disables or degrades the feature it drives:
 | `funding_domain` | string | Legacy DotNS label of the funding dApp; read only when `funding_config.onrampUrl` is absent. |
 | `cross_chain_transfers`, `xcm_general_config` | JSON | XCM transfer routes for the deposit flow (`XcmTransfersSyncService`). Deposits via XCM stay unavailable without them. |
 | `transaction_extension_versions` | JSON object | `{"<chainId>": <uint8>}` — transaction-extension version per chain; defaults to `0`. |
+| `collectibles_enabled` | bool | Feature gate for the Collectibles card on the Pocket tab. The card opens the `stash` product on the network's dotNS suffix. |
 | `payment_asset_config` | JSON object | `{"symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg"}` — the payment asset's symbol and logos: a square mark for amounts and payment messages, a wide mark-plus-wordmark for the balance card, as absolute web URLs (SVG or PNG; an SVG must not set `fill="none"` on its root element, which the iOS renderer cannot draw). Each field is optional; anything missing or failing to load falls back to the bundled brand (`BRAND_CASH_SYMBOL` and the built-in mark). Logos are fetched as soon as the config is applied and kept cached by URL, so a change shows on the next config refresh without an app update; publish a changed logo under a new URL. Test assets live in `docs/assets/payment-asset/`. |
 | `app_sharing_url` | string | Download link included in the message the ID card's Share button composes ("Download it at {link} and add me – my username is {username}."). Without it the message is shared without the link sentence. |
 

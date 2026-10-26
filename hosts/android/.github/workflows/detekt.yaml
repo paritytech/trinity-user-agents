@@ -39,4 +39,4 @@ jobs:
           GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
           GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
           NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
-        run: ./gradlew detekt --no-daemon --stacktrace
+        run: ./gradlew :config:detekt:rules:test detekt --no-daemon --stacktrace

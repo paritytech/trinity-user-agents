@@ -342,7 +342,12 @@ private class InMemoryCoinageAssetLedger(private val store: InMemoryLedger) : Co
         return null
     }
 
-    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = store.transaction {
+    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = mark(assets, committed = false)
+
+    override suspend fun markHandedOffCommitted(assets: List<LedgerAsset>): Result<Unit> =
+        mark(assets, committed = true)
+
+    private suspend fun mark(assets: List<LedgerAsset>, committed: Boolean): Result<Unit> = store.transaction {
         val claimed = store.filterClaimed(assets.map { it.publicKey })
         assets.firstOrNull { it.publicKey in claimed }?.asset?.let {
             throw io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model
@@ -357,7 +362,7 @@ private class InMemoryCoinageAssetLedger(private val store: InMemoryLedger) : Co
         assets.forEach { asset ->
             val owned = asset.asset ?: return@forEach
             if (asset.publicKey !in store.handoffs) {
-                store.handoffs = store.handoffs + (asset.publicKey to HandoffRow(owned, committed = false))
+                store.handoffs = store.handoffs + (asset.publicKey to HandoffRow(owned, committed = committed))
             }
         }
     }

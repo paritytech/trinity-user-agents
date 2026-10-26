@@ -29,7 +29,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".to_string()).expect("test product context is valid"),
+		ProductContext::new("dotli.dot".parse().expect("valid product id")),
 	)
 }
 
@@ -208,7 +208,7 @@ impl LocaleHost for WireShapePlatform {
 impl PreimageHost for WireShapePlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		Box::pin(stream::empty())
 	}
