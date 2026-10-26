@@ -28,6 +28,8 @@ sealed class ChatUserInputState {
 
     data object UnblockUser : ChatUserInputState()
 
+    data object IdentitySigningConsentRequired : ChatUserInputState()
+
     data object Nothing : ChatUserInputState()
 }
 

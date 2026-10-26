@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementReque
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStoreService
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.CommunicationSessionCreator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.OneShotSessionRequestPublisher
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStoreMessageProver
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
@@ -34,6 +35,7 @@ import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificatio
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.NotificationSlotSubmissionPolicy
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.notificationAllocator.RealNotificationStatementAccountAllocator
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.CommunicationSessionCreatorFactory
+import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.RealOneShotSessionRequestPublisher
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.codec.IncomingTopicsProvider
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.sessions.codec.RealIncomingTopicsProviderFactory
 import io.paritytech.polkadotapp.feature_statement_store_impl.domain.slotAllocator.CurrentPeriodProvider
@@ -55,6 +57,9 @@ interface StatementStoreFeatureApiModule {
 
     @Binds
     fun bindCommunicationSessionCreatorFactory(impl: CommunicationSessionCreatorFactory): CommunicationSessionCreator.Factory
+
+    @Binds
+    fun bindOneShotSessionRequestPublisher(impl: RealOneShotSessionRequestPublisher): OneShotSessionRequestPublisher
 
     @Binds
     @Singleton

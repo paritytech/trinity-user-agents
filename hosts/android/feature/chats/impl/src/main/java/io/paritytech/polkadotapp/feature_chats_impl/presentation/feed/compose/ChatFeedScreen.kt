@@ -61,6 +61,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val menuState by contract.menuState.collectAsStateWithLifecycle()
     val displayState by contract.chatDisplay.collectAsStateWithLifecycle()
     val toolbarActions by contract.toolbarActions.collectAsStateWithLifecycle()
+    val showPrivacyWarning by contract.showPrivacyWarning.collectAsStateWithLifecycle()
     val footerRenderer by contract.footerRenderer.collectAsStateWithLifecycle()
     val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
@@ -98,6 +99,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         revealingMessageId = revealingMessageId,
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
+        showPrivacyWarning = showPrivacyWarning,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -110,10 +112,13 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onUnreadMessageVisible = contract::onUnreadMessageVisible,
         onStartCallClick = contract::onStartCallClick,
         onMenuClick = contract::onMenuClick,
+        onPrivacyWarningClick = contract::onPrivacyWarningClick,
         onAttachClick = contract::onAttachClick,
         onAcceptChatRequest = contract::onAcceptChatRequest,
         onDeclineChatRequest = contract::onDeclineChatRequest,
         onUnblockUserClick = contract::onUnblockUserClick,
+        onAllowIdentitySigningClick = contract::onAllowIdentitySigningClick,
+        onDeclineIdentitySigningClick = contract::onDeclineIdentitySigningClick,
         isActionMenuVisible = popupState is MessagePopUpUiState.ActionMenu,
         onMessageLongPress = { message, layoutInfo ->
             menuLayoutInfo = layoutInfo
@@ -164,6 +169,7 @@ private fun ChatFeedScreenInternal(
     revealingMessageId: ChatMessageId?,
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
+    showPrivacyWarning: Boolean,
     highlightEvents: Flow<HighlightedMessage>,
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
@@ -177,9 +183,12 @@ private fun ChatFeedScreenInternal(
     onUnreadMessageVisible: (ChatMessageUiModel) -> Unit,
     onStartCallClick: (withVideo: Boolean) -> Unit,
     onMenuClick: () -> Unit,
+    onPrivacyWarningClick: () -> Unit,
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
+    onAllowIdentitySigningClick: () -> Unit,
+    onDeclineIdentitySigningClick: () -> Unit,
     isActionMenuVisible: Boolean,
     onMessageLongPress: (ChatMessageUiModel, MessageLayoutInfo) -> Unit
 ) {
@@ -206,9 +215,11 @@ private fun ChatFeedScreenInternal(
                     displayState = displayState,
                     toolbarActions = toolbarActions,
                     showAvatar = config.showAvatar,
+                    showPrivacyWarning = showPrivacyWarning,
                     onBack = onBackClick,
                     onStartCallClick = onStartCallClick,
                     onMenuClick = onMenuClick,
+                    onPrivacyWarningClick = onPrivacyWarningClick,
                 )
             }
 
@@ -258,6 +269,8 @@ private fun ChatFeedScreenInternal(
                         onAcceptChatRequest = onAcceptChatRequest,
                         onDeclineChatRequest = onDeclineChatRequest,
                         onUnblockUserClick = onUnblockUserClick,
+                        onAllowIdentitySigningClick = onAllowIdentitySigningClick,
+                        onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
                         onHeightChanged = { footerHeight = it },
                     )
                 }
@@ -331,6 +344,7 @@ private fun ChatFeedPreview() {
                     revealingMessageId = null,
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
+                    showPrivacyWarning = true,
                     highlightEvents = emptyFlow(),
                     scrollToPosition = emptyFlow(),
                     onBackClick = {},
@@ -344,9 +358,12 @@ private fun ChatFeedPreview() {
                     onUnreadMessageVisible = {},
                     onStartCallClick = {},
                     onMenuClick = {},
+                    onPrivacyWarningClick = {},
                     onAcceptChatRequest = {},
                     onDeclineChatRequest = {},
                     onUnblockUserClick = {},
+                    onAllowIdentitySigningClick = {},
+                    onDeclineIdentitySigningClick = {},
                     isActionMenuVisible = false,
                     onMessageLongPress = { _, _ -> }
                 )

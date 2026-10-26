@@ -10,8 +10,10 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.AccountDe
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfDerivationProvider
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
+import io.paritytech.polkadotapp.feature_chats_api.domain.derivation.ChatProductSubtreeProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
+import io.paritytech.polkadotapp.feature_products_impl.domain.derivation.ReservedChatProductSubtreeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.derivation.ReservedProductAccountDerivationProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.derivation.ReservedRingVrfDerivationProvider
 
@@ -54,5 +56,10 @@ internal object ProductDerivationModule {
     @AccountPurposeKey(MetaAccount.Purpose.WALLET)
     fun provideLightPersonhoodRingVrfDerivation(dotNsTldProvider: DotNsTldProvider): RingVrfDerivationProvider {
         return ReservedRingVrfDerivationProvider(dotNsTldProvider, ReservedProductIds::personhood, LIGHT_PERSONHOOD_INDEX)
+    }
+
+    @Provides
+    fun provideChatProductSubtree(dotNsTldProvider: DotNsTldProvider): ChatProductSubtreeProvider {
+        return ReservedChatProductSubtreeProvider(dotNsTldProvider)
     }
 }

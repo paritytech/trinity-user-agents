@@ -51,11 +51,12 @@ class Initialization(
                         transition.emitSideEffect(CommunicationSideEffect.RequestReceived(request))
                         transition.emitSideEffect(
                             CommunicationSideEffect.SubmitResponse(
-                                StatementTransportEvent.Response(
+                                response = StatementTransportEvent.Response(
                                     requestId = request.requestId,
                                     expiry = expiry,
                                     responseCode = PROTOCOL_ACK_CODE
-                                )
+                                ),
+                                request = request,
                             )
                         )
                     }

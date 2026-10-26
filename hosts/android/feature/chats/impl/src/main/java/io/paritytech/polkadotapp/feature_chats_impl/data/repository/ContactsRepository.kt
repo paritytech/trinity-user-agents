@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatR
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithRequestTimestamp
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.data.model.toLocal
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ContactWithDevicePresence
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -55,15 +56,18 @@ interface ContactsRepository {
 
     fun subscribeContactsWithChatRequests(): Flow<List<ContactWithChatRequest>>
 
+    /** Every contact with whether it has a known device, read together so the two never disagree. */
+    fun subscribeContactsWithDevicePresence(): Flow<List<ContactWithDevicePresence>>
+
     suspend fun getContactsWithChatRequests(metaId: Long): List<ContactWithChatRequest>
 
     fun subscribeContactsWithUndeliveredOutgoingRequests(): Flow<List<ContactWithChatRequest>>
 
     /** Runs [action] in one database transaction, which also covers writes through other repositories. */
-    suspend fun withTransaction(action: suspend () -> Unit)
+    suspend fun <R> withTransaction(action: suspend () -> R): R
 
-    /** Newest request first. */
-    suspend fun getContactsWithAnonymouslyDeliveredPendingRequests(): List<ContactWithChatRequest>
+    /** Pending outgoing requests published in some period and renewed in every next one, newest first. */
+    suspend fun getContactsWithRenewablePendingRequests(): List<ContactWithChatRequest>
 
     fun subscribePendingFanOutContacts(): Flow<List<Contact>>
 
@@ -212,13 +216,22 @@ class RealContactsRepository @Inject constructor(
             .mapList { it.toDomain() }
     }
 
+    override fun subscribeContactsWithDevicePresence(): Flow<List<ContactWithDevicePresence>> {
+        return dao.subscribeContactsWithDevicePresence()
+            .mapList { ContactWithDevicePresence(it.contact.toDomain(), it.hasDevices) }
+    }
+
     override suspend fun getContactsWithChatRequests(metaId: Long): List<ContactWithChatRequest> {
         return dao.getContactsWithChatRequestsForAccount(metaId)
             .map { it.toDomain() }
     }
 
-    override suspend fun withTransaction(action: suspend () -> Unit) {
-        dao.withTransaction(action)
+    override suspend fun <R> withTransaction(action: suspend () -> R): R {
+        var result: R? = null
+        dao.withTransaction { result = action() }
+
+        @Suppress("UNCHECKED_CAST")
+        return result as R
     }
 
     override fun subscribeContactsWithUndeliveredOutgoingRequests(): Flow<List<ContactWithChatRequest>> {
@@ -226,8 +239,8 @@ class RealContactsRepository @Inject constructor(
             .mapList { it.toDomain() }
     }
 
-    override suspend fun getContactsWithAnonymouslyDeliveredPendingRequests(): List<ContactWithChatRequest> {
-        return dao.getContactsWithAnonymouslyDeliveredPendingRequests()
+    override suspend fun getContactsWithRenewablePendingRequests(): List<ContactWithChatRequest> {
+        return dao.getContactsWithRenewablePendingRequests()
             .map { it.toDomain() }
     }
 

@@ -15,6 +15,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestPayload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningDeclined
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningGate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
@@ -27,7 +29,7 @@ class ChatRequestDeliveryServiceTest {
     private val contact: Contact = mockk()
     private val request = outgoingRequest("request", ChatRequest.Delivery.Undelivered)
     private val payload: OutgoingChatRequestPayload = mockk()
-    private val signer = ChatRequestDeliverySigner(mockk(), ChatRequest.Delivery.DeliveredAnonymously(1u))
+    private val signer = deliverySigner(ChatRequest.Delivery.DeliveredAnonymously(1u))
 
     private val contactsRepository: ContactsRepository = mockk()
     private val chatRequestRepository: ChatRequestRepository = mockk()
@@ -37,10 +39,11 @@ class ChatRequestDeliveryServiceTest {
     private val connectionRefCounter: ChainConnectionRefCounter = mockk()
     private val knownChains: KnownChains = mockk { every { people } returns "people" }
     private val dispatchers: CoroutineDispatchers = mockk { every { computation } returns Dispatchers.Unconfined }
+    private val identitySigningGate: IdentitySigningGate = mockk(relaxed = true)
 
     private val service = ChatRequestDeliveryService(
         contactsRepository, chatRequestRepository, payloadLoader, publisher, accountResolver,
-        connectionRefCounter, knownChains, dispatchers,
+        connectionRefCounter, knownChains, dispatchers, identitySigningGate,
     )
 
     @Before
@@ -84,6 +87,20 @@ class ChatRequestDeliveryServiceTest {
 
         coVerify { publisher.markUndeliverable(request) }
         coVerify(exactly = 0) { accountResolver.resolveFirstDelivery(any(), any()) }
+    }
+
+    @Test
+    fun `fails the request once the user declined signing it with our own account`() = runBlocking<Unit> {
+        withContactLinkedTo(request.id)
+        withRequestFitting(true)
+        coEvery { accountResolver.resolveFirstDelivery(contact, request) } returns
+            Result.failure(IdentitySigningDeclined(contactAccountId))
+        coEvery { publisher.markFailed(request) } returns Result.success(Unit)
+
+        startDelivery()
+
+        coVerify(exactly = 1) { publisher.markFailed(request) }
+        coVerify(exactly = 0) { publisher.publishFirstDelivery(any(), any(), any()) }
     }
 
     private fun withContactLinkedTo(requestId: String?) {

@@ -10,6 +10,11 @@ interface StatementStoreMessageProver {
         fun createKeyPairProver(metaAccount: MetaAccount): StatementStoreMessageProver
 
         fun createKeyPairProver(keypair: Sr25519Keypair): StatementStoreMessageProver
+
+        /**
+         * [getKeypair] is invoked on every proof generation and may suspend; verification never invokes it.
+         */
+        fun createLazyKeyPairProver(getKeypair: suspend () -> Sr25519Keypair): StatementStoreMessageProver
     }
 
     suspend fun generateMessageProof(statementBody: Statement.Body): StatementStoreMessageProof

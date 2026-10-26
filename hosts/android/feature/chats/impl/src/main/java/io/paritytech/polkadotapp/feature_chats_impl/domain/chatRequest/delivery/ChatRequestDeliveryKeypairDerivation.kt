@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.delivery
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.AccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRequestId
 import javax.inject.Inject
@@ -15,13 +16,32 @@ class ChatRequestDeliveryAccount(
     val accountId: AccountId get() = keypair.publicKey.toDataByteArray()
 }
 
+/** The request id comes from the peer for an acceptance, so it must not smuggle extra junctions into the path. */
+class InvalidRequestIdJunction(requestId: ChatRequestId) :
+    Throwable("Chat request id \"$requestId\" cannot be used as a derivation junction")
+
+// T_req and T_acc of chat-spec RFC-0005.
 class ChatRequestDeliveryKeypairDerivation @Inject constructor(
     private val accountDerivationUseCase: AccountDerivationUseCase,
 ) {
     suspend fun deliveryAccount(requestId: ChatRequestId, period: UInt): Result<ChatRequestDeliveryAccount> {
-        return accountDerivationUseCase.deriveKeypair("//chat-request//$requestId//$period").mapCatching { keypair ->
+        return oneShotPath("chat-request", requestId, period).flatMap { path -> derive(path, period) }
+    }
+
+    suspend fun acceptanceAccount(requestId: ChatRequestId, period: UInt): Result<ChatRequestDeliveryAccount> {
+        return oneShotPath("chat-accept", requestId, period).flatMap { path -> derive(path, period) }
+    }
+
+    private fun oneShotPath(namespace: String, requestId: ChatRequestId, period: UInt): Result<String> {
+        if (requestId.isEmpty() || '/' in requestId) return Result.failure(InvalidRequestIdJunction(requestId))
+
+        return Result.success("//$namespace//$requestId//$period")
+    }
+
+    private suspend fun derive(path: String, period: UInt): Result<ChatRequestDeliveryAccount> {
+        return accountDerivationUseCase.deriveKeypair(path).mapCatching { keypair ->
             val sr25519 = keypair as? Sr25519Keypair
-                ?: error("Chat request delivery keypair must be Sr25519, got ${keypair::class.simpleName} for request $requestId")
+                ?: error("Chat request keypair at $path must be Sr25519, got ${keypair::class.simpleName}")
             ChatRequestDeliveryAccount(sr25519, period)
         }
     }

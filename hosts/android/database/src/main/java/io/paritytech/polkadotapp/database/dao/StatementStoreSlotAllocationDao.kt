@@ -45,16 +45,37 @@ interface StatementStoreSlotAllocationDao {
         """
         SELECT EXISTS(
             SELECT 1 FROM statement_store_slot_allocations
-            WHERE chainId = :chainId AND accountId = :accountId
-              AND latestRenewedPeriod < :currentPeriod
+            WHERE chainId = :chainId AND latestRenewedPeriod < :currentPeriod
         )
         """
     )
-    suspend fun hasStaleFor(
+    suspend fun hasAnyStale(
+        chainId: String,
+        currentPeriod: Long,
+    ): Boolean
+
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM statement_store_slot_allocations
+            WHERE chainId = :chainId AND accountId = :accountId
+              AND latestRenewedPeriod >= :currentPeriod
+        )
+        """
+    )
+    suspend fun hasRenewedFor(
         chainId: String,
         accountId: ByteArray,
         currentPeriod: Long,
     ): Boolean
+
+    @Query(
+        """
+        SELECT DISTINCT accountId FROM statement_store_slot_allocations
+        WHERE chainId = :chainId AND tag = :tag
+        """
+    )
+    suspend fun accountsWithTag(chainId: String, tag: String): List<ByteArray>
 
     /**
      * Bulk lookup of "highest priority level seen locally" per account. Returns one row

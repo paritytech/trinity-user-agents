@@ -11,7 +11,10 @@ sealed interface CommunicationSideEffect {
     object StopPolling : CommunicationSideEffect
 
     class SubmitRequest(val request: StatementTransportEvent.Request) : CommunicationSideEffect
-    class SubmitResponse(val response: StatementTransportEvent.Response) : CommunicationSideEffect
+    class SubmitResponse(
+        val response: StatementTransportEvent.Response,
+        val request: StatementTransportEvent.Request,
+    ) : CommunicationSideEffect
 
     class RequestReceived(val request: StatementTransportEvent.Request) : CommunicationSideEffect
     class ResponseReceived(val respondedMessages: List<EncodedMessage>) : CommunicationSideEffect

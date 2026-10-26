@@ -649,7 +649,7 @@
 
     <string name="chats_toolbar_title" translatable="false">Chats</string>
     <string name="chats_empty_state_title">Add your first contact</string>
-    <string name="chats_empty_state_message">Tap + below to find someone by username</string>
+    <string name="chats_empty_state_message">Tap the button below to find someone by username</string>
 
     <string name="chat_search_empty_state_title">No results</string>
     <string name="chat_search_empty_state_message">There is no result for “%1$s”. Try a new search</string>
@@ -665,6 +665,9 @@
     <string name="search_section_recent">RECENT</string>
     <string name="search_section_contacts">CONTACTS</string>
     <string name="search_section_all_users">ALL USERS</string>
+    <string name="search_section_recents">RECENTS</string>
+    <string name="search_section_results">RESULTS</string>
+    <string name="docklet_close_search">Close search</string>
 
     <string name="add_contact_search_placeholder">Type username</string>
     <string name="add_contact_no_recent_searches">No recent searches</string>
@@ -878,6 +881,12 @@
     <string name="chat_block_user">Block user</string>
     <string name="blocked_users_unblock">Unblock</string>
     <string name="chat_leave_chat_question">Leave chat?</string>
+    <string name="chat_privacy_disclaimer_title">This chat isn\'t fully private</string>
+    <string name="chat_privacy_disclaimer_body">You allowed this chat to use your username while no private slot was free. It\'s still end-to-end encrypted, but some activity, like when you send messages, may be linked to your username.</string>
+    <string name="chat_identity_signing_consent_title">This chat can\'t be fully private right now</string>
+    <string name="chat_identity_signing_consent_body">All private slots are taken. You can send with your username instead: the chat stays end-to-end encrypted, but some activity, like when you send messages, may be linked to your username. If you don\'t, waiting messages won\'t be sent.</string>
+    <string name="chat_identity_signing_consent_allow">Use username</string>
+    <string name="chat_identity_signing_consent_decline">Don\'t send</string>
     <string name="chat_leave_chat_confirmation">Are you sure you want to leave\nthe chat with %1$s?</string>
     <string name="chat_block_user_question">Block %1$s?</string>
     <string name="chat_block_user_confirmation">They won\'t be able to send you a message request or call you.</string>

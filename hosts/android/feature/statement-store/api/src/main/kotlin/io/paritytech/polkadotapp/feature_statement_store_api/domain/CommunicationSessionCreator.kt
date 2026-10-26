@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_statement_store_api.data.encryption.CommunicationEncryption
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.IncomingRequestResponsePolicy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionAccount
 import kotlinx.coroutines.CoroutineScope
 
@@ -18,6 +19,12 @@ import kotlinx.coroutines.CoroutineScope
 interface CommunicationSessionCreator {
     interface Factory {
         fun create(account: MetaAccount): CommunicationSessionCreator
+
+        /**
+         * Sessions sign outgoing statements with [prover] instead of the account's own key.
+         * Addressing (topics, envelopes) still comes from the `SessionAccount`s passed per session.
+         */
+        fun create(prover: StatementStoreMessageProver): CommunicationSessionCreator
     }
 
     /**
@@ -32,6 +39,7 @@ interface CommunicationSessionCreator {
         encryption: CommunicationEncryption,
         maxStatementSize: InformationSize,
         compactor: MessageCompactor? = null,
+        responsePolicy: IncomingRequestResponsePolicy = IncomingRequestResponsePolicy.Always,
     ): CommunicationSession
 
     /**
@@ -47,5 +55,6 @@ interface CommunicationSessionCreator {
         identityChatDomain: SharedSecretDerivationDomain,
         maxStatementSize: InformationSize,
         compactor: MessageCompactor? = null,
+        responsePolicy: IncomingRequestResponsePolicy = IncomingRequestResponsePolicy.Always,
     ): CommunicationSession
 }
