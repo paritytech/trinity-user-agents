@@ -1185,6 +1185,7 @@
     <string name="funding_eta_days">in %1$d days</string>
     <string name="funding_eta_hours">in %1$d h</string>
     <string name="funding_eta_minutes">in %1$d min</string>
+    <string name="funding_fees_amount">Amount</string>
     <string name="funding_fees_amount_to_send">Amount to send inc. fees</string>
     <string name="funding_fees_network">Network fee</string>
     <string name="funding_fees_provider">Provider fee</string>

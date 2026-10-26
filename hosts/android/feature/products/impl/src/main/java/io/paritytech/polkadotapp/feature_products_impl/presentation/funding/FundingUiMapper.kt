@@ -136,7 +136,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
     val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.cost(cash.decimal(units)) }
-    val total = (quote.providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (quote.networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
+    val total = quote.totalFee()
 
     return FundingFeesUiState(
         payTitle = when {
@@ -144,6 +144,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
             rail == FundingRail.CARD -> FundingPayTitle.YOU_PAY
             else -> FundingPayTitle.AMOUNT_TO_SEND
         },
+        amount = feeText(quote.netOfFees().toString()),
         providerFee = feeText(quote.providerFee),
         networkFee = feeText(quote.networkFee),
         totalFee = feeText(total.toString()),
@@ -152,12 +153,20 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     )
 }
 
-/** What one unit of the balance is worth in the provider-side asset. */
+private fun FundingQuote.totalFee(): BigInteger =
+    (providerFee.toBigIntegerOrNull() ?: BigInteger.ZERO) + (networkFee.toBigIntegerOrNull() ?: BigInteger.ZERO)
+
+/** What the user pays before fees, in the unit of `sendAmount`. */
+private fun FundingQuote.netOfFees(): BigInteger =
+    ((sendAmount.toBigIntegerOrNull() ?: BigInteger.ZERO) - totalFee()).max(BigInteger.ZERO)
+
+/** What one unit of the balance is worth in the provider-side asset, net of fees as the amount line. */
 private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
-    val providerSide = quoteUnit.decimal(if (inbound) quote.sendAmount else quote.receiveAmount)
-    val cashSide = cash.decimal(if (inbound) quote.receiveAmount else quote.sendAmount)
+    val net = quote.netOfFees().toString()
+    val providerSide = quoteUnit.decimal(if (inbound) net else quote.receiveAmount)
+    val cashSide = cash.decimal(if (inbound) quote.receiveAmount else net)
     if (cashSide.signum() <= 0) return null
 
     val perCash = providerSide.divide(cashSide, RATE_SCALE, RoundingMode.HALF_EVEN)

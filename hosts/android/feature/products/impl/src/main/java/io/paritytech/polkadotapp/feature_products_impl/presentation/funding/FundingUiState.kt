@@ -122,6 +122,8 @@ sealed interface FundingSummaryProblem {
 
 data class FundingFeesUiState(
     val payTitle: FundingPayTitle,
+    /** What the user pays before fees: with the fees it adds up to [pay]. */
+    val amount: String,
     val providerFee: String,
     val networkFee: String,
     val totalFee: String,

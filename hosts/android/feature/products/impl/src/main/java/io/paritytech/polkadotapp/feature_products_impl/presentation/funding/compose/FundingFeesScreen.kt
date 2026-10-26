@@ -37,6 +37,7 @@ fun FundingFeesScreen(
 
         if (state != null) {
             Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
+                FeeLine(stringResource(RCommon.string.funding_fees_amount), state.amount)
                 FeeLine(stringResource(RCommon.string.funding_fees_provider), state.providerFee)
                 FeeLine(stringResource(RCommon.string.funding_fees_network), state.networkFee)
                 FeeLine(stringResource(RCommon.string.funding_fees_swapping), stringResource(RCommon.string.funding_fees_variable))

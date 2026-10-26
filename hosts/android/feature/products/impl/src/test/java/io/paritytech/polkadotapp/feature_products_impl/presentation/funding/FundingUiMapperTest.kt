@@ -44,6 +44,18 @@ class FundingUiMapperTest {
     }
 
     @Test
+    fun `the fee breakdown adds up to what the user pays`() {
+        val fees = requireNotNull(
+            flow()
+                .let { it.asking(requireNotNull(it.currentAsk())) }
+                .receiving(bothQuoted())
+                .toFeesUiState(),
+        )
+
+        assertEquals(listOf("50.00 EUR", "0.90 EUR", "0.10 EUR", "1.00 EUR", "51.00 EUR"), with(fees) { listOf(amount, providerFee, networkFee, totalFee, pay) })
+    }
+
+    @Test
     fun `asking the same again keeps what each price was for while the new one loads`() {
         val quotedOnce = flow()
             .let { it.asking(requireNotNull(it.currentAsk())) }
