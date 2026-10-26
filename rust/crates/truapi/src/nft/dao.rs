@@ -1,11 +1,9 @@
 //! Queries over the NFT tables, one SQL constant and one function each.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use futures::stream::BoxStream;
-use rusqlite::{
-	Connection, OptionalExtension, Row, Transaction, named_params, params_from_iter, types::Value,
-};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Value};
 
 use super::{
 	holding::HeldItem,
@@ -147,7 +145,7 @@ const KEY_STANDINGS: &str = concat!(
 	spent!(),
 	" AS spent FROM nft_item AS item
 	JOIN nft_holding AS holding ON holding.key = item.key
-	WHERE item.purse = ?1 AND item.key IN "
+	WHERE item.purse = :purse AND item.key IN rarray(:keys)"
 );
 
 /// Where each of `keys` that holds an NFT in `purse` stands, in one query. A
@@ -157,11 +155,11 @@ pub fn key_standings(
 	purse: PurseId,
 	keys: &[ItemKey],
 ) -> Result<HashMap<ItemKey, KeyStanding>, DbError> {
-	let placeholders = vec!["?"; keys.len()].join(", ");
-	let mut statement = conn.prepare(&format!("{KEY_STANDINGS}({placeholders})"))?;
-	let key_values = keys.iter().map(|key| Value::Blob(key.0.to_vec()));
-	let values = std::iter::once(Value::Integer(purse.0.into())).chain(key_values);
-	let rows = statement.query_map(params_from_iter(values), key_standing_from_row)?;
+	let mut statement = conn.prepare_cached(KEY_STANDINGS)?;
+	let key_values: Rc<Vec<Value>> =
+		Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect());
+	let params = named_params! { ":purse": purse.0, ":keys": key_values };
+	let rows = statement.query_map(params, key_standing_from_row)?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 

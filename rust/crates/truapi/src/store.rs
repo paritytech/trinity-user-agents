@@ -146,6 +146,7 @@ impl Db {
 				conn.pragma_update(None, "foreign_keys", true)?;
 				conn.pragma_update(None, "temp_store", "MEMORY")?;
 				conn.busy_timeout(BUSY_TIMEOUT)?;
+				rusqlite::vtab::array::load_module(conn)?;
 				match migrations().to_latest(conn) {
 					Ok(()) |
 					Err(rusqlite_migration::Error::MigrationDefinition(
@@ -169,6 +170,7 @@ impl Db {
 				readers
 					.conn_for_each(|conn| {
 						conn.busy_timeout(BUSY_TIMEOUT)?;
+						rusqlite::vtab::array::load_module(conn)?;
 						conn.authorizer(Some(authorize_for_change_tracking))
 					})
 					.await
