@@ -46,6 +46,7 @@ use std::{
 	fmt,
 	future::{Future, ready},
 	net::{Ipv4Addr, SocketAddr},
+	ops::ControlFlow,
 	path::{Path, PathBuf},
 	process::ExitStatus,
 	str::FromStr,
@@ -1975,43 +1976,41 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let exit = retry(
+		let mut restarts = RESPONDER_RETRY_PAUSES;
+		retry(
 			&RealTimer,
-			RESPONDER_RETRY_PAUSES,
-			|| runtime.resume_pairing(peer),
-			|exit, _| match exit {
-				Ok(ResponderExit::PeerDisconnected) => false,
-				Ok(exit) => {
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
+			|| async {
+				match runtime.resume_pairing(peer).await {
+					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
+					Ok(exit) => ControlFlow::Continue(SystemEvent::SigningHostExit {
 						outcome: format!("{exit:?}"),
-					});
-					true
-				},
-				Err(error) => {
-					terminal_ui::output_event(SystemEvent::SigningHostError {
-						reason: error.reason.clone(),
-					});
-					true
-				},
+					}),
+					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
+						reason: error.reason,
+					}),
+				}
+			},
+			|event| {
+				terminal_ui::output_event(event);
+				restarts.next_pause()
 			},
 		)
 		.await;
-		let Ok(exit @ ResponderExit::PeerDisconnected) = exit else {
-			return;
-		};
 		if let Some((catalog, profile)) = &persisted {
+			let mut removals = RESPONDER_RETRY_PAUSES;
 			retry(
 				&RealTimer,
-				RESPONDER_RETRY_PAUSES,
-				|| ready(catalog.remove_paired_host(profile, &peer.statement_account_id).err()),
-				|failure, _| {
-					let Some(error) = failure else {
-						return false;
-					};
+				|| {
+					ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
+						Ok(_) => ControlFlow::Break(()),
+						Err(error) => ControlFlow::Continue(error),
+					})
+				},
+				|error| {
 					terminal_ui::output_event(SystemEvent::SigningHostError {
 						reason: format!("failed to remove disconnected paired device: {error}"),
 					});
-					true
+					removals.next_pause()
 				},
 			)
 			.await;
@@ -2026,7 +2025,9 @@ fn spawn_supervised_responder(
 				});
 			}
 		}
-		terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
+		terminal_ui::output_event(SystemEvent::SigningHostExit {
+			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+		});
 	})
 }
 

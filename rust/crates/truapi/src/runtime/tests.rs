@@ -2921,22 +2921,7 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	let opening =
-		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
-	let intent = futures::executor::block_on(async {
-		futures::pin_mut!(opening);
-		assert!(futures::poll!(&mut opening).is_pending());
-		// The overlay runs on a task of its own, which these held tasks run.
-		for task in tasks.take() {
-			task.await;
-		}
-		opening.await
-	})
-	.expect("opened")
-	.intent;
-	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
-	// The expiry sweep the open armed would wait out the session's deadline.
-	drop(tasks.take());
+	let intent = cancelled_session(&services, &tasks);
 	let announced_on_resume = || {
 		platform.announced.lock().expect("announced mutex poisoned").clear();
 		services.resume_funding();
@@ -2952,6 +2937,86 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let after = announced_on_resume();
 
 	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// Open a session and cancel it, so it ends before the host records it. The
+/// expiry sweep the open armed is dropped, since it would wait out the
+/// session's deadline.
+fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
+	let opening =
+		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
+	let intent = futures::executor::block_on(async {
+		futures::pin_mut!(opening);
+		assert!(futures::poll!(&mut opening).is_pending());
+		// The overlay runs on a task of its own, which these held tasks run.
+		for task in tasks.take() {
+			task.await;
+		}
+		opening.await
+	})
+	.expect("opened")
+	.intent;
+	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	drop(tasks.take());
+	intent
+}
+
+// The host's session views read what the core has loaded, so a resume that
+// cannot store the sessions keeps trying, and the host hears of them once
+// storage recovers.
+#[test]
+fn funding_resume_is_retried_until_storage_recovers() {
+	let tasks = HeldTasks::default();
+	let storage = stub_platform();
+	let services = funding_services_on(storage.clone(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = cancelled_session(&services, &tasks);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	let set_write_error = |error| {
+		*storage.core_storage_write_error.lock().expect("write error mutex poisoned") = error;
+	};
+	platform.announced.lock().expect("announced mutex poisoned").clear();
+	set_write_error(Some("storage busy"));
+	services.resume_funding();
+	let mut resume = tasks.take().pop().expect("resume task");
+
+	let (while_failing, after_recovery) = futures::executor::block_on(async {
+		assert!(futures::poll!(&mut resume).is_pending());
+		let while_failing = announced();
+		set_write_error(None);
+		resume.await;
+		(while_failing, announced())
+	});
+
+	assert_eq!((while_failing, after_recovery), (Vec::new(), vec![intent]));
+}
+
+// Sessions a newer app stored stay unreadable however often the load is
+// retried, so resume stops at once and leaves them for that app.
+#[test]
+fn funding_resume_stops_at_sessions_of_a_newer_format() {
+	let tasks = HeldTasks::default();
+	let storage = stub_platform();
+	let newer = u16::MAX.encode();
+	futures::executor::block_on(
+		storage.write_core_storage(CoreStorageKey::FundingSessions, newer.clone()),
+	)
+	.expect("written");
+	let services = funding_services_on(storage.clone(), tasks.spawner());
+	services.resume_funding();
+	let mut resume = tasks.take().pop().expect("resume task");
+
+	let finished = futures::executor::block_on(async { futures::poll!(&mut resume).is_ready() });
+
+	assert_eq!(
+		(
+			finished,
+			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
+		),
+		(true, Ok(Some(newer)))
+	);
 }
 
 /// A funding overlay that, while it is up, records how many sessions the

@@ -24,6 +24,7 @@
 
 use core::{
 	net::SocketAddr,
+	ops::ControlFlow,
 	sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 	time::Duration,
 };
@@ -339,60 +340,76 @@ async fn writer_loop(
 	pending_dropped: Arc<AtomicU64>,
 	queued_bytes: Arc<AtomicUsize>,
 ) {
-	let mut backoff = RECONNECT_PAUSES;
+	let mut pauses = RECONNECT_PAUSES;
 	loop {
-		let Some(stream) = dial(url.as_str(), &addrs).await else {
-			tokio::time::sleep(backoff.next_pause()).await;
-			// The sink was dropped while we were retrying: give up.
-			if inbox.is_closed() {
-				return;
-			}
-			continue;
+		let delivered = match dial(url.as_str(), &addrs).await {
+			Some(stream) => {
+				match forward(stream, &mut inbox, &dropped, &pending_dropped, &queued_bytes).await {
+					ControlFlow::Break(()) => return,
+					ControlFlow::Continue(delivered) => delivered,
+				}
+			},
+			None => false,
 		};
-		let (mut write, mut read) = stream.split();
-		// Drain queued frames to the wire, and also poll the read half so
-		// tokio-tungstenite answers server pings and observes a Close; being
-		// forward-only, any inbound message is ignored. Reset backoff only on a
-		// *delivered* frame, so an accept-then-close server still backs off
-		// instead of spinning on zero-delay reconnects.
-		loop {
-			tokio::select! {
-				queued = inbox.recv() => match queued {
-					Some(QueuedFrame { line, shed }) => {
-						// Off the queue now: release its bytes from the budget
-						// before the (moving) send so the counter can't drift.
-						queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
-						match write.send(Message::Text(line)).await {
-							Ok(()) => backoff.reset(),
-							Err(_) => {
-								debug!("truapi debug sink: socket closed, reconnecting");
-								// The in-flight line is lost across this reconnect.
-								dropped.fetch_add(1, Ordering::Relaxed);
-								// It carried `shed` earlier drops that therefore
-								// never reached the debugger: make them pending
-								// again (with this frame) so the next delivered
-								// envelope still reports the whole gap.
-								pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
-								break;
-							}
-						}
-					}
-					// All senders dropped: the sink is gone, so is the host. Done.
-					None => return,
-				},
-				inbound = read.next() => match inbound {
-					Some(Ok(_)) => {} // forward-only: ignore any inbound message
-					Some(Err(_)) | None => {
-						debug!("truapi debug sink: read side closed, reconnecting");
-						break;
-					}
-				},
-			}
+		// Start over only after a *delivered* frame, so an accept-then-close
+		// server still backs off instead of spinning on zero-delay reconnects.
+		if delivered {
+			pauses.reset();
 		}
-		// Reconnect after an established socket dropped: back off here too.
-		tokio::time::sleep(backoff.next_pause()).await;
+		tokio::time::sleep(pauses.next_pause()).await;
+		// The sink was dropped while we were waiting to reconnect: give up.
 		if inbox.is_closed() {
 			return;
+		}
+	}
+}
+
+/// Drain queued frames to `stream`. Breaks once the sink is dropped, and
+/// continues with whether any frame got through once the socket closes.
+async fn forward(
+	stream: WebSocketStream<TcpStream>,
+	inbox: &mut mpsc::Receiver<QueuedFrame>,
+	dropped: &AtomicU64,
+	pending_dropped: &AtomicU64,
+	queued_bytes: &AtomicUsize,
+) -> ControlFlow<(), bool> {
+	let (mut write, mut read) = stream.split();
+	let mut delivered = false;
+	// Drain queued frames to the wire, and also poll the read half so
+	// tokio-tungstenite answers server pings and observes a Close; being
+	// forward-only, any inbound message is ignored.
+	loop {
+		tokio::select! {
+			queued = inbox.recv() => match queued {
+				Some(QueuedFrame { line, shed }) => {
+					// Off the queue now: release its bytes from the budget
+					// before the (moving) send so the counter can't drift.
+					queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
+					match write.send(Message::Text(line)).await {
+						Ok(()) => delivered = true,
+						Err(_) => {
+							debug!("truapi debug sink: socket closed, reconnecting");
+							// The in-flight line is lost across this reconnect.
+							dropped.fetch_add(1, Ordering::Relaxed);
+							// It carried `shed` earlier drops that therefore
+							// never reached the debugger: make them pending
+							// again (with this frame) so the next delivered
+							// envelope still reports the whole gap.
+							pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
+							return ControlFlow::Continue(delivered);
+						}
+					}
+				}
+				// All senders dropped: the sink is gone, so is the host. Done.
+				None => return ControlFlow::Break(()),
+			},
+			inbound = read.next() => match inbound {
+				Some(Ok(_)) => {} // forward-only: ignore any inbound message
+				Some(Err(_)) | None => {
+					debug!("truapi debug sink: read side closed, reconnecting");
+					return ControlFlow::Continue(delivered);
+				}
+			},
 		}
 	}
 }

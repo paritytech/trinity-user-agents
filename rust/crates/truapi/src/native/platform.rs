@@ -1,4 +1,4 @@
-use core::{iter, time::Duration};
+use core::{ops::ControlFlow, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -24,7 +24,7 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
-	time::{RealTimer, Timer, retry},
+	time::{RealTimer, retry_after},
 };
 
 use super::{
@@ -517,7 +517,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: usize = 5;
+const PREIMAGE_FAST_RETRIES: u32 = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -541,7 +541,7 @@ impl PreimageHost for CallbackPlatform {
 			};
 			let found = stream::iter(retry.then_some(key))
 				.then(move |key| lookup_until_found(callbacks.clone(), key))
-				.map(|found| found.map_err(v01::GenericError::from));
+				.map(|found| found.map(Some).map_err(v01::GenericError::from));
 			let current = current.map_err(v01::GenericError::from);
 			stream::once(future::ready(current)).chain(stream::select(rx, found))
 		}
@@ -555,28 +555,31 @@ impl PreimageHost for CallbackPlatform {
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
-) -> Result<Option<Vec<u8>>, HostRejection> {
+) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
-	// The lookup that missed was the first attempt, so the first retry waits
-	// too, and `retry` takes the pauses between the retries after it.
-	RealTimer.sleep(PREIMAGE_RETRY_PAUSE_FAST).await;
-	let pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES - 1)
-		.chain(iter::repeat(PREIMAGE_RETRY_PAUSE_SLOW));
 	let mut retries = 0u32;
-	let found = retry(
+	let found = retry_after(
+		(),
 		&RealTimer,
-		pauses,
-		|| {
-			retries += 1;
-			callbacks.lookup_preimage(digest.to_vec()).map(move |looked_up| {
-				looked_up.map(|value| value.filter(|bytes| preimage_key(bytes) == digest))
-			})
+		|| async {
+			match callbacks.lookup_preimage(digest.to_vec()).await {
+				Ok(Some(value)) if preimage_key(&value) == digest => ControlFlow::Break(Ok(value)),
+				Ok(_) => ControlFlow::Continue(()),
+				Err(rejection) => ControlFlow::Break(Err(rejection)),
+			}
 		},
-		|found, _| matches!(found, Ok(None)),
+		|()| {
+			retries += 1;
+			if retries <= PREIMAGE_FAST_RETRIES {
+				PREIMAGE_RETRY_PAUSE_FAST
+			} else {
+				PREIMAGE_RETRY_PAUSE_SLOW
+			}
+		},
 	)
 	.await;
-	if let Ok(Some(_)) = found {
+	if found.is_ok() {
 		callbacks.on_core_log(
 			"truapi.native.preimage.found".to_string(),
 			format!("{key_hex} on retry {retries}"),

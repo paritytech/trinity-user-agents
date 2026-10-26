@@ -14,6 +14,7 @@
 //! Message size, outbound queues, authenticated connections and pending
 //! handshakes are bounded to contain a misbehaving local peer.
 
+use core::{future::ready, ops::ControlFlow};
 use std::{
 	collections::{HashMap, VecDeque},
 	io,
@@ -42,7 +43,10 @@ use tokio_tungstenite::{
 };
 
 use super::executor::shared_native_executor;
-use crate::{FrameSink, ProductRuntime, time::Backoff};
+use crate::{
+	FrameSink, ProductRuntime,
+	time::{Backoff, RealTimer, retry_after},
+};
 
 // Allow reconnect overlap without one execution exhausting the shared limit.
 const MAX_WS_CONNECTIONS_PER_EXECUTION: usize = 8;
@@ -482,7 +486,6 @@ async fn accept_loop(
 	let mut setup_tasks: VecDeque<tokio::task::JoinHandle<()>> = VecDeque::new();
 	// Absent while a lost listener waits to be bound again on the same port.
 	let mut listener = Some(listener);
-	let mut relisten_backoff = RELISTEN_PAUSES;
 	loop {
 		tokio::select! {
 			// Shutdown first, so a stopping loop never binds its port again.
@@ -533,21 +536,33 @@ async fn accept_loop(
 					connection_setup(stream, peer, registry, logger).await;
 				}));
 			}
-			_ = tokio::time::sleep(relisten_backoff.peek()), if listener.is_none() => {
-				match bind_loopback(port).and_then(TcpListener::from_std) {
-					Ok(rebound) => {
-						logger("truapi.ws_bridge.relistened", &format!("port={port}"));
-						listener = Some(rebound);
-						relisten_backoff.reset();
-					}
-					Err(err) => {
-						logger("truapi.ws_bridge.relisten_failed", &err.to_string());
-						relisten_backoff.next_pause();
-					}
-				}
+			rebound = rebind(port, &logger), if listener.is_none() => {
+				logger("truapi.ws_bridge.relistened", &format!("port={port}"));
+				listener = Some(rebound);
 			}
 		}
 	}
+}
+
+/// Bind `port` again for a listener that was lost. Losing it counts as the
+/// first failure, so even the first bind waits for a pause.
+async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
+	let mut pauses = RELISTEN_PAUSES;
+	retry_after(
+		(),
+		&RealTimer,
+		|| {
+			ready(match bind_loopback(port).and_then(TcpListener::from_std) {
+				Ok(listener) => ControlFlow::Break(listener),
+				Err(err) => {
+					logger("truapi.ws_bridge.relisten_failed", &err.to_string());
+					ControlFlow::Continue(())
+				},
+			})
+		},
+		|()| pauses.next_pause(),
+	)
+	.await
 }
 
 async fn connection_setup(
