@@ -7,9 +7,10 @@ use futures::{StreamExt, stream::BoxStream};
 
 use super::{
 	dao,
+	handoff::{HandOffError, HandoffRequest, handoff_slots, record_handoff},
 	holding::{HeldItem, record_holdings},
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver},
+	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
 		nft_domain, plan_transfers, progress_of, record_inputs,
@@ -33,6 +34,8 @@ pub struct NftLedgerDeps {
 	pub keys: Arc<dyn ItemKeyDeriver>,
 	/// Registers and follows the transfers of items.
 	pub durable: Arc<DurableTxEngine>,
+	/// Exports the secrets of items handed off.
+	pub secrets: Arc<dyn ItemSecrets>,
 }
 
 /// Layer 1's store of purses and their items.
@@ -42,13 +45,14 @@ pub struct NftLedger {
 	installation: Arc<dyn InstallationIdProvider>,
 	keys: Arc<dyn ItemKeyDeriver>,
 	durable: Arc<DurableTxEngine>,
+	secrets: Arc<dyn ItemSecrets>,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable } = deps;
-		Self { db, installation, keys, durable }
+		let NftLedgerDeps { db, installation, keys, durable, secrets } = deps;
+		Self { db, installation, keys, durable, secrets }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
@@ -166,6 +170,45 @@ impl NftLedger {
 			.observe_group(&nft_domain(), operation.group())
 			.map(|transfers| transfers.and_then(progress_of))
 			.boxed()
+	}
+
+	/// Hands the keys of `request` off: exports their secrets, lets `seal` turn
+	/// them into the caller's result, then records the keys as handed off under
+	/// the tag in one write that checks them again. The keys are spent from
+	/// then on. Returns what `seal` returned; on any refusal nothing is written.
+	pub async fn hand_off<T, E, Seal>(
+		&self,
+		request: HandoffRequest,
+		seal: Seal,
+	) -> Result<T, HandOffError<E>>
+	where
+		Seal: FnOnce(&[ItemSecret]) -> Result<T, E>,
+		E: Send + 'static,
+	{
+		if request.keys.is_empty() {
+			return Err(HandOffError::NoItems);
+		}
+		let secrets = self.secrets_of(&request).await?;
+		let sealed = seal(&secrets).map_err(HandOffError::Seal)?;
+		drop(secrets);
+		self.db
+			.write_unless_refused(move |tx| Ok(record_handoff(tx, &request)))
+			.await??;
+		Ok(sealed)
+	}
+
+	/// The secret of each key of `request`, once the read checks pass.
+	async fn secrets_of<E: Send + 'static>(
+		&self,
+		request: &HandoffRequest,
+	) -> Result<Vec<ItemSecret>, HandOffError<E>> {
+		let read_request = HandoffRequest {
+			from: request.from,
+			keys: request.keys.clone(),
+			tag: request.tag.clone(),
+		};
+		let slots = self.db.read(move |conn| Ok(handoff_slots(conn, &read_request))).await??;
+		self.secrets.item_secrets(&slots).map_err(HandOffError::Secrets)
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

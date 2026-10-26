@@ -7,8 +7,8 @@ use truapi::latest::GenericError;
 
 use super::{
 	keys::{
-		ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy,
-		item_signer_from_entropy,
+		ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot,
+		item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
 	},
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
@@ -47,6 +47,7 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 		durable: unbuilt_transfers_engine(db),
+		secrets: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 	}
 }
 
@@ -97,6 +98,13 @@ pub struct FixedEntropy(pub Vec<u8>);
 impl ItemKeyDeriver for FixedEntropy {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
 		item_keys_from_entropy(&self.0, slots)
+			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
+	}
+}
+
+impl ItemSecrets for FixedEntropy {
+	fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
+		item_secrets_from_entropy(&self.0, slots)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
 }

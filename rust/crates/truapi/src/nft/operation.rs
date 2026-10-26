@@ -10,11 +10,12 @@ use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
 use super::{
-	dao::{self, KeyStanding},
+	dao,
 	item::{AllocateItemsError, Allocation, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver, ItemSlot},
+	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
 	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
 	durable::{
@@ -71,6 +72,15 @@ pub enum StartOperationError {
 	Db(#[from] DbError),
 }
 
+impl From<ItemRefusal> for StartOperationError {
+	fn from(refusal: ItemRefusal) -> Self {
+		match refusal {
+			ItemRefusal::NotFound(key) => Self::ItemNotFound(key),
+			ItemRefusal::Unavailable(key) => Self::ItemUnavailable(key),
+		}
+	}
+}
+
 /// Where the transfers of an operation take their items.
 pub enum TransferDestinations {
 	/// Fresh keys allocated in this purse, one per item.
@@ -111,7 +121,7 @@ pub fn plan_transfers(
 	if group_exists(tx, &nft_domain(), request.operation.group())? {
 		return Err(StartOperationError::OperationExists);
 	}
-	let sources = idle_items(tx, request.from, &request.items)?;
+	let sources = idle_items(tx, request.from, &request.items)??;
 	let destinations = match request.destinations {
 		TransferDestinations::AllocatedIn(purse) => {
 			allocate_destinations(tx, purse, sources.len(), keys)?
@@ -137,13 +147,6 @@ pub fn plan_transfers(
 		.collect())
 }
 
-/// An item that holds an NFT and that nothing spends.
-struct IdleItem {
-	key: ItemKey,
-	slot: ItemSlot,
-	instance: u64,
-}
-
 /// `item_count` fresh keys in `purse`.
 fn allocate_destinations(
 	tx: &Transaction<'_>,
@@ -155,25 +158,6 @@ fn allocate_destinations(
 	let count = count.ok_or(StartOperationError::NoItems)?;
 	let allocation = Allocation { purse, installation: keys.installation, count };
 	Ok(allocate_items_in(tx, allocation, keys.deriver)??)
-}
-
-/// Each of `items` with its slot and instance, in order, when every one is
-/// idle in `purse`. Reads every standing in one query.
-fn idle_items(
-	tx: &Transaction<'_>,
-	purse: PurseId,
-	items: &BTreeSet<ItemKey>,
-) -> Result<Vec<IdleItem>, StartOperationError> {
-	let keys: Vec<ItemKey> = items.iter().copied().collect();
-	let standings = dao::key_standings(tx, purse, &keys)?;
-	let idle_item = |key: &ItemKey| match standings.get(key) {
-		Some(KeyStanding::Idle { instance, slot }) => {
-			Ok(IdleItem { key: *key, slot: *slot, instance: *instance })
-		},
-		Some(KeyStanding::Spent) => Err(StartOperationError::ItemUnavailable(*key)),
-		None => Err(StartOperationError::ItemNotFound(*key)),
-	};
-	keys.iter().map(idle_item).collect()
 }
 
 /// Records that the transfer with each id of `ids` spends the item at the same

@@ -1444,6 +1444,17 @@ impl crate::nft::ItemSigner for SigningHost {
 	}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft::ItemSecrets for SigningHost {
+	fn item_secrets(
+		&self,
+		slots: &[crate::nft::ItemSlot],
+	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		crate::nft::item_secrets_from_entropy(&entropy, slots).map_err(AuthorityError::from)
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	mod activation;

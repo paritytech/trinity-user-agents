@@ -955,8 +955,10 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
-		let keys = Arc::new(Arc::downgrade(&self.signing_host));
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable };
+		let signing_host = Arc::downgrade(&self.signing_host);
+		let keys = Arc::new(signing_host.clone());
+		let secrets = Arc::new(signing_host);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets };
 		let ledger = crate::nft::NftLedger::new(deps);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);

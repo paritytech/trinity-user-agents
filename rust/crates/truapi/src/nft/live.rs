@@ -137,7 +137,8 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let engine =
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
-	let ledger = NftLedger::new(NftLedgerDeps { db, installation, keys, durable: engine });
+	let secrets = keys.clone();
+	let ledger = NftLedger::new(NftLedgerDeps { db, installation, keys, durable: engine, secrets });
 	let tracking = super::HoldingTrackerDeps {
 		ledger: ledger.clone(),
 		storage,
