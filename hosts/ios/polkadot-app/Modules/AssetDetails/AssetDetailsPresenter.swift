@@ -178,10 +178,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         view?.didReceive(isRecoveryInProgress: isRecoveryInProgress)
     }
 
-    func didReceive(isAccountBackupPending: Bool) {
-        view?.didReceive(isAccountBackupPending: isAccountBackupPending)
-    }
-
     func didReceive(showsRecoveredBalance: Bool) {
         if showsRecoveredBalance {
             view?.didShowBackupNotification()

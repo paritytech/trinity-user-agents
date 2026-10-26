@@ -128,12 +128,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         viewModel.isUpdating = isRecoveryInProgress
     }
 
-    func didReceive(isAccountBackupPending: Bool) {
-        withAnimation(.easeInOut) {
-            viewModel.showsAccountBackupPending = isAccountBackupPending
-        }
-    }
-
     func didShowBackupNotification() {
         guard animatesBackupNotificationUpdates else {
             viewModel.showsBackupNotification = true

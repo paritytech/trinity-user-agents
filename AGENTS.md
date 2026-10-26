@@ -13,7 +13,8 @@ rust/crates/
                          and, on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
                          scheduled ones through their submission policies; its `nft`
-                         (purse records) and `nft_purse` (the NFT purses RFC over them)
+                         (purse records, item keys, and the tracker of what they hold on
+                         Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
@@ -189,11 +190,17 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   the same class of drift; `make android-check` does it locally. The embedding
   apps are compiled by neither.
 - Both compile gates are path-filtered from one place. The `changes` job in
-  `ci.yml` computes `sdk_swift`, `sdk_kotlin`, `needs_changeset`, and
+  `ci.yml` evaluates `.github/hosts.json` with `scripts/ci-gates.py` into a
+  gate per host and per package (`package_swift`, `package_kotlin`,
+  `package_provider_kotlin`), alongside its own `needs_changeset` and
   `adds_changeset`, and each gated job reads the output. Because neither
-  binding set is committed, a filter has to name every
+  binding set is committed, a package's list has to name every
   crate its bindings are generated from, since a protocol change leaves no
-  `ios/` or `android/` diff to key on. Every job in `ci.yml` is aggregated by
+  `ios/` or `android/` diff to key on. The iOS and Android apps are
+  `ios-app.yml` and `android-app.yml`, which `ci.yml` calls on their host's
+  gates; `ios-main.yml` runs the iOS suite for a push to main, on path filters
+  `ci-gates.py --check` holds to the registry, and the label builds start from
+  `on-label.yml`. Every job in `ci.yml` is aggregated by
   `ci-status`, which is the check worth requiring: a job skipped by its filter
   counts as a pass, so a gate cannot stall a PR it does not apply to.
   `Changeset guard` reads live PR titles and labels, so re-running failed jobs
@@ -206,8 +213,8 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   main's entries; release and publish jobs restore without saving. A composite
   action that needs a Rust cache calls Swatinem/rust-cache directly with the
   same main-only `save-if`, because a post step two composites deep loses its
-  inputs and never saves. `prune-caches.yml` runs after each CI and iOS CI
-  push to main and deletes Rust entries on main that a newer entry of the same
+  inputs and never saves. `prune-caches.yml` runs after each CI and iOS
+  app push to main and deletes Rust entries on main that a newer entry of the same
   key family supersedes, so a `Cargo.lock` or toolchain change does not leave
   the old set holding cache space until eviction. See `docs/RELEASE_PROCESS.md` for
   label setup and release recovery.

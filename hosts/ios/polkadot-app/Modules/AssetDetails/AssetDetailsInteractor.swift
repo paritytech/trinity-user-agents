@@ -29,7 +29,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
 
     private var recoveryStateTask: Task<Void, Error>?
     private var recoveredBalanceTask: Task<Void, Error>?
-    private var accountBackupStatusTask: Task<Void, Error>?
 
     private let fundingOpener: FundingOpening
     private var fundingTasks: [FundingDirection: Task<Void, Never>] = [:]
@@ -58,7 +57,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         balanceSubscriptionTask?.cancel()
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
-        accountBackupStatusTask?.cancel()
         priceSubscriptionTask?.cancel()
         fundingTasks.values.forEach { $0.cancel() }
     }
@@ -70,7 +68,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToBalances()
         subscribeToRecoveryState()
         subscribeToRecoveredBalance()
-        subscribeToAccountBackupStatus()
     }
 
     func triggerSync() {
@@ -173,15 +170,6 @@ private extension AssetDetailsInteractor {
         recoveredBalanceTask = Task { [weak presenter, coinageBackupSyncService] in
             for try await shows in coinageBackupSyncService.showsRecoveredBalanceStream {
                 await presenter?.didReceive(showsRecoveredBalance: shows)
-            }
-        }
-    }
-
-    func subscribeToAccountBackupStatus() {
-        accountBackupStatusTask?.cancel()
-        accountBackupStatusTask = Task { [weak presenter, coinageService] in
-            for try await status in coinageService.subscribeAccountBackupStatus() {
-                await presenter?.didReceive(isAccountBackupPending: status.needsAttention)
             }
         }
     }

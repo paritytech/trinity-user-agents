@@ -16,14 +16,65 @@ pub use driver::{
 };
 
 use crate::{
-	host_logic::product_account::derive_root_keypair_from_entropy,
+	host_logic::product_account::{ProductAccountError, derive_root_keypair_from_entropy},
 	platform::{CoreStorage, CoreStorageKey, ProductId},
+	runtime::{
+		authority::AuthorityError, statement_allowance::StatementAllowanceError,
+		statement_store_rpc::StatementStoreRpcClientError,
+	},
 };
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 
-use super::SigningHost;
+use super::{SigningHost, allowance::AllowanceAllocationError};
+use truapi::latest::GenericError;
+
+/// Failure reading renewal targets or preparing a statement-store renewal pass.
+#[derive(Debug, thiserror::Error)]
+pub enum StatementRenewalError {
+	/// The active authority could not supply the renewal identity.
+	#[error(transparent)]
+	Authority(#[from] AuthorityError),
+	/// A tracked account could not be derived.
+	#[error(transparent)]
+	ProductAccount(#[from] ProductAccountError),
+	/// The clock could not supply the current allowance period.
+	#[error(transparent)]
+	Clock(#[from] AllowanceAllocationError),
+	/// The chain could not be opened for a renewal pass.
+	#[error(transparent)]
+	RpcClient(#[from] StatementStoreRpcClientError),
+	/// Chain state or allowance preparation failed.
+	#[error(transparent)]
+	Allowance(#[from] StatementAllowanceError),
+	/// The persisted targets could not be read.
+	#[error("renewal ledger read failed: {0}")]
+	ReadLedger(#[source] GenericError),
+	/// The persisted targets could not be written.
+	#[error("renewal ledger write failed: {0}")]
+	WriteLedger(#[source] GenericError),
+	/// Persisted targets are not valid SCALE values.
+	#[error("invalid persisted renewal targets: {0}")]
+	DecodeLedger(#[from] parity_scale_codec::Error),
+	/// Bytes after a complete target list make the ledger invalid.
+	#[error("invalid persisted renewal targets: trailing bytes")]
+	TrailingLedgerBytes,
+	/// The session ended before ring membership could be resolved.
+	#[error("no active session for statement-store renewal")]
+	NoActiveSession,
+	/// Renewal requires a personhood membership for its allowance proof.
+	#[error(
+		"signing account is not a member of any personhood ring; cannot renew statement-store allowances"
+	)]
+	MissingPersonhoodMembership,
+}
+
+impl From<StatementRenewalError> for GenericError {
+	fn from(error: StatementRenewalError) -> Self {
+		Self { reason: error.to_string() }
+	}
+}
 
 /// A statement account or derivation recipe the wallet keeps renewed.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -70,10 +121,8 @@ impl TrackedStatementRenewalTarget {
 
 /// Root public key of the identity rooted at `entropy`, used to own raw ledger
 /// entries.
-fn owner_key(entropy: &[u8]) -> Result<[u8; 32], String> {
-	derive_root_keypair_from_entropy(entropy)
-		.map(|pair| pair.public.to_bytes())
-		.map_err(|err| err.to_string())
+fn owner_key(entropy: &[u8]) -> Result<[u8; 32], StatementRenewalError> {
+	Ok(derive_root_keypair_from_entropy(entropy)?.public.to_bytes())
 }
 
 /// Renewal coordination state owned by [`SigningHost`].
@@ -103,11 +152,11 @@ impl RenewalState {
 /// Discard unreadable entries; later allocations rebuild the ledger.
 async fn read_entries(
 	storage: &(impl CoreStorage + ?Sized),
-) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let Some(blob) = storage
 		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
 		.await
-		.map_err(|err| format!("renewal ledger read failed: {}", err.reason))?
+		.map_err(StatementRenewalError::ReadLedger)?
 	else {
 		return Ok(Vec::new());
 	};
@@ -127,7 +176,7 @@ async fn track_targets(
 	ledger_lock: &Mutex<()>,
 	owner: [u8; 32],
 	new_targets: Vec<StatementRenewalTarget>,
-) -> Result<(), String> {
+) -> Result<(), StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
 	let mut entries = read_entries(storage).await?;
 	let mut changed = false;
@@ -147,19 +196,20 @@ async fn track_targets(
 async fn write_entries(
 	storage: &(impl CoreStorage + ?Sized),
 	entries: &[TrackedStatementRenewalTarget],
-) -> Result<(), String> {
+) -> Result<(), StatementRenewalError> {
 	storage
 		.write_core_storage(CoreStorageKey::StatementRenewalTargets, entries.encode())
 		.await
-		.map_err(|err| format!("renewal ledger write failed: {}", err.reason))
+		.map_err(StatementRenewalError::WriteLedger)
 }
 
-fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+fn decode_entries(
+	blob: &[u8],
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let mut input = blob;
-	let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)
-		.map_err(|err| format!("invalid persisted renewal targets: {err}"))?;
+	let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)?;
 	if !input.is_empty() {
-		return Err("invalid persisted renewal targets: trailing bytes".to_string());
+		return Err(StatementRenewalError::TrailingLedgerBytes);
 	}
 	Ok(entries)
 }
@@ -168,8 +218,8 @@ fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, Str
 pub async fn track(
 	signing_host: &SigningHost,
 	targets: Vec<StatementRenewalTarget>,
-) -> Result<(), String> {
-	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+) -> Result<(), StatementRenewalError> {
+	let entropy = signing_host.root_entropy()?;
 	track_targets(
 		signing_host.platform.as_ref(),
 		signing_host.renewal.ledger_lock(),

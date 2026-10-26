@@ -84,9 +84,6 @@ struct AssetDetailsView: View {
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsAccountBackupPending {
-                AccountBackupPendingView()
-            }
             // The Total panel tucks under the tiles.
             VStack(spacing: -Self.panelTuck) {
                 Group {
