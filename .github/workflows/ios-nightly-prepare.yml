@@ -77,7 +77,9 @@ jobs:
   # The night itself, in this run, so a failed leg is re-run in place.
   nightly:
     needs: prepare
-    if: ${{ !cancelled() && needs.prepare.outputs.should_release == 'true' }}
+    # A failed prepare can leave should_release set after a step that pushed
+    # the branch or opened the pull request failed, so its result is checked too.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.should_release == 'true' }}
     uses: ./.github/workflows/ios-nightly.yml
     secrets: inherit
     permissions:

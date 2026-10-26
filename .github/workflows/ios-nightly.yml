@@ -30,14 +30,25 @@ jobs:
   # Device and simulator slices, since TestFlight archives for a device. Every
   # leg unpacks this rather than building its own. The cache is the pull request
   # gate's, which main's runs of ios-main.yml write; this only restores it.
+  #
+  # Every leg builds the commit this job built, not the branch's head, so a
+  # merge during the night or a re-run the next morning still pairs the core
+  # with the sources it was generated from, and a re-run still finds its
+  # commit once the release branch is deleted.
   core:
     name: Build the in-tree core
     runs-on: parity-macos-large
     timeout-minutes: 45
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
+
+      - name: Record the commit
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: ./.github/actions/mac-preflight
         with:
@@ -96,6 +107,7 @@ jobs:
       build_configuration: "Nightly"
       distribute_to_external_group: true
       external_group_name: "Daily test builds"
+      ref: ${{ needs.core.outputs.sha }}
       core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -124,7 +136,7 @@ jobs:
     permissions:
       contents: write
     with:
-      ref: ${{ inputs.release_branch }}
+      ref: ${{ needs.core.outputs.sha }}
       core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
@@ -165,12 +177,21 @@ jobs:
     if: false
     needs: core
     uses: ./.github/workflows/ios-build-distribute.yml
+    # Checked when the run starts, held or not, so it needs the same grant as
+    # the TestFlight leg.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+      statuses: write
     with:
       release_branch: ${{ inputs.release_branch }}
       release_pr_number: ${{ inputs.release_pr_number }}
       build_configuration: "Safetynet"
       distribute_to_external_group: true
       external_group_name: "Daily test builds"
+      ref: ${{ needs.core.outputs.sha }}
       core_artifact: ios-nightly-core-${{ github.run_id }}
     secrets:
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
