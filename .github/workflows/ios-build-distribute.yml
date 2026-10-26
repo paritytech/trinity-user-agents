@@ -94,18 +94,14 @@ jobs:
     # number needs fastlane and Xcode, and the hosted macOS queue can hold this
     # short job for hours.
     runs-on: parity-macos-large
-    # actions: read is what lets the pull request lookup below find the run
-    # this one follows. check_build_result declares it for the same call.
     permissions:
       contents: read
-      actions: read
       pull-requests: read
     outputs:
       build_number: ${{ steps.build_version.outputs.build_number }}
       marketing_version: ${{ steps.build_version.outputs.marketing_version }}
       release_notes: ${{ steps.release_notes.outputs.notes }}
-      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes
-        || steps.collect_prs_since_last_build.outputs.release_notes }}
+      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes }}
     steps:
       # Safetynet ships from the app repository, which produces it from its
       # nightly pipeline. Every upload to Apple passes through this workflow,
@@ -222,28 +218,17 @@ jobs:
           asc_key_base64: ${{ secrets.ASC_KEY_BASE64 }}
 
       # A release branch carries the pull requests that main does not yet have,
-      # so the diff between the two is the list.
+      # so the diff between the two is the list the release announcement shows.
+      # The nightly announcement links to its prerelease notes instead.
       - name: Collect merged PRs from the release branch
         id: collect_prs_markdown
-        if: inputs.release_branch != env.MAIN_BRANCH || inputs.build_configuration != 'Nightly'
+        if: inputs.build_configuration != 'Nightly'
         uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
         with:
           github_token: ${{ github.token }}
           src_ref: ${{ inputs.release_branch }}
           dst_ref: ${{ env.MAIN_BRANCH }}
           release_notes_format: markdown
-
-      # A nightly builds main itself, where that diff compares the branch with
-      # itself and is empty by construction. The range is the one since the last
-      # successful run of this pipeline instead. Narrowed to the nightly: a
-      # Release built straight from main reaches here too, and it carries its
-      # own notes rather than a range since the last nightly.
-      - name: Collect merged PRs since the last successful build
-        id: collect_prs_since_last_build
-        if: inputs.release_branch == env.MAIN_BRANCH && inputs.build_configuration == 'Nightly'
-        uses: ./.github/actions/collect-prs-since-last-build
-        with:
-          github_token: ${{ github.token }}
 
   check_and_build:
     # The configuration is part of the name so that a caller invoking this workflow

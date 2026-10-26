@@ -11,6 +11,10 @@ struct CoinAllocatorTests {
 
     init() {
         allocator = CoinAllocator(
+            installationProvider: CoinageBackedUpInstallationProvider(
+                installationStore: store,
+                backupObserver: StubAccountBackupObserver(status: .completed)
+            ),
             installationStore: store,
             coinRepository: AnyDataProviderRepository(StubRepository<Coin>()),
             keyFactory: CoinKeypairFactory(entropyManager: MockEntropyManager(entropy: Data(

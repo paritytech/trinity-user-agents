@@ -9,15 +9,21 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private let tabFactory: TabFactoryProtocol
     private let moduleNavigator: ModuleNavigating
     private weak var presentedSettings: UINavigationController?
+    /// Injected rather than read from the tab bar's view, which leaves the window under a full-screen modal.
+    private weak var windowScene: UIWindowScene?
+    private var paymentsSetupNotice: TopNoticeWindow?
+    private var isPaymentsSetupNoticeDismissed = false
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
         tabFactory: TabFactoryProtocol,
-        moduleNavigator: ModuleNavigating
+        moduleNavigator: ModuleNavigating,
+        windowScene: UIWindowScene?
     ) {
         self.serviceCoordinator = serviceCoordinator
         self.tabFactory = tabFactory
         self.moduleNavigator = moduleNavigator
+        self.windowScene = windowScene
     }
 
     func showPolkadotSignIn(with url: URL, view: MainTabBarViewProtocol?) {
@@ -31,6 +37,24 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
             return
         }
         view?.controller.present(signInView.controller, animated: true)
+    }
+
+    func showPaymentsSetupNotice(isVisible: Bool) {
+        guard isVisible else {
+            paymentsSetupNotice?.hide()
+            isPaymentsSetupNoticeDismissed = false
+            return
+        }
+        guard !isPaymentsSetupNoticeDismissed, let windowScene else {
+            return
+        }
+
+        let notice = paymentsSetupNotice ?? TopNoticeWindow(windowScene: windowScene)
+        paymentsSetupNotice = notice
+        notice.show(PaymentsSetupNoticeView { [weak self] in
+            self?.isPaymentsSetupNoticeDismissed = true
+            self?.paymentsSetupNotice?.hide()
+        })
     }
 
     func openProduct(productId: ProductId) {

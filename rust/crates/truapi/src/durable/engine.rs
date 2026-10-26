@@ -21,12 +21,12 @@ use super::{
 	model::{DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId},
 	oracle::DurableRegistry,
 	ownership::Ownership,
-	time::Timer,
 };
 use crate::{
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
 	subscription::Spawner,
+	time::Timer,
 };
 use executor::SubmissionExecutor;
 use wake::WakeSignal;
