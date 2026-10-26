@@ -213,6 +213,18 @@ struct ChainSocketTests {
         #expect(fixture.scheduler.pendingDelays == [Timing.pingInterval, Timing.viabilityTimeout])
     }
 
+    @Test func pathLostAgainAfterReturningClosesTheSocket() throws {
+        let fixture = try makeOpenSocket()
+
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.socket.handle(.viabilityChanged(true))
+        fixture.socket.handle(.viabilityChanged(false))
+        fixture.scheduler.fire(after: Timing.viabilityTimeout)
+
+        #expect(fixture.delegate.closeReasons.count == 1)
+        #expect(fixture.delegate.closeReasons.first?.isPathLost == true)
+    }
+
     @Test func lostPathWhileConnectingIsLeftToTheConnectTimeout() throws {
         let fixture = try makeSocket()
         fixture.socket.open()
@@ -229,6 +241,15 @@ struct ChainSocketTests {
 
         #expect(fixture.connection.pingCount == 0)
         #expect(fixture.delegate.closeReasons.isEmpty)
+    }
+
+    @Test func closeDropsThePendingPathDeadline() throws {
+        let fixture = try makeOpenSocket()
+        fixture.socket.handle(.viabilityChanged(false))
+
+        fixture.socket.close()
+
+        #expect(fixture.scheduler.pendingDelays.isEmpty)
     }
 
     @Test func probeIgnoredOnceClosed() throws {

@@ -190,7 +190,7 @@ public final class ChainSocket: ChainSocketProtocol, @unchecked Sendable {
         case .viabilityChanged(false):
             closeUnlessViableAgain()
         case .viabilityChanged(true):
-            state.withLockUnchecked { $0.cancelViabilityDeadline() }
+            markPathViable()
         case .reconnectSuggested(false),
              .ping:
             break
@@ -241,6 +241,10 @@ private extension ChainSocket {
 
     func markAlive() {
         state.withLockUnchecked { $0.cancelPongDeadline() }
+    }
+
+    func markPathViable() {
+        state.withLockUnchecked { $0.cancelViabilityDeadline() }
     }
 
     // A ping cannot cross a path the system reports as gone, so the socket waits for the path instead.
