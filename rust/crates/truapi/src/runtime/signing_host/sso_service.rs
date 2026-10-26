@@ -6,7 +6,6 @@ use crate::platform::{
 	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
 	UserConfirmationReview,
 };
-use futures::{FutureExt, pin_mut};
 use tracing::warn;
 use truapi::latest as api;
 
@@ -34,8 +33,8 @@ use crate::{
 	host_logic::product_account::{derive_ring_vrf_domain_entropy, product_public_key_to_address},
 	runtime::{
 		authority::{
-			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
-			SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+			AccountCaller, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+			ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		},
 		sso_service::{Dispatch, SsoReply, SsoRequestContext},
 	},
@@ -83,20 +82,23 @@ impl SigningHostSsoService {
 		}
 	}
 
-	/// The person's answer to `review`, or `None` once the pairing host has
-	/// withdrawn the request, which leaves nothing authorized.
-	async fn prompt(
+	/// Confirm a paired host's request, which is always reviewed, until the
+	/// pairing host withdraws it.
+	async fn review(
 		&self,
 		cx: &SsoRequestContext,
+		product_id: Option<&ProductId>,
 		review: UserConfirmationReview,
-	) -> Option<Result<bool, api::GenericError>> {
-		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
-		let withdrawn = cx.call.cancel().cancelled().fuse();
-		pin_mut!(answer, withdrawn);
-		futures::select_biased! {
-			_ = withdrawn => None,
-			answer = answer => Some(answer),
-		}
+	) -> Result<(), AuthorityError> {
+		self.signing_host
+			.consent
+			.review(
+				&cx.call,
+				AccountCaller::Remote { product_id },
+				self.signing_host.platform.as_ref(),
+				review,
+			)
+			.await
 	}
 
 	/// Run the platform confirmation seam; rejection and failure both refuse
@@ -106,12 +108,7 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		review: UserConfirmationReview,
 	) -> Result<(), String> {
-		match self.prompt(cx, review).await {
-			Some(Ok(true)) => Ok(()),
-			Some(Ok(false)) => Err("Rejected".to_string()),
-			Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
-			None => Err(WITHDRAWN.to_string()),
-		}
+		self.review(cx, None, review).await.map_err(|error| error.to_string())
 	}
 
 	async fn serve_sign(
@@ -396,13 +393,12 @@ impl SigningHostSsoService {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			let confirmed = self
-				.prompt(cx, review)
-				.await
-				.ok_or_else(|| WITHDRAWN.to_string())?
-				.map_err(|err| format!("confirmation failed: {}", err.reason))?;
-			if !confirmed {
-				return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+			match self.review(cx, Some(&request.calling_product_id), review).await {
+				Ok(()) => {},
+				Err(AuthorityError::Rejected) => {
+					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+				},
+				Err(error) => return Err(error.to_string()),
 			}
 
 			self.signing_host
@@ -504,9 +500,8 @@ impl SigningHostSsoService {
 			.sign_vrf_request(
 				&cx.call,
 				&cx.session,
-				&request.calling_product_id,
+				AccountCaller::Remote { product_id: Some(&request.calling_product_id) },
 				request.payload,
-				false,
 			)
 			.await
 			.map_err(api::HostAccountSignVrfError::from)
