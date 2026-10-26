@@ -136,9 +136,9 @@ impl NftLedger {
 	async fn current_installation(
 		&self,
 	) -> Result<InstallationId, RegistrationError<StartOperationError>> {
-		let installation = self.installation.current_installation().await;
-		let unavailable = AllocateItemsError::InstallationUnavailable;
-		installation.map_err(|error| RegistrationError::Hook(unavailable(error).into()))
+		self.installation.current_installation().await.map_err(|error| {
+			RegistrationError::Hook(AllocateItemsError::InstallationUnavailable(error).into())
+		})
 	}
 
 	/// `request` as a durable request whose transfers are planned in its write.
