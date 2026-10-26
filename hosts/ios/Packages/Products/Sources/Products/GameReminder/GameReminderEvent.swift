@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 
 /// One step of a product's game reminder, from booking the alarm to opening the product. Each step names
 /// the product and the game start, so a missed game can be followed through the host.
@@ -54,35 +55,35 @@ public struct GameReminderEvent: Sendable, Equatable {
         self.occurredAt = occurredAt
     }
 
-    /// Shared with the Android host, so both platforms' reminder events filter together.
-    public static let logger = "host.telemetry"
-
     public var name: String {
         "host.reminder.\(step.rawValue)"
     }
 
     /// Times are device wall clock. The alarm rings at the start, so `delay_after_start_ms` is also how
     /// late a step came against the alarm's fire time.
-    public func fields(origin: HostEventOrigin) -> HostEventFields {
-        var tags = origin.tags
-        tags["reminder.product_id"] = productId
+    public func hostEvent(origin: HostEventOrigin) -> HostEvent {
+        var tags = [
+            "host.app_variant": origin.appVariant,
+            "host.platform": "ios",
+            "host.os_version": origin.osVersion,
+            "reminder.product_id": productId
+        ]
+        tags["host.native_app_version"] = origin.appVersion
         tags["reminder.delivery"] = delivery?.rawValue
         tags["reminder.skip_reason"] = skipReason?.rawValue
         tags["reminder.open_source"] = openSource?.rawValue
         tags["host.app_state"] = appState?.rawValue
 
-        var extras = origin.extras
-        extras["reminder.navigated"] = navigated
+        var extras: [String: HostEventValue] = [
+            "app.launch_id": .string(origin.launchID.uuidString.lowercased())
+        ]
+        extras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
+        extras["reminder.navigated"] = navigated.map(HostEventValue.boolean)
         if let startsAt {
-            extras["reminder.starts_at_unix_ms"] = Int64(startsAt.timeIntervalSince1970 * 1_000)
-            extras["reminder.delay_after_start_ms"] = Int64(occurredAt.timeIntervalSince(startsAt) * 1_000)
+            extras["reminder.starts_at_unix_ms"] = .integer(Int(startsAt.timeIntervalSince1970 * 1_000))
+            extras["reminder.delay_after_start_ms"] = .integer(Int(occurredAt.timeIntervalSince(startsAt) * 1_000))
         }
 
-        return HostEventFields(tags: tags, extras: extras)
+        return HostEvent(name: name, tags: tags, extras: extras)
     }
-}
-
-public struct HostEventFields {
-    public let tags: [String: String]
-    public let extras: [String: Any]
 }

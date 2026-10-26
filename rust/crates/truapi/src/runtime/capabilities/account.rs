@@ -31,10 +31,10 @@ use truapi::versioned::IntoLatest;
 use crate::{
 	host_internal::product_manifest::Granted,
 	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, versioning::version, vrf_call_error,
+		ProductRuntimeHost, account_get_authority_error, remote_authority_call,
+		remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
+		ring_vrf_register_error, ring_vrf_sign_error, until_cancelled, validate_vrf_transcript,
+		versioning::version, vrf_call_error,
 	},
 };
 
@@ -55,13 +55,15 @@ impl Account for ProductRuntimeHost {
 					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
 
 				if &owner != self.connection.product_id() {
-					match account_access_authorization(
-						self.connection.platform.as_ref(),
+					let access = self.accounts.consent().account_access(
 						self.connection.product_id(),
 						&owner,
-					)
-					.await
-					.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
+						self.connection.platform.as_ref(),
+					);
+					match until_cancelled(cx, access)
+						.await
+						.map_err(account_get_authority_error)?
+						.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
 					{
 						PermissionAuthorizationStatus::Authorized => {},
 						PermissionAuthorizationStatus::Denied |
@@ -74,20 +76,10 @@ impl Account for ProductRuntimeHost {
 					.subtree_resolution_reaches_account_holder(&session, &owner)
 					.await
 				{
-					let approved = until_cancelled(
-						cx,
-						self.connection.confirm_user_action_if_needed(
-							UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-								product_id: owner.clone(),
-							}),
-						),
-					)
-					.await
-					.map_err(account_get_authority_error)?
-					.map_err(|err| CallError::HostFailure { reason: err.reason })?;
-					if !approved {
-						return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
-					}
+					let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+						product_id: owner.clone(),
+					});
+					self.confirm(cx, review).await.map_err(account_get_authority_error)?;
 				}
 
 				let public_key = self

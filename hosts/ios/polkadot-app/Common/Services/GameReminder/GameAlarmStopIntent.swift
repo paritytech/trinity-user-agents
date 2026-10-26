@@ -1,6 +1,9 @@
 import Foundation
 import AlarmKit
 import AppIntents
+import IssueMonitoring
+import Products
+import UIKit
 
 @available(iOS 26.1, *)
 struct GameAlarmPlayIntent: LiveActivityIntent {
@@ -19,11 +22,17 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         if let productId {
-            // A tap that launches the app can come before the services are up; the center then works on the
-            // same stored reminders.
-            let registered: ProductGameReminderScheduling? = RootDependencyLocator.getDependency()
-            let reminders = registered as? ProductGameReminderCenter ?? ProductGameReminderCenter.makeDefault()
-            reminders.openFromAlarm(productId: productId, startsAt: startsAt)
+            let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
+            var tapped = GameReminderEvent(step: .tapped, productId: productId, startsAt: startsAt)
+            tapped.appState = .init(UIApplication.shared.applicationState)
+            diagnostics.record(tapped)
+
+            let navigated = ProductOpener().open(productId: productId)
+            var opened = GameReminderEvent(step: .productOpened, productId: productId, startsAt: startsAt)
+            opened.openSource = .alarm
+            opened.appState = .init(UIApplication.shared.applicationState)
+            opened.navigated = navigated
+            diagnostics.record(opened)
         }
 
         if let alarmIDString = alarmID,

@@ -15,6 +15,8 @@ protocol ProductGameReminderServicesMaking {
     /// The ids of the alarms ringing now, each time AlarmKit reports a change while the app runs. Never yields
     /// without AlarmKit.
     func alertingAlarms() -> AsyncStream<Set<UUID>>
+    /// The alarms already ringing when the app refreshes its stored reminders.
+    func currentAlertingAlarmIds() -> Set<UUID>
 }
 
 struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
@@ -61,5 +63,13 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    func currentAlertingAlarmIds() -> Set<UUID> {
+        guard #available(iOS 26.1, *),
+              let alarms = try? AlarmManager.shared.alarms else {
+            return []
+        }
+        return Set(alarms.filter { $0.state == .alerting }.map(\.id))
     }
 }

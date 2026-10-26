@@ -5,7 +5,6 @@ import Keystore_iOS
 import Products
 import SwiftUI
 import Individuality
-import IssueMonitoring
 
 /// The AlarmKit calls a game reminder makes, so the reminder can be exercised without the system alarm store.
 @available(iOS 26.1, *)
@@ -31,7 +30,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared,
-        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics(reporter: NoopIssueReporter())
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager

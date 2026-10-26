@@ -1,4 +1,4 @@
-import IssueMonitoring
+import Products
 import UIKit
 
 extension GameReminderEvent.AppState {

@@ -34,7 +34,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     }
 
     static func makeDefault() -> ProductGameReminderCenter {
-        let diagnostics = GameReminderDiagnostics.make(reporter: IssueReportingFacade.shared)
+        let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
         return ProductGameReminderCenter(
             dependencies: Dependencies(
                 services: ProductGameReminderServicesFactory(
@@ -130,6 +130,10 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
             ringAlarm: ringAlarm,
             calendarStartsAt: slot(for: productId)?.calendarStartsAt
         )
+        guard next.startsAt > dateProvider.now else {
+            record(.notScheduled, for: next) { $0.skipReason = .startInPast }
+            return
+        }
         deliver(next)
         refresh()
 
@@ -147,25 +151,12 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         refresh()
     }
 
-    /// The alarm's Play button. The tap is the open, so the held reminder goes first: the start can then
-    /// neither open the product a second time nor count as missed.
-    func openFromAlarm(productId: ProductId, startsAt: Date?) {
-        let startsAt = startsAt ?? slot(for: productId)?.startsAt
-        if slot(for: productId) != nil {
-            drop(productId)
-            refresh()
-        }
-        record(.tapped, productId: productId, startsAt: startsAt)
-        let navigated = productOpener.open(productId: productId)
-        record(.productOpened, productId: productId, startsAt: startsAt) { event in
-            event.openSource = .alarm
-            event.navigated = navigated
-        }
-    }
-
     func refresh() {
         wakeUp?.cancel()
         wakeUp = nil
+
+        // A refresh can drop a past slot, so capture an alarm already ringing before walking the slots.
+        recordFired(services.currentAlertingAlarmIds())
 
         let now = dateProvider.now
         var pill: Slot?

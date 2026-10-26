@@ -100,6 +100,19 @@ struct ProductGameReminderCenterTests {
         #expect(fakes.alarm(for: productId).scheduled.last == reminderCall(later, productId))
     }
 
+    @Test("A past start is reported once and is not handed to either delivery service")
+    func pastStartIsReportedOnce() async {
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(60))
+
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+
+        #expect(fakes.reporter.events.map(\.step) == [.notScheduled])
+        #expect(fakes.reporter.events.first?.skipReason == .startInPast)
+        #expect(fakes.alarm(for: productId).scheduled.isEmpty)
+        #expect(fakes.notification(for: productId).scheduled.isEmpty)
+        #expect(center.slots.isEmpty)
+    }
+
     @Test("With the calendar flag and a start exactly an hour away, one calendar event is added")
     func addsCalendarEventOnce() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
@@ -304,35 +317,20 @@ struct ProductGameReminderCenterTests {
         #expect(events.first?.occurredAt == startsAt.addingTimeInterval(1))
     }
 
-    @Test("The Play tap drops the reminder first, so the start neither opens again nor counts as missed")
-    func playTapIsTheOpen() async throws {
-        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
+    @Test("A ringing alarm is recorded before refresh drops its past slot")
+    func recordsFiredBeforeDroppingPastSlot() async {
+        let settings = InMemorySettingsManager()
+        let alarmId = UUID()
+        settings.set(string: alarmId.uuidString, for: GameReminderStorageKeys.product(productId).alarmId)
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60), settings: settings)
         await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
-        fakes.now = startsAt.addingTimeInterval(5)
-
-        center.openFromAlarm(productId: productId, startsAt: startsAt)
+        fakes.currentAlertingAlarms = [alarmId]
         fakes.now = startsAt.addingTimeInterval(600)
+
         center.refresh()
 
-        let events = fakes.reporter.events
-        #expect(events.map(\.step) == [.tapped, .productOpened])
-        #expect(events.last?.openSource == .alarm)
-        #expect(events.last?.navigated == true)
-        #expect(events.allSatisfy { $0.startsAt == startsAt && $0.occurredAt == startsAt.addingTimeInterval(5) })
-        #expect(fakes.opened == [productId])
+        #expect(fakes.reporter.events.map(\.step) == [.fired, .missed])
         #expect(center.slots.isEmpty)
-        #expect(fakes.alarm(for: productId).cancelCount == 1)
-    }
-
-    @Test("A Play tap with no held reminder still opens the product and reports it")
-    func playTapWithoutReminder() throws {
-        let (center, fakes) = makeSUT(now: startsAt)
-
-        center.openFromAlarm(productId: productId, startsAt: nil)
-
-        #expect(fakes.reporter.events.map(\.step) == [.tapped, .productOpened])
-        #expect(fakes.reporter.events.first?.startsAt == nil)
-        #expect(fakes.opened == [productId])
     }
 
     @Test("A cancel while calendar access is being asked adds no event")
@@ -366,7 +364,8 @@ private final class Fakes: @unchecked Sendable {
     var opened: [String] = []
     var openNavigates = true
     let calendar = RecordingCalendar()
-    let reporter = RecordingGameReminderIssueReporter()
+    let reporter = RecordingGameReminderHostEventRecorder()
+    var currentAlertingAlarms: Set<UUID> = []
     var diagnostics: GameReminderDiagnostics { reporter.diagnostics }
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
     private let alarmAlertStream: AsyncStream<Set<UUID>>
@@ -416,6 +415,10 @@ extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, P
 
     func alertingAlarms() -> AsyncStream<Set<UUID>> {
         alarmAlertStream
+    }
+
+    func currentAlertingAlarmIds() -> Set<UUID> {
+        currentAlertingAlarms
     }
 
     func open(productId: String) -> Bool {

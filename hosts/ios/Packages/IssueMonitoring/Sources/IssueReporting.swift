@@ -1,10 +1,8 @@
 import Foundation
 
-/// Sends critical, flow-breaking issues and structured diagnostic events.
-/// See `.claude/docs/code/error-handling.md`.
+/// Sends critical, flow-breaking issues. See `.claude/docs/code/error-handling.md`.
 public protocol IssueReporting: Sendable {
     func report(_ issue: CriticalIssue)
-    func report(_ event: GameReminderEvent)
 }
 
 /// An error that names its case for reporting without exposing associated values.
@@ -32,6 +30,4 @@ public struct NoopIssueReporter: IssueReporting {
     public init() {}
 
     public func report(_: CriticalIssue) {}
-
-    public func report(_: GameReminderEvent) {}
 }

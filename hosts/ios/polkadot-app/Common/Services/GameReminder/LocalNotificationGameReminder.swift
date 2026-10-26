@@ -3,7 +3,6 @@ import UserNotifications
 import Keystore_iOS
 import Products
 import Individuality
-import IssueMonitoring
 
 final class LocalNotificationGameReminder {
     private let localNotificationService: UserNotificationServicing
@@ -17,7 +16,7 @@ final class LocalNotificationGameReminder {
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared,
-        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics(reporter: NoopIssueReporter())
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.localNotificationService = localNotificationService
         self.settingsManager = settingsManager
