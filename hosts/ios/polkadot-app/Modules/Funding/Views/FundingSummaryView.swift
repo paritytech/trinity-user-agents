@@ -147,13 +147,18 @@ private extension FundingSummaryView {
             if model.direction == .in {
                 String(localized: .Funding.summaryMinPayout)
             } else {
-                String(localized: .Funding.summaryFromBalance)
+                String(localized: .Funding.summaryYouReceive)
             }
 
         return FundingValueRow(title: title) {
             if let quote = model.selectedQuote {
-                let units = model.direction == .in ? quote.receiveAmount : quote.sendAmount
-                Text(verbatim: model.cash.label(model.cash.decimal(units)))
+                let payout =
+                    if model.direction == .in {
+                        model.cash.label(model.cash.decimal(quote.receiveAmount))
+                    } else {
+                        model.quoteUnit(quote).format(quote.receiveAmount)
+                    }
+                Text(verbatim: payout)
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
             } else {

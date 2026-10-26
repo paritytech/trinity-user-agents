@@ -16,6 +16,7 @@ protocol WalletMainPresenterProtocol: AnyObject {
     func showCollectibles()
     func showPocketCard(_ card: PocketCardViewModel)
     func removePocketCard(_ card: PocketCardViewModel)
+    func showFundingHistory()
 }
 
 @MainActor
@@ -23,6 +24,7 @@ protocol WalletMainWireframeProtocol: AnyObject {
     func showProduct(page: ProductPage)
     func showPocketCard(_ card: PocketCardViewModel, from view: WalletMainViewProtocol?)
     func confirmPocketCardRemoval(_ card: PocketCardViewModel, onConfirm: @escaping () -> Void)
+    func showFundingHistory()
 }
 
 protocol WalletMainInteractorInputProtocol: AnyObject {

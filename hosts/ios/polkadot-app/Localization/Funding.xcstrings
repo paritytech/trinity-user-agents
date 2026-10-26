@@ -947,6 +947,17 @@
         }
       }
     },
+    "summary.youReceive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You'll receive"
+          }
+        }
+      }
+    },
     "summary.minPayout" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2399,13 +2410,13 @@
         }
       }
     },
-    "live.reconnecting" : {
+    "live.checkedNow" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Trying to reconnect"
+            "value" : "Checked with the provider just now"
           }
         }
       }
@@ -2417,17 +2428,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "If you've already sent the transfer, don't cancel, as your money will still arrive. Only cancel if you haven't paid yet."
-          }
-        }
-      }
-    },
-    "summary.fromBalance" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "From your balance inc. fees"
           }
         }
       }

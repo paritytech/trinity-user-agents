@@ -89,6 +89,17 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         navigationItem.setRightBarButton(item, animated: true)
     }
 
+    private func setFundingHistoryButton() {
+        let item = UIBarButtonItem(
+            image: UIImage(systemName: "clock.arrow.circlepath"),
+            style: .plain,
+            target: self,
+            action: #selector(didTapFundingHistory)
+        )
+        item.accessibilityLabel = String(localized: .Funding.historyOpen)
+        navigationItem.setRightBarButton(item, animated: true)
+    }
+
     private func resetRightButton() {
         navigationItem.setRightBarButton(nil, animated: true)
     }
@@ -162,6 +173,11 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     @objc
+    func didTapFundingHistory() {
+        presenter.showFundingHistory()
+    }
+
+    @objc
     func collapseExpandedSection() {
         rootView.viewModel.expandedSection = .none
         resetOverlayCloseButton()
@@ -172,7 +188,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
     private func showAssetDetailsOverlay() {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
-        resetRightButton()
+        setFundingHistoryButton()
         navigationItem.style = .navigator
         purseTitleView.apply(progress: 0)
         navigationItem.titleView = purseTitleView

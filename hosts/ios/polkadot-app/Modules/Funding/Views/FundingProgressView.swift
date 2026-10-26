@@ -483,12 +483,11 @@ private extension FundingStepBar.DotState {
 }
 
 /// When the provider was last heard from, kept current while on screen:
-/// "Checked with the provider 12s ago", then "Trying to reconnect" once a
-/// minute has passed without word.
+/// "just now", then seconds, minutes and hours.
 struct FundingLiveLine: View {
     let heardAt: Date
 
-    static let staleAfter: TimeInterval = 60
+    static let justNowBelow = 5
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 3)) { context in
@@ -499,9 +498,15 @@ struct FundingLiveLine: View {
     }
 
     static func text(heardAt: Date, now: Date) -> String {
-        let elapsed = max(0, now.timeIntervalSince(heardAt))
-        guard elapsed < staleAfter else { return String(localized: .Funding.liveReconnecting) }
-        return String(localized: .Funding.liveChecked(time: "\(Int(elapsed))s"))
+        let seconds = max(0, Int(now.timeIntervalSince(heardAt)))
+        guard seconds >= justNowBelow else { return String(localized: .Funding.liveCheckedNow) }
+        let time =
+            switch seconds {
+            case ..<60: "\(seconds)s"
+            case ..<3_600: "\(seconds / 60) min"
+            default: "\(seconds / 3_600) h"
+            }
+        return String(localized: .Funding.liveChecked(time: time))
     }
 }
 

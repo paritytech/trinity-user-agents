@@ -72,9 +72,11 @@ struct FundingPocketTests {
     }
 
     @Test
-    func theLiveLineTurnsToReconnectingAfterAMinute() {
+    func theLiveLineCountsUpFromJustNow() {
+        #expect(FundingLiveLine.text(heardAt: now - 2, now: now) == "Checked with the provider just now")
         #expect(FundingLiveLine.text(heardAt: now - 12, now: now) == "Checked with the provider 12s ago")
-        #expect(FundingLiveLine.text(heardAt: now - 60, now: now) == "Trying to reconnect")
+        #expect(FundingLiveLine.text(heardAt: now - 180, now: now) == "Checked with the provider 3 min ago")
+        #expect(FundingLiveLine.text(heardAt: now - 7_300, now: now) == "Checked with the provider 2 h ago")
     }
 
     @Test
