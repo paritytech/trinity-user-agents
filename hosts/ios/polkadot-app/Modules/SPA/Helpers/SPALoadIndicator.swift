@@ -16,6 +16,8 @@ final class SPALoadIndicator {
 
     private let progressView: UIProgressView
     private let statusLabel: UILabel
+    private let sizeFormatter = SPALoadIndicator.makeSizeFormatter(includesUnit: true)
+    private let downloadedFormatter = SPALoadIndicator.makeSizeFormatter(includesUnit: false)
 
     private var statusText: String?
     private var canRevealStatus = false
@@ -84,6 +86,16 @@ final class SPALoadIndicator {
 }
 
 private extension SPALoadIndicator {
+    static func makeSizeFormatter(includesUnit: Bool) -> ByteCountFormatter {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB]
+        formatter.countStyle = .file
+        formatter.zeroPadsFractionDigits = true
+        formatter.allowsNonnumericFormatting = false
+        formatter.includesUnit = includesUnit
+        return formatter
+    }
+
     func progress(for phase: ProductLoadPhase) -> Float? {
         switch phase {
         case .resolving:
@@ -113,10 +125,8 @@ private extension SPALoadIndicator {
         case .resolving,
              .unpacking:
             nil
-        case let .downloading(downloadedBytes, _):
-            String(localized: .Products.loadStatusDownloading(
-                size: ByteCountFormatter.string(fromByteCount: downloadedBytes, countStyle: .file)
-            ))
+        case let .downloading(downloadedBytes, totalBytes):
+            downloadStatus(downloadedBytes, of: totalBytes)
         case .waitingForNetwork:
             String(localized: .Products.loadStatusWaitingForNetwork)
         case .retrying:
@@ -124,8 +134,23 @@ private extension SPALoadIndicator {
         }
     }
 
+    func downloadStatus(_ downloadedBytes: Int64, of totalBytes: Int64?) -> String {
+        guard let totalBytes, totalBytes > 0 else {
+            return String(localized: .Products.loadStatusDownloading(
+                size: sizeFormatter.string(fromByteCount: downloadedBytes)
+            ))
+        }
+
+        return String(localized: .Products.loadStatusDownloadingOf(
+            downloaded: downloadedFormatter.string(fromByteCount: downloadedBytes),
+            total: sizeFormatter.string(fromByteCount: totalBytes)
+        ))
+    }
+
     func applyStatus() {
-        statusLabel.text = statusText
+        if statusLabel.text != statusText {
+            statusLabel.text = statusText
+        }
         statusLabel.isHidden = !canRevealStatus || statusText == nil
     }
 
