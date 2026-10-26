@@ -59,11 +59,31 @@ struct AppScannerHostBridgeTests {
         try await waitUntil { page.presentedViewController is StubScanner }
         let scanner = try #require(page.presentedViewController)
         try await waitUntil { !scanner.isBeingPresented }
-        await present(UIViewController(), over: scanner)
+        await present(UIAlertController(title: nil, message: nil, preferredStyle: .alert), over: scanner)
         scan.cancel()
         _ = try await scan.value
 
         try await waitUntil { page.presentedViewController == nil }
+    }
+
+    @Test("A cancelled scan leaves another request's prompt over its scanner up, so that request still gets its answer")
+    func cancelledScanKeepsPromptOverIt() async throws {
+        let page = StubProductPage(productId: "shop.dot")
+        let window = try makeTestWindow(root: page)
+        let bridge = makeBridge(page: page, application: StubApplication(), window: window)
+
+        let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        try await waitUntil { page.presentedViewController is StubScanner }
+        let scanner = try #require(page.presentedViewController)
+        try await waitUntil { !scanner.isBeingPresented }
+        let prompt = UIViewController()
+        await present(prompt, over: scanner)
+        scan.cancel()
+        let answer = try await scan.value
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(answer == .dismissed)
+        #expect(scanner.presentedViewController === prompt)
     }
 
     @Test("A scan cancelled while waiting for its page opens nothing")

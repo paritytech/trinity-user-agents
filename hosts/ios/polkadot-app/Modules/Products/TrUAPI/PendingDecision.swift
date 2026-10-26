@@ -29,8 +29,9 @@ func awaitDecision<Decision: Sendable>(
 /// incoming continuation with `cancelled` instead of leaking it.
 @MainActor
 final class PendingDecision<Decision: Sendable> {
-    /// Closed when the core stops waiting before it answers. A decision with
-    /// no screen leaves its prompt up and discards the late answer.
+    /// Closed when the core stops waiting before it answers, unless another
+    /// request's prompt is over it. A decision with no screen leaves its prompt
+    /// up and discards the late answer.
     weak var screen: UIViewController?
     private(set) var isFinished = false
     private var continuation: CheckedContinuation<Decision, Never>?
@@ -65,7 +66,20 @@ final class PendingDecision<Decision: Sendable> {
             return
         }
         finish(cancelled)
-        // From its presenter, so whatever the screen opened on top closes with it.
-        screen?.presentingViewController?.dismiss(animated: true)
+        guard let screen, hasOnlyItsOwnAlertAbove(screen) else {
+            return
+        }
+        // From its presenter, so the screen's own alert closes with it.
+        screen.presentingViewController?.dismiss(animated: true)
+    }
+
+    /// Product prompts are never system alerts, so an alert directly over the
+    /// screen is the screen's own. Anything else is another request's prompt,
+    /// which would close unanswered with the screen, so the screen stays up.
+    private func hasOnlyItsOwnAlertAbove(_ screen: UIViewController) -> Bool {
+        guard let above = screen.presentedViewController else {
+            return true
+        }
+        return above is UIAlertController && above.presentedViewController == nil
     }
 }
