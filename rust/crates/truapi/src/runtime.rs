@@ -147,7 +147,7 @@ use crate::{
 			derivation_index_bytes, derive_product_public_key, public_key_from_address,
 		},
 		session::{SessionInfo, SessionState},
-		sso::pairing::x25519_public_key,
+		x25519_seal::x25519_public_key,
 	},
 };
 

@@ -2210,9 +2210,9 @@ mod tests {
 			product_account::derive_identity_keypair,
 			sso::pairing::{
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-				x25519_public_key,
 			},
 			worker::WorkerTransition,
+			x25519_seal::x25519_public_key,
 		},
 		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};

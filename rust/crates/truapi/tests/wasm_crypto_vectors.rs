@@ -14,13 +14,14 @@ use truapi::{
 		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			self, AEAD_NONCE_LEN, PairingBootstrap, SsoStatementData, VersionedHandshakeProposal,
+			self, PairingBootstrap, SsoStatementData, VersionedHandshakeProposal,
 			VersionedHandshakeResponse, bootstrap_topic, build_pairing_deeplink,
 			decode_app_handshake_data, decrypt_session_statement_data,
 			decrypt_v2_handshake_response, encrypt_session_statement_data_with_nonce,
 			encrypt_v2_handshake_response, establish_sso_session_info,
 		},
 		statement_store::{build_signed_session_request_statement, decode_verified_statement_data},
+		x25519_seal::AEAD_NONCE_LEN,
 	},
 	platform::{
 		CoreStorageKey, HostDevicePermissionRequest, HostInfo, PairingHostConfig, PlatformInfo,

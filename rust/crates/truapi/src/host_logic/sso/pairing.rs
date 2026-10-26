@@ -15,23 +15,20 @@
 use crate::platform::PairingHostConfig;
 #[cfg(test)]
 use crate::platform::{HostInfo, PlatformInfo};
-use chacha20poly1305::{
-	ChaCha20Poly1305,
-	aead::{Aead, KeyInit},
-};
-use hkdf::Hkdf;
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey, SignatureError};
-use sha2::Sha256;
 use thiserror::Error;
-use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::host_logic::session::SsoSessionInfo;
+use crate::host_logic::{
+	session::SsoSessionInfo,
+	x25519_seal::{
+		self, AEAD_NONCE_LEN, SealError, aead_key, generate_x25519_keypair, seal_to,
+		x25519_public_key,
+	},
+};
 
 const HANDSHAKE_TOPIC_SUFFIX: &[u8] = b"topic";
 
-/// Byte length of the ChaCha20-Poly1305 nonce prepended to encrypted payloads.
-pub const AEAD_NONCE_LEN: usize = 12;
 const SESSION_PREFIX: &[u8] = b"session";
 const PIN_SEPARATOR: &[u8] = b"/";
 const REQUEST_CHANNEL_SUFFIX: &[u8] = b"request";
@@ -173,13 +170,12 @@ pub fn encrypt_v2_handshake_response(
 	host_encryption_public_key: [u8; 32],
 	response: &v2::EncryptedResponse,
 ) -> Result<VersionedHandshakeResponse, String> {
-	let (ephemeral_secret, ephemeral_public) =
-		generate_x25519_keypair().map_err(|err| err.to_string())?;
-	let shared_secret = shared_secret(ephemeral_secret, host_encryption_public_key)?;
-	let aead_key = aead_key_from_shared_secret(&shared_secret)?;
-	let encrypted_message =
-		encrypt_chacha20_poly1305(aead_key, &response.encode(), "handshake response")?;
-	Ok(VersionedHandshakeResponse::V2 { encrypted_message, public_key: ephemeral_public })
+	let sealed = seal_to(host_encryption_public_key, &response.encode())
+		.map_err(|err| format!("failed to encrypt SSO handshake response: {err}"))?;
+	Ok(VersionedHandshakeResponse::V2 {
+		encrypted_message: sealed.encrypted,
+		public_key: sealed.ephemeral_public,
+	})
 }
 
 /// Decode wallet-posted pairing handshake data from SCALE bytes.
@@ -200,11 +196,8 @@ pub fn decrypt_v2_handshake_response(
 	encrypted_message: &[u8],
 ) -> Result<v2::EncryptedResponse, String> {
 	let shared_secret = shared_secret(core_encryption_secret_key, wallet_ephemeral_public_key)?;
-	let plaintext = decrypt_chacha20_poly1305(
-		aead_key_from_shared_secret(&shared_secret)?,
-		encrypted_message,
-		"handshake answer",
-	)?;
+	let plaintext =
+		decrypt_chacha20_poly1305(aead_key(&shared_secret), encrypted_message, "handshake answer")?;
 	let mut input = plaintext.as_slice();
 	let value = v2::EncryptedResponse::decode(&mut input)
 		.map_err(|err| format!("invalid SSO V2 handshake response: {err}"))?;
@@ -314,11 +307,6 @@ pub fn derive_x25519_keypair_from_entropy(entropy: &[u8], domain: &[u8]) -> ([u8
 	(secret_bytes, x25519_public_key(secret_bytes))
 }
 
-/// X25519 public key matching a raw 32-byte secret scalar.
-pub fn x25519_public_key(secret_bytes: [u8; 32]) -> [u8; 32] {
-	PublicKey::from(&StaticSecret::from(secret_bytes)).to_bytes()
-}
-
 /// RFC-0022 domain for the identity chat X25519 key.
 pub const CHAT_ENCRYPTION_DOMAIN: &[u8] = b"chat";
 
@@ -377,31 +365,14 @@ fn decrypt_session_message(
 	decrypt_chacha20_poly1305(session_aead_key(session)?, encrypted_message, "statement data")
 }
 
-fn encrypt_chacha20_poly1305(
-	key: [u8; 32],
-	plaintext: &[u8],
-	label: &str,
-) -> Result<Vec<u8>, String> {
-	let mut nonce = [0u8; AEAD_NONCE_LEN];
-	getrandom::getrandom(&mut nonce)
-		.map_err(|err| format!("failed to generate ChaCha20-Poly1305 nonce: {err}"))?;
-	encrypt_chacha20_poly1305_with_nonce(key, plaintext, nonce, label)
-}
-
 fn encrypt_chacha20_poly1305_with_nonce(
 	key: [u8; 32],
 	plaintext: &[u8],
 	nonce: [u8; AEAD_NONCE_LEN],
 	label: &str,
 ) -> Result<Vec<u8>, String> {
-	let cipher = ChaCha20Poly1305::new((&key).into());
-	let mut encrypted = nonce.to_vec();
-	encrypted.extend(
-		cipher
-			.encrypt((&nonce).into(), plaintext)
-			.map_err(|err| format!("failed to encrypt SSO {label}: {err}"))?,
-	);
-	Ok(encrypted)
+	x25519_seal::encrypt_with_nonce(key, plaintext, nonce)
+		.map_err(|err| format!("failed to encrypt SSO {label}: {err}"))
 }
 
 fn decrypt_chacha20_poly1305(
@@ -409,39 +380,19 @@ fn decrypt_chacha20_poly1305(
 	encrypted_message: &[u8],
 	label: &str,
 ) -> Result<Vec<u8>, String> {
-	if encrypted_message.len() < AEAD_NONCE_LEN + 16 {
-		return Err(format!("encrypted SSO {label} is too short"));
-	}
-	let (nonce, ciphertext) = encrypted_message.split_at(AEAD_NONCE_LEN);
-	let nonce: &[u8; AEAD_NONCE_LEN] =
-		nonce.try_into().expect("nonce slice has the checked fixed length");
-	let cipher = ChaCha20Poly1305::new((&key).into());
-	cipher
-		.decrypt(nonce.into(), ciphertext)
-		.map_err(|err| format!("failed to decrypt SSO {label}: {err}"))
+	x25519_seal::decrypt(key, encrypted_message).map_err(|err| match err {
+		SealError::TooShort(_) => format!("encrypted SSO {label} is too short"),
+		other => format!("failed to decrypt SSO {label}: {other}"),
+	})
 }
 
 fn session_aead_key(session: &SsoSessionInfo) -> Result<[u8; 32], String> {
 	let shared_secret = shared_secret(session.enc_secret, session.peer_enc_pubkey)?;
-	aead_key_from_shared_secret(&shared_secret)
-}
-
-fn aead_key_from_shared_secret(shared_secret: &[u8; 32]) -> Result<[u8; 32], String> {
-	let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
-	let mut aead_key = [0u8; 32];
-	hkdf.expand(&[], &mut aead_key)
-		.map_err(|err| format!("failed to derive AEAD key: {err}"))?;
-	Ok(aead_key)
+	Ok(aead_key(&shared_secret))
 }
 
 fn shared_secret(own_secret_key: [u8; 32], peer_public_key: [u8; 32]) -> Result<[u8; 32], String> {
-	let secret = StaticSecret::from(own_secret_key);
-	let peer_public = PublicKey::from(peer_public_key);
-	let shared = secret.diffie_hellman(&peer_public);
-	if !shared.was_contributory() {
-		return Err("invalid X25519 public key".to_string());
-	}
-	Ok(shared.to_bytes())
+	x25519_seal::shared_secret(own_secret_key, peer_public_key).map_err(|err| err.to_string())
 }
 
 fn create_session_id(
@@ -572,13 +523,6 @@ fn generate_statement_store_keypair() -> Result<([u8; 64], [u8; 32]), PairingBoo
 	Ok((keypair.secret.to_bytes(), keypair.public.to_bytes()))
 }
 
-/// Generate a random X25519 keypair as `(secret, public)`.
-pub fn generate_x25519_keypair() -> Result<([u8; 32], [u8; 32]), PairingBootstrapError> {
-	let mut secret_bytes = [0u8; 32];
-	getrandom::getrandom(&mut secret_bytes)?;
-	Ok((secret_bytes, x25519_public_key(secret_bytes)))
-}
-
 fn normalize_chain_code(encoded: Vec<u8>) -> [u8; 32] {
 	let mut chain_code = [0u8; 32];
 	if encoded.len() > chain_code.len() {
@@ -591,6 +535,8 @@ fn normalize_chain_code(encoded: Vec<u8>) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
+	use x25519_dalek::{PublicKey, StaticSecret};
+
 	use super::*;
 	use crate::host_logic::statement_store::statement_public_key_from_secret;
 

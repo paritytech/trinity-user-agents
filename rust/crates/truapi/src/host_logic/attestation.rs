@@ -23,7 +23,8 @@ use crate::host_logic::{
 		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
 		derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 	},
-	sso::pairing::{derive_identity_chat_private_key, x25519_public_key},
+	sso::pairing::derive_identity_chat_private_key,
+	x25519_seal::x25519_public_key,
 };
 
 /// sr25519 proof-of-ownership message prefix (exact bytes; one space).

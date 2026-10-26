@@ -48,9 +48,10 @@ use crate::{
 			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
 			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
 			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
-			establish_responder_session_info, v2, x25519_public_key,
+			establish_responder_session_info, v2,
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
+		x25519_seal::x25519_public_key,
 	},
 	runtime::{
 		services::RuntimeServices,
@@ -894,7 +895,7 @@ mod tests {
 
 		assert_eq!(
 			&registration.identifier_key[1..33],
-			&crate::host_logic::sso::pairing::x25519_public_key(served),
+			&crate::host_logic::x25519_seal::x25519_public_key(served),
 			"the advertised chat key is not the one served over pairing"
 		);
 	}

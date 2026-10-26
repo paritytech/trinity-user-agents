@@ -9,7 +9,7 @@
 use crate::platform::{CoreStorage, CoreStorageKey};
 use tracing::{instrument, warn};
 
-use crate::host_logic::sso::pairing::generate_x25519_keypair;
+use crate::host_logic::x25519_seal::generate_x25519_keypair;
 
 /// Read this device's persisted X25519 encryption secret, generating and
 /// storing one on first use.

@@ -685,7 +685,7 @@ fn sso_statement(
 	data: pairing::SsoStatementData,
 	nonce_seed: u8,
 ) -> Vec<u8> {
-	let mut nonce = [0; pairing::AEAD_NONCE_LEN];
+	let mut nonce = [0; crate::host_logic::x25519_seal::AEAD_NONCE_LEN];
 	nonce[0] = nonce_seed;
 	let encrypted = pairing::encrypt_session_statement_data_with_nonce(
 		session.sso.as_ref().unwrap(),
@@ -743,7 +743,7 @@ pub fn failed_wallet_handshake_statement(deeplink: &str, reason: &str) -> Vec<u8
 /// tests catch a session that keys device-scoped material off the SSO channel
 /// key by mistake.
 pub fn wallet_device_encryption_public_key() -> [u8; 32] {
-	pairing::x25519_public_key([9; 32])
+	crate::host_logic::x25519_seal::x25519_public_key([9; 32])
 }
 
 fn wallet_handshake_success() -> pairing::v2::Success {
