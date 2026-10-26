@@ -1964,8 +1964,8 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
-/// Pauses between restarts of a paired responder, carried on by the attempts
-/// to forget a pairing host that disconnected.
+/// Pauses between restarts of a paired responder, then between attempts to
+/// forget a host that disconnected.
 const RESPONDER_RETRY_PAUSES: Backoff =
 	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
@@ -2007,9 +2007,7 @@ fn spawn_supervised_responder(
 	})
 }
 
-/// Forget a pairing host that disconnected: remove it from the session's
-/// paired hosts, retrying after each of `pauses` until that is stored, and
-/// stop renewing its statement allowance.
+/// Forget a pairing host that disconnected, retrying its removal with `pauses`.
 async fn forget_disconnected_peer(
 	runtime: &SigningHostRuntime,
 	peer: PairedSsoPeer,

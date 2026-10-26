@@ -350,7 +350,7 @@ async fn writer_loop(
 			return;
 		}
 		tokio::time::sleep(pauses.next_pause()).await;
-		// The sink was dropped while we were waiting to reconnect: give up.
+		// The sink was dropped while we were retrying: give up.
 		if inbox.is_closed() {
 			return;
 		}
@@ -398,8 +398,6 @@ async fn forward(
 				pauses.reset();
 			}
 			inbound = read.next() => {
-				// Forward-only: any inbound message is ignored, and an error or
-				// the end of the stream means the socket closed.
 				let Some(Ok(_)) = inbound else {
 					debug!("truapi debug sink: read side closed, reconnecting");
 					return ControlFlow::Continue(());
@@ -438,9 +436,8 @@ mod tests {
 		let _sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
 		tokio::time::sleep(WINDOW).await;
 
-		// Dials land at 0, 0.2, 0.6 and 1.4 s. Starting over after every
-		// connection would dial every 0.2 s, and no pause at all hundreds of
-		// times.
+		// Dials at 0, 0.2, 0.6 and 1.4 s. Starting over after every connection
+		// would dial eight times, and not pausing at all hundreds.
 		let dials = accepted.load(Ordering::Relaxed);
 		assert!((2..=4).contains(&dials), "{dials} dials in {WINDOW:?}");
 	}

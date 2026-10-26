@@ -7,12 +7,10 @@ use super::Timer;
 
 /// Runs `attempt` until it breaks, and returns what it broke with.
 ///
-/// An attempt breaks with the result to stop at, which may be a failure no
-/// later attempt can mend, or continues with a failure worth another attempt.
-/// `pause_after` takes each failure an attempt continues with, reports it if
-/// the caller wants, and returns how long to wait on `timer` before the next
-/// attempt. Retrying never gives up on its own: an operation that should stop
-/// after some failures counts them in `attempt` and breaks.
+/// An attempt continues with a failure worth retrying and breaks with anything
+/// else, including a failure no retry can mend. `pause_after` gets each such
+/// failure, may report it, and returns the wait on `timer` before the next
+/// attempt. To give up after some failures, `attempt` counts them and breaks.
 pub async fn retry<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	mut attempt: impl FnMut() -> AttemptFuture,
@@ -29,13 +27,11 @@ where
 	}
 }
 
-/// Pauses between attempts of an operation that keeps failing: the first
-/// pause, then each one twice the one before, up to the longest. They never
-/// run out.
+/// Pauses that start at a first one and double up to a longest one, without
+/// end.
 ///
-/// The pauses carry no jitter. Add it before a backoff paces many clients that
-/// fail together against one server, so that their retries do not arrive in
-/// step.
+/// They carry no jitter; add it before a backoff paces many clients that fail
+/// together against one server.
 #[derive(Debug)]
 pub struct Backoff {
 	first: Duration,

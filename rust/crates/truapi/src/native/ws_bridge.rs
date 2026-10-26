@@ -544,8 +544,7 @@ async fn accept_loop(
 	}
 }
 
-/// Bind `port` again for a listener that was lost, pausing longer after each
-/// failed bind.
+/// Bind `port` again for a lost listener, backing off between failed binds.
 async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
 	let mut pauses = RELISTEN_PAUSES;
 	// Wait before the first bind too, so a listener that keeps getting lost is
