@@ -299,7 +299,8 @@ type ChequeId = [u8; 32];
 enum ChequeDestination {
     // One-time ReceiveKey created by the receiver with `create_receive_key`, for
     // transmission over a channel dedicated to this transfer. The ReceiveKey is the
-    // transfer identity and idempotency key; the host derives the ChequeId from it.
+    // transfer identity and idempotency key; the host derives the ChequeId from it as
+    // blake2_256("nft-purse/cheque-id" ‖ ReceiveKey), with the label in ASCII.
     // The payment is receiver-initiated: the receiver has to hand the ReceiveKey to
     // the sender first.
     Ephemeral(ReceiveKey),
@@ -329,6 +330,18 @@ struct Cheque {
     encrypted_secrets: Vec<u8>,
 }
 ```
+
+For version 0, `encrypted_secrets` is `E ‖ nonce ‖ ciphertext`:
+
+- `E` is a fresh ephemeral X25519 public key (32 bytes), and `nonce` is 12 random bytes.
+- The key is HKDF-SHA256 with no salt and empty info over the X25519 shared secret of the ephemeral secret and the
+  recipient key: the `ReceiveKey` for `Ephemeral`, `encryption_key` for `Static`. A low-order recipient key is refused.
+- `ciphertext` is ChaCha20-Poly1305 under that key and nonce, with no associated data, of the SCALE-encoded
+  `Vec<[u8; 64]>` holding the 64-byte sr25519 secret key of each item, in the order of `items`. Each is the scalar,
+  then the nonce, as schnorrkel's `SecretKey::to_bytes` writes it, not the ed25519-expanded form.
+
+The cleartext `items` are not bound to the ciphertext, so the recipient checks that each secret derives the key listed
+at its position.
 
 On the sender side, the host associates a cheque with the product that created it with `create_cheque`. On the
 receiver side, it associates a cheque with the product that deposited it with `deposit`. These associations, not purse
@@ -383,6 +396,8 @@ enum ListenForPaymentError {
 // cleartext (item keys, recipient), so the transmission channel must add its own
 // encryption layer.
 // The items become InUse and stay InUse until the cheque is revoked with `revoke_cheque`.
+// The cheque id is the idempotency key, scoped to the calling product: creating a second
+// cheque with the same id fails with OperationExists.
 // Asks for a confirmation if owner(from) != PurseOwner::Product(self).
 fn create_cheque(
     from: PurseId,
@@ -395,6 +410,10 @@ enum CreateChequeError {
     PurseNotFound,
     ItemNotFound,
     ItemUnavailable,
+    // `items` is empty
+    NoItems,
+    // This product already created a cheque with the same id
+    OperationExists,
     Other(GenericError),
 }
 ```
