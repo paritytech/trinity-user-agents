@@ -15,14 +15,15 @@ mod browser {
 			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
 			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
-			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
-			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
-			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
-			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
-			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
-			HostNftPurseTransferItemResponse,
+			HostNftPurseCreateReceiveKeyError, HostNftPurseCreateReceiveKeyRequest,
+			HostNftPurseCreateReceiveKeyResponse, HostNftPurseListPursesError,
+			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+			HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+			HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+			HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+			HostNftPurseRebalancePurseResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -59,6 +60,17 @@ mod browser {
 			_cx: &CallContext,
 			_request: HostNftPurseListPursesRequest,
 		) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn create_receive_key(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseCreateReceiveKeyRequest,
+		) -> Result<
+			HostNftPurseCreateReceiveKeyResponse,
+			CallError<HostNftPurseCreateReceiveKeyError>,
+		> {
 			Err(CallError::Unsupported)
 		}
 

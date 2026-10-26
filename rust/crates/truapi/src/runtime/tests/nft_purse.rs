@@ -4,14 +4,15 @@ use truapi::{
 		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
 		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
-		HostNftPurseCreateReceiveKeyRequest, HostNftPurseListPursesError,
-		HostNftPurseListPursesRequest, HostNftPurseListPursesResponse, HostNftPurseQueryPurseError,
-		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseRevokeChequeRequest,
 	},
 };
 
 use super::*;
 use crate::{
+	encrypted_storage::{EncryptedStorage, MemoryEncryptedStorage},
 	nft::{PurseId, test_ledger},
 	store::open_temporary_core_db,
 };
@@ -27,10 +28,22 @@ fn nft_host(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
 ) -> (tempfile::TempDir, ProductRuntimeHost) {
+	let encrypted = Arc::new(MemoryEncryptedStorage::default());
+	nft_host_with_storage(platform, with_session, encrypted)
+}
+
+/// A product host over a fresh core database and `encrypted`, with the
+/// directory that keeps the database alive.
+pub fn nft_host_with_storage(
+	platform: Arc<StubPlatform>,
+	with_session: bool,
+	encrypted: Arc<dyn EncryptedStorage>,
+) -> (tempfile::TempDir, ProductRuntimeHost) {
 	let services = payment_services_over(platform);
 	let (dir, db) = open_temporary_core_db();
 	assert!(services.install_core_db(db.clone()));
 	assert!(services.install_nft_ledger(test_ledger(db)));
+	assert!(services.install_encrypted_storage(encrypted));
 	(dir, payment_host(&services, PRODUCT, with_session))
 }
 
@@ -355,15 +368,17 @@ fn querying_an_unknown_purse_is_refused_without_a_prompt() {
 #[test]
 fn methods_of_later_stages_are_unavailable() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
-	let request = v01::HostNftPurseCreateReceiveKeyRequest { into: v01::NftPurseId(0) };
+	let request =
+		v01::HostNftPurseRevokeChequeRequest { cheque_id: v01::NftPurseChequeId([1; 32]) };
 
-	let created = futures::executor::block_on(host.create_receive_key(
-		&CallContext::default(),
-		HostNftPurseCreateReceiveKeyRequest::V1(request),
-	));
+	let revoked = futures::executor::block_on(
+		host.revoke_cheque(&CallContext::default(), HostNftPurseRevokeChequeRequest::V1(request)),
+	);
 
-	assert_eq!(created, Err(CallError::unavailable()));
+	assert_eq!(revoked, Err(CallError::unavailable()));
 }
+
+mod cheques;
 
 mod operations {
 	//! The chain operations of NFT purses through the product-facing trait.
@@ -390,19 +405,28 @@ mod operations {
 
 	/// A product host over a fresh core database, and the ledger it serves,
 	/// with purses 0 and 1 owned by [`PRODUCT`].
-	struct Purses {
+	pub struct Purses {
 		_dir: tempfile::TempDir,
-		services: Arc<RuntimeServices>,
-		ledger: NftLedger,
-		host: ProductRuntimeHost,
+		pub services: Arc<RuntimeServices>,
+		pub ledger: NftLedger,
+		pub host: ProductRuntimeHost,
 	}
 
-	fn product_purses(platform: Arc<StubPlatform>) -> Purses {
+	pub fn product_purses(platform: Arc<StubPlatform>) -> Purses {
+		product_purses_over(platform, Arc::new(MemoryEncryptedStorage::default()))
+	}
+
+	/// [`product_purses`] with receive key secrets kept in `encrypted`.
+	pub fn product_purses_over(
+		platform: Arc<StubPlatform>,
+		encrypted: Arc<dyn EncryptedStorage>,
+	) -> Purses {
 		let services = payment_services_over(platform);
 		let (dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
 		assert!(services.install_core_db(db));
 		assert!(services.install_nft_ledger(ledger.clone()));
+		assert!(services.install_encrypted_storage(encrypted));
 		let host = payment_host(&services, PRODUCT, true);
 		create(&host, "Tickets").unwrap();
 		create(&host, "Spare").unwrap();
@@ -411,7 +435,7 @@ mod operations {
 
 	impl Purses {
 		/// `count` keys of `purse`, each holding an NFT.
-		fn held_items(&self, purse: PurseId, count: u32) -> Vec<v01::NftPurseItemKey> {
+		pub fn held_items(&self, purse: PurseId, count: u32) -> Vec<v01::NftPurseItemKey> {
 			let count = NonZeroU32::new(count).unwrap();
 			let keys = block_on(self.ledger.allocate_items(purse, count)).unwrap();
 			let held = HeldItem { collection: 1, item: 1, instance: 7 };
@@ -421,11 +445,11 @@ mod operations {
 		}
 
 		/// A purse of Root's, which no product owns.
-		fn root_purse(&self) -> PurseId {
+		pub fn root_purse(&self) -> PurseId {
 			block_on(self.ledger.create_purse("Recovered".to_owned(), PurseTag::default())).unwrap()
 		}
 
-		fn other_product(&self) -> ProductRuntimeHost {
+		pub fn other_product(&self) -> ProductRuntimeHost {
 			payment_host(&self.services, OTHER_PRODUCT, true)
 		}
 	}

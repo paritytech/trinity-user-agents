@@ -965,6 +965,7 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
+
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
@@ -3850,6 +3851,20 @@ mod tests {
 		assert!(runtime.services.nft_purses().is_none());
 	}
 
+	/// A receive key whose secret the host does not keep could never open a
+	/// cheque, so without encrypted storage there are no purses at all.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_encrypted_storage() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
 	/// The setters only store their inputs, so purses are served once the
 	/// services start and not before.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -3858,6 +3873,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 
 		runtime.start_core_services();
 
@@ -3873,6 +3891,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 		runtime.start_core_services();
 		let services = Arc::downgrade(&runtime.services);
 

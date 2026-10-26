@@ -17,3 +17,35 @@ pub trait EncryptedStorage: Send + Sync {
 	/// Stores `value` under `key`, replacing any earlier value.
 	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), GenericError>;
 }
+
+/// Encrypted storage in memory, for tests.
+#[cfg(test)]
+#[derive(Default)]
+pub struct MemoryEncryptedStorage {
+	values: std::sync::Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>,
+}
+
+#[cfg(test)]
+impl MemoryEncryptedStorage {
+	/// Every stored value by key.
+	pub fn stored(&self) -> std::collections::HashMap<Vec<u8>, Vec<u8>> {
+		self.values.lock().expect("storage mutex poisoned").clone()
+	}
+}
+
+#[cfg(test)]
+#[async_trait]
+impl EncryptedStorage for MemoryEncryptedStorage {
+	async fn read_encrypted(&self, key: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, GenericError> {
+		let values = self.values.lock().expect("storage mutex poisoned");
+		Ok(values.get(key).cloned().map(Zeroizing::new))
+	}
+
+	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), GenericError> {
+		self.values
+			.lock()
+			.expect("storage mutex poisoned")
+			.insert(key.to_vec(), value.to_vec());
+		Ok(())
+	}
+}

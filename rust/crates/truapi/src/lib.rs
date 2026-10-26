@@ -109,9 +109,10 @@ pub mod latest {
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseClearedItem,
-		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
-		NftPurseItemKey, NftPurseOwner, NftPursePurse, NftPurseStatus, OperationStartedResult,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
+		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
+		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		NftPursePurse, NftPurseReceiveKey, NftPurseStatus, OperationStartedResult,
 		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
 		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
 		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
@@ -121,7 +122,7 @@ pub mod latest {
 		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
 		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
 		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature,
+		VrfSignature, X25519PublicKey,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -382,6 +383,24 @@ pub mod latest {
 	/// NFT purse rebalance failure.
 	pub type HostNftPurseRebalancePurseError =
 		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseError>;
+	/// NFT receive key creation request.
+	pub type HostNftPurseCreateReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyRequest>;
+	/// A created NFT receive key.
+	pub type HostNftPurseCreateReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse>;
+	/// NFT receive key creation failure.
+	pub type HostNftPurseCreateReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyError>;
+	/// NFT cheque creation request.
+	pub type HostNftPurseCreateChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeRequest>;
+	/// A created NFT cheque.
+	pub type HostNftPurseCreateChequeResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeResponse>;
+	/// NFT cheque creation failure.
+	pub type HostNftPurseCreateChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
 	/// NFT item transfer request.
 	pub type HostNftPurseTransferItemRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;
