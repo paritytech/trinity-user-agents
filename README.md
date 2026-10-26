@@ -187,6 +187,9 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
+The core requests product worker transitions through `requestWorkerTransition`
+(`request_worker_transition` in Rust). `Start` requires the worker to run;
+`Stop` permits it to stop when no references remain.
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or

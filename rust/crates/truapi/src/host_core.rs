@@ -1664,8 +1664,8 @@ impl ProductRuntimeControl {
 	///
 	/// An open render stream is one reference on the product's worker, held by
 	/// the core for exactly as long as the returned subscription lives. A
-	/// transition it causes reaches the host through the observer installed on
-	/// [`WorkerLedger::install_demand_observer`].
+	/// transition it causes reaches the host through the controller installed with
+	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
@@ -3016,8 +3016,12 @@ mod tests {
 		struct RecordingDemand {
 			transitions: Mutex<Vec<(String, WorkerTransition)>>,
 		}
-		impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
-			fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
+		impl crate::host_logic::worker::WorkerController for RecordingDemand {
+			fn request_worker_transition(
+				&self,
+				product_id: &ProductId,
+				transition: WorkerTransition,
+			) {
 				self.transitions
 					.lock()
 					.expect("transition mutex poisoned")
@@ -3040,8 +3044,8 @@ mod tests {
 		let services = runtime.admin.product_runtime().connection().services().clone();
 		let demand = Arc::new(RecordingDemand::default());
 		assert!(
-			services.worker_ledger.install_demand_observer(demand.clone()),
-			"the observer installs once"
+			services.worker_ledger.install_worker_controller(demand.clone()),
+			"the controller installs once"
 		);
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 
