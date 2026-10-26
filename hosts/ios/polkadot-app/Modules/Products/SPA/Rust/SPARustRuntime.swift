@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
@@ -21,6 +22,7 @@ actor SPARustRuntime {
     private let productResolver: ProductResolving
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
     private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
@@ -34,7 +36,8 @@ actor SPARustRuntime {
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -42,6 +45,7 @@ actor SPARustRuntime {
         self.productResolver = productResolver
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -77,8 +81,10 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let bootstrapScript = try executionModel.startBridge()
         let scriptsFactory = RustRuntimeScriptsFactory(
             bootstrapScript: bootstrapScript,
-            hostTelemetry: .current(hostSessionId: hostSessionId),
-            logger: logger
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
         )
 
         await engine.registerJSDeviceCapabilityHandler(
@@ -88,6 +94,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: ProcessInfo.processInfo.systemUptime * 1_000
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
