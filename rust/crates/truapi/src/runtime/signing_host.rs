@@ -1422,6 +1422,17 @@ fn local_session_validation_id(session: &SessionInfo, activation_generation: u64
 	id
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft::ItemKeyDeriver for SigningHost {
+	fn derive_item_keys(
+		&self,
+		slots: &[crate::nft::ItemSlot],
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		crate::nft::item_keys_from_entropy(&entropy, slots).map_err(AuthorityError::from)
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	mod activation;
