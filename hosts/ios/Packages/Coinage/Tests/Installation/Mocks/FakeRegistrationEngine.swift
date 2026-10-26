@@ -16,25 +16,16 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
         var groups: [DurableTxGroupId: [DurableTxEntry]] = [:]
         var observers: [DurableTxGroupId: [AsyncStream<[DurableTxEntry]>.Continuation]] = [:]
         var recoveryStarts = 0
-        var subscriptions = 0
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let subscriptionCount: AsyncStream<Int>.Continuation
-    private let subscriptionCountStream: AsyncStream<Int>
-
-    init() {
-        (subscriptionCountStream, subscriptionCount) = AsyncStream<Int>.makeStream()
-    }
+    private let subscriptions = AsyncCurrentValueSubject<Int>(0)
 
     var recoveryStarts: Int { state.withLock { $0.recoveryStarts } }
-    var subscriptions: Int { state.withLock { $0.subscriptions } }
 
-    func waitForSubscriptions(_ count: Int) async {
-        guard subscriptions < count else { return }
-        for await total in subscriptionCountStream where total >= count {
-            return
-        }
+    /// How many group subscriptions were opened so far; replays the current count.
+    func subscribeSubscriptionCount() -> AnyAsyncSequence<Int> {
+        subscriptions.eraseToAnyAsyncSequence()
     }
 
     func current(_ group: DurableTxGroupId) -> [DurableTxEntry] {
@@ -84,13 +75,12 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
     func subscribeGroupEntries(domain: TxDomainId, groupId: DurableTxGroupId) -> AnyAsyncSequence<[DurableTxEntry]> {
         precondition(domain == .coinageInstallation)
         return AsyncStream<[DurableTxEntry]> { continuation in
-            let snapshot = state.withLock { state -> [DurableTxEntry] in
+            let (snapshot, count) = state.withLock { state -> ([DurableTxEntry], Int) in
                 state.observers[groupId, default: []].append(continuation)
-                state.subscriptions += 1
-                subscriptionCount.yield(state.subscriptions)
-                return state.groups[groupId] ?? []
+                return (state.groups[groupId] ?? [], state.observers.values.map(\.count).reduce(0, +))
             }
             continuation.yield(snapshot)
+            subscriptions.send(count)
         }
         .eraseToAnyAsyncSequence()
     }

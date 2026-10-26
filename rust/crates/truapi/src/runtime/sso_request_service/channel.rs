@@ -191,10 +191,9 @@ impl SsoRequestService {
 		let message_id = message_id.to_string();
 		(self.spawner)(Box::pin(async move {
 			let submitted = match withdrawal {
-				Ok(statement) => statement_store
-					.submit_fire_and_forget(statement, "SSO statement-store")
-					.await
-					.map_err(|err| err.to_string()),
+				Ok(statement) => {
+					statement_store.submit_fire_and_forget(statement, "SSO statement-store").await
+				},
 				Err(reason) => Err(reason),
 			};
 			if let Err(reason) = submitted {
@@ -224,14 +223,12 @@ impl SsoRequestService {
 			return Err(SsoRemoteResponseError::LocalDisconnected);
 		}
 		let message_id = sso_message_id();
-		let statement = self
-			.build_request_channel_statement(
-				sso,
-				message_id.clone(),
-				RemoteMessage::request(message_id.clone(), request),
-				Some(message_id.clone()),
-			)
-			.map_err(SsoRemoteResponseError::Failure)?;
+		let statement = self.build_request_channel_statement(
+			sso,
+			message_id.clone(),
+			RemoteMessage::request(message_id.clone(), request),
+			Some(message_id.clone()),
+		)?;
 		let rpc_client = self
 			.statement_store
 			.client("SSO statement-store")

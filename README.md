@@ -148,6 +148,8 @@ scripts/refresh-host-import.sh
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
+scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
+                           ci.yml change gates
 ```
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
@@ -187,6 +189,9 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
+The core requests product worker transitions through `requestWorkerTransition`
+(`request_worker_transition` in Rust). `Start` requires the worker to run;
+`Stop` permits it to stop when no references remain.
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or
@@ -279,9 +284,14 @@ Native signing hosts serve the `NftPurse` API from the
 the core database. A product creates purses it owns and lists any owner's
 purses: its own freely, Root's or another product's with the user's
 `NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
-Calls that need items on chain answer unavailable for now. A host without a
-core database, such as the browser core, answers `Unsupported` to the two
-served calls.
+`createItems` derives receiving keys in a purse on the hard path
+`//nft//<purse>//<installation>//<index>`, under the installation the host
+reports through `currentInstallation`. A tracker watches
+`Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
+`queryPurse` pages through the keys that hold an NFT. The same grant covers
+both. Calls that move items answer unavailable for now. A host without a core
+database, such as the browser core, answers `Unsupported` to the four served
+calls.
 
 ### Trinity stack descriptors
 
@@ -342,6 +352,8 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
 The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 
@@ -521,12 +533,19 @@ crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
-it fails here rather than at the next version bump. Every push to main runs the
-jobs below. A pull request touching the app, or the crates its bindings come
-from, always runs `test`; `build` and `preview` are macOS time no test needs, so
-they run once it is labelled `ios-simulator-build`. CI's
-`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates. The first time a
+it fails here rather than at the next version bump. CI's `iOS app` job,
+`ios-app.yml`, is part of `CI Status` and runs `build` and `test` on every pull
+request touching the app or the crates its bindings come from;
+`.github/hosts.json` names those inputs. A pull request that changes only those
+crates skips both when main already passed the tests against the same bindings.
+Pull requests from forks and from Dependabot skip it, since the Macs are shared
+and Dependabot runs get no secrets, and so does the merge queue. A push to main
+that touches those inputs runs the same suite through `ios-main.yml`, outside
+`CI Status`, and publishes the core pull requests reuse. `preview` is
+macOS time no check needs, so `on-label.yml` builds it once the pull request is
+labelled `ios-simulator-build`. CI's `iOS package (Swift + WebKit)` job also
+compiles the TrUAPIHost package against the core on a pull request touching
+`ios/` or the core crates. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ios-simulator-build`, `ios-device-build` and
 `android-device-build`.
