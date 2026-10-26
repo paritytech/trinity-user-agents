@@ -27,7 +27,8 @@ extension PGASAllowanceManager: AllowanceManaging {
     public func allocate(
         accountId: AccountId,
         policy _: OnExistingAllowancePolicy,
-        priority: AllowanceRecord.Priority
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
     ) async throws {
         // TODO: Should save allocation locally and check if we have it
         // always allocate new slot for now
@@ -42,6 +43,7 @@ extension PGASAllowanceManager: AllowanceManaging {
                 accountId: accountId,
                 allocatedAt: Date(),
                 kind: .pgas,
+                domain: domain,
                 priority: priority,
                 latestRenewedPeriod: period
             )

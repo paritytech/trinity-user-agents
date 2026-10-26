@@ -1854,7 +1854,8 @@ export interface PocketPlatform {
  */
 export interface PreimageHost {
   /**
-   * Emits current value/miss immediately, then future updates.
+   * Emits current value/miss immediately, then future updates. `key` is
+   * the blake2b-256 digest of the preimage.
    */
   lookupPreimage(
     key: Uint8Array,

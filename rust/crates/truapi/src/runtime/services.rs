@@ -28,6 +28,12 @@ use crate::{
 	},
 	subscription::Spawner,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+	installation::InstallationIdProvider,
+	nft::{HoldingTracker, NftLedger},
+	nft_purse::NftPurses,
+};
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -90,6 +96,16 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// The NFT ledger (purse records and item keys) over the core database,
+	/// installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	nft_ledger: OnceLock<NftLedger>,
+	/// Keeps the ledger's holdings in step with the chain, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	holding_tracker: OnceLock<HoldingTracker>,
+	/// Provider of the installation id NFT purse item keys are derived under.
+	#[cfg(not(target_arch = "wasm32"))]
+	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -174,6 +190,12 @@ impl RuntimeServices {
 			core_db: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			holding_tracker: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			installation_provider: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
@@ -387,6 +409,39 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the NFT ledger. Set-once, like the database it runs on.
+	/// Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
+		self.nft_ledger.set(ledger).is_ok()
+	}
+
+	/// Install the tracker of NFT holdings, which runs for as long as the
+	/// services live. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
+		self.holding_tracker.set(tracker).is_ok()
+	}
+
+	/// Install the provider of the installation id. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_installation_provider(&self, provider: Arc<dyn InstallationIdProvider>) -> bool {
+		self.installation_provider.set(provider).is_ok()
+	}
+
+	/// The provider of the installation id, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn installation_provider(&self) -> Option<Arc<dyn InstallationIdProvider>> {
+		self.installation_provider.get().cloned()
+	}
+
+	/// NFT purses, once their ledger is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn nft_purses(&self) -> Option<NftPurses> {
+		self.nft_ledger.get().cloned().map(NftPurses::new)
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

@@ -23,6 +23,7 @@ object FeatureFlags {
 
             FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR -> BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
             FeatureOption.COINAGE_DEBUG_FEATURES -> BuildConfig.COINAGE_DEBUG_FEATURES
+            FeatureOption.COINAGE_DEBUG_TOOLS -> BuildConfig.COINAGE_DEBUG_TOOLS
             FeatureOption.SAMPLE_BOT -> BuildConfig.SAMPLE_BOT
         }
     }
@@ -52,6 +53,10 @@ enum class FeatureOption {
     // log sharing. Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which
     // is also set on safetynet builds, where the card is wanted.
     COINAGE_DEBUG_FEATURES,
+
+    // The coinage card's test-data and coin-set switches. Debug builds only: COINAGE_DEBUG_FEATURES is also on
+    // in nightly builds, which testers use as the real thing.
+    COINAGE_DEBUG_TOOLS,
     ALL_CHAT_EXTENSIONS,
     LINKED_DEVICES,
     PRODUCT_SETTINGS,

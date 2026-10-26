@@ -2,21 +2,17 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
@@ -32,19 +28,15 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
-import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.R
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.LocalCardTilt
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.MotionShineParameters
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.maskedMotionShine
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketBalanceSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarBalanceStatus
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -57,105 +49,75 @@ fun DigitalDollarCard(
     onSelected: ((PocketCardUiModel.DigitalDollar) -> Unit)? = null,
     isExpanded: Boolean
 ) {
-    val tiltState = LocalCardTilt.current
-
-    val highlightBrush = remember { digitalDollarHighlightBrush() }
-
-    val litBorderColor = PolkadotTheme.colors.fg.staticWhite
-    val borderBrush = remember(litBorderColor) { digitalDollarBorderBrush(litBorderColor) }
-
-    PolkadotSurface(
-        modifier = modifier,
-        shape = PolkadotTheme.shapes.large,
-        color = PocketCardColors.DigitalDollarCardBackground,
-        border = BorderStroke(BORDER_WIDTH, borderBrush),
-        onClick = { onSelected?.invoke(card) },
-        enabled = onSelected != null
-    ) {
+    Box(modifier = modifier) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(CardSizes.HEIGHT)
-                .background(highlightBrush)
-        )
-
-        Image(
-            modifier = Modifier.matchParentSize(),
-            painter = painterResource(R.drawable.img_texture_grain_dark),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            alpha = TEXTURE_ALPHA
-        )
-
-        Box(modifier = Modifier.matchParentSize()) {
-            Image(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .align(Alignment.CenterEnd)
-                    .maskedMotionShine(
-                        tiltState = tiltState,
-                        parameters = MotionShineParameters.DigitalDollarCard,
-                        contentAlpha = ILLUSTRATION_ALPHA
-                    ),
-                painter = painterResource(R.drawable.img_digital_dollar_card),
-                contentDescription = null,
-                contentScale = ContentScale.FillHeight
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .padding(
-                    horizontal = PolkadotTheme.spacings.large,
-                    vertical = PolkadotTheme.spacings.mediumIncreased
+                .aspectRatio(WalletLeatherRenderer.ASPECT)
+                .clickable(
+                    enabled = onSelected != null,
+                    interactionSource = null,
+                    indication = null,
+                    role = Role.Button,
+                    onClick = { onSelected?.invoke(card) }
                 )
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            WalletLeatherSurface(modifier = Modifier.matchParentSize())
+
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .padding(
+                        horizontal = PolkadotTheme.spacings.large,
+                        vertical = PolkadotTheme.spacings.mediumIncreased
+                    )
             ) {
                 Row(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    PaymentAssetLogoImage(
-                        modifier = Modifier
-                            .height(LogoHeight)
-                            .aspectRatio(PaymentAssetLogoVariant.Square.aspectRatio),
-                        variant = PaymentAssetLogoVariant.Square
-                    )
-                }
-
-                BalanceAmount(
-                    amounts = card.amounts,
-                    cardId = card.id,
-                    isHidden = isExpanded
-                )
-            }
-
-            if (isExpanded) {
-                Column(
-                    modifier = Modifier.align(Alignment.BottomStart)
-                ) {
-                    AnimatedContent(
-                        targetState = card.balanceStatus,
-                        contentKey = { it::class },
-                        label = "DigitalDollarBalanceStatus"
-                    ) { status ->
-                        when (status) {
-                            DigitalDollarBalanceStatus.Syncing -> SyncProgress()
-                            is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
-
-                            DigitalDollarBalanceStatus.TotalOnly -> Unit
-                        }
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        PaymentAssetLogoImage(
+                            modifier = Modifier
+                                .height(LogoHeight)
+                                .aspectRatio(PaymentAssetLogoVariant.Square.aspectRatio),
+                            variant = PaymentAssetLogoVariant.Square
+                        )
                     }
 
                     BalanceAmount(
                         amounts = card.amounts,
                         cardId = card.id,
-                        isHidden = false
+                        isHidden = isExpanded
                     )
+                }
+
+                if (isExpanded) {
+                    Column(
+                        modifier = Modifier.align(Alignment.BottomStart)
+                    ) {
+                        AnimatedContent(
+                            targetState = card.balanceStatus,
+                            contentKey = { it::class },
+                            label = "DigitalDollarBalanceStatus"
+                        ) { status ->
+                            when (status) {
+                                DigitalDollarBalanceStatus.Syncing -> SyncProgress()
+                                is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
+
+                                DigitalDollarBalanceStatus.TotalOnly -> Unit
+                            }
+                        }
+
+                        BalanceAmount(
+                            amounts = card.amounts,
+                            cardId = card.id,
+                            isHidden = false
+                        )
+                    }
                 }
             }
         }
@@ -244,12 +206,6 @@ private fun SyncProgress() {
         )
     }
 }
-
-private val BORDER_WIDTH = 0.5.dp
-
-private const val ILLUSTRATION_ALPHA = 0.2f
-
-private const val TEXTURE_ALPHA = 0.3f
 
 private object AmountShimmerSizes {
     val WIDTH = 100.dp

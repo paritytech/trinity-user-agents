@@ -8,7 +8,7 @@ import SDKLogger
 ///   (inner one-shot ChaCha20-Poly1305 key per device), then applies outer X25519 encryption via `outgoingCoder`
 ///   = ECDH(own_device_priv, peer_identity_pub).
 ///
-/// - Decoding: selects the outer coder based on sender account ID:
+/// - Decoding: selects the outer coder by the sender's device account, taken from the topic rather than the signer:
 ///   - own account → `outgoingCoder` (own statements were encoded with the same key)
 ///   - known peer device account → per-device coder ECDH(own_identity_priv, peer_device_pub)
 ///   - unknown sender → throws `deviceEntryNotFound`

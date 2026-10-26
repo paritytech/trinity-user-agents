@@ -69,7 +69,7 @@ cli = ["uniffi", "uniffi/cli"]
 
 [dependencies]
 async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["display", "error"] }
+derive_more = { workspace = true, features = ["display", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
 serde_json = { workspace = true }

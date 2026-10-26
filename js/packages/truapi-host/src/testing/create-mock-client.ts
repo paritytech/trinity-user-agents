@@ -99,7 +99,7 @@ export async function createMockClient(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
       ...createWasmRawCallbacks(host.callbacks),
-      workerDemandChanged: () => {},
+      requestWorkerTransition: () => {},
     },
     hostConfig,
   );

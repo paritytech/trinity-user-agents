@@ -29,6 +29,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         issueMonitoringService.setup()
 
+        // The OS requires every background task handler to be registered before launch finishes.
+        StatementRenewalBackgroundTask.shared?.register()
         CoreDurableRecoveryTask.shared.register()
 
         UserNotificationService.shared.startGatheringNotifications()
