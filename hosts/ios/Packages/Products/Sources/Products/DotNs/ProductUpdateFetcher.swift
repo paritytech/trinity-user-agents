@@ -50,16 +50,14 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
 
         onPhase(.resolving)
 
-        let dotNsResolver = makeDotNsResolver(carFetcher: carFetcher)
+        let dotNsResolver = makeDotNsResolver()
 
         let resolved = try await resolverFactory.makeResolver(
             metadataRepository: ProductMetadataRepository(contractApi: contractApi),
             hostProvider: hostProvider
         ).resolve(productId)
 
-        let appContent = try await makeDotNsResolver(
-            carFetcher: ProgressReportingCarFetcher(carFetcher: carFetcher, onPhase: onPhase)
-        ).stageContent(dotNsName: resolved.appContentId)
+        let appContent = try await dotNsResolver.stageContent(dotNsName: resolved.appContentId, onPhase: onPhase)
         var contents = [resolved.appContentId: appContent]
 
         for contentId in optionalContentIds(of: resolved) where contents[contentId] == nil {
@@ -77,7 +75,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
 }
 
 private extension ProductUpdateFetcher {
-    func makeDotNsResolver(carFetcher: CarFetcherProtocol) -> DotNsResolver {
+    func makeDotNsResolver() -> DotNsResolver {
         DotNsResolver(
             contractApi: contractApi,
             carFetcher: carFetcher,
@@ -101,23 +99,5 @@ private extension ProductUpdateFetcher {
             resolverFactory.logger.warning("Product \(productId) declares \(contentId) with no published content")
             return nil
         }
-    }
-}
-
-private struct ProgressReportingCarFetcher: CarFetcherProtocol {
-    let carFetcher: CarFetcherProtocol
-    let onPhase: ProductLoadPhaseHandler
-
-    func fetchCarToFile(
-        contentHash: Data,
-        onProgress: @escaping (_ downloaded: Int64, _ total: Int64?) -> Void
-    ) async throws -> URL {
-        let fileURL = try await carFetcher.fetchCarToFile(contentHash: contentHash) { [onPhase] downloaded, total in
-            onProgress(downloaded, total)
-            onPhase(.downloading(downloadedBytes: downloaded, totalBytes: total))
-        }
-
-        onPhase(.unpacking)
-        return fileURL
     }
 }

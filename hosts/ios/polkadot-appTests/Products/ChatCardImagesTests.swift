@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
@@ -122,10 +121,6 @@ private final class RecordingResolver: DotNsResolverProtocol, @unchecked Sendabl
     func resolveToLocalURL(dotNsName: String) async throws -> URL {
         lock.withLock { names.append(dotNsName) }
         return root
-    }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

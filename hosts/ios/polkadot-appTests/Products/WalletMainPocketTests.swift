@@ -1,4 +1,3 @@
-import AsyncExtensions
 import ChainRegistry
 import Foundation
 import os
@@ -274,10 +273,6 @@ private final class SlowArchives: DotNsResolverProtocol, @unchecked Sendable {
         if delay > .zero { try await Task.sleep(for: delay) }
 
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}
