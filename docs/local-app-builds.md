@@ -53,28 +53,17 @@ Prerequisites: Xcode 26.4.1, the version CI pins (`hosts/ios/.github/actions/ins
 Both are gitignored (`hosts/ios/.gitignore`).
 
 ```bash
-npm ci --ignore-scripts
-SIM_ONLY=1 make ios-bootstrap               # about 2 minutes
 hosts/ios/Runscripts/setup-secrets.sh       # scaffolds env-vars.sh and the plists
 # then replace hosts/ios/polkadot-app/GoogleService/GoogleService-Info-Dev.plist with the dev plist
-
-cd hosts/ios
-TRUAPI_USE_LOCAL_BINARY=1 xcodebuild build \
-  -project polkadot-app.xcodeproj -scheme polkadot-app -configuration Debug \
-  -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath build_simulator_dd -clonedSourcePackagesDirPath source_packages \
-  -skipPackagePluginValidation -skipMacroValidation ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-  CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES
-
-xcrun simctl install booted build_simulator_dd/Build/Products/Debug-iphonesimulator/polkadot-app.app
-xcrun simctl launch booted io.parity.polkadotapp.develop
+xcrun simctl boot "iPhone 17 Pro"
+make ios-sim-run                            # IOS_SIM_DEVICE=<udid> picks a simulator other than the booted one
 ```
 
-A cold build takes about 3 minutes on an M-series Mac and an incremental one under a minute. Opening `hosts/ios/polkadot-app.xcodeproj` in Xcode after `make ios-bootstrap` works the same way. Rerun `make ios-bootstrap` after changing the `truapi` or `truapi-provider` crates.
+`make ios-sim-run` builds with `make ios-sim-build`, then installs and launches the app. The first run installs the npm dependencies and runs `SIM_ONLY=1 make ios-bootstrap` to generate the core. After that a cold app build takes about 3 minutes on an M-series Mac and an incremental one under a minute. Rerun `SIM_ONLY=1 make ios-bootstrap` after changing the `truapi` or `truapi-provider` crates. Opening `hosts/ios/polkadot-app.xcodeproj` in Xcode after the bootstrap works the same way.
 
-**The dev plist is required to launch.** The template `setup-secrets.sh` copies in carries `GOOGLE_APP_ID = 1:YOUR_GCM_SENDER_ID:ios:YOUR_APP_ID`, which `FirebaseApp.configure()` (`polkadot-app/Common/Firebase/FirebaseApplicationService.swift:43`) rejects with an uncaught exception, and a well-formed fake id fails next in Firebase Installations. `hosts/ios/docs/PUBLISHING.md` §1 describes the templates as inert; on a simulator they crash.
+**The dev plist is required to launch.** The target refuses to build with the template, because the template `setup-secrets.sh` copies in carries `GOOGLE_APP_ID = 1:YOUR_GCM_SENDER_ID:ios:YOUR_APP_ID`, which `FirebaseApp.configure()` (`polkadot-app/Common/Firebase/FirebaseApplicationService.swift:43`) rejects with an uncaught exception, and a well-formed fake id fails next in Firebase Installations. `hosts/ios/docs/PUBLISHING.md` §1 describes the templates as inert; on a simulator they crash.
 
-**Ad hoc signing is required.** `CODE_SIGN_IDENTITY="-"` embeds the App Group and keychain entitlements without a provisioning profile; an unsigned build (`CODE_SIGNING_ALLOWED=NO`) launches without them and fails when the app opens its App Group container. These are the flags CI's simulator build uses (`hosts/ios/fastlane/lanes/lane_simulator_build.rb:71-73`).
+**Ad hoc signing is required.** The target builds with `CODE_SIGN_IDENTITY="-"`, which embeds the App Group and keychain entitlements without a provisioning profile; an unsigned build (`CODE_SIGNING_ALLOWED=NO`) launches without them and fails when the app opens its App Group container. These are the flags CI's simulator build uses (`hosts/ios/fastlane/lanes/lane_simulator_build.rb:71-73`).
 
 **Debug is the configuration to build.** It uses the `.develop` bundle id that the dev plist is registered for, and the simulator's attestation path, so onboarding completes without a device.
 
