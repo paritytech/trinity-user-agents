@@ -312,9 +312,20 @@ transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
 submitted, and proven landed when its instance is at the destination. What
 each transfer spends is recorded in `nft_consumption`, and a failed transfer
 frees its item again. Transferring items out of Root's or another product's
-purse asks the user through the `NftPurseDrain` confirmation review. The cheque calls answer
-unavailable for now. A host without a core database, such as the browser core,
-answers `Unsupported` to the served calls.
+purse asks the user through the `NftPurseDrain` confirmation review.
+
+`createReceiveKey` makes a random X25519 key for a receiver. Its secret goes to
+the host's encrypted storage (`encryptedStorageRead` and `encryptedStorageWrite`
+on the runtime bridge: the Keychain on iOS, encrypted preferences on Android),
+and the core database records only the public key, its purse and its creator.
+`createCheque` hands items to a receive key or a static X25519 key: it seals
+the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
+key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
+under the cheque id, so they are spent from then on. A second cheque with the
+same id from the same product answers `OperationExists`. Deposit, refund,
+revoke and listening for payments answer unavailable for now. A host without a
+core database, such as the browser core, answers `Unsupported` to the served
+calls.
 
 ### Trinity stack descriptors
 
