@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerBridge
 
@@ -15,7 +16,7 @@ class ChatHostCalls(
 ) : HostCallHandlerGroup {
     override fun registerOn(bridge: ContainerBridge) {
         bridge.registerHandler<ChatCreateRoomParams, ChatCreateRoomResult>("chatCreateRoom") { params ->
-            validateChatIcon(params.icon).flatMap { icon ->
+            ProductChatIcon.fromString(params.icon).flatMap { icon ->
                 val request = CreateProductRoomRequest(
                     chatIdParameter = ProductChatIdParameter(params.roomId),
                     name = params.name,

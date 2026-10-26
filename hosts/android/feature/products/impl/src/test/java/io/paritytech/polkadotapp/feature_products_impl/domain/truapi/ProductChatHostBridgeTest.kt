@@ -57,7 +57,7 @@ class ProductChatHostBridgeTest {
         val bridge = bridge(api)
 
         val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi"), alt = null) }.exceptionOrNull()
-        val created = runCatching { bridge.createRoom("", "Jollity", "icon") }.exceptionOrNull()
+        val created = runCatching { bridge.createRoom("", "Jollity", "") }.exceptionOrNull()
         val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
 
         assertTrue(posted is HostRejection)
@@ -113,7 +113,7 @@ class ProductChatHostBridgeTest {
     fun `a failing createRoom surfaces as a rejection carrying its reason`() = runTest {
         val api = FakeChatMessaging(onCreateRoom = { messagingNotSupported() })
 
-        val thrown = runCatching { bridge(api).createRoom(ROOM, "Jollity", "icon") }.exceptionOrNull()
+        val thrown = runCatching { bridge(api).createRoom(ROOM, "Jollity", "") }.exceptionOrNull()
 
         assertTrue(thrown is HostRejection)
         assertTrue(thrown!!.message!!.contains("Product messaging is not supported"))
@@ -131,11 +131,22 @@ class ProductChatHostBridgeTest {
         assertEquals(null, registered?.icon)
     }
 
+    // The room keeps the icon in the form the core screens it to, so the bridge must build it through the core.
+    @Test
+    fun `a room registers the icon in the form the core screens it to`() = runTest {
+        var registered: CreateProductRoomRequest? = null
+        val api = FakeChatMessaging(onCreateRoom = { registered = it; Result.success(CreateProductRoomResult(CreateRoomStatus.New)) })
+
+        bridge(api).createRoom(ROOM, "Jollity", icon = "https://example.invalid")
+
+        assertEquals("https://example.invalid/", registered?.icon?.value)
+    }
+
     @Test
     fun `createRoom maps New and Exists to the core registration status`() = runTest {
         suspend fun statusFor(status: CreateRoomStatus) = bridge(
             FakeChatMessaging(onCreateRoom = { Result.success(CreateProductRoomResult(status)) }),
-        ).createRoom(ROOM, "Jollity", "icon")
+        ).createRoom(ROOM, "Jollity", "")
 
         assertEquals(ChatRoomRegistrationStatus.NEW, statusFor(CreateRoomStatus.New))
         assertEquals(ChatRoomRegistrationStatus.EXISTS, statusFor(CreateRoomStatus.Exists))

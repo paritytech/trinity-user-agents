@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import kotlinx.coroutines.flow.firstOrNull
 import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
@@ -23,8 +24,8 @@ class ProductChatHostBridge(
 ) : ChatHostBridge {
     override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        // The core hands over an absent icon as an empty string; the room then shows its default icon.
-        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, icon.ifBlank { null }))
+        val roomIcon = ProductChatIcon.fromString(icon).orReject()
+        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, roomIcon))
             .orReject()
             .status
             .toCoreStatus()

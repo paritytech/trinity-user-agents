@@ -173,7 +173,7 @@ class ProductChatExtension(
     ) : ProductChatMessaging {
         override suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult> {
             val chatId = request.chatIdParameter.toChatId(id)
-            val roomRequest = CreateRoomRequest(chatId, request.name, request.icon)
+            val roomRequest = CreateRoomRequest(chatId, request.name, request.icon?.value)
             val response = extensionContext.createRoom(roomRequest)
             return Result.success(CreateProductRoomResult(response.status))
         }
