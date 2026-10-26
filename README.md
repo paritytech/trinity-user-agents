@@ -802,6 +802,10 @@ use a different state directory while debugging.
 - **v0.2**: See [`docs/design/releases/v0.2.md`](docs/design/releases/v0.2.md) for the rationale behind each change.
 - **v0.3**: current protocol version.
 
+If a product sends a request in a newer version than the host knows, the
+call fails with `Unsupported`. See
+[Request versions](docs/design/truapi-protocol.md#request-versions).
+
 ## Deploy
 
 Pushes to `main` build and deploy:
