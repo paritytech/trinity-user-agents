@@ -13,7 +13,6 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(fundingStates: [AssetFundingStatusView.FundingState])
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didShowBackupNotification()
     func didHideBackupNotification()
 
@@ -63,7 +62,6 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(price: PriceData?)
     func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
     func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
