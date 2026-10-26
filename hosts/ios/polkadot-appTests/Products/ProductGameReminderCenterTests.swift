@@ -113,6 +113,22 @@ struct ProductGameReminderCenterTests {
         #expect(center.slots.isEmpty)
     }
 
+    @Test("A past replacement drops the product's held future reminder")
+    func pastStartDropsHeldFutureReminder() async {
+        let heldStart = startsAt.addingTimeInterval(600)
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
+        await center.schedule(productId: productId, startsAt: heldStart, addCalendarEvent: false)
+        fakes.now = startsAt.addingTimeInterval(60)
+
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+
+        #expect(fakes.reporter.events.map(\.step) == [.notScheduled])
+        #expect(fakes.reporter.events.first?.skipReason == .startInPast)
+        #expect(fakes.alarm(for: productId).cancelCount == 1)
+        #expect(center.slots.isEmpty)
+        #expect(center.pill == nil)
+    }
+
     @Test("With the calendar flag and a start exactly an hour away, one calendar event is added")
     func addsCalendarEventOnce() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))

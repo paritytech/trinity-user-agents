@@ -131,6 +131,10 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
             calendarStartsAt: slot(for: productId)?.calendarStartsAt
         )
         guard next.startsAt > dateProvider.now else {
+            if slot(for: productId) != nil {
+                drop(productId)
+                refresh()
+            }
             record(.notScheduled, for: next) { $0.skipReason = .startInPast }
             return
         }
