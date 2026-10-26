@@ -394,6 +394,13 @@ export interface MockHostConfig {
   remotePermissions?: PermissionPolicy;
   /** Whether `featureSupported` reports support. Default `true`. */
   featureSupported?: boolean;
+  /**
+   * When set, `featureSupported` answers from `supportedChains`, as a real host
+   * does, so a chain outside that set is unsupported. Default `false`. It
+   * becomes the default in a later breaking release. The Rust
+   * `MockConfig::only_served_chains` is the same option.
+   */
+  onlyServedChains?: boolean;
   /** Theme emitted by `subscribeTheme`. Default `"Dark"`. */
   theme?: ThemeVariant;
   /** BCP 47 tag emitted by `subscribeLocale`. Default `"en"`. */
@@ -864,6 +871,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
+    onlyServedChains = false,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -1214,9 +1222,16 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
     features: {
-      async featureSupported() {
+      async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
-        return { supported: featureSupported };
+        const served =
+          !onlyServedChains ||
+          supportedChains.chains.some(
+            (entry) =>
+              normalizeHash(entry.genesisHash) ===
+              normalizeHash(request.value.genesisHash),
+          );
+        return { supported: featureSupported && served };
       },
       async supportedChains() {
         if (faults.featureError) throw new Error(faults.featureError);
