@@ -82,7 +82,7 @@ fun FundingSummaryScreen(
             }
 
             FundingInfoRow(
-                label = stringResource(if (state.isWithdraw) RCommon.string.funding_fees_you_send else RCommon.string.funding_summary_min_payout),
+                label = stringResource(if (state.isWithdraw) RCommon.string.funding_summary_you_receive else RCommon.string.funding_summary_min_payout),
             ) {
                 if (state.payout != null) ValueText(state.payout) else ValueSkeleton()
             }

@@ -4,7 +4,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCas
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingQuote
@@ -14,6 +16,7 @@ import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import kotlin.time.Instant
+import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingUiMapperTest {
     @Test
@@ -51,6 +54,19 @@ class FundingUiMapperTest {
 
         assertEquals(FundingCountdown.Refreshing, providers.countdown)
         assertEquals(FundingProviderPrice.Updating(forAmount = "$50 CASH"), providers.rows[0].price)
+    }
+
+    @Test
+    fun `the band line follows the rail, and retrying or delay reads as a warning`() {
+        val bank = flow().copy(rail = FundingRail.BANK)
+        val crypto = flow().copy(rail = FundingRail.CRYPTO)
+
+        assertEquals(FundingBandUi(RCommon.string.funding_band_waiting_bank, null, warning = false), bank.bandLine(FundingBand.AWAITING_PAYMENT, null))
+        assertEquals(FundingBandUi(RCommon.string.funding_band_retrying_bank, null, warning = true), bank.bandLine(FundingBand.RETRYING, null))
+        assertEquals(FundingBandUi(RCommon.string.funding_band_confirming_deposit, "USDC", warning = false), crypto.bandLine(FundingBand.CHECKING_PAYMENT, "USDC"))
+        assertEquals(FundingBandUi(RCommon.string.funding_band_adding, "$50 CASH", warning = false), bank.bandLine(FundingBand.ADDING, null))
+        assertEquals(FundingBandUi(RCommon.string.funding_band_delayed, null, warning = true), bank.bandLine(FundingBand.DELAYED, null))
+        assertNull(bank.bandLine(FundingBand.ENDED, null))
     }
 
     private fun flow() = FundingFlowState.initial(

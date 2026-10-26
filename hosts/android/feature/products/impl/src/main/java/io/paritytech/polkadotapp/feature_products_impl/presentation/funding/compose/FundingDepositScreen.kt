@@ -15,20 +15,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
+import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
+import io.paritytech.polkadotapp.design.components.icon.vectors.SyncArrowsOutlined
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.qr.QrCode
+import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCancelUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositContent
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingLiveProgressUi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingLastHeard
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
 import kotlinx.coroutines.delay
 import uniffi.truapi.FundingRail
@@ -39,6 +46,8 @@ private val WAITING_HEIGHT = 52.dp
 private val SMALL_INDICATOR_SIZE = 16.dp
 private val INDICATOR_SIZE = 32.dp
 private val INDICATOR_STROKE = 2.dp
+private val LIVE_ICON_SIZE = 48.dp
+private val LIVE_GLYPH_SIZE = 24.dp
 
 /** Where to send the funds, as the provider reported it, while the session waits for them. */
 @Composable
@@ -56,7 +65,7 @@ fun FundingDepositScreen(
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
         FundingHeader(
-            title = stringResource(
+            title = if (state.progress != null) "" else stringResource(
                 when (state.rail) {
                     FundingRail.CARD -> RCommon.string.funding_summary_card_title
                     FundingRail.BANK -> RCommon.string.funding_summary_bank_title
@@ -65,6 +74,8 @@ fun FundingDepositScreen(
             ),
             onBack = onBack,
         )
+
+        state.progress?.let { LiveProgress(figure = state.figure, progress = it) }
 
         when (val content = state.content) {
             is FundingDepositContent.Crypto -> CryptoDeposit(content = content, onCopy = onCopy)
@@ -121,9 +132,40 @@ fun FundingDepositScreen(
                         onClick = onCancel,
                     )
                 }
-                WaitingPill(modifier = Modifier.weight(1f))
+                if (state.progress == null) WaitingPill(modifier = Modifier.weight(1f))
             }
         }
+    }
+}
+
+@Composable
+private fun LiveProgress(figure: String, progress: FundingLiveProgressUi) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
+    ) {
+        PolkadotSurface(
+            modifier = Modifier.size(LIVE_ICON_SIZE),
+            shape = PolkadotTheme.shapes.full,
+            color = PolkadotTheme.colors.bg.surface.nested,
+            contentAlignment = Alignment.Center,
+        ) {
+            NovaIcon(modifier = Modifier.size(LIVE_GLYPH_SIZE), imageVector = NovaIcons.SyncArrowsOutlined)
+        }
+        NovaText(
+            text = "$figure ${LocalPaymentAssetBrand.current.symbol}",
+            style = PolkadotTheme.typography.headline.large,
+            color = PolkadotTheme.colors.fg.primary,
+            maxLines = 1,
+        )
+        VerticalSpacer { small }
+        FundingTimelineCard(
+            timeline = progress.timeline,
+            band = progress.band?.let { band -> band.arg?.let { stringResource(band.text, it) } ?: stringResource(band.text) },
+            bandWarning = progress.band?.warning == true,
+        )
+        progress.lastHeardAtMs?.let { FundingLastHeard(lastHeardAtMs = it) }
     }
 }
 
@@ -166,11 +208,36 @@ private fun CryptoDeposit(content: FundingDepositContent.Crypto, onCopy: (String
 @Composable
 private fun BankDeposit(content: FundingDepositContent.Bank, onCopy: (String) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
-        CopyRow(stringResource(RCommon.string.funding_deposit_exact_amount), content.amount, content.amount, onCopy)
+        CopyRow(stringResource(RCommon.string.funding_row_send_exact), content.amount, content.amount, onCopy)
         content.beneficiary?.let { CopyRow(stringResource(RCommon.string.funding_deposit_beneficiary), it, it, onCopy) }
         content.account?.let { CopyRow(stringResource(RCommon.string.funding_deposit_account), it, it, onCopy) }
         content.bankCode?.let { CopyRow(stringResource(RCommon.string.funding_deposit_bank_code), it, it, onCopy) }
         CopyRow(stringResource(RCommon.string.funding_deposit_reference), content.reference, content.reference, onCopy)
+        ArrivesRow()
+    }
+}
+
+@Composable
+private fun ArrivesRow() {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = PolkadotTheme.spacings.small)) {
+        NovaText(
+            modifier = Modifier.weight(1f),
+            text = stringResource(RCommon.string.funding_row_arrives),
+            style = PolkadotTheme.typography.body.medium,
+            color = PolkadotTheme.colors.fg.primary,
+        )
+        Column(horizontalAlignment = Alignment.End) {
+            NovaText(
+                text = stringResource(RCommon.string.funding_row_arrives_bank),
+                style = PolkadotTheme.typography.body.mediumEmphasized,
+                color = PolkadotTheme.colors.fg.primary,
+            )
+            NovaText(
+                text = stringResource(RCommon.string.funding_row_rate_note),
+                style = PolkadotTheme.typography.caption.medium,
+                color = PolkadotTheme.colors.fg.secondary,
+            )
+        }
     }
 }
 
@@ -181,19 +248,20 @@ private fun CopyRow(title: String, value: String, shown: String, onCopy: (String
             .fillMaxWidth()
             .padding(vertical = PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            NovaText(
-                text = title,
-                style = PolkadotTheme.typography.caption.medium,
-                color = PolkadotTheme.colors.fg.secondary,
-            )
-            NovaText(
-                text = shown,
-                style = PolkadotTheme.typography.body.medium,
-                color = PolkadotTheme.colors.fg.primary,
-            )
-        }
+        NovaText(
+            modifier = Modifier.weight(1f),
+            text = title,
+            style = PolkadotTheme.typography.body.medium,
+            color = PolkadotTheme.colors.fg.primary,
+        )
+        NovaText(
+            text = shown,
+            style = PolkadotTheme.typography.body.mediumEmphasized,
+            color = PolkadotTheme.colors.fg.primary,
+            textAlign = TextAlign.End,
+        )
         FundingCircleButton(icon = NovaIcons.ContentCopy, onClick = { onCopy(value) })
     }
 }
@@ -391,7 +459,11 @@ fun FundingCancelConfirmScreen(
         )
         NovaText(
             text = stringResource(
-                if (state.content is FundingDepositContent.Crypto) RCommon.string.funding_cancel_body else RCommon.string.funding_cancel_body_provider,
+                when {
+                    state.content is FundingDepositContent.Crypto -> RCommon.string.funding_cancel_body
+                    state.rail == FundingRail.BANK && !state.moneyMoved -> RCommon.string.funding_cancel_body_bank
+                    else -> RCommon.string.funding_cancel_body_provider
+                },
             ),
             style = PolkadotTheme.typography.body.medium,
             color = PolkadotTheme.colors.fg.primary,

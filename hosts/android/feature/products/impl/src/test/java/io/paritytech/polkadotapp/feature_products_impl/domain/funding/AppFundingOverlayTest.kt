@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingProgressStep
@@ -84,8 +85,8 @@ class AppFundingOverlayTest {
         val interactor = FundingFlowInteractor(mockk(), mockk<FundingBalance>(), runtime, mockk())
         coEvery { runtime.session("intent") } returns session(FundingRail.CARD, FundingStage.Open)
         coEvery { runtime.progress("intent") } returnsMany listOf(
-            progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.PAYMENT, null)),
-            progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.PAYMENT, 2uL)),
+            progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.RECEIVED, null)),
+            progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.RECEIVED, 2uL)),
         )
 
         assertEquals(listOf(false, true), listOf(interactor.paymentMoved("intent"), interactor.paymentMoved("intent")))
@@ -93,6 +94,8 @@ class AppFundingOverlayTest {
 
     private fun progress(vararg steps: FundingProgressStep) = FundingProgress(
         steps = steps.toList(),
+        band = FundingBand.AWAITING_PAYMENT,
+        lastHeardAtMs = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,

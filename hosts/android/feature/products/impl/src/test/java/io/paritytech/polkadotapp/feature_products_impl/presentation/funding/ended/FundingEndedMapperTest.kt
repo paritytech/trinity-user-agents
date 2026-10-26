@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCas
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -19,14 +21,14 @@ class FundingEndedMapperTest {
     private val mapper = FundingEndedMapper(FundingCash(symbol = "CASH", precision = 6))
 
     @Test
-    fun `a top-up that went through is signed, green, and has no steps`() {
+    fun `a top-up that went through is signed, green, with every milestone done`() {
         val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Delivered))
 
         assertEquals(true, ended.succeeded)
         assertEquals(FundingEndedIcon.IN, ended.icon)
         assertEquals("+$50", ended.figure)
         assertEquals(FundingEndedTone.SUCCESS, ended.figureTone)
-        assertTrue(ended.steps.isEmpty())
+        assertEquals(List(FundingTimeline.DOTS) { FundingDotState.DONE }, ended.timeline.dots)
         assertNull(ended.note)
         assertEquals(FundingEndedAction.CLOSE, ended.action)
     }
@@ -38,11 +40,9 @@ class FundingEndedMapperTest {
         assertEquals(FundingEndedIcon.FAILED, ended.icon)
         assertEquals("$50", ended.figure)
         assertEquals(FundingEndedTone.TERTIARY, ended.figureTone)
-        assertEquals(
-            listOf(FundingEndedStepState.DONE, FundingEndedStepState.FAILED, FundingEndedStepState.UPCOMING, FundingEndedStepState.UPCOMING, FundingEndedStepState.UPCOMING),
-            ended.steps.map { it.state },
-        )
-        assertEquals(RCommon.string.funding_ended_step_payment_declined, ended.steps[1].title)
+        assertEquals(FundingDotState.FAILED, ended.timeline.dots[FundingTimeline.MILESTONE_GAP])
+        assertEquals(1, ended.timeline.failedLabel)
+        assertEquals(RCommon.string.funding_ended_step_payment_declined, ended.timeline.labels[1])
         assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_card_declined, emptyList()), ended.note)
         assertEquals(FundingEndedAction.START_OVER, ended.action)
     }
@@ -53,8 +53,8 @@ class FundingEndedMapperTest {
             record(FundingDirection.OUT, FundingRecordOutcome.Released, payout = FundingRecordPayout.Failed("rejected"), refunded = 49_000_000),
         )
 
-        assertEquals(RCommon.string.funding_activity_payout_failed, ended.steps.last().title)
-        assertEquals(FundingEndedStepState.FAILED, ended.steps.last().state)
+        assertEquals(RCommon.string.funding_activity_payout_failed, ended.timeline.labels.last())
+        assertEquals(FundingDotState.FAILED, ended.timeline.dots.last())
         assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_withdraw_refunded, listOf("$49 CASH")), ended.note)
     }
 
@@ -64,7 +64,7 @@ class FundingEndedMapperTest {
 
         assertEquals(true, ended.succeeded)
         assertEquals("-$50", ended.figure)
-        assertEquals(FundingEndedStepState.CURRENT, ended.steps.last().state)
+        assertEquals(FundingDotState.CURRENT, ended.timeline.dots[5])
         assertTrue(
             ended.rows.contains(
                 FundingEndedRow.Value(RCommon.string.funding_ended_payout, FundingEndedText.Res(RCommon.string.funding_ended_payout_pending, emptyList())),

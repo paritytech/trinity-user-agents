@@ -12,6 +12,7 @@ internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (thi
     FundingStatus.WaitingForTransfer -> inProgress(FundingActivityStep.WaitingForTransfer)
     FundingStatus.WaitingForDeposit -> inProgress(FundingActivityStep.WaitingForDeposit)
     FundingStatus.ConvertingToCash -> inProgress(FundingActivityStep.Converting)
+    FundingStatus.AddingToBalance -> inProgress(FundingActivityStep.AddingToBalance)
     FundingStatus.TransactionInitiated -> inProgress(FundingActivityStep.TransactionInitiated)
     is FundingStatus.ConvertingTo -> inProgress(FundingActivityStep.ConvertingOut(asset))
     FundingStatus.PreparingPayout -> inProgress(FundingActivityStep.PreparingPayout)

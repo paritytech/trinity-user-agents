@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
@@ -93,7 +94,9 @@ class FundingActivityCenter @Inject constructor(
 
         return FundingActivity(
             inFlight = inFlight,
-            history = records.sortedByDescending { it.settledAt }.map { it.toItem() },
+            // A top-up the user cancelled before paying leaves the lists; if its payment arrives anyway, the core
+            // hands the session back and it shows as received.
+            history = records.filterNot { it.cancelledBeforePaying }.sortedByDescending { it.settledAt }.map { it.toItem() },
         )
     }
 
@@ -140,6 +143,9 @@ class FundingActivityCenter @Inject constructor(
             status = status,
         )
     }
+
+    private val FundingRecord.cancelledBeforePaying: Boolean
+        get() = (outcome as? FundingRecordOutcome.Failed)?.reason == FundingFailureReason.Cancelled
 
     private fun FundingRecord.toItem() = FundingActivityItem(
         id = intent,

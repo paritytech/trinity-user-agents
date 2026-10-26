@@ -6,12 +6,19 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCas
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import kotlinx.collections.immutable.toImmutableList
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingRail
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /** Builds an ended session's detail screen from the host's record of it, the same way iOS draws it. */
+private const val MIDDLE_MILESTONE = 1
+private const val LAST_MILESTONE = 2
+private const val SENDING_DOT = 5
+private const val LAST_MILESTONE_DOT = 6
+
 class FundingEndedMapper(private val cash: FundingCash) {
     fun map(record: FundingRecord): FundingEndedUiState {
         val outcome = outcome(record)
@@ -29,7 +36,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
                 else -> FundingEndedTone.PRIMARY
             },
             settledAt = record.settledAt.takeIf { succeeded },
-            steps = steps(record, outcome).toImmutableList(),
+            timeline = timeline(record, outcome),
             note = note(record, outcome),
             rows = rows(record, succeeded).toImmutableList(),
             action = if (succeeded) FundingEndedAction.CLOSE else FundingEndedAction.START_OVER,
@@ -52,67 +59,35 @@ class FundingEndedMapper(private val cash: FundingCash) {
         is FundingRecordOutcome.Failed -> Outcome.Failed(outcome.reason)
     }
 
-    private enum class Step { STARTED, PAYMENT, APPROVED, CONVERSION, ADDED, SENT, PAYOUT }
-
-    private fun stepsFor(record: FundingRecord): List<Step> = when {
-        record.direction == FundingDirection.OUT -> listOf(Step.STARTED, Step.PAYMENT, Step.SENT, Step.CONVERSION, Step.PAYOUT)
-        record.rail == FundingRail.BANK -> listOf(Step.STARTED, Step.PAYMENT, Step.ADDED)
-        else -> listOf(Step.STARTED, Step.PAYMENT, Step.APPROVED, Step.CONVERSION, Step.ADDED)
-    }
-
-    private fun steps(record: FundingRecord, outcome: Outcome): List<FundingEndedStep> {
-        val steps = stepsFor(record)
+    /** Every milestone done once it succeeded; a released payout still on its way sits on Sending; a failure is red where it stopped. */
+    private fun timeline(record: FundingRecord, outcome: Outcome): FundingTimelineUi {
+        val labels = FundingTimeline.labels(record.direction)
         val pendingPayout = record.direction == FundingDirection.OUT &&
             record.outcome == FundingRecordOutcome.Released && record.payout == null
-        if (pendingPayout) {
-            val waitingAt = steps.indexOf(Step.PAYOUT)
-            return steps.mapIndexed { index, step ->
-                val state = when {
-                    index < waitingAt -> FundingEndedStepState.DONE
-                    index == waitingAt -> FundingEndedStepState.CURRENT
-                    else -> FundingEndedStepState.UPCOMING
-                }
-                FundingEndedStep(title(step, record), state)
-            }
-        }
-        val stoppedAt = when (outcome) {
-            Outcome.Succeeded -> return emptyList()
-            is Outcome.PayoutFailed -> steps.indexOf(Step.PAYOUT).takeIf { it >= 0 } ?: steps.lastIndex
-            is Outcome.Failed -> steps.indexOf(Step.PAYMENT)
-        }
-        return steps.mapIndexed { index, step ->
-            when {
-                index < stoppedAt -> FundingEndedStep(title(step, record), FundingEndedStepState.DONE)
-                index == stoppedAt -> FundingEndedStep(stoppedTitle(step, record, outcome), FundingEndedStepState.FAILED)
-                else -> FundingEndedStep(title(step, record), FundingEndedStepState.UPCOMING)
-            }
+        return when {
+            pendingPayout -> FundingTimeline.at(SENDING_DOT, failed = false, labels = labels)
+            outcome is Outcome.Succeeded -> FundingTimeline.at(FundingTimeline.DOTS, failed = false, labels = labels)
+            outcome is Outcome.PayoutFailed -> FundingTimeline.at(
+                position = LAST_MILESTONE_DOT,
+                failed = true,
+                labels = labels.replacing(LAST_MILESTONE, RCommon.string.funding_activity_payout_failed),
+            )
+            else -> FundingTimeline.at(
+                position = FundingTimeline.MILESTONE_GAP,
+                failed = true,
+                labels = labels.replacing(MIDDLE_MILESTONE, failedTitle(record, (outcome as Outcome.Failed).reason)),
+            )
         }
     }
 
-    private fun title(step: Step, record: FundingRecord): Int {
-        val out = record.direction == FundingDirection.OUT
-        return when (step) {
-            Step.STARTED -> RCommon.string.funding_step_started
-            Step.PAYMENT -> if (out) RCommon.string.funding_step_sending else RCommon.string.funding_step_payment
-            Step.APPROVED -> RCommon.string.funding_step_approved
-            Step.CONVERSION -> if (out) RCommon.string.funding_step_preparing else RCommon.string.funding_step_conversion
-            Step.ADDED -> RCommon.string.funding_step_added
-            Step.SENT -> RCommon.string.funding_step_received
-            Step.PAYOUT -> RCommon.string.funding_step_payout
-        }
+    private fun failedTitle(record: FundingRecord, reason: FundingFailureReason): Int = when {
+        reason == FundingFailureReason.Refunded -> RCommon.string.funding_activity_refunded
+        record.direction == FundingDirection.OUT -> RCommon.string.funding_ended_step_sending_failed
+        reason == FundingFailureReason.Declined -> RCommon.string.funding_ended_step_payment_declined
+        else -> RCommon.string.funding_ended_step_payment_failed
     }
 
-    private fun stoppedTitle(step: Step, record: FundingRecord, outcome: Outcome): Int = when (outcome) {
-        Outcome.Succeeded -> title(step, record)
-        is Outcome.PayoutFailed -> RCommon.string.funding_activity_payout_failed
-        is Outcome.Failed -> when {
-            outcome.reason == FundingFailureReason.Refunded -> RCommon.string.funding_activity_refunded
-            step != Step.PAYMENT -> title(step, record)
-            record.direction == FundingDirection.OUT -> RCommon.string.funding_ended_step_sending_failed
-            outcome.reason == FundingFailureReason.Declined -> RCommon.string.funding_ended_step_payment_declined
-            else -> RCommon.string.funding_ended_step_payment_failed
-        }
-    }
+    private fun List<Int>.replacing(index: Int, label: Int): List<Int> = mapIndexed { i, it -> if (i == index) label else it }
 
     private fun note(record: FundingRecord, outcome: Outcome): FundingEndedText? = when (outcome) {
         Outcome.Succeeded -> null

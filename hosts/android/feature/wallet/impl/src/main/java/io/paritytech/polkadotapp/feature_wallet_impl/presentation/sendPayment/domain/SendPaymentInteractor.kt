@@ -2,10 +2,12 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.d
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 
 interface SendPaymentInteractor {
@@ -15,6 +17,10 @@ interface SendPaymentInteractor {
 
     /** Opens the funding overlay for value leaving the pocket: to a bank, a card or a crypto wallet. */
     suspend fun openWithdrawal(): Result<Unit>
+
+    fun observeFundingActivity(): Flow<FundingActivity>
+
+    suspend fun showFundingSession(intent: String)
 }
 
 class RealSendPaymentInteractor @Inject constructor(
@@ -26,4 +32,8 @@ class RealSendPaymentInteractor @Inject constructor(
     override fun chainId() = chainAssetProvider.chainId()
 
     override suspend fun openWithdrawal(): Result<Unit> = hostFunding.openFunding(FundingDirection.OUT, amount = null).map { }
+
+    override fun observeFundingActivity(): Flow<FundingActivity> = hostFunding.observeActivity()
+
+    override suspend fun showFundingSession(intent: String) = hostFunding.showSession(intent)
 }

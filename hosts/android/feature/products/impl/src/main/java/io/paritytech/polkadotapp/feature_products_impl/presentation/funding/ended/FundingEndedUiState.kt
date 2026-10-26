@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.end
 
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.time.Instant
 
@@ -11,7 +12,7 @@ data class FundingEndedUiState(
     val figure: String?,
     val figureTone: FundingEndedTone,
     val settledAt: Instant?,
-    val steps: ImmutableList<FundingEndedStep>,
+    val timeline: FundingTimelineUi,
     val note: FundingEndedText?,
     val rows: ImmutableList<FundingEndedRow>,
     val action: FundingEndedAction,
@@ -32,18 +33,6 @@ enum class FundingEndedTone {
 enum class FundingEndedAction {
     CLOSE,
     START_OVER,
-}
-
-data class FundingEndedStep(
-    @param:StringRes val title: Int,
-    val state: FundingEndedStepState,
-)
-
-enum class FundingEndedStepState {
-    DONE,
-    CURRENT,
-    FAILED,
-    UPCOMING,
 }
 
 sealed interface FundingEndedText {

@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
@@ -236,6 +237,10 @@ data class FundingDepositUiState(
     val cancel: FundingCancelUiState?,
     /** The core's `FundingProgress.moneyMoved`: only the provider can end the session; before, a second cancel ends it. */
     val moneyMoved: Boolean,
+    /** "$50", as the figure over the milestones. */
+    val figure: String,
+    /** Once the session started: its milestones, what is happening now, and when the provider last reported. */
+    val progress: FundingLiveProgressUi?,
     val content: FundingDepositContent,
 ) {
     /**
@@ -253,6 +258,19 @@ data class FundingDepositUiState(
     val isSecondCancel: Boolean
         get() = cancel == FundingCancelUiState.Requested && !moneyMoved
 }
+
+data class FundingLiveProgressUi(
+    val timeline: FundingTimelineUi,
+    val band: FundingBandUi?,
+    val lastHeardAtMs: Long?,
+)
+
+/** The line under the milestones; amber when the provider is retrying or late. */
+data class FundingBandUi(
+    @param:StringRes val text: Int,
+    val arg: String?,
+    val warning: Boolean,
+)
 
 /** Where the user's cancel stands once money has moved, so the provider decides it. */
 sealed interface FundingCancelUiState {

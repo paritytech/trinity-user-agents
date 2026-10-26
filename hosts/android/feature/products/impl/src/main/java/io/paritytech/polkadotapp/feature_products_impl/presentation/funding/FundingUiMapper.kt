@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDeposit
 import uniffi.truapi.FundingDirection
@@ -73,12 +74,12 @@ fun FundingFlowState.toSummaryUiState(
     return FundingSummaryUiState(
         isWithdraw = !inbound,
         rail = rail,
-        headline = quote?.let { unitOf(it).format(if (inbound) it.sendAmount else it.receiveAmount) },
+        headline = quote?.let { if (inbound) unitOf(it).format(it.sendAmount) else cash.label(cash.decimal(it.sendAmount)) },
         isQuoting = isQuoting,
         showCountry = rail != FundingRail.CRYPTO,
         country = country?.toUi(refused = false, minimum = null, selected = true),
         provider = selectedProviderId?.let { brands.brandOf(it) },
-        payout = quote?.let { cash.label(cash.decimal(if (inbound) it.receiveAmount else it.sendAmount)) },
+        payout = quote?.let { if (inbound) cash.label(cash.decimal(it.receiveAmount)) else unitOf(it).format(it.receiveAmount) },
         eta = quote?.etaSecs?.let(::etaOf),
         bankRateNoteSymbol = cash.symbol.takeIf { rail == FundingRail.BANK && inbound },
         problem = summaryProblem(start),
@@ -326,8 +327,59 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         isCancelling = start.isCancelling,
         cancel = start.cancel?.toUi(cash),
         moneyMoved = progress?.moneyMoved == true,
+        figure = cash.figure(amount),
+        progress = progress?.takeIf { start.started }?.let { live ->
+            FundingLiveProgressUi(
+                timeline = FundingTimeline.live(live.steps, live.band, direction, failed = start.failure != null),
+                band = bandLine(live.band, (live.deposit as? FundingDeposit.Crypto)?.asset ?: asset),
+                lastHeardAtMs = live.lastHeardAtMs?.toLong(),
+            )
+        },
         content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
     )
+}
+
+/** The band line, worded per `FundingBand`'s docs for this session's rail and [asset]. */
+fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi? {
+    val crypto = rail == FundingRail.CRYPTO
+    val inbound = direction == FundingDirection.IN
+    val coin = asset.orEmpty()
+    fun line(text: Int, arg: String? = null) = FundingBandUi(text, arg, warning = false)
+    fun warning(text: Int) = FundingBandUi(text, null, warning = true)
+    return when (band) {
+        FundingBand.AWAITING_PAYMENT -> when (rail) {
+            FundingRail.CARD -> line(RCommon.string.funding_band_waiting_payment)
+            FundingRail.BANK -> line(RCommon.string.funding_band_waiting_bank)
+            FundingRail.CRYPTO -> line(RCommon.string.funding_band_waiting_deposit)
+        }
+        FundingBand.CHECKING_PAYMENT ->
+            if (crypto) line(RCommon.string.funding_band_confirming_deposit, coin) else line(RCommon.string.funding_band_checking)
+        FundingBand.ON_ITS_WAY -> line(RCommon.string.funding_band_on_its_way)
+        FundingBand.ADDING -> line(RCommon.string.funding_band_adding, cash.label(amount))
+        FundingBand.ADDED -> line(RCommon.string.funding_band_added, cash.label(amount))
+        FundingBand.CONVERTING -> line(RCommon.string.funding_band_converting)
+        FundingBand.PREPARING_PAYOUT ->
+            if (crypto) line(RCommon.string.funding_band_exchanging, coin) else line(RCommon.string.funding_band_preparing_payout)
+        FundingBand.SENDING -> when (rail) {
+            FundingRail.CARD -> line(RCommon.string.funding_band_sending_card)
+            FundingRail.BANK -> line(RCommon.string.funding_band_sending_bank)
+            FundingRail.CRYPTO -> line(RCommon.string.funding_band_sending_asset, coin)
+        }
+        FundingBand.SENT -> when (rail) {
+            FundingRail.CARD -> line(RCommon.string.funding_band_sent_card)
+            FundingRail.BANK -> line(RCommon.string.funding_band_sent_bank)
+            FundingRail.CRYPTO -> line(RCommon.string.funding_band_sent_asset, coin)
+        }
+        FundingBand.RETRYING -> warning(
+            when {
+                !inbound -> RCommon.string.funding_band_retrying_payout
+                rail == FundingRail.BANK -> RCommon.string.funding_band_retrying_bank
+                else -> RCommon.string.funding_band_retrying
+            },
+        )
+        FundingBand.DELAYED -> warning(if (inbound) RCommon.string.funding_band_delayed else RCommon.string.funding_band_delayed_out)
+        FundingBand.CANCEL, FundingBand.ENDED -> null
+    }
 }
 
 private fun FundingCancel.toUi(cash: FundingCash): FundingCancelUiState? = when (this) {

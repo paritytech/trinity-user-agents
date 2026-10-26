@@ -4,8 +4,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
@@ -16,7 +18,12 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaymentsAddressConverterFactory
@@ -25,6 +32,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.User
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
@@ -34,7 +42,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -48,6 +58,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val CHAIN_ID = "chain"
@@ -70,7 +81,10 @@ class SendPaymentViewModelTest {
         mock(PreviousPaymentsAddressConverterFactory::class.java)
     private val contactsAddressConverterFactory: ContactsAddressConverterFactory =
         mock(ContactsAddressConverterFactory::class.java)
-    private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
+    private val chainAssetProvider = mockk<ChainAssetProvider> {
+        every { chainId() } returns CHAIN_ID
+        coEvery { asset() } returns mockk { every { precision } returns 6 }
+    }
     private val addressConverter: AddressInputMixin.AddressConverter = mock(AddressInputMixin.AddressConverter::class.java)
 
     private val input = MutableStateFlow("")
@@ -82,6 +96,7 @@ class SendPaymentViewModelTest {
         coEvery { openFunding(any(), null) } coAnswers {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
+        every { observeActivity() } returns emptyFlow()
     }
 
     private val interactor = RealSendPaymentInteractor(
@@ -92,7 +107,6 @@ class SendPaymentViewModelTest {
     @Before
     fun setUp() = runBlocking<Unit> {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        whenever(chainAssetProvider.chainId()).thenReturn(CHAIN_ID)
         whenever(getContactsUseCase()).thenReturn(emptyList())
         withAddressConverters()
         whenever(addressInputMixin.input).thenReturn(input)
@@ -231,6 +245,33 @@ class SendPaymentViewModelTest {
         coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.OUT, null) }
     }
 
+    @Test
+    fun `Send to yourself with a withdrawal in progress shows it first, and Send money out opens funding`() = runBlocking<Unit> {
+        every { hostFunding.observeActivity() } returns flowOf(FundingActivity(inFlight = listOf(withdrawalInProgress()), history = emptyList()))
+        val viewModel = createViewModel()
+        withRecentsListed(query = "")
+        viewModel.awaitState { it.funding.sending.isNotEmpty() }
+
+        viewModel.onSendToYourselfClick()
+        assertEquals(FundingSheet.SENDING, viewModel.awaitState { it.fundingSheet != null }.fundingSheet)
+        coVerify(exactly = 0) { hostFunding.openFunding(any(), any()) }
+
+        viewModel.onSendMoneyOutClick()
+        answerOpens(Result.success("intent"))
+
+        assertEquals(null, viewModel.awaitState { it.fundingSheet == null }.fundingSheet)
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
+    }
+
+    private fun withdrawalInProgress() = FundingActivityItem(
+        id = "out",
+        direction = FundingDirection.OUT,
+        rail = FundingRailType.BANK,
+        amount = 50_000_000.intoBalance(),
+        date = Instant.fromEpochMilliseconds(0),
+        status = FundingActivityStatus.InProgress(FundingActivityStep.Converting),
+    )
+
     private fun answerOpens(result: Result<String?>) {
         while (pendingOpens.isNotEmpty()) {
             pendingOpens.removeFirst().complete(result)
@@ -292,5 +333,6 @@ class SendPaymentViewModelTest {
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
         fundingEntryPoints = fundingEntryPoints,
+        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) },
     )
 }

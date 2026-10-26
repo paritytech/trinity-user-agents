@@ -38,6 +38,7 @@ import org.junit.Test
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingSession
@@ -267,6 +268,8 @@ class FundingCancelViewModelTest {
 
     private fun progress() = FundingProgress(
         steps = emptyList(),
+        band = FundingBand.AWAITING_PAYMENT,
+        lastHeardAtMs = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,

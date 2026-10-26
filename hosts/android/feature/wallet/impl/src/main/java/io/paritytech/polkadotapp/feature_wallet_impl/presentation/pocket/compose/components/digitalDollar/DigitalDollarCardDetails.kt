@@ -15,8 +15,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +53,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownwards
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
+import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -67,21 +66,18 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Local
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.DigitalDollarCardDetailsViewModel
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketArrivals
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketCollapse
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketMotion
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityDayUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingDayTitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -104,6 +100,7 @@ fun DigitalDollarCardDetails(
     val loadingState by viewModel.coinageState.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val fundingActivity by viewModel.fundingActivity.collectAsStateWithLifecycle()
+    val fundingSheet by viewModel.fundingSheet.collectAsStateWithLifecycle()
 
     BackHandler { onBack() }
 
@@ -115,7 +112,7 @@ fun DigitalDollarCardDetails(
         state = state,
         fundingActivity = fundingActivity,
         onSendClick = viewModel::onSendClick,
-        onFundingRowClick = viewModel::onFundingRowClick,
+        onHistoryClick = viewModel::onHistoryClick,
         onGetCashClick = viewModel::onGetCashClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onCoinTapped = viewModel::onCoinTapped,
@@ -126,6 +123,16 @@ fun DigitalDollarCardDetails(
         onShareLogsClick = viewModel::onShareLogsClick,
         onBackupUpdateClick = viewModel::onBackupUpdateClick,
         onBackupCloseClick = viewModel::onBackupCloseClick
+    )
+
+    FundingActivitySheet(
+        sheet = fundingSheet,
+        state = fundingActivity,
+        onHistory = viewModel::onHistoryClick,
+        onBack = viewModel::onSheetBack,
+        onStartNew = viewModel::onNewTopUpClick,
+        onRowClick = viewModel::onFundingRowClick,
+        onDismiss = viewModel::onSheetDismiss,
     )
 }
 
@@ -138,7 +145,7 @@ private fun DigitalDollarCardDetailsContent(
     state: DigitalDollarCardDetailsUiState,
     fundingActivity: FundingActivityUiState,
     onSendClick: () -> Unit,
-    onFundingRowClick: (id: String) -> Unit,
+    onHistoryClick: () -> Unit,
     onGetCashClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
@@ -150,9 +157,6 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
-    var inProgressExpanded by remember { mutableStateOf(false) }
-    val showInProgressPanel = inProgressExpanded && fundingActivity.inFlight.size > 1
-    val arrivals = rememberFundingArrivals(fundingActivity)
     val listState = rememberLazyListState()
     val density = LocalDensity.current
     val collapseRangePx = with(density) { PocketMotion.COLLAPSE_RANGE.toPx() }
@@ -166,12 +170,9 @@ private fun DigitalDollarCardDetailsContent(
     var topBarBounds by remember { mutableStateOf(Rect.Zero) }
     var cardRest by remember { mutableStateOf(Rect.Zero) }
     var pageOrigin by remember { mutableStateOf(Offset.Zero) }
-    val dayOfItem = remember(fundingActivity.days) { fundingActivity.days.dayOfItemKey() }
-    val passedDay by remember(dayOfItem) {
-        derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key?.let(dayOfItem::get) }
-    }
     val navigationInsets = LocalAppNavigationBarInsets.current.asPaddingValues()
-    val dockSpace = if (fundingActivity.inFlight.isEmpty()) 0.dp else DOCK_CLEARANCE
+    val hasActivity = fundingActivity.inFlight.isNotEmpty() || fundingActivity.completed.isNotEmpty()
+    val historyAction = rememberTopBarAction(action = onHistoryClick, icon = NovaIcons.Clock)
 
     Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { pageOrigin = it.positionInRoot() }) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -183,7 +184,8 @@ private fun DigitalDollarCardDetailsContent(
                     title = "",
                     navigationAction = rememberTopBarAction(onBack),
                     titleAlignment = TopBarTitleAlignment.Center,
-                    titleSize = TopBarTitleSize.Medium
+                    titleSize = TopBarTitleSize.Medium,
+                    actions = if (hasActivity) persistentListOf(historyAction) else persistentListOf()
                 )
                 NovaText(
                     modifier = Modifier.graphicsLayer { alpha = PocketCollapse.titleAlpha(collapse) },
@@ -200,7 +202,7 @@ private fun DigitalDollarCardDetailsContent(
                     start = PolkadotTheme.spacings.mediumIncreased,
                     end = PolkadotTheme.spacings.mediumIncreased,
                     top = PolkadotTheme.spacings.mediumIncreased,
-                    bottom = navigationInsets.calculateBottomPadding() + dockSpace + PolkadotTheme.spacings.mediumIncreased,
+                    bottom = navigationInsets.calculateBottomPadding() + PolkadotTheme.spacings.mediumIncreased,
                 ),
             ) {
                 item(key = CARD_KEY) {
@@ -286,20 +288,12 @@ private fun DigitalDollarCardDetailsContent(
                         VerticalSpacer { large }
                     }
                 }
-
-                fundingHistory(
-                    days = fundingActivity.days,
-                    arrived = arrivals.ids,
-                    onArrived = arrivals::settle,
-                    onRowClick = onFundingRowClick,
-                )
             }
         }
 
         if (collapse >= 1f) {
             StickyBalanceBar(
                 modifier = Modifier.offset { IntOffset(0, topBarBounds.bottom.toInt()) },
-                day = passedDay?.let(fundingActivity.days::getOrNull),
                 currentBalance = fundingActivity.currentBalance
             )
         }
@@ -331,42 +325,12 @@ private fun DigitalDollarCardDetailsContent(
                 balanceAlpha = { PocketCollapse.balanceAlpha(collapse) }
             )
         }
-
-        if (showInProgressPanel) FundingInProgressScrim(onCollapse = { inProgressExpanded = false })
-
-        val dockModifier = Modifier
-            .align(Alignment.BottomCenter)
-            .windowInsetsPadding(LocalAppNavigationBarInsets.current)
-            .padding(horizontal = DOCK_INSET, vertical = DOCK_INSET)
-
-        if (showInProgressPanel) {
-            FundingInProgressPanel(
-                modifier = dockModifier,
-                rows = fundingActivity.inFlight,
-                onCollapse = { inProgressExpanded = false },
-                onRowClick = onFundingRowClick,
-            )
-        } else {
-            FundingInProgressDock(
-                modifier = dockModifier,
-                rows = fundingActivity.inFlight,
-                onExpand = { inProgressExpanded = true },
-                onRowClick = onFundingRowClick,
-            )
-        }
     }
 }
 
-/**
- * Under the header once the card has scrolled away: "Current balance" until the list reaches a day before today,
- * then that day and the balance at its end.
- */
+/** Under the header once the card has scrolled away. */
 @Composable
-private fun StickyBalanceBar(modifier: Modifier = Modifier, day: FundingActivityDayUi?, currentBalance: String?) {
-    val past = day?.takeIf { it.title != FundingDayTitle.Today }
-    val label = past?.let { dayTitle(it.title) } ?: stringResource(RCommon.string.pocket_current_balance)
-    val value = if (past != null) past.endOfDayBalance else currentBalance
-
+private fun StickyBalanceBar(modifier: Modifier = Modifier, currentBalance: String?) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -377,14 +341,14 @@ private fun StickyBalanceBar(modifier: Modifier = Modifier, day: FundingActivity
     ) {
         NovaText(
             modifier = Modifier.weight(1f),
-            text = label,
+            text = stringResource(RCommon.string.pocket_current_balance),
             style = PolkadotTheme.typography.title.small,
             color = PolkadotTheme.colors.fg.primary,
             maxLines = 1,
         )
-        if (value != null) {
+        if (currentBalance != null) {
             NovaText(
-                text = value,
+                text = currentBalance,
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
                 maxLines = 1,
@@ -393,21 +357,11 @@ private fun StickyBalanceBar(modifier: Modifier = Modifier, day: FundingActivity
     }
 }
 
-/** Each history item's key to the index of its day, so the sticky bar knows which day is at the top. */
-private fun List<FundingActivityDayUi>.dayOfItemKey(): Map<Any, Int> = buildMap {
-    this@dayOfItemKey.forEachIndexed { index, day ->
-        put(fundingDayKey(index), index)
-        day.rows.forEach { row -> put(fundingRowKey(row.id), index) }
-    }
-}
-
 private const val CARD_KEY = "card"
 private const val ACTIONS_KEY = "actions"
 private val ACTION_TILE_HEIGHT = 96.dp
 private val TOTAL_TUCK = 8.dp
 private val TOTAL_INSET = 3.dp
-private val DOCK_INSET = 16.dp
-private val DOCK_CLEARANCE = 120.dp
 private val STICKY_BAR_HEIGHT = 49.dp
 
 /** How far the list has scrolled from its top, saturating once the card has left it. */
@@ -532,9 +486,9 @@ private fun DigitalDollarCardDetailsPreview() {
                 state = DigitalDollarCardDetailsUiState(
                     balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
                 ),
-                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf(), currentBalance = null),
+                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null),
                 onSendClick = {},
-                onFundingRowClick = {},
+                onHistoryClick = {},
                 onGetCashClick = {},
                 onAutoFundClick = {},
                 onCoinTapped = {},
@@ -548,32 +502,4 @@ private fun DigitalDollarCardDetailsPreview() {
             )
         }
     }
-}
-
-/** The history rows that left the dock while the page was open, until their arrival has played. */
-@Stable
-private class FundingArrivals {
-    var ids by mutableStateOf(emptySet<String>())
-        private set
-
-    fun add(arrived: Set<String>) {
-        if (arrived.isNotEmpty()) ids = ids + arrived
-    }
-
-    fun settle(id: String) {
-        ids = ids - id
-    }
-}
-
-@Composable
-private fun rememberFundingArrivals(activity: FundingActivityUiState): FundingArrivals {
-    val arrivals = remember { FundingArrivals() }
-    var inFlight by remember { mutableStateOf(activity.inFlight.mapTo(mutableSetOf()) { it.id }) }
-    LaunchedEffect(activity) {
-        val current = activity.inFlight.mapTo(mutableSetOf()) { it.id }
-        val history = activity.days.flatMapTo(mutableSetOf()) { day -> day.rows.map { it.id } }
-        arrivals.add(PocketArrivals.arrived(inFlight, current, history))
-        inFlight = current
-    }
-    return arrivals
 }

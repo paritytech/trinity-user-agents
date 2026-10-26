@@ -4,9 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -15,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,7 +28,6 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.CardReceived
 import io.paritytech.polkadotapp.design.components.icon.vectors.CardSent
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.icon.vectors.ContentCopy
-import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -40,6 +36,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingInfoRow
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
 import kotlinx.collections.immutable.ImmutableList
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -50,8 +47,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 40.dp
 private val GLYPH_SIZE = 20.dp
-private val STEP_DOT_SIZE = 12.dp
-private val STEP_LINE_HEIGHT = 2.dp
 private val COPY_ICON_SIZE = 16.dp
 private const val TINT_ALPHA = 0.24f
 
@@ -94,7 +89,7 @@ private fun FundingEndedContent(
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
         ) {
             Headline(ended)
-            if (ended.steps.isNotEmpty()) StepCard(ended)
+            FundingTimelineCard(timeline = ended.timeline, band = ended.note?.let { text(it) }, bandWarning = false)
             Rows(rows = ended.rows, providerName = state.providerName, onCopy = onCopy)
         }
 
@@ -167,88 +162,6 @@ private fun StatusIcon(icon: FundingEndedIcon) {
             tint = tint,
         )
     }
-}
-
-@Composable
-private fun StepCard(ended: FundingEndedUiState) {
-    PolkadotSurface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = PolkadotTheme.shapes.large,
-        color = PolkadotTheme.colors.bg.surface.nested,
-    ) {
-        Column {
-            PolkadotSurface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = PolkadotTheme.shapes.large,
-                color = PolkadotTheme.colors.bg.surface.main,
-            ) {
-                StepBar(
-                    modifier = Modifier.padding(
-                        horizontal = PolkadotTheme.spacings.mediumIncreased,
-                        vertical = PolkadotTheme.spacings.medium,
-                    ),
-                    steps = ended.steps,
-                )
-            }
-            if (ended.note != null) {
-                NovaText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PolkadotTheme.spacings.medium, vertical = PolkadotTheme.spacings.smallIncreased),
-                    text = text(ended.note),
-                    style = PolkadotTheme.typography.body.small,
-                    color = PolkadotTheme.colors.fg.secondary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepBar(steps: ImmutableList<FundingEndedStep>, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-        steps.forEachIndexed { index, step ->
-            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StepLine(visible = index > 0, color = stepColor(step.state), modifier = Modifier.weight(1f))
-                    PolkadotSurface(
-                        modifier = Modifier.size(STEP_DOT_SIZE),
-                        shape = PolkadotTheme.shapes.full,
-                        color = stepColor(step.state),
-                    ) {}
-                    StepLine(
-                        visible = index < steps.lastIndex,
-                        color = stepColor(steps.getOrNull(index + 1)?.state ?: step.state),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                VerticalSpacer { extraSmall }
-                NovaText(
-                    text = stringResource(step.title),
-                    style = PolkadotTheme.typography.body.small,
-                    color = if (step.state == FundingEndedStepState.FAILED) PolkadotTheme.colors.fg.error else PolkadotTheme.colors.fg.secondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepLine(visible: Boolean, color: Color, modifier: Modifier) {
-    Box(modifier = modifier.height(STEP_LINE_HEIGHT)) {
-        if (visible) PolkadotSurface(modifier = Modifier.fillMaxWidth().height(STEP_LINE_HEIGHT), color = color) {}
-    }
-}
-
-@Composable
-private fun stepColor(state: FundingEndedStepState): Color = when (state) {
-    FundingEndedStepState.DONE -> PolkadotTheme.colors.fg.primary
-    FundingEndedStepState.CURRENT -> PolkadotTheme.colors.fg.warning
-    FundingEndedStepState.FAILED -> PolkadotTheme.colors.fg.error
-    FundingEndedStepState.UPCOMING -> PolkadotTheme.colors.fg.tertiary
 }
 
 @Composable

@@ -60,22 +60,6 @@ class PocketMotionTest {
     }
 
     @Test
-    fun `only sessions that left the dock for the history arrive`() {
-        val arrived = PocketArrivals.arrived(
-            previousInFlight = setOf("finished", "still-going", "dropped"),
-            currentInFlight = setOf("still-going", "new"),
-            history = setOf("finished", "older"),
-        )
-
-        assertEquals(setOf("finished"), arrived)
-    }
-
-    @Test
-    fun `nothing arrives on the first look`() {
-        assertEquals(emptySet<String>(), PocketArrivals.arrived(emptySet(), setOf("a"), setOf("b")))
-    }
-
-    @Test
     fun `the count-up runs from the old figure to the new one, to the cent`() {
         val from = BigDecimal("10.00")
         val to = BigDecimal("60.00")

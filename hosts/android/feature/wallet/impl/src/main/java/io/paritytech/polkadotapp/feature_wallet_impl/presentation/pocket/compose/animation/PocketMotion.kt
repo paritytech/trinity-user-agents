@@ -25,27 +25,6 @@ object PocketMotion {
     const val TITLE_FADE_RATE = 2.5f
     const val BALANCE_FADE_RATE = 1.8f
 
-    const val ROW_ENTER_MILLIS = 560
-    const val ROW_ENTER_DELAY_MILLIS = 260
-    val ROW_ENTER_OFFSET = (-10).dp
-    val ROW_ENTER_BLUR = 4.dp
-
-    const val DOCK_EXIT_MILLIS = 520
-
-    const val ICON_SPINNER_OUT_MILLIS = 260
-    const val ICON_GLYPH_DELAY_MILLIS = 220
-    const val ICON_GLYPH_MILLIS = 450
-    const val CROSS_FIRST_STROKE_DELAY_MILLIS = 220
-    const val CROSS_SECOND_STROKE_DELAY_MILLIS = 380
-    const val CROSS_STROKE_MILLIS = 220
-
-    const val COUNT_RING_MORPH_MILLIS = 520
-    const val COUNT_RING_START_SCALE = 10.8f / 22.8f
-    const val COUNT_SLIDE_MILLIS = 420
-    const val CHEVRON_HINT_PERIOD_MILLIS = 10_000L
-    const val CHEVRON_HINT_SHOWN_AT_MILLIS = 7_200L
-    const val CHEVRON_HINT_SHOWN_FOR_MILLIS = 2_200L
-
     const val BALANCE_COUNT_UP_MILLIS = 650
     const val STRIPE_PERIOD_MILLIS = 700
 
@@ -89,12 +68,6 @@ object PocketCollapse {
     }
 
     private fun lerp(from: Float, to: Float, t: Float) = from + (to - from) * t
-}
-
-/** The sessions that left the dock for the history since the last look, whose rows play their arrival. */
-object PocketArrivals {
-    fun arrived(previousInFlight: Set<String>, currentInFlight: Set<String>, history: Set<String>): Set<String> =
-        previousInFlight.filterTo(mutableSetOf()) { it !in currentInFlight && it in history }
 }
 
 /** The figure a count-up shows at [fraction] of the way from [from] to [to], to the cent. */

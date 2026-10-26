@@ -24,13 +24,15 @@ import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHolding
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingSheets
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -40,6 +42,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import kotlin.time.Clock
@@ -131,18 +134,40 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     val fundingActivity: StateFlow<FundingActivityUiState> = combine(
         interactor.observeFundingActivity(),
         paymentAssetBrandProvider.brand,
-        holdingsFlow
-    ) { activity, brand, holdings ->
-        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now())
-            .map(activity, currentBalance = holdings.getOrNull()?.balance?.total)
+        holdingsFlow.map { it.getOrNull()?.balance?.total }.onStart { emit(null) }
+    ) { activity, brand, balance ->
+        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity, currentBalance = balance)
     }
         .stateIn(
             scope = this,
             started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),
-            initialValue = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf(), currentBalance = null)
+            initialValue = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null)
         )
 
-    fun onGetCashClick() = openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
+    private val sheets = FundingSheets()
+
+    val fundingSheet: StateFlow<FundingSheet?> = sheets.shown
+        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
+
+    /** Top-ups in progress show first, so a second one is a deliberate choice rather than a paid-twice slip. */
+    fun onGetCashClick() {
+        if (fundingActivity.value.toppingUp.isEmpty()) {
+            openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
+        } else {
+            sheets.open(FundingSheet.TOPPING_UP)
+        }
+    }
+
+    fun onNewTopUpClick() {
+        sheets.close()
+        openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
+    }
+
+    fun onHistoryClick() = sheets.open(FundingSheet.HISTORY)
+
+    fun onSheetBack() = sheets.back()
+
+    fun onSheetDismiss() = sheets.close()
 
     fun onSendClick() {
         router.openSendPayment()
@@ -150,6 +175,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
 
     /** A session in flight opens where it stands; an ended one opens its detail. */
     fun onFundingRowClick(id: String) = launchUnit {
+        sheets.close()
         interactor.showFundingSession(id)
     }
 

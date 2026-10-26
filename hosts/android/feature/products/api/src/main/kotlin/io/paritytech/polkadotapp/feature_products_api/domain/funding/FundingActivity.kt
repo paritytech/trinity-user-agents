@@ -10,7 +10,7 @@ enum class FundingRailType {
     CRYPTO,
 }
 
-/** The CASH card's funding lists: sessions in flight, then ended ones, newest first. */
+/** The CASH card's funding lists: sessions in flight, then ended ones, newest first. A top-up the user cancelled before paying is in neither. */
 data class FundingActivity(
     val inFlight: List<FundingActivityItem>,
     val history: List<FundingActivityItem>,
@@ -58,6 +58,9 @@ sealed interface FundingActivityStep {
 
     /** Value in, once the provider has the payment: converting it to the balance asset. */
     data object Converting : FundingActivityStep
+
+    /** Value in, the provider crediting the user's balance. */
+    data object AddingToBalance : FundingActivityStep
 
     /** Value in, the provider retrying a top-up that claimed only part of the amount. */
     data object Retrying : FundingActivityStep

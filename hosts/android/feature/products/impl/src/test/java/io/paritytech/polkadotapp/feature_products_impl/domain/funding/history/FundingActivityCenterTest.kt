@@ -19,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
@@ -231,6 +232,8 @@ class FundingActivityCenterTest {
         longerAtMs: ULong? = null,
     ) = FundingProgress(
         steps = emptyList(),
+        band = FundingBand.AWAITING_PAYMENT,
+        lastHeardAtMs = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,

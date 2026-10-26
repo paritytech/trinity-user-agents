@@ -44,7 +44,6 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Local
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberCountUp
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
@@ -213,7 +212,6 @@ private fun SyncProgress() {
         )
     }
 }
-
 
 private val CardShape = RoundedCornerShape(23.26.dp)
 private val WalletFallback = Color(0xFF3A2417)
