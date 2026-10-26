@@ -11,7 +11,7 @@ final class SPALoadIndicator {
         static let downloadSpan: Float = 0.8
         static let unpackingProgress: Float = 0.9
         static let unknownSizeHalfwayBytes: Double = 2_000_000
-        static let finishHideDelay: TimeInterval = 0.3
+        static let finishHideDelay: Duration = .milliseconds(300)
     }
 
     private let progressView: UIProgressView
@@ -20,6 +20,7 @@ final class SPALoadIndicator {
     private var statusText: String?
     private var canRevealStatus = false
     private var revealTask: Task<Void, Never>?
+    private var hideTask: Task<Void, Never>?
 
     init(progressView: UIProgressView, statusLabel: UILabel) {
         self.progressView = progressView
@@ -28,9 +29,12 @@ final class SPALoadIndicator {
 
     deinit {
         revealTask?.cancel()
+        hideTask?.cancel()
     }
 
     func start() {
+        hideTask?.cancel()
+        resetProgress()
         revealTask?.cancel()
         canRevealStatus = false
         statusText = nil
@@ -63,16 +67,19 @@ final class SPALoadIndicator {
 
         progressView.setProgress(1, animated: true)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.finishHideDelay) { [progressView] in
-            progressView.isHidden = true
-            progressView.setProgress(0, animated: false)
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: Constants.finishHideDelay)
+
+            guard !Task.isCancelled else { return }
+
+            self?.resetProgress()
         }
     }
 
     func stop() {
         stopStatus()
-        progressView.isHidden = true
-        progressView.setProgress(0, animated: false)
+        hideTask?.cancel()
+        resetProgress()
     }
 }
 
@@ -120,6 +127,11 @@ private extension SPALoadIndicator {
     func applyStatus() {
         statusLabel.text = statusText
         statusLabel.isHidden = !canRevealStatus || statusText == nil
+    }
+
+    func resetProgress() {
+        progressView.isHidden = true
+        progressView.setProgress(0, animated: false)
     }
 
     func stopStatus() {
