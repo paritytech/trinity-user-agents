@@ -82,10 +82,10 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
-		// Core notices reach this host's log regardless of trace level, which
-		// defaults to ERROR and so drops everything the core would otherwise
-		// say about itself.
-		crate::logging::set_host_notice_sink({
+		// Events the core addresses to a host reach this log regardless of the
+		// trace level, which defaults to ERROR and so drops everything the core
+		// would otherwise say about itself.
+		crate::logging::set_host_log_sink({
 			let callbacks = callbacks.clone();
 			Arc::new(move |marker: &str, detail: &str| {
 				callbacks.on_core_log(marker.to_string(), detail.to_string());
