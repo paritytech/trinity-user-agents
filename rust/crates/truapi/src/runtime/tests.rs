@@ -9793,6 +9793,38 @@ fn a_provider_credits_only_what_it_started_for_the_session() {
 	);
 }
 
+// A user who cancels a bank top-up after sending the transfer still gets the
+// money: the provider's top-up lands on the cancelled session, which opens
+// again and is delivered from the claim like any other.
+#[test]
+fn a_transfer_that_arrives_after_a_cancel_is_still_delivered() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	for _ in 0..2 {
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	}
+	let cancelled = services.funding().get(&intent).map(|session| session.wire_item());
+
+	top_up(&worker, 500, product_account_source()).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+	assert_eq!(
+		(cancelled, wait_for_stage(&services, &intent)),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }),
+		)
+	);
+}
+
 // A provider cannot settle a session with a top-up that already settled
 // another: starting it again under the same id is refused by the host, and
 // the core keeps no record of it for the later session, whatever amount it
