@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.data.installation.CoinageInstallationRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,10 +14,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import javax.inject.Singleton
-
-interface CurrentInstallationProvider {
-    suspend fun awaitBackedUp(): Result<CoinageInstallationId>
-}
 
 @Singleton
 class RealCurrentInstallationProvider @Inject constructor(
