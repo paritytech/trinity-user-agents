@@ -111,7 +111,8 @@ mod tests {
 		chain::Mortality,
 		durable::{DomainId, DurableTxStatus, PolicyId, SubmissionPlan},
 		nft::{
-			ItemKey,
+			ItemKey, ItemSlot, PurseId, TEST_INSTALLATION,
+			keys::ItemIndex,
 			scarcity::{
 				chain::{KeyLocks, ScarcityNft, TransferContext},
 				policy::TRANSFER_POLICY,
@@ -121,6 +122,7 @@ mod tests {
 
 	const FINALIZED: HashAndNumber = HashAndNumber { hash: H256([0x0f; 32]), number: 130 };
 	const BEST: HashAndNumber = HashAndNumber { hash: H256([0x0b; 32]), number: 140 };
+	const SOURCE: ItemKey = ItemKey([0x05; 32]);
 	const DESTINATION: ItemKey = ItemKey([0x08; 32]);
 	const ELSEWHERE: ItemKey = ItemKey([0x09; 32]);
 	const INSTANCE: u64 = 330;
@@ -167,6 +169,12 @@ mod tests {
 	/// an outside one.
 	fn transfer_entry_into(destination_is_fresh: bool) -> DurableTxEntry {
 		let params = TransferParams {
+			source: SOURCE,
+			slot: ItemSlot {
+				purse: PurseId(0),
+				installation: TEST_INSTALLATION,
+				index: ItemIndex(0),
+			},
 			instance: INSTANCE,
 			destination: DESTINATION,
 			destination_is_fresh,

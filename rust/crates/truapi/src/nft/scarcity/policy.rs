@@ -16,8 +16,7 @@ use crate::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
 	},
-	nft::{ItemKey, ItemSigner, ItemSlot, dao},
-	store::{Db, DbError},
+	nft::{ItemKey, ItemSigner, ItemSlot},
 	unix_time::current_unix_secs,
 };
 
@@ -32,10 +31,15 @@ const MAX_ATTEMPTS: u32 = 5;
 /// end before it is given up, so its item never stays in use for good.
 pub const TRANSFER_WAIT_LIMIT_SECS: u64 = 30 * 60;
 
-/// What the policy stores with each transfer: the instance it transfers, the key it
-/// goes to, and when it stops waiting.
+/// What the policy stores with each transfer: the key it spends and where
+/// that key sits, the instance it transfers, the key it goes to, and when it
+/// stops waiting. Everything a build needs, so it reads no table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct TransferParams {
+	/// The key the NFT leaves, which signs the transfer.
+	pub source: ItemKey,
+	/// Where `source` sits in the derivation tree.
+	pub slot: ItemSlot,
 	/// The instance the source key holds when the transfer is registered.
 	pub instance: u64,
 	/// The key it goes to.
@@ -66,8 +70,6 @@ impl TryFrom<&PolicyParams> for TransferParams {
 
 /// What the policy runs on.
 pub struct ScarcityTransferPolicyDeps {
-	/// The core database, for the key each transfer spends.
-	pub db: Db,
 	/// Scarcity storage, read fresh for every batch.
 	pub chain: Arc<dyn ScarcityChain>,
 	/// Signs with the key each transfer spends.
@@ -95,8 +97,6 @@ struct PlannedTransfer {
 	id: DurableTxId,
 	attempts: u32,
 	params: TransferParams,
-	source: ItemKey,
-	slot: ItemSlot,
 }
 
 /// What the chain says about one planned transfer at the best head.
@@ -162,7 +162,7 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 		&self,
 		batch: &[ScheduledDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
-		let (planned, unplanned) = self.read_planned_transfers(batch).await?;
+		let planned = planned_transfers(batch);
 		let context = self.deps.chain.transfer_context().await.map_err(policy_error)?;
 		let views = self.read_transfer_views(context.best.hash, &planned).await?;
 		let build = BatchBuild::born_at(&self.deps.extrinsics, self.deps.genesis, context).await?;
@@ -172,30 +172,18 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 				prepared.insert(transfer.id, answer);
 			}
 		}
-		prepared.extend(unplanned.into_iter().map(|id| (id, Preparation::GiveUp)));
 		Ok(prepared)
 	}
 }
 
 impl ScarcityTransferPolicy {
-	/// The transfers of `batch` with their spent key, and the ids of rows that
-	/// name no transfer this policy can build, which can only be given up.
-	async fn read_planned_transfers(
-		&self,
-		batch: &[ScheduledDurableTx],
-	) -> Result<(Vec<PlannedTransfer>, Vec<DurableTxId>), PolicyError> {
-		let batch = batch.to_vec();
-		let read = move |conn: &rusqlite::Connection| split_planned(conn, batch);
-		self.deps.db.read(read).await.map_err(policy_error)
-	}
-
 	/// What the chain holds at `at` for each of `planned`, in order.
 	async fn read_transfer_views(
 		&self,
 		at: H256,
 		planned: &[PlannedTransfer],
 	) -> Result<Vec<TransferView>, PolicyError> {
-		let sources: Vec<ItemKey> = planned.iter().map(|planned| planned.source).collect();
+		let sources: Vec<ItemKey> = planned.iter().map(|planned| planned.params.source).collect();
 		let destinations: Vec<ItemKey> =
 			planned.iter().map(|planned| planned.params.destination).collect();
 		let chain = &self.deps.chain;
@@ -249,7 +237,7 @@ impl ScarcityTransferPolicy {
 		state_nonce: u64,
 		build: &BatchBuild,
 	) -> Result<MortalExtrinsic, PolicyError> {
-		let signer = self.deps.signer.item_signer(transfer.slot).map_err(policy_error)?;
+		let signer = self.deps.signer.item_signer(transfer.params.slot).map_err(policy_error)?;
 		let TransferParams { instance, destination, .. } = transfer.params;
 		let nft_transfer = NftTransfer { instance, state_nonce, destination };
 		build
@@ -260,38 +248,18 @@ impl ScarcityTransferPolicy {
 	}
 }
 
-/// The transfers of `batch` with the key each spends, and the ids of rows
-/// that name no transfer.
-fn split_planned(
-	conn: &rusqlite::Connection,
-	batch: Vec<ScheduledDurableTx>,
-) -> Result<(Vec<PlannedTransfer>, Vec<DurableTxId>), DbError> {
-	let mut planned = Vec::new();
-	let mut unplanned = Vec::new();
-	for scheduled in batch {
-		match planned_transfer(conn, &scheduled)? {
-			Some(transfer) => planned.push(transfer),
-			None => unplanned.push(scheduled.id),
-		}
-	}
-	Ok((planned, unplanned))
+/// The transfers of `batch` whose params decode. Only registration writes
+/// these params, so a row that does not decode is left out rather than
+/// answered.
+fn planned_transfers(batch: &[ScheduledDurableTx]) -> Vec<PlannedTransfer> {
+	batch.iter().filter_map(planned_transfer).collect()
 }
 
-/// `scheduled` with the key it spends, or `None` when it names no transfer: its
-/// params do not decode or it spends no key.
-fn planned_transfer(
-	conn: &rusqlite::Connection,
-	scheduled: &ScheduledDurableTx,
-) -> Result<Option<PlannedTransfer>, DbError> {
-	let Ok(params) = TransferParams::try_from(&scheduled.plan.params) else { return Ok(None) };
-	let input = dao::input_of(conn, scheduled.id)?;
-	Ok(input.map(|(source, slot)| PlannedTransfer {
-		id: scheduled.id,
-		attempts: scheduled.attempts,
-		params,
-		source,
-		slot,
-	}))
+/// `scheduled` as a transfer, or `None` when its params do not decode.
+fn planned_transfer(scheduled: &ScheduledDurableTx) -> Option<PlannedTransfer> {
+	TransferParams::try_from(&scheduled.plan.params)
+		.ok()
+		.map(|params| PlannedTransfer { id: scheduled.id, attempts: scheduled.attempts, params })
 }
 
 /// One view per transfer from the three reads, which answer in the same order.
@@ -337,11 +305,8 @@ fn policy_error(error: impl core::fmt::Display) -> PolicyError {
 
 #[cfg(test)]
 mod tests {
-	use core::num::NonZeroU32;
-
 	use futures::executor::block_on;
-	use subxt::utils::H256;
-	use tempfile::TempDir;
+	use subxt::{ext::frame_decode::extrinsics::decode_extrinsic, utils::H256};
 
 	use super::*;
 	use crate::{
@@ -351,15 +316,15 @@ mod tests {
 		},
 		durable::{DomainId, SubmissionPlan},
 		nft::{
-			NftLedger, PurseId, PurseTag,
+			PurseId, item_keys_from_entropy,
+			keys::ItemIndex,
 			scarcity::{
 				chain::TransferContext,
-				testing::{ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE},
+				testing::{ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE, asset_hub_metadata},
 			},
-			testing::{FixedEntropy, TEST_ENTROPY, test_ledger},
+			testing::{FixedEntropy, TEST_ENTROPY, TEST_INSTALLATION},
 		},
 		runtime::AuthorityError,
-		store::open_temporary_core_db,
 		unix_time::current_unix_secs,
 	};
 
@@ -431,11 +396,9 @@ mod tests {
 		}
 	}
 
-	/// A scheduled transfer of one allocated key to [`DESTINATION`], as the ledger
-	/// registers it.
+	/// A scheduled transfer of the first key of purse 0 to [`DESTINATION`], as
+	/// the ledger registers it.
 	struct RegisteredTransfer {
-		_dir: TempDir,
-		db: Db,
 		source: ItemKey,
 		scheduled: ScheduledDurableTx,
 	}
@@ -446,39 +409,26 @@ mod tests {
 
 	/// [`registered_transfer`] that stops waiting at unix time `give_up_after`.
 	fn registered_transfer_until(attempts: u32, give_up_after: u64) -> RegisteredTransfer {
-		let (dir, db) = open_temporary_core_db();
-		let source = allocate_one_key(&test_ledger(db.clone()));
-		let id = block_on(db.write(move |tx| {
-			tx.execute(
-				"INSERT INTO durable_tx (domain, status) VALUES ('nft', 'PENDING_SUBMISSION')",
-				[],
-			)?;
-			let id = DurableTxId(tx.last_insert_rowid());
-			dao::insert_inputs(tx, &[(source, id)])?;
-			Ok(id)
-		}))
-		.unwrap();
+		let slot =
+			ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(0) };
+		let source = item_keys_from_entropy(&TEST_ENTROPY, &[slot]).unwrap()[0];
 		let params = TransferParams {
+			source,
+			slot,
 			instance: INSTANCE,
 			destination: DESTINATION,
 			destination_is_fresh: true,
 			give_up_after,
 		};
 		let plan = SubmissionPlan { policy: PolicyId::new(TRANSFER_POLICY), params: params.into() };
+		let id = DurableTxId(1);
 		let scheduled =
 			ScheduledDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
-		RegisteredTransfer { _dir: dir, db, source, scheduled }
+		RegisteredTransfer { source, scheduled }
 	}
 
-	fn allocate_one_key(ledger: &NftLedger) -> ItemKey {
-		block_on(ledger.create_purse("tickets".to_owned(), PurseTag::default())).unwrap();
-		let one = NonZeroU32::new(1).unwrap();
-		block_on(ledger.allocate_items(PurseId(0), one)).unwrap()[0]
-	}
-
-	fn policy(registered: &RegisteredTransfer, chain: ScriptedScarcity) -> ScarcityTransferPolicy {
+	fn policy(chain: ScriptedScarcity) -> ScarcityTransferPolicy {
 		ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
-			db: registered.db.clone(),
 			chain: Arc::new(chain),
 			signer: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 			extrinsics: transfer_extrinsics(),
@@ -496,7 +446,7 @@ mod tests {
 		chain: ScriptedScarcity,
 	) -> Option<Preparation> {
 		let batch = [registered.scheduled.clone()];
-		let mut prepared = block_on(policy(registered, chain).prepare(&batch)).unwrap();
+		let mut prepared = block_on(policy(chain).prepare(&batch)).unwrap();
 		prepared.remove(&registered.scheduled.id)
 	}
 
@@ -511,6 +461,27 @@ mod tests {
 
 		let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
 		assert_eq!(signed.mortality, Mortality::new(FINALIZED, DEFAULT_MORTALITY_PERIOD).unwrap());
+	}
+
+	/// The chain only accepts a transfer signed by the key that holds the NFT,
+	/// so the build signs with the key the params name, derived again at the
+	/// slot registration recorded.
+	#[test]
+	fn a_transfer_is_signed_by_the_key_it_spends() {
+		let registered = registered_transfer(0);
+		let metadata = asset_hub_metadata();
+
+		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
+
+		let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
+		let bytes = signed.extrinsic.bytes();
+		let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
+		let extensions = decoded.transaction_extension_payload().unwrap();
+		let verify = extensions
+			.iter()
+			.find(|extension| extension.name() == "VerifyMultiSignature")
+			.unwrap();
+		assert!(bytes[verify.range()].ends_with(&registered.source.0));
 	}
 
 	/// A reorg can briefly show the source key without its NFT, so the transfer
@@ -596,7 +567,6 @@ mod tests {
 		let expired = registered_transfer_until(0, current_unix_secs() - 1);
 		let signed_out = |registered: &RegisteredTransfer| {
 			ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
-				db: registered.db.clone(),
 				chain: Arc::new(holding(registered, held_nft())),
 				signer: Arc::new(SignedOut),
 				extrinsics: transfer_extrinsics(),

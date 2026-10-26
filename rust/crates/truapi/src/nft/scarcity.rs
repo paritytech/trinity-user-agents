@@ -14,6 +14,8 @@ use std::sync::Arc;
 use subxt::utils::H256;
 
 pub use policy::{TRANSFER_POLICY, TRANSFER_WAIT_LIMIT_SECS, TransferParams};
+#[cfg(test)]
+pub use testing::ASSET_HUB_PIPELINE;
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
 
 use self::{
@@ -25,13 +27,10 @@ use super::{ItemSigner, operation::nft_domain};
 use crate::{
 	chain::{ChainHeads, ExtrinsicService, WatchedStorage},
 	durable::DurableRegistry,
-	store::Db,
 };
 
 /// What NFT transfers need to be decided and built.
 pub struct ScarcityTransfersDeps {
-	/// The core database, for the key each transfer spends.
-	pub db: Db,
 	/// Storage of the chain that runs the pallet.
 	pub storage: Arc<dyn WatchedStorage>,
 	/// Heads of that chain.
@@ -50,10 +49,10 @@ pub fn with_scarcity_transfers(
 	registry: DurableRegistry,
 	deps: ScarcityTransfersDeps,
 ) -> DurableRegistry {
-	let ScarcityTransfersDeps { db, storage, heads, genesis, signer, extrinsics } = deps;
+	let ScarcityTransfersDeps { storage, heads, genesis, signer, extrinsics } = deps;
 	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
 	let oracle = Arc::new(ScarcityTransferOracle::new(chain.clone(), genesis));
-	let policy_deps = ScarcityTransferPolicyDeps { db, chain, signer, extrinsics, genesis };
+	let policy_deps = ScarcityTransferPolicyDeps { chain, signer, extrinsics, genesis };
 	let policy = ScarcityTransferPolicy::new(policy_deps);
 	registry.with_domain(nft_domain(), oracle).with_policy(Arc::new(policy))
 }

@@ -12,7 +12,7 @@ use subxt::utils::H256;
 use super::{
 	dao::{self, KeyStanding},
 	item::{AllocateItemsError, Allocation, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver},
+	keys::{ItemKey, ItemKeyDeriver, ItemSlot},
 	purse::PurseId,
 	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
 };
@@ -111,49 +111,69 @@ pub fn plan_transfers(
 	if group_exists(tx, &nft_domain(), request.operation.group())? {
 		return Err(StartOperationError::OperationExists);
 	}
-	let instances = idle_instances(tx, request.from, &request.items)?;
+	let sources = idle_items(tx, request.from, &request.items)?;
 	let (destinations, destination_is_fresh) = match request.destinations {
 		TransferDestinations::AllocatedIn(purse) => {
-			(allocate_destinations(tx, purse, &instances, keys)?, true)
+			(allocate_destinations(tx, purse, sources.len(), keys)?, true)
 		},
 		TransferDestinations::Foreign(destination) => (vec![destination], false),
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	Ok(instances
+	Ok(sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(instance, destination)| {
-			TransferParams { instance, destination, destination_is_fresh, give_up_after }.into()
+		.map(|(IdleItem { key, slot, instance }, destination)| {
+			let source = key;
+			TransferParams {
+				source,
+				slot,
+				instance,
+				destination,
+				destination_is_fresh,
+				give_up_after,
+			}
+			.into()
 		})
 		.collect())
 }
 
-/// One fresh key in `purse` for each of `instances`.
+/// An item that holds an NFT and that nothing spends.
+struct IdleItem {
+	key: ItemKey,
+	slot: ItemSlot,
+	instance: u64,
+}
+
+/// `item_count` fresh keys in `purse`.
 fn allocate_destinations(
 	tx: &Transaction<'_>,
 	purse: PurseId,
-	instances: &[u64],
+	item_count: usize,
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<ItemKey>, StartOperationError> {
-	let count = u32::try_from(instances.len()).ok().and_then(NonZeroU32::new);
+	let count = u32::try_from(item_count).ok().and_then(NonZeroU32::new);
 	let count = count.ok_or(StartOperationError::NoItems)?;
 	let allocation = Allocation { purse, installation: keys.installation, count };
 	Ok(allocate_items_in(tx, allocation, keys.deriver)??)
 }
 
-/// The instance each of `items` holds, in order, when every one is idle in
-/// `purse`.
-fn idle_instances(
+/// Each of `items` with its slot and instance, in order, when every one is
+/// idle in `purse`. Reads every standing in one query.
+fn idle_items(
 	tx: &Transaction<'_>,
 	purse: PurseId,
 	items: &BTreeSet<ItemKey>,
-) -> Result<Vec<u64>, StartOperationError> {
-	let idle_instance = |item: &ItemKey| match dao::key_standing(tx, purse, item)? {
-		KeyStanding::Idle { instance } => Ok(instance),
-		KeyStanding::Spent => Err(StartOperationError::ItemUnavailable(*item)),
-		KeyStanding::NotHeld => Err(StartOperationError::ItemNotFound(*item)),
+) -> Result<Vec<IdleItem>, StartOperationError> {
+	let keys: Vec<ItemKey> = items.iter().copied().collect();
+	let standings = dao::key_standings(tx, purse, &keys)?;
+	let idle_item = |key: &ItemKey| match standings.get(key) {
+		Some(KeyStanding::Idle { instance, slot }) => {
+			Ok(IdleItem { key: *key, slot: *slot, instance: *instance })
+		},
+		Some(KeyStanding::Spent) => Err(StartOperationError::ItemUnavailable(*key)),
+		None => Err(StartOperationError::ItemNotFound(*key)),
 	};
-	items.iter().map(idle_instance).collect()
+	keys.iter().map(idle_item).collect()
 }
 
 /// Records that the transfer with each id of `ids` spends the item at the same
@@ -205,33 +225,24 @@ impl From<DurableTxStatus> for TransferState {
 	}
 }
 
-/// Where each of `transfers` stands. A transfer whose spent key or params cannot be
-/// read is an error: the operation's rows are written together.
-pub fn progress_of(
-	conn: &rusqlite::Connection,
-	transfers: Vec<DurableTxState>,
-) -> Result<Vec<TransferProgress>, DbError> {
-	transfers.into_iter().map(|state| transfer_progress(conn, state)).collect()
+/// Where each of `transfers` stands. A transfer whose params cannot be read
+/// is an error: registration writes them with every transfer.
+pub fn progress_of(transfers: Vec<DurableTxState>) -> Result<Vec<TransferProgress>, DbError> {
+	transfers.into_iter().map(transfer_progress).collect()
 }
 
-fn transfer_progress(
-	conn: &rusqlite::Connection,
-	state: DurableTxState,
-) -> Result<TransferProgress, DbError> {
+fn transfer_progress(state: DurableTxState) -> Result<TransferProgress, DbError> {
 	let unreadable = |what: String| {
 		DbError::Connection(format!("transfer {:?} has no readable {what}", state.id))
 	};
-	let (consumed, _) =
-		dao::input_of(conn, state.id)?.ok_or_else(|| unreadable("spent key".into()))?;
 	let plan = state.plan.as_ref().ok_or_else(|| unreadable("plan".into()))?;
 	let params = TransferParams::try_from(&plan.params)
 		.map_err(|error| unreadable(format!("params: {error}")))?;
-	let state_of_transfer = TransferState::from(state.status);
 	Ok(TransferProgress {
-		consumed,
+		consumed: params.source,
 		minted: params.destination,
 		tx_hash: state.tx_hash,
-		state: state_of_transfer,
+		state: TransferState::from(state.status),
 	})
 }
 

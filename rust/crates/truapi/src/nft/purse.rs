@@ -1,11 +1,13 @@
 //! Purse records.
 
+use parity_scale_codec::{Decode, Encode};
+
 use crate::store::DbError;
 
 /// A purse's id. Ids are allocated in order from 0 and never reused, because
 /// each one becomes part of its items' key derivation and recovery walks them
 /// in order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct PurseId(pub u32);
 
 /// No purse has this id.

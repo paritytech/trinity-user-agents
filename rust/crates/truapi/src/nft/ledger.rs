@@ -3,7 +3,7 @@
 use core::num::NonZeroU32;
 use std::sync::Arc;
 
-use futures::{StreamExt, TryStreamExt, stream::BoxStream};
+use futures::{StreamExt, stream::BoxStream};
 
 use super::{
 	dao,
@@ -162,14 +162,9 @@ impl NftLedger {
 		&self,
 		operation: &OperationKey,
 	) -> BoxStream<'static, Result<Vec<TransferProgress>, DbError>> {
-		let db = self.db.clone();
-		let read_progress = move |transfers| {
-			let db = db.clone();
-			async move { db.read(move |conn| progress_of(conn, transfers)).await }
-		};
 		self.durable
 			.observe_group(&nft_domain(), operation.group())
-			.and_then(read_progress)
+			.map(|transfers| transfers.and_then(progress_of))
 			.boxed()
 	}
 

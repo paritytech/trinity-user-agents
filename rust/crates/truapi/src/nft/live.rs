@@ -21,13 +21,14 @@ use subxt::{
 use super::{
 	ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId, PurseTag,
 	ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
+	scarcity::ASSET_HUB_PIPELINE,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
 };
 use crate::{
 	chain::{
 		BlockBackend, ChainHeads, DispatchOutcome, EncodedExtrinsic, ExtrinsicService,
-		FixedExtensionVersions, HashAndNumber, TxSubmitter, V4OnlyHost, WatchEvent, WatchedStorage,
+		FixedExtensionVersions, HashAndNumber, TxSubmitter, WatchEvent, WatchedStorage,
 		live_asset_hub, live_asset_hub_genesis, tokio_spawner,
 	},
 	chain_runtime::ChainRuntime,
@@ -65,7 +66,7 @@ impl CollectionOwner {
 			None => derive_sr25519_hard_path(&entropy, &["Alice"]),
 		}
 		.expect("the owner key derives");
-		let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, 1));
+		let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE));
 		let extrinsics = ExtrinsicService::over_chain(chain.clone(), versions);
 		Self { chain, genesis, signer: Sr25519Signer::from_keypair(&keypair), extrinsics }
 	}
@@ -125,13 +126,13 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let keys = Arc::new(FixedEntropy(rand::random::<[u8; 16]>().to_vec()));
 	let storage: Arc<dyn WatchedStorage> = Arc::new(chain.clone());
 	let heads = Arc::new(chain.clone());
+	let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE));
 	let transfers = ScarcityTransfersDeps {
-		db: db.clone(),
 		storage: storage.clone(),
 		heads,
 		genesis,
 		signer: keys.clone(),
-		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost))),
+		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), versions)),
 	};
 	let engine =
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));

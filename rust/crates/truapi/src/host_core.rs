@@ -1308,7 +1308,7 @@ fn durable_engine(
 	};
 
 	let chain = Arc::new(services.chain.clone());
-	let registry = durable_registry(services, db.clone(), signer);
+	let registry = durable_registry(services, signer);
 	DurableTxEngine::new(DurableDeps {
 		db,
 		registry,
@@ -1326,7 +1326,6 @@ fn durable_engine(
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
-	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> crate::durable::DurableRegistry {
 	use crate::nft::{ScarcityTransfersDeps, with_scarcity_transfers};
@@ -1338,7 +1337,6 @@ fn durable_registry(
 	};
 	let chain = Arc::new(services.chain.clone());
 	let deps = ScarcityTransfersDeps {
-		db,
 		storage: chain.clone(),
 		heads: chain,
 		genesis: genesis.into(),

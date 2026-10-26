@@ -17,7 +17,7 @@ use crate::{
 
 /// Position of an item key under its purse and installation. Allocated in
 /// order from 0, because recovery scans from 0.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Encode, Decode)]
 pub struct ItemIndex(pub u32);
 
 /// Public key of one item. Its secret is derived again when it is needed.
@@ -25,7 +25,7 @@ pub struct ItemIndex(pub u32);
 pub struct ItemKey(pub [u8; 32]);
 
 /// Where an item key sits in the derivation tree.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct ItemSlot {
 	/// Purse the key belongs to.
 	pub purse: PurseId,
