@@ -518,19 +518,21 @@ impl PreimageHost for CallbackPlatform {
 		let rx = self.events.subscribe_preimage_changes(key.clone());
 		let callbacks = self.callbacks.clone();
 		async move {
-			let current =
-				callbacks.lookup_preimage(key.clone()).await.map_err(v01::GenericError::from);
+			let current = callbacks.lookup_preimage(key.clone()).await;
 			// A miss can mean the fetch failed, and hosts are not required to
 			// notify the value later, so retry until the bytes hash to the key.
-			// Keys that are not 32 bytes can never match.
+			// Keys that are not 32 bytes can never match. An error is final:
+			// apps answer a failed fetch with `None`, and `HostRejection` has no
+			// case for a failure worth retrying.
 			let retry = <[u8; 32]>::try_from(key.as_slice()).ok().filter(|digest| match &current {
 				Ok(Some(value)) => preimage_key(value) != *digest,
 				Ok(None) => true,
-				Err(_) => false,
+				Err(HostRejection::Rejected { .. }) => false,
 			});
 			let found = stream::iter(retry)
 				.then(move |digest| lookup_until_found(callbacks.clone(), digest))
-				.map(|found| found.map(Some));
+				.map(|found| found.map(Some).map_err(v01::GenericError::from));
+			let current = current.map_err(v01::GenericError::from);
 			stream::once(future::ready(current)).chain(stream::select(rx, found))
 		}
 		.flatten_stream()
@@ -543,7 +545,7 @@ impl PreimageHost for CallbackPlatform {
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
-) -> Result<Vec<u8>, v01::GenericError> {
+) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
 	let mut retries = 0u32;
