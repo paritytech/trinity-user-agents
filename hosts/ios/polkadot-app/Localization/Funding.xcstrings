@@ -595,6 +595,17 @@
         }
       }
     },
+    "fees.amount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Amount"
+          }
+        }
+      }
+    },
     "fees.amountToSend" : {
       "extractionState" : "manual",
       "localizations" : {

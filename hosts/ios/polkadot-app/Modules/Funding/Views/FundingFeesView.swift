@@ -22,6 +22,22 @@ struct FundingFeesView: View {
     }
 }
 
+extension FundingFeesView {
+    static func totalFee(_ quote: FundingQuote) -> Decimal {
+        (Decimal(string: quote.providerFee) ?? 0) + (Decimal(string: quote.networkFee) ?? 0)
+    }
+
+    /// What the user pays before fees, in the unit of `sendAmount`: the
+    /// amount and the fees add up to the total shown under them.
+    static func net(_ quote: FundingQuote) -> Decimal {
+        max(0, (Decimal(string: quote.sendAmount) ?? 0) - totalFee(quote))
+    }
+
+    static func units(_ value: Decimal) -> U128 {
+        NSDecimalNumber(decimal: value).stringValue
+    }
+}
+
 private extension FundingFeesView {
     /// Fees are counted in what the user pays: the ask's asset for value in,
     /// the balance for value out.
@@ -33,14 +49,15 @@ private extension FundingFeesView {
     }
 
     func breakdown(_ quote: FundingQuote) -> some View {
-        let total = (Decimal(string: quote.providerFee) ?? 0) + (Decimal(string: quote.networkFee) ?? 0)
+        let total = Self.totalFee(quote)
 
         return VStack(spacing: DSSpacings.small) {
+            line(String(localized: .Funding.feesAmount), feeText(Self.units(Self.net(quote)), of: quote))
             line(String(localized: .Funding.feesProvider), feeText(quote.providerFee, of: quote))
             line(String(localized: .Funding.feesNetwork), feeText(quote.networkFee, of: quote))
             line(String(localized: .Funding.feesSwapping), String(localized: .Funding.feesVariable))
             Divider().overlay(Color.strokePrimary)
-            line(String(localized: .Funding.feesTotal), feeText(NSDecimalNumber(decimal: total).stringValue, of: quote))
+            line(String(localized: .Funding.feesTotal), feeText(Self.units(total), of: quote))
             Divider().overlay(Color.strokePrimary)
 
             HStack(alignment: .firstTextBaseline) {
@@ -68,11 +85,13 @@ private extension FundingFeesView {
         }
     }
 
-    /// What one CASH is worth in the provider-side asset, from the quote.
+    /// What one CASH is worth in the provider-side asset, net of fees as the
+    /// amount line above it.
     func rate(_ quote: FundingQuote) -> String? {
-        let providerUnits = model.direction == .in ? quote.sendAmount : quote.receiveAmount
+        let net = Self.units(Self.net(quote))
+        let providerUnits = model.direction == .in ? net : quote.receiveAmount
         let providerSide = model.quoteUnit(quote).decimal(providerUnits)
-        let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : quote.sendAmount)
+        let cashSide = model.cash.decimal(model.direction == .in ? quote.receiveAmount : net)
         guard cashSide > 0 else { return nil }
 
         let perCash = model.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
