@@ -2,17 +2,18 @@ name: host-playground e2e
 
 # Runs host-playground inside the iOS and Android host apps built from this commit.
 # See e2e/host-playground/README.md.
+# Each nightly calls this for its own platform and commit. on-label.yml calls
+# it for both platforms on a pull request labelled host-playground-e2e, never
+# one from a fork.
 on:
-  pull_request:
-    types: [labeled, synchronize]
   workflow_dispatch:
-  # Each nightly calls this for its own platform and commit.
   workflow_call:
     inputs:
       platform:
-        description: "android or ios"
-        required: true
+        description: "android or ios, or empty for both"
+        required: false
         type: string
+        default: ""
       ref:
         description: "Commit to test. Defaults to the calling run's commit."
         required: false
@@ -60,15 +61,8 @@ permissions:
 jobs:
   android:
     name: Android emulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      (inputs.platform == '' || inputs.platform == 'android')
-      && (github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'android'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
       group: host-playground-e2e-android-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -185,15 +179,8 @@ jobs:
 
   ios:
     name: iOS simulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      (inputs.platform == '' || inputs.platform == 'ios')
-      && (github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'ios'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
       group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}

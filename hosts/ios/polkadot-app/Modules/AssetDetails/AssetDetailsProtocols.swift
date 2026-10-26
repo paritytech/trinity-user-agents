@@ -12,7 +12,6 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didShowBackupNotification()
     func didHideBackupNotification()
 
@@ -57,7 +56,6 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
 
     func didReceive(price: PriceData?)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
     func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)

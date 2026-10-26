@@ -1117,9 +1117,9 @@ impl LocaleHost for MockPlatform {
 impl PreimageHost for MockPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
-		let found = self.preimages.lock().expect("preimages poisoned").get(&key).cloned();
+		let found = self.preimages.lock().expect("preimages poisoned").get(key.as_slice()).cloned();
 		// Emit the current value/miss, then stay open — a live subscription that
 		// never ends, matching `subscribe_theme`, the trait doc, and the JS mock.
 		Box::pin(
@@ -1612,10 +1612,11 @@ mod tests {
 			key,
 			hex_bytes("11c0e79b71c3976ccd0c02d1310e2516c08edc9d8b6f57ccd680d63a4d8e72da")
 		);
+		let key = key.try_into().expect("a blake2b-256 key is 32 bytes");
 		let found = block_on(p.lookup_preimage(key).next()).unwrap().unwrap();
 		assert_eq!(found, Some(vec![1, 2, 3]));
 		// An unknown key misses.
-		let miss = block_on(p.lookup_preimage(vec![9; 32]).next()).unwrap().unwrap();
+		let miss = block_on(p.lookup_preimage([9; 32]).next()).unwrap().unwrap();
 		assert_eq!(miss, None);
 	}
 

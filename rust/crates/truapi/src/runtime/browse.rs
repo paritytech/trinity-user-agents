@@ -87,13 +87,20 @@ async fn fetch_published_products(
 	genesis_hash: [u8; 32],
 	publishers: &[[u8; 20]],
 ) -> Result<Option<String>, String> {
-	let mut lookup =
-		DotnsLookup::pinned_to_best_block(chain, genesis_hash, "browse:published").await?;
-	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
+	let mut lookup = DotnsLookup::pinned_to_best_block(chain, genesis_hash, "browse:published")
+		.await
+		.map_err(|error| error.to_string())?;
+	let Some(protocol_registry) =
+		protocol_registry(&mut lookup).await.map_err(|error| error.reason())?
+	else {
 		return Ok(None);
 	};
-	let tld = network_tld(&mut lookup, &protocol_registry).await?;
-	let registrar = protocol_component(&mut lookup, &protocol_registry, "registrar").await?;
+	let tld = network_tld(&mut lookup, &protocol_registry)
+		.await
+		.map_err(|error| error.reason())?;
+	let registrar = protocol_component(&mut lookup, &protocol_registry, "registrar")
+		.await
+		.map_err(|error| error.reason())?;
 
 	let mut label_hashes: Vec<[u8; 32]> = Vec::new();
 	for publisher in publishers {
