@@ -564,12 +564,16 @@ for raw bytes signed inside the `<Bytes>` watermark.
   amount takes the quote's. The provider receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  `funding_progress(intent)` gives the steps the host draws for a session's
-  direction and rail, each with when it was reached: card and crypto in,
-  `Started`, `Payment`, `Approved` (once the payment can no longer be
-  reversed), `Conversion`, `Added`; bank in, `Started`, `Payment`, `Added`;
-  out, `Started`, `Payment`, `Sent`, `Conversion`, `Payout`. A step
-  the provider skipped takes the time of the first later one. It also carries
+  `funding_progress(intent)` gives the milestones the host draws for a
+  session, each with when it was reached: in, `Started`, `Received` (the
+  provider saw the payment) and `Added`; out, `Started`, `Received` (released
+  to the provider) and `Sent` (paid out). A milestone the provider skipped
+  takes the time of the first later one. `band` is the line under them, what
+  is happening now (`AwaitingPayment`, `CheckingPayment`, `OnItsWay`,
+  `Adding`, `Added` in; `Converting`, `PreparingPayout`, `Sending`, `Sent`
+  out; `Retrying`, `Delayed`, `Cancel` or `Ended` otherwise), and
+  `last_heard_at_ms` when the provider last reported, for "Checked with the
+  provider 12s ago". It also carries
   when the session failed, the latest transaction id and reference the
   provider reported with `Details`, the latest `Deposit` instructions for the
   host to draw (a crypto address with network, asset, amount, whether it is
@@ -591,7 +595,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session waiting for its refund.
   The progress carries one `status` for the host to word: in flight by rail
   (`WaitingForTransfer`, `WaitingForPayment`, `WaitingForDeposit`, then
-  `ConvertingToCash`; out, `TransactionInitiated`, then after release
+  `ConvertingToCash` and `AddingToBalance`; out, `TransactionInitiated`, then after release
   `ConvertingTo { asset }` on crypto or `PreparingPayout`, and `RetryingPayout`
   while the provider's latest word is that it retries the payout), `Retrying`, and
   `TakingLonger` once the provider has been silent for longer than the
@@ -600,7 +604,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   until money moved); ended, `ToppedUp`, `Sent`, `Refunded`,
   `PayoutFailed { refunded }` or `Failed { reason }`. An inbound payment
   the provider returned ends as `Failed { Refunded }`, one the user's bank or
-  card issuer refused as `Failed { Declined }`.
+  card issuer refused as `Failed { Declined }`. A top-up the user cancelled
+  before paying stays open for 7 days to a payment that arrives anyway: when
+  its provider starts a top-up for it, with no other session in flight
+  taking it, the session opens again, is handed to the host again and
+  settles as delivered.
   That provider's worker runs it through the `FundingProvider` trait. The
   core calls the worker with host-initiated calls the worker answers with one
   item: `assign` hands it a session, `cancel` asks it to stop one, and
