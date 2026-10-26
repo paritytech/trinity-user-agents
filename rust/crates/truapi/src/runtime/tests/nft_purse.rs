@@ -558,7 +558,7 @@ mod operations {
 	}
 
 	#[test]
-	fn draining_a_root_purse_the_user_confirms_registers_the_moves() {
+	fn draining_a_root_purse_the_user_confirms_registers_the_transfers() {
 		let platform = StubPlatform { nft_purse_drain_confirmed: true, ..Default::default() };
 		let purses = product_purses(Arc::new(platform));
 		let root = purses.root_purse();
@@ -608,7 +608,7 @@ mod operations {
 	}
 
 	#[test]
-	fn an_item_spent_by_a_registered_move_is_not_listed() {
+	fn an_item_spent_by_a_registered_transfer_is_not_listed() {
 		let purses = product_purses(Arc::new(StubPlatform::default()));
 		let items = purses.held_items(PurseId(0), 1);
 

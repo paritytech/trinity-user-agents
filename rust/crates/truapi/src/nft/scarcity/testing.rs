@@ -7,6 +7,10 @@ use subxt::ArcMetadata;
 pub const ASSET_HUB_METADATA_BYTES: &[u8] =
 	include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
 
+/// The extension pipeline the native hosts map Asset Hub to, which carries
+/// `AsScarcity` and is signed by `VerifyMultiSignature`.
+pub const ASSET_HUB_PIPELINE: u8 = 1;
+
 /// [`ASSET_HUB_METADATA_BYTES`], decoded.
 pub fn asset_hub_metadata() -> ArcMetadata {
 	let prefixed =

@@ -221,7 +221,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_landed_move_makes_the_operation_clearing_and_lists_every_landed_move() {
+	fn a_landed_transfer_makes_the_operation_clearing_and_lists_every_landed_transfer() {
 		let status = fold_status(&[finalized(1), landed(2), waiting(3)]);
 
 		assert_eq!(
@@ -231,7 +231,7 @@ mod tests {
 	}
 
 	#[test]
-	fn every_move_finalized_clears_the_operation() {
+	fn every_transfer_finalized_clears_the_operation() {
 		let status = fold_status(&[finalized(2), finalized(1)]);
 
 		let NftPurseStatus::Cleared { cleared: items, reference } = status else {
@@ -243,7 +243,7 @@ mod tests {
 	}
 
 	#[test]
-	fn settled_moves_with_a_failure_are_incomplete_and_name_the_failed_items() {
+	fn settled_transfers_with_a_failure_are_incomplete_and_name_the_failed_items() {
 		let status = fold_status(&[finalized(1), failed(2)]);
 
 		let NftPurseStatus::Incomplete { cleared: items, failed, reference } = status else {
@@ -255,7 +255,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_failure_beside_a_move_still_landing_is_not_terminal() {
+	fn a_failure_beside_a_transfer_still_landing_is_not_terminal() {
 		assert!(matches!(fold_status(&[landed(1), failed(2)]), NftPurseStatus::Clearing { .. }));
 	}
 

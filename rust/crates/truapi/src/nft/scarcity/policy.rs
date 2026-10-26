@@ -8,10 +8,10 @@ use subxt::utils::H256;
 
 use super::{
 	chain::{KeyLocks, ScarcityChain, ScarcityNft, TransferContext},
-	transfer::{NftTransfer, TRANSFER_PERIOD, sign_transfer},
+	transfer::NftTransfer,
 };
 use crate::{
-	chain::{ExtrinsicService, MortalExtrinsic, Mortality},
+	chain::{DEFAULT_MORTALITY_PERIOD, ExtrinsicService, MortalExtrinsic, Mortality},
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
@@ -131,8 +131,8 @@ impl BatchBuild {
 		context: TransferContext,
 	) -> Result<Self, PolicyError> {
 		let TransferContext { birth, best } = context;
-		let mortality = Mortality::new(birth, TRANSFER_PERIOD).map_err(policy_error)?;
-		let finality_stalled = best.number + TRANSFER_PERIOD / 2 >= mortality.death();
+		let mortality = Mortality::new(birth, DEFAULT_MORTALITY_PERIOD).map_err(policy_error)?;
+		let finality_stalled = best.number + DEFAULT_MORTALITY_PERIOD / 2 >= mortality.death();
 		let extrinsics = extrinsics.cache_runtime_at(genesis, birth).await.map_err(policy_error)?;
 		Ok(Self { extrinsics, finality_stalled, now: current_unix_secs() })
 	}
@@ -258,9 +258,11 @@ impl ScarcityTransferPolicy {
 		let signer = self.deps.signer.item_signer(transfer.slot).map_err(policy_error)?;
 		let TransferParams { instance, destination, .. } = transfer.params;
 		let nft_transfer = NftTransfer { instance, state_nonce, destination };
-		let signed =
-			sign_transfer(&build.extrinsics, self.deps.genesis, &signer, &nft_transfer).await;
-		signed.map_err(policy_error)
+		build
+			.extrinsics
+			.sign_nft_transfer(self.deps.genesis, &signer, &nft_transfer)
+			.await
+			.map_err(policy_error)
 	}
 }
 
@@ -353,7 +355,10 @@ mod tests {
 		durable::{DomainId, SubmissionPlan},
 		nft::{
 			NftLedger, PurseId, PurseTag,
-			scarcity::{chain::TransferContext, testing::ASSET_HUB_METADATA_BYTES},
+			scarcity::{
+				chain::TransferContext,
+				testing::{ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE},
+			},
 			testing::{FixedEntropy, TEST_ENTROPY, test_ledger},
 		},
 		runtime::AuthorityError,
@@ -372,7 +377,7 @@ mod tests {
 
 	/// Builds transfers over a scripted node serving the Asset Hub fixture.
 	fn transfer_extrinsics() -> Arc<ExtrinsicService> {
-		Arc::new(extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, 1))
+		Arc::new(extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE))
 	}
 
 	/// Scarcity storage a test writes by hand, held at [`BEST`] only.
@@ -512,7 +517,7 @@ mod tests {
 		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
 
 		let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
-		assert_eq!(signed.mortality, Mortality::new(FINALIZED, TRANSFER_PERIOD).unwrap());
+		assert_eq!(signed.mortality, Mortality::new(FINALIZED, DEFAULT_MORTALITY_PERIOD).unwrap());
 	}
 
 	/// A reorg can briefly show the source key without its NFT, so the transfer
@@ -582,7 +587,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_move_is_given_up_after_its_last_attempt() {
+	fn a_transfer_is_given_up_after_its_last_attempt() {
 		let registered = registered_transfer(MAX_ATTEMPTS);
 
 		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
@@ -624,7 +629,7 @@ mod tests {
 		let registered = registered_transfer(0);
 		let behind =
 			|blocks| ScriptedScarcity { best_ahead_by: blocks, ..holding(&registered, held_nft()) };
-		let lag_to_death = FINALIZED.number + TRANSFER_PERIOD / 2 - BEST.number;
+		let lag_to_death = FINALIZED.number + DEFAULT_MORTALITY_PERIOD / 2 - BEST.number;
 
 		let stalled = prepare_one(&registered, behind(lag_to_death));
 		let lagging = prepare_one(&registered, behind(lag_to_death - 1));

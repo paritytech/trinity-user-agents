@@ -4,19 +4,12 @@ use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 
 use crate::{
 	chain::{
-		ExtensionError, ExtrinsicBuildError, ExtrinsicService, ExtrinsicVersion,
-		InheritedImplication, MortalExtrinsic, TransactionExtension,
+		ExtensionError, ExtrinsicBuildError, ExtrinsicService, InheritedImplication,
+		MortalExtrinsic, TransactionExtension,
 	},
 	host_internal::extrinsic::Sr25519Signer,
 	nft::ItemKey,
 };
-
-/// The transaction extension pipeline that carries `AsScarcity`, signed by
-/// `VerifyMultiSignature` rather than paid for.
-const TRANSFER_PIPELINE_VERSION: u8 = 1;
-
-/// Blocks a transfer stays valid for after its birth.
-pub const TRANSFER_PERIOD: u64 = 64;
 
 /// One NFT transfer: the instance at the source key, the revision it must sign,
 /// and the key it goes to.
@@ -30,27 +23,27 @@ pub struct NftTransfer {
 	pub destination: ItemKey,
 }
 
-/// `nft_transfer` on the chain `genesis`, signed by `signer` and built by
-/// `extrinsics`, which decides the block it is born at. It pays no fee and
-/// uses no account nonce.
-pub async fn sign_transfer(
-	extrinsics: &ExtrinsicService,
-	genesis: H256,
-	signer: &Sr25519Signer,
-	nft_transfer: &NftTransfer,
-) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	let call = TransferCallArgs { to: nft_transfer.destination.0 };
-	let version = ExtrinsicVersion::V5 { extension_version: TRANSFER_PIPELINE_VERSION };
-	extrinsics
-		.build_mortal_extrinsic(genesis)
-		.with_call_args("Scarcity", "transfer", call)
-		.with_extension(AsScarcityExtension::from(nft_transfer))
-		.with_signer(signer)
-		.with_nonce(0)
-		.with_mortality_period(TRANSFER_PERIOD)
-		.with_extrinsic_version(version)
-		.build()
-		.await
+impl ExtrinsicService {
+	/// `nft_transfer` on the chain `genesis`, signed by `signer` and born at
+	/// the block this service picks. It pays no fee and uses no account nonce.
+	pub async fn sign_nft_transfer(
+		&self,
+		genesis: H256,
+		signer: &Sr25519Signer,
+		nft_transfer: &NftTransfer,
+	) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+		self.build_mortal_extrinsic(genesis)
+			.with_call_args(
+				"Scarcity",
+				"transfer",
+				TransferCallArgs { to: nft_transfer.destination.0 },
+			)
+			.with_extension(AsScarcityExtension::from(nft_transfer))
+			.with_signer(signer)
+			.with_nonce(0)
+			.build()
+			.await
+	}
 }
 
 /// `Scarcity::transfer` arguments.
@@ -115,8 +108,10 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain::extrinsic_service_serving,
-		nft::scarcity::testing::{ASSET_HUB_METADATA_BYTES, asset_hub_metadata},
+		chain::{DEFAULT_MORTALITY_PERIOD, extrinsic_service_serving},
+		nft::scarcity::testing::{
+			ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE, asset_hub_metadata,
+		},
 	};
 
 	const DESTINATION: ItemKey = ItemKey([0x08; 32]);
@@ -136,13 +131,12 @@ mod tests {
 
 	/// [`test_transfer`] built over a scripted node serving the Asset Hub fixture.
 	fn signed_test_transfer() -> MortalExtrinsic {
-		let extrinsics =
-			extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, TRANSFER_PIPELINE_VERSION);
-		block_on(sign_transfer(&extrinsics, GENESIS, &test_signer(), &test_transfer())).unwrap()
+		let extrinsics = extrinsic_service_serving(ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE);
+		block_on(extrinsics.sign_nft_transfer(GENESIS, &test_signer(), &test_transfer())).unwrap()
 	}
 
 	#[test]
-	fn a_move_is_a_signed_transfer_to_the_destination() {
+	fn a_transfer_is_a_signed_scarcity_transfer_to_the_destination() {
 		let metadata = asset_hub_metadata();
 
 		let signed = signed_test_transfer();
@@ -153,11 +147,11 @@ mod tests {
 		let pallet_and_call = (decoded.pallet_name(), decoded.call_name());
 		assert_eq!(pallet_and_call, ("Scarcity", "transfer"));
 		assert_eq!(call_args, DESTINATION.0);
-		assert_eq!(signed.mortality.period(), TRANSFER_PERIOD);
+		assert_eq!(signed.mortality.period(), DEFAULT_MORTALITY_PERIOD);
 	}
 
 	#[test]
-	fn a_move_acts_as_the_nft_it_names_without_fee_or_nonce() {
+	fn a_transfer_acts_as_the_nft_it_names_without_fee_or_nonce() {
 		let metadata = asset_hub_metadata();
 
 		let signed = signed_test_transfer();
@@ -188,14 +182,17 @@ mod tests {
 	async fn the_live_node_refuses_a_transfer_from_an_empty_key_as_holding_no_nft() {
 		use subxt::tx::{TransactionInvalid, ValidationResult};
 
-		use crate::chain::{TxValidator, V4OnlyHost, live_asset_hub, live_asset_hub_genesis};
+		use crate::chain::{
+			FixedExtensionVersions, TxValidator, live_asset_hub, live_asset_hub_genesis,
+		};
 
 		let genesis = live_asset_hub_genesis();
 		let chain = live_asset_hub(genesis);
-		let extrinsics =
-			ExtrinsicService::over_chain(chain.clone(), std::sync::Arc::new(V4OnlyHost));
+		let host = FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE);
+		let extrinsics = ExtrinsicService::over_chain(chain.clone(), std::sync::Arc::new(host));
 
-		let signed = sign_transfer(&extrinsics, genesis, &test_signer(), &test_transfer())
+		let signed = extrinsics
+			.sign_nft_transfer(genesis, &test_signer(), &test_transfer())
 			.await
 			.unwrap();
 		let validated = chain.validate(genesis, &signed.extrinsic).await.expect("node validates");
