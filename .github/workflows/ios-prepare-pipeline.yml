@@ -49,7 +49,7 @@ env:
 
 jobs:
   prepare_release:
-    name: Bump MARKETING_VERSION, create PR, and trigger distribution
+    name: Bump MARKETING_VERSION, create PR, and hand over the build
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.decide.outputs.should_release }}

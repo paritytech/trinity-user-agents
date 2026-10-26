@@ -6,7 +6,7 @@ run-name: iOS Nightly (${{ inputs.source_ref || 'main' }})
 # A night is one run, and cancelling one mid-upload would leave a build number
 # taken and nothing announced, so a second start waits for the first.
 concurrency:
-  group: ios-nightly
+  group: ios-nightly-${{ github.ref }}
   cancel-in-progress: false
 
 on:

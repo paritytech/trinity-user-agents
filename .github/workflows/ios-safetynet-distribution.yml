@@ -49,8 +49,8 @@ jobs:
     # TestFlight build number the production record depends on.
     #
     # This workflow calls the distribute action directly rather than through
-    # ios-build-distribute.yml, so it does not inherit that workflow's
-    # github-actions[bot] check and nothing else would stop a hand-started run.
+    # ios-build-distribute.yml, so it does not inherit that workflow's check of
+    # who started the upload, and nothing else would stop a hand-started run.
     #
     # Removing this is part of the cutover, tracked on #764.
     if: false

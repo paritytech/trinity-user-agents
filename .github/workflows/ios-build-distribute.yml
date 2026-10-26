@@ -110,6 +110,9 @@ jobs:
     # number needs fastlane and Xcode, and the hosted macOS queue can hold this
     # short job for hours.
     runs-on: parity-macos-large
+    # Reading two numbers. A hung job here holds the night's concurrency group,
+    # and with it every retry, so it is bounded.
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -276,6 +279,9 @@ jobs:
     # timing-sensitive tests exceed their limits on shared hosted runners.
     runs-on: parity-macos-large
     needs: prepare_build_metadata
+    # Twice the longest upload in October. A hung upload holds the night's
+    # concurrency group, and with it every retry, so it is bounded.
+    timeout-minutes: 90
     steps:
       # Again here, because "Re-run failed jobs" re-runs this job without the
       # metadata job, so the check there does not see a re-run's actor.
