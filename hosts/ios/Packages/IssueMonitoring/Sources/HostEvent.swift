@@ -1,5 +1,6 @@
 import Foundation
 
+/// An extra's value, kept typed so numbers reach Sentry as numbers.
 public enum HostEventValue: Sendable, Equatable {
     case string(String)
     case integer(Int)
@@ -7,6 +8,7 @@ public enum HostEventValue: Sendable, Equatable {
     case boolean(Bool)
 }
 
+/// A native host lifecycle event: tags are indexed, extras are not.
 public struct HostEvent: Sendable, Equatable {
     public let name: String
     public let tags: [String: String]
@@ -18,10 +20,11 @@ public struct HostEvent: Sendable, Equatable {
         self.extras = extras
     }
 
+    /// The event for the app process finishing launch.
     public static func processStarted(
         origin: HostEventOrigin,
         truapiHostVersion: String,
-        monotonicMilliseconds: Double
+        monotonicMilliseconds: Int
     ) -> HostEvent {
         HostEvent(
             name: "host.process.started",
@@ -30,23 +33,24 @@ public struct HostEvent: Sendable, Equatable {
             ]) { _, value in value },
             extras: appMetadata(origin: origin).merging([
                 "app.launch_id": .string(origin.launchID.uuidString.lowercased()),
-                "event.monotonic_ms": .double(monotonicMilliseconds)
+                "event.monotonic_ms": .integer(monotonicMilliseconds)
             ]) { _, value in value }
         )
     }
 
+    /// The event for a product WebView; `hostSessionID` is the id its page reads from `__trinityHostTelemetry`.
     public static func webViewCreated(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
-        monotonicMilliseconds: Double
+        monotonicMilliseconds: Int
     ) -> HostEvent {
         HostEvent(
             name: "host.webview.created",
             tags: tags(origin: origin, truapiHostVersion: truapiHostVersion),
             extras: appMetadata(origin: origin).merging([
                 "host.session_id": .string(hostSessionID.uuidString.lowercased()),
-                "event.monotonic_ms": .double(monotonicMilliseconds)
+                "event.monotonic_ms": .integer(monotonicMilliseconds)
             ]) { _, value in value }
         )
     }

@@ -19,8 +19,8 @@ final class RustRuntimeScriptsFactory {
     func makeScripts() throws -> [JSEngineScript] {
         var scripts: [JSEngineScript] = []
 
-        if let hostTelemetry {
-            try scripts.append(makeHostTelemetryScript(hostTelemetry))
+        if let hostTelemetry, let telemetryScript = Self.makeHostTelemetryScript(hostTelemetry) {
+            scripts.append(telemetryScript)
         }
 
         try scripts.append(contentsOf: [
@@ -35,12 +35,15 @@ final class RustRuntimeScriptsFactory {
         return scripts
     }
 
-    private func makeHostTelemetryScript(_ telemetry: NativeHostTelemetry) throws -> JSEngineScript {
+    /// Nil when the telemetry cannot be encoded, so it never stops the product from starting.
+    private static func makeHostTelemetryScript(_ telemetry: NativeHostTelemetry) -> JSEngineScript? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(telemetry)
-        guard let json = String(data: data, encoding: .utf8) else {
-            throw CocoaError(.fileReadInapplicableStringEncoding)
+        guard
+            let data = try? encoder.encode(telemetry),
+            let json = String(data: data, encoding: .utf8)
+        else {
+            return nil
         }
         let script = """
         try {

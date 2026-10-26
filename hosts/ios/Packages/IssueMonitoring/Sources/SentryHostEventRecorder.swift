@@ -3,7 +3,8 @@
     import Sentry
 
     struct SentryHostEventRecorder: HostEventRecording {
-        func record(_ event: HostEvent) {
+        func record(_ event: @autoclosure () -> HostEvent) {
+            let event = event()
             let sentryEvent = Event(level: .info)
             sentryEvent.message = SentryMessage(formatted: event.name)
             sentryEvent.logger = "host.telemetry"

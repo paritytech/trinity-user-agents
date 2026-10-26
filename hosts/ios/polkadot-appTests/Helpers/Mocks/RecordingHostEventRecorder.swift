@@ -9,7 +9,8 @@ final class RecordingHostEventRecorder: HostEventRecording, @unchecked Sendable 
         lock.withLock { recordedEvents }
     }
 
-    func record(_ event: HostEvent) {
+    func record(_ event: @autoclosure () -> HostEvent) {
+        let event = event()
         lock.withLock { recordedEvents.append(event) }
     }
 }
