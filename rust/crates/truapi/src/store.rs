@@ -191,8 +191,10 @@ impl Db {
 		T: Send + 'static,
 	{
 		let never_refused = move |tx: &rusqlite::Transaction<'_>| Ok(Ok::<_, Infallible>(f(tx)?));
-		let written = self.write_unless_refused(never_refused).await?;
-		Ok(written.unwrap_or_else(|never| match never {}))
+		Ok(self
+			.write_unless_refused(never_refused)
+			.await?
+			.unwrap_or_else(|never| match never {}))
 	}
 
 	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer, like

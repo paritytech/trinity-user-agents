@@ -103,8 +103,10 @@ impl ExtrinsicService {
 	}
 
 	fn cached_runtime_of(&self, genesis: H256) -> Option<RuntimeAtBirth> {
-		let cached = self.cached_runtime.as_ref().filter(|cached| cached.genesis == genesis)?;
-		Some(cached.runtime.clone())
+		self.cached_runtime
+			.as_ref()
+			.filter(|cached| cached.genesis == genesis)
+			.map(|cached| cached.runtime.clone())
 	}
 }
 

@@ -102,8 +102,10 @@ impl ProductRuntimeHost {
 		let drain = rebalance_drain(&purses, from, to, items.len()).await?;
 		self.confirm_drain(cx, drain, REBALANCE_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
-		let started = purses.rebalance(caller, from, to, items, idempotency_key).await;
-		started.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
+		purses
+			.rebalance(caller, from, to, items, idempotency_key)
+			.await
+			.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
 	}
 
 	/// Registers a transfer of an item of ours to an outside key, after
@@ -124,8 +126,10 @@ impl ProductRuntimeHost {
 		let drain = Drain { from, owner, item_count: 1, destination: to_key };
 		self.confirm_drain(cx, drain, TRANSFER_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
-		let started = purses.transfer(caller, from, item, destination, idempotency_key).await;
-		started.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))
+		purses
+			.transfer(caller, from, item, destination, idempotency_key)
+			.await
+			.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))
 	}
 
 	/// The status of an operation the caller registered, until it ends.
@@ -200,6 +204,9 @@ async fn owner_or_purse_not_found(
 	purses: &NftPurses,
 	purse: PurseId,
 ) -> Result<PurseOwner, CallError<latest::HostNftPurseRebalancePurseError>> {
-	let owner = purses.owner_of(purse).await.map_err(host_failure)?;
-	owner.ok_or(CallError::Domain(latest::HostNftPurseRebalancePurseError::PurseNotFound))
+	purses
+		.owner_of(purse)
+		.await
+		.map_err(host_failure)?
+		.ok_or(CallError::Domain(latest::HostNftPurseRebalancePurseError::PurseNotFound))
 }

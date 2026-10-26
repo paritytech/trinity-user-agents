@@ -415,8 +415,9 @@ impl DurableTxState {
 
 /// The row's plan, when a policy builds it.
 fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Option<SubmissionPlan>> {
-	let policy: Option<String> = row.get("policy_id")?;
-	policy.map(|_| SubmissionPlan::from_row(row)).transpose()
+	row.get::<_, Option<String>>("policy_id")?
+		.map(|_| SubmissionPlan::from_row(row))
+		.transpose()
 }
 
 impl ToSql for PolicyParams {

@@ -94,8 +94,9 @@ impl WatchedStorage for ChainRuntime {
 	) -> Result<StorageSnapshot, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
 		let at = numbered(&legacy, at, READ_KEYS_AT).await?;
-		let reader = Arc::new(WatchedKeysReader::new(self.clone(), genesis, keys));
-		reader.read_snapshot_at(at).await
+		Arc::new(WatchedKeysReader::new(self.clone(), genesis, keys))
+			.read_snapshot_at(at)
+			.await
 	}
 
 	fn timer(&self) -> Arc<dyn Timer> {

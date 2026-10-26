@@ -89,8 +89,10 @@ impl PassScope for LandedTransfers {
 /// The transfer `entry` makes into a fresh key, when its plan names one.
 fn transfer_of(entry: &DurableTxEntry) -> Option<(DurableTxId, TransferParams)> {
 	let plan = entry.plan.as_ref()?;
-	let params = TransferParams::try_from(&plan.params).ok()?;
-	params.destination_is_fresh.then_some((entry.id, params))
+	TransferParams::try_from(&plan.params)
+		.ok()
+		.filter(|params| params.destination_is_fresh)
+		.map(|params| (entry.id, params))
 }
 
 fn runtime_failure(error: StorageWatchError) -> RuntimeFailure {

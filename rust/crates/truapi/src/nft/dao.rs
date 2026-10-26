@@ -153,8 +153,10 @@ pub fn key_standing(
 ) -> Result<KeyStanding, DbError> {
 	let mut statement = conn.prepare_cached(KEY_STANDING)?;
 	let params = named_params! { ":key": key.0, ":purse": purse.0 };
-	let standing = statement.query_row(params, key_standing_from_row).optional()?;
-	Ok(standing.unwrap_or(KeyStanding::NotHeld))
+	Ok(statement
+		.query_row(params, key_standing_from_row)
+		.optional()?
+		.unwrap_or(KeyStanding::NotHeld))
 }
 
 const INSERT_INPUT: &str =
@@ -191,8 +193,10 @@ const PURSE_OF: &str = "SELECT purse FROM nft_item WHERE key = :key";
 /// The purse `key` belongs to, if it is one of ours.
 pub fn purse_of(conn: &Connection, key: &ItemKey) -> Result<Option<PurseId>, DbError> {
 	let mut statement = conn.prepare_cached(PURSE_OF)?;
-	let purse = statement.query_row(named_params! { ":key": key.0 }, |row| row.get("purse"));
-	Ok(purse.optional()?.map(PurseId))
+	Ok(statement
+		.query_row(named_params! { ":key": key.0 }, |row| row.get("purse"))
+		.optional()?
+		.map(PurseId))
 }
 
 const ITEM_KEYS: &str = "SELECT key FROM nft_item";

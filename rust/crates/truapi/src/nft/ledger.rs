@@ -167,8 +167,10 @@ impl NftLedger {
 			let db = db.clone();
 			async move { db.read(move |conn| progress_of(conn, transfers)).await }
 		};
-		let transfers = self.durable.observe_group(&nft_domain(), operation.group());
-		transfers.and_then(read_progress).boxed()
+		self.durable
+			.observe_group(&nft_domain(), operation.group())
+			.and_then(read_progress)
+			.boxed()
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.
