@@ -7,9 +7,7 @@ use std::sync::Arc;
 use futures::{channel::mpsc, executor::block_on};
 use tempfile::TempDir;
 
-use super::{
-	FakeChain, GENESIS, ManualTimer, ScriptedPolicy, block, insert_with_plan, open_db, test_plan,
-};
+use super::{FakeChain, GENESIS, ScriptedPolicy, block, insert_with_plan, open_db, test_plan};
 use crate::{
 	chain::{EncodedExtrinsic, HeadEvent, MortalExtrinsic},
 	chain_runtime::RuntimeFailure,
@@ -22,6 +20,7 @@ use crate::{
 	},
 	store::Db,
 	test_support::{test_spawner, wait_until},
+	time::ManualTimer,
 };
 
 /// The domain a test schedules into unless it needs a second one.

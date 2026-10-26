@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -78,6 +79,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val contactsBridge: AppContactsHostBridge,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
+    private val installations: CurrentInstallationProvider,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -237,6 +239,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override fun durableWorkChanged(pending: Boolean) {
             if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
+
+        // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
+        override suspend fun currentInstallation(): ByteArray =
+            installations.awaitBackedUp().getOrThrow().value.value
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")

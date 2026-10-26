@@ -9,7 +9,6 @@ pub use policy::{
 	extrinsic_for_index, first_builds, insert_retryable, test_plan, test_policy_id, without_plan,
 };
 
-use core::time::Duration;
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
 	sync::{
@@ -19,8 +18,7 @@ use std::{
 };
 
 use futures::{
-	channel::{mpsc, oneshot},
-	future::BoxFuture,
+	channel::mpsc,
 	stream::{BoxStream, StreamExt},
 };
 use parking_lot::{Mutex, MutexGuard};
@@ -35,7 +33,6 @@ use super::{
 	ladder::{PinnedView, SearchResult},
 	model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind, SubmissionPlan},
 	oracle::{DurableRegistry, PassScope, Unobservable},
-	time::Timer,
 };
 use crate::{
 	chain::{
@@ -44,6 +41,7 @@ use crate::{
 	},
 	chain_runtime::RuntimeFailure,
 	store::{Db, open_temporary_core_db},
+	time::ManualTimer,
 };
 
 /// Genesis hash of the chain every fixture lives on.
@@ -367,58 +365,6 @@ impl TxSubmitter for FakeChain {
 			.pop_front()
 			.map(StreamExt::boxed)
 			.unwrap_or_else(|| futures::stream::pending().boxed()))
-	}
-}
-
-/// A clock that moves only when a test advances it.
-#[derive(Default)]
-pub struct ManualTimer {
-	state: Mutex<ManualTimerState>,
-	sleeps: AtomicUsize,
-}
-
-#[derive(Default)]
-struct ManualTimerState {
-	now: Duration,
-	sleepers: Vec<(Duration, oneshot::Sender<()>)>,
-}
-
-impl ManualTimer {
-	/// Moves the clock forward, waking every sleeper whose deadline passed.
-	pub fn advance(&self, by: Duration) {
-		let mut state = self.state.lock();
-		state.now += by;
-		let now = state.now;
-		let (due, waiting) = core::mem::take(&mut state.sleepers)
-			.into_iter()
-			.partition(|(deadline, _)| *deadline <= now);
-		state.sleepers = waiting;
-		drop(state);
-		for (_, wake) in due {
-			let _ = wake.send(());
-		}
-	}
-
-	/// How many sleeps were started. A zero-duration sleep does not count:
-	/// it never waits.
-	pub fn sleeps(&self) -> usize {
-		self.sleeps.load(Ordering::SeqCst)
-	}
-}
-
-impl Timer for ManualTimer {
-	fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
-		if duration.is_zero() {
-			return Box::pin(futures::future::ready(()));
-		}
-		let (wake, woken) = oneshot::channel();
-		let mut state = self.state.lock();
-		let deadline = state.now + duration;
-		state.sleepers.push((deadline, wake));
-		self.sleeps.fetch_add(1, Ordering::SeqCst);
-		Box::pin(async move {
-			let _ = woken.await;
-		})
 	}
 }
 

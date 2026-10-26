@@ -200,6 +200,12 @@ public protocol HostBridge: AnyObject, Sendable {
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
 
+    /// The 32-byte id of the current app installation, created on first use.
+    /// NFT purse item keys are derived under it, so it must be the id the
+    /// host registers for recovery. Runtime-wide, like `durableWorkChanged`.
+    /// Defaults to a rejection for a host that keeps no installation id.
+    func currentInstallation() async throws -> Data
+
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
 
@@ -417,6 +423,9 @@ public extension HostBridge {
     func workerDemandChanged(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func currentInstallation() async throws -> Data {
+        throw HostRejection.Rejected(reason: "this host keeps no installation id")
+    }
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
@@ -677,6 +686,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func durableWorkChanged(pending: Bool) {
         bridge.durableWorkChanged(pending: pending)
+    }
+
+    func currentInstallation() async throws -> Data {
+        try await withHostRejection {
+            try await bridge.currentInstallation()
+        }
     }
 
     func navigateTo(url: String) async throws {
