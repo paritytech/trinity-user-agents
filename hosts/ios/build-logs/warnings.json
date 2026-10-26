@@ -210,11 +210,6 @@
       "path": "polkadot-app/Modules/Products/TrUAPI/RustHostRuntimeBridge.swift",
       "line": 96,
       "message": "Todo Violation: TODOs should be resolved (pass the real SSO host identit...) (todo)"
-    },
-    {
-      "path": "polkadot-app/Modules/Products/TrUAPI/RustHostRuntimeBridge.swift",
-      "line": 126,
-      "message": "Todo Violation: TODOs should be resolved (wait for the installation back...) (todo)"
     }
   ]
 }

@@ -2,7 +2,6 @@ import Foundation
 import UIKit
 import UIKitExt
 import TrUAPIHost
-import Coinage
 import ChainRegistry
 import Foundation_iOS
 import FoundationExt
@@ -43,7 +42,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
-    private let installationRepository: any CoinageCurrentInstallationRepositoryProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -65,7 +64,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        installationRepository: any CoinageCurrentInstallationRepositoryProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -74,7 +72,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
-        self.installationRepository = installationRepository
         self.tldProvider = tldProvider
         self.logger = logger
     }
@@ -94,6 +91,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
     func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
@@ -149,7 +147,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
-            installationRepository: installationRepository,
+            backedUpInstallation: backedUpInstallation,
             logger: logger
         )
 
