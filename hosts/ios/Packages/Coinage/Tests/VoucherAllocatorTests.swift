@@ -12,6 +12,10 @@ struct VoucherAllocatorTests {
 
     init() {
         allocator = VoucherAllocator(
+            installationProvider: CoinageBackedUpInstallationProvider(
+                installationStore: store,
+                backupObserver: StubAccountBackupObserver(status: .completed)
+            ),
             installationStore: store,
             delayProvider: mockDelay,
             voucherRepository: AnyDataProviderRepository(StubRepository<Voucher>()),

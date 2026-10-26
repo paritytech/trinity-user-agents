@@ -542,7 +542,7 @@ impl crate::platform::PocketPlatform for WasmPlatform {
 impl crate::platform::PreimageHost for WasmPlatform {
     fn lookup_preimage(
         &self,
-        key: Vec<u8>,
+        key: [u8; 32],
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
         invoke_js_subscription(
             &self.bridge.lookup_preimage,

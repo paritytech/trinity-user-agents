@@ -116,6 +116,7 @@ class RealFundingProductsWarmUpTest {
         )
         val resolved = ResolvedProduct(
             product = Product(id = productId, name = base, icon = null),
+            description = null,
             executables = executables,
         )
         whenever(resolveProductUseCase.resolve(productId)).thenReturn(Result.success(resolved))

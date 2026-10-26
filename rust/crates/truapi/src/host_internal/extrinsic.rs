@@ -702,6 +702,13 @@ pub mod tests {
 	/// Output of the runtime calls a subxt client makes to load the bulletin
 	/// fixture: `Core_version` (spec 1) and the metadata calls.
 	pub fn bulletin_runtime_call(method: &str) -> Option<Vec<u8>> {
+		runtime_call_serving_metadata(BULLETIN_METADATA_BYTES, method)
+	}
+
+	/// Output of the runtime calls a subxt client makes to load `metadata`,
+	/// the bytes of a `RuntimeMetadataPrefixed`: `Core_version` (spec 1) and
+	/// the metadata calls.
+	pub fn runtime_call_serving_metadata(metadata: &[u8], method: &str) -> Option<Vec<u8>> {
 		Some(match method {
 			"Core_version" => {
 				("bulletin", "bulletin", 1u32, 1u32, 1u32, Vec::<([u8; 8], u32)>::new(), 1u32)
@@ -710,9 +717,8 @@ pub mod tests {
 			"Metadata_metadata_versions" => vec![14u32].encode(),
 			"Metadata_metadata_at_version" => {
 				let mut output = vec![1];
-				Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
-					.encode_to(&mut output);
-				output.extend_from_slice(BULLETIN_METADATA_BYTES);
+				Compact(u32::try_from(metadata.len()).unwrap()).encode_to(&mut output);
+				output.extend_from_slice(metadata);
 				output
 			},
 			_ => return None,
