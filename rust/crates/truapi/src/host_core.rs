@@ -950,7 +950,7 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
-		let keys = self.signing_host.clone();
+		let keys = Arc::new(Arc::downgrade(&self.signing_host));
 		let ledger =
 			crate::nft::NftLedger::new(crate::nft::NftLedgerDeps { db, installation, keys });
 		self.services.install_nft_ledger(ledger.clone());
@@ -3813,6 +3813,23 @@ mod tests {
 		runtime.start_core_services();
 
 		assert!(runtime.services.nft_purses().is_some());
+	}
+
+	/// Hosts drop the runtime on every session switch, so the services NFT
+	/// purses run on must go with it rather than keep the signer, database
+	/// and tracker alive.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn dropping_the_runtime_releases_nft_purse_services() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+		runtime.start_core_services();
+		let services = Arc::downgrade(&runtime.services);
+
+		drop(runtime);
+
+		assert!(services.upgrade().is_none(), "the runtime services outlived the runtime");
 	}
 
 	/// Durable transactions do not depend on NFT purses, so the engine runs
