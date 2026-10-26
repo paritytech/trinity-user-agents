@@ -252,6 +252,11 @@ pub trait RuntimeChainProvider: Send + Sync {
 /// those budgets collide: four products plus the core's own client is a fifth
 /// follow the node refuses. Each product runtime gets its own connection, and
 /// the core's internal traffic keeps one of its own.
+/// Follows a node allows per connection, as [`ConnectionScope`] describes. A
+/// connection holding this many refuses the next one, whichever caller it
+/// belongs to.
+const FOLLOWS_A_NODE_BUDGETS: usize = 4;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ConnectionScope {
 	/// The core's own traffic: metadata, transaction assembly, internal reads.
@@ -1523,7 +1528,37 @@ impl ChainConnection {
 		};
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
+		let holding = Self::follows_holding_a_slot(&follows);
+		drop(follows);
+		if holding.len() >= FOLLOWS_A_NODE_BUDGETS {
+			// The refusal this predicts surfaces far from here, on whichever
+			// call happens to open the next follow, and says nothing about
+			// follows when it does. Name the state while it is still legible.
+			warn!(
+				chain = %encode_hex(&self.genesis_hash),
+				holding = holding.len(),
+				budget = FOLLOWS_A_NODE_BUDGETS,
+				follows = %holding.join(", "),
+				"chain connection is at the node's follow budget; the next follow on it will be refused"
+			);
+		}
 		true
+	}
+
+	/// Local ids of the follows holding a slot in this connection's budget.
+	///
+	/// A follow is recorded on intent and gains a remote id once the node
+	/// acknowledges one, so only the acknowledged ones occupy the node's
+	/// budget. Counting intents instead would report a connection as full
+	/// while the node still had room.
+	fn follows_holding_a_slot(follows: &HashMap<String, FollowState>) -> Vec<String> {
+		let mut holding: Vec<String> = follows
+			.iter()
+			.filter(|(_, follow)| follow.remote_subscription_id.is_some())
+			.map(|(local_follow_id, _)| local_follow_id.clone())
+			.collect();
+		holding.sort();
+		holding
 	}
 
 	/// Abort every follow pump on this connection.
@@ -3521,6 +3556,35 @@ mod tests {
 		assert!(
 			messages.iter().any(|m| m.contains("chainHead_v1_unfollow")),
 			"unfollow not sent; messages: {messages:?}",
+		);
+	}
+
+	/// Only follows the node acknowledged hold a slot in its budget. A follow
+	/// recorded on intent has asked for nothing yet, so counting it would
+	/// report a connection as full while the node still had room.
+	#[test]
+	fn only_acknowledged_follows_hold_a_slot_in_the_budget() {
+		let mut follows: HashMap<String, FollowState> = HashMap::new();
+		let intended = |remote: Option<&str>| FollowState {
+			with_runtime: false,
+			client_subscription_id: None,
+			remote_subscription_id: remote.map(str::to_string),
+			abort: None,
+			sender: mpsc::unbounded().0,
+			cancelled: Arc::new(AtomicBool::new(false)),
+		};
+		follows.insert("acknowledged-b".to_string(), intended(Some("REMOTE-B")));
+		follows.insert("intent-only".to_string(), intended(None));
+		follows.insert("acknowledged-a".to_string(), intended(Some("REMOTE-A")));
+
+		assert_eq!(
+			ChainConnection::follows_holding_a_slot(&follows),
+			vec!["acknowledged-a".to_string(), "acknowledged-b".to_string()],
+			"an unacknowledged follow occupies nothing on the node",
+		);
+		assert!(
+			ChainConnection::follows_holding_a_slot(&follows).len() < FOLLOWS_A_NODE_BUDGETS,
+			"two acknowledged follows are below the budget",
 		);
 	}
 
