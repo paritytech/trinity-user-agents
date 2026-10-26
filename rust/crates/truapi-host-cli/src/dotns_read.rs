@@ -10,9 +10,10 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
-		DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
-		classify_labels, discover_pop_controller, encode_revive_call, label_available,
-		lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+		ClaimBlocker, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
+		account_alias_key, claim_blocker, classify_labels, discover_pop_controller,
+		encode_revive_call, label_available, lite_label_owner_key, resolve_labels,
+		timestamp_now_key, view_output,
 	},
 	platform::async_trait,
 };
@@ -97,6 +98,20 @@ impl AssetHubReader {
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
 		let controller = self.pop_controller().await?;
 		label_available(self, &controller, label).await.map_err(anyhow::Error::msg)
+	}
+
+	/// Why a gateway claim of `label` by `claimant` would revert on the name's
+	/// reservation queue, or `None` when it can go through.
+	pub async fn claim_blocker(
+		&mut self,
+		label: &str,
+		claimant: &[u8; 20],
+	) -> Result<Option<ClaimBlocker>> {
+		let controller = self.pop_controller().await?;
+		let now = self.timestamp_secs().await?;
+		claim_blocker(self, &controller, label, claimant, now)
+			.await
+			.map_err(anyhow::Error::msg)
 	}
 
 	/// `DotnsPopController` address, resolved once per reader. The env override

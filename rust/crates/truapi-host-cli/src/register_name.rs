@@ -17,8 +17,8 @@ use tracing::debug;
 use truapi::{
 	host_logic::{
 		dotns_gateway::{
-			DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN,
-			build_register_proof_message, encode_register_full_name_extra,
+			ClaimBlocker, DOTNS_GATEWAY_CONTEXT, Link, MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN,
+			account_to_h160, build_register_proof_message, encode_register_full_name_extra,
 			encode_register_name_call, is_dotted_lite_username, is_registrable_full_label,
 		},
 		product_account::{
@@ -72,10 +72,28 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let who_public = who.public.to_bytes();
 
 	let mut reader = AssetHubReader::for_network(&config.network).await?;
-	// Registered names (any flow) fail only at submission otherwise; a pending
-	// reservation of `label` is not a mint and stays claimable.
+	// Registered names (any flow) fail only at submission otherwise.
 	if !reader.label_available(label).await? {
 		bail!("label {label:?} is already registered on dotNS and cannot be registered again");
+	}
+	// A claim the reservation queue refuses reverts in the gateway call, and the
+	// alias wait below would only time out.
+	match reader.claim_blocker(label, &account_to_h160(&who_public)).await? {
+		None => {},
+		Some(ClaimBlocker::HeldBy(holder)) => {
+			bail!(
+				"label {label:?} is reserved for 0x{} in its reservation queue; only that \
+				 account can claim it",
+				hex::encode(holder)
+			)
+		},
+		Some(ClaimBlocker::ClearFirst { dead }) => {
+			bail!(
+				"label {label:?} has {dead} expired or emptied reservations in front of this \
+				 claim, more than one gateway call clears; call \
+				 DotnsPopController.expireReservation({label:?}) to clear them, then retry"
+			)
+		},
 	}
 	// The gateway rejects a second registration for the account and a lite
 	// link the account does not own; both are storage reads, so ask first.

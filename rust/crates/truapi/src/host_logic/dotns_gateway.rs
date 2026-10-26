@@ -803,6 +803,98 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 		.map_err(|err| format!("DotnsRegistrar.exists({label}): {err}"))
 }
 
+/// Why a gateway claim of a personhood name would revert on the name's
+/// reservation queue in `DotnsPopController`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimBlocker {
+	/// Another account holds the first active reservation. Only it can claim the name.
+	HeldBy([u8; 20]),
+	/// More expired or emptied reservations stand in front of the claim than one
+	/// gateway call clears (dotNS 1.1.0 and later).
+	/// `DotnsPopController.expireReservation(label)` clears them.
+	ClearFirst {
+		/// Expired or emptied entries in front of the claim.
+		dead: u64,
+	},
+}
+
+/// Whether a gateway `register_name` of `label` by `claimant` would revert on
+/// the name's reservation queue, and why. `None` when the queue lets it through.
+///
+/// A claim first clears up to `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+/// entries from the front of the queue, and its revert discards that clearing,
+/// so a retry gets no further. A controller without that constant (dotNS 1.0.0)
+/// has no such limit and clears every one of them in the claim itself, so only
+/// another account's active reservation blocks it there. An entry is active
+/// while it has an owner and `joinedAt + reservationDuration` has not passed
+/// `now_secs`.
+pub async fn claim_blocker<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	controller: &[u8; 20],
+	label: &str,
+	claimant: &[u8; 20],
+	now_secs: u64,
+) -> Result<Option<ClaimBlocker>, String> {
+	let failed =
+		|view: &str, err: &dyn core::fmt::Display| format!("DotnsPopController.{view}: {err}");
+	let labelhash = keccak_256(label.as_bytes());
+	let meta = transport
+		.view(controller, call_bytes32("reservationMeta(bytes32)", &labelhash))
+		.await
+		.map_err(|err| failed("reservationMeta", &err))?;
+	let head = word_u64(&meta, 0).map_err(|err| failed("reservationMeta", &err))?;
+	let tail = word_u64(&meta, 1).map_err(|err| failed("reservationMeta", &err))?;
+	if head >= tail {
+		return Ok(None);
+	}
+	let duration = transport
+		.view(controller, call_no_args("reservationDuration()"))
+		.await
+		.map_err(|err| failed("reservationDuration", &err))
+		.and_then(|output| {
+			decode_u64(&output).map_err(|err| failed("reservationDuration", &err))
+		})?;
+	let max_steps =
+		match transport.view(controller, call_no_args("MAX_QUEUE_STEPS_PER_CALL()")).await {
+			Ok(output) => {
+				Some(decode_u64(&output).map_err(|err| failed("MAX_QUEUE_STEPS_PER_CALL", &err))?)
+			},
+			Err(DotnsViewError::Reverted(_)) => None,
+			Err(err) => return Err(failed("MAX_QUEUE_STEPS_PER_CALL", &err)),
+		};
+
+	let mut dead = 0;
+	for index in head..tail {
+		let entry = transport
+			.view(
+				controller,
+				call_bytes32_u64("reservationEntry(bytes32,uint64)", &labelhash, index),
+			)
+			.await
+			.map_err(|err| failed("reservationEntry", &err))?;
+		let owner = decode_address(&entry).map_err(|err| failed("reservationEntry", &err))?;
+		let joined_at = word_u64(&entry, 1).map_err(|err| failed("reservationEntry", &err))?;
+		if owner != [0u8; 20] && joined_at.saturating_add(duration) >= now_secs {
+			if owner != *claimant {
+				return Ok(Some(ClaimBlocker::HeldBy(owner)));
+			}
+			break;
+		}
+		dead += 1;
+	}
+	let clears_too_few = max_steps.is_some_and(|max_steps| dead > max_steps);
+	Ok(clears_too_few.then_some(ClaimBlocker::ClearFirst { dead }))
+}
+
+/// Calldata for a view function taking a `bytes32` and a `uint64`.
+fn call_bytes32_u64(signature: &str, word: &[u8; 32], value: u64) -> Vec<u8> {
+	let mut data = call_bytes32(signature, word);
+	let mut value_word = [0u8; 32];
+	value_word[24..].copy_from_slice(&value.to_be_bytes());
+	data.extend_from_slice(&value_word);
+	data
+}
+
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
 /// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
 /// entry counts, whatever its `mintedAt`: the controller no longer expires
@@ -1709,5 +1801,98 @@ mod tests {
 		assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
 		assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
 		assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
+	}
+
+	/// A personhood name's reservation queue, scripted: the entries from the
+	/// front, the reservation duration, and `MAX_QUEUE_STEPS_PER_CALL` where the
+	/// controller has it.
+	struct ScriptedQueue {
+		entries: Vec<([u8; 20], u64)>,
+		max_steps: Option<u64>,
+	}
+
+	const QUEUE_HEAD: u64 = 7;
+	const DURATION: u64 = 1_000;
+	const NOW: u64 = 10_000;
+	const LIVE: u64 = NOW - 10;
+	const EXPIRED: u64 = NOW - DURATION - 1;
+	const CLAIMANT: [u8; 20] = [0xc1; 20];
+	const OTHER: [u8; 20] = [0x07; 20];
+	const LEFT: [u8; 20] = [0u8; 20];
+
+	#[crate::platform::async_trait]
+	impl DotnsTransport for ScriptedQueue {
+		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+			Ok(None)
+		}
+
+		async fn view(
+			&mut self,
+			_dest: &[u8; 20],
+			input: Vec<u8>,
+		) -> Result<Vec<u8>, DotnsViewError> {
+			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
+			if sel == selector("reservationMeta(bytes32)") {
+				assert_eq!(&input[4..36], &keccak_256(b"george"));
+				let tail = QUEUE_HEAD + self.entries.len() as u64;
+				Ok([abi_word(QUEUE_HEAD), abi_word(tail)].concat())
+			} else if sel == selector("reservationDuration()") {
+				Ok(abi_word(DURATION).to_vec())
+			} else if sel == selector("MAX_QUEUE_STEPS_PER_CALL()") {
+				self.max_steps.map(|steps| abi_word(steps).to_vec()).ok_or_else(|| {
+					DotnsViewError::Reverted(DotnsContractError::Reverted {
+						detail: "(empty)".to_string(),
+					})
+				})
+			} else if sel == selector("reservationEntry(bytes32,uint64)") {
+				let index = decode_u64(&input[36..]).expect("index word; qed");
+				let (owner, joined_at) = self.entries[(index - QUEUE_HEAD) as usize];
+				let mut owner_word = [0u8; 32];
+				owner_word[12..].copy_from_slice(&owner);
+				Ok([owner_word, abi_word(joined_at)].concat())
+			} else {
+				panic!("unscripted view {}", hex::encode(sel));
+			}
+		}
+	}
+
+	/// A claim the queue refuses reverts, and the revert discards the clearing it
+	/// did, so the caller has to know before submitting: who holds the name, or
+	/// that the queue must be cleared first. An active user behind expired entries
+	/// still holds it.
+	#[test]
+	fn claim_blocker_follows_the_controller_queue_rule() {
+		let run = |entries: Vec<([u8; 20], u64)>, max_steps: Option<u64>| {
+			futures::executor::block_on(claim_blocker(
+				&mut ScriptedQueue { entries, max_steps },
+				&[0xc0; 20],
+				"george",
+				&CLAIMANT,
+				NOW,
+			))
+		};
+		let dead = |count| vec![(OTHER, EXPIRED); count];
+
+		assert_eq!(run(vec![], Some(4)), Ok(None));
+		assert_eq!(run(vec![(CLAIMANT, LIVE)], Some(4)), Ok(None));
+		assert_eq!(run([dead(4), vec![(CLAIMANT, LIVE)]].concat(), Some(4)), Ok(None));
+		assert_eq!(
+			run([dead(5), vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+			Ok(Some(ClaimBlocker::ClearFirst { dead: 5 }))
+		);
+		assert_eq!(
+			run(vec![(OTHER, EXPIRED), (LEFT, 0), (OTHER, LIVE), (CLAIMANT, LIVE)], Some(4)),
+			Ok(Some(ClaimBlocker::HeldBy(OTHER)))
+		);
+		assert_eq!(run(dead(4), Some(4)), Ok(None));
+		assert_eq!(run(dead(5), Some(4)), Ok(Some(ClaimBlocker::ClearFirst { dead: 5 })));
+		assert_eq!(run(vec![(CLAIMANT, NOW - DURATION)], Some(4)), Ok(None));
+		// dotNS 1.0.0 has no step limit: the claim clears every dead entry itself.
+		assert_eq!(run([dead(9), vec![(CLAIMANT, LIVE)]].concat(), None), Ok(None));
+		assert_eq!(run(dead(9), None), Ok(None));
+		assert_eq!(
+			run([dead(9), vec![(OTHER, LIVE), (CLAIMANT, LIVE)]].concat(), None),
+			Ok(Some(ClaimBlocker::HeldBy(OTHER)))
+		);
 	}
 }

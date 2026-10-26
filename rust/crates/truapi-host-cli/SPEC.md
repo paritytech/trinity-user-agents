@@ -2159,10 +2159,14 @@ REGISTER_CONFIRMED label=<label> full_username=<name>
 
 `REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
 account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
-`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar` (a
-pending reservation is not a mint and stays claimable); the account must not
-already hold a `DotnsGateway.AccountAlias`; a linked lite username must be
-owned by the account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
+`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar`;
+the label's reservation queue on `DotnsPopController` must let the account
+claim it, which fails when another account holds the first active reservation
+or, on dotNS 1.1.0 and later, when more expired or emptied reservations stand
+in front than one gateway call clears (`MAX_QUEUE_STEPS_PER_CALL`; clear them
+with `DotnsPopController.expireReservation(label)`); the account must not already
+hold a `DotnsGateway.AccountAlias`; a linked lite username must be owned by the
+account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 `RegisterFullName` shape differs are rejected.
 
 ### 19.3 `alloc-check`
