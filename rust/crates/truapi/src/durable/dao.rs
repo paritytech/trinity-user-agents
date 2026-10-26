@@ -78,15 +78,17 @@ pub fn schedule(
 const START_ATTEMPT: &str = "UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
     birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL,
-    scanned_number = NULL, attempts = attempts + 1
+    scanned_number = NULL, attempts = attempts + 1,
+    policy_params = COALESCE(:policy_params, policy_params)
     WHERE id = :id AND status = 'PENDING_SUBMISSION'";
 
-/// Gives a waiting row the attempt `extrinsic` makes. Returns whether the row
-/// was still waiting.
+/// Gives a waiting row the attempt `extrinsic` makes, and `params` in place of
+/// its policy params when given. Returns whether the row was still waiting.
 pub fn start_attempt(
 	tx: &Transaction<'_>,
 	id: DurableTxId,
 	extrinsic: &MortalExtrinsic,
+	params: Option<&PolicyParams>,
 ) -> Result<bool, DbError> {
 	let birth = extrinsic.mortality.birth();
 	let changed = tx.prepare_cached(START_ATTEMPT)?.execute(named_params! {
@@ -94,6 +96,7 @@ pub fn start_attempt(
 		":birth_number": birth.number,
 		":birth_hash": birth.hash.0,
 		":period": extrinsic.mortality.period(),
+		":policy_params": params,
 		":id": id.0,
 	})?;
 	Ok(changed == 1)
@@ -772,7 +775,7 @@ mod tests {
 	}
 
 	fn start_attempt_tagged(db: &Db, id: DurableTxId, tag: u8) -> bool {
-		block_on(db.write(move |tx| start_attempt(tx, id, &extrinsic(tag, 110, 32)))).unwrap()
+		block_on(db.write(move |tx| start_attempt(tx, id, &extrinsic(tag, 110, 32), None))).unwrap()
 	}
 
 	fn abandon_waiting(db: &Db, id: DurableTxId) -> bool {
@@ -838,6 +841,24 @@ mod tests {
 			})
 		);
 		assert_eq!(pending_rows(&db), vec![]);
+	}
+
+	/// A policy records what it learned building an attempt, such as the
+	/// revision it signed, so an oracle judges the attempt that is live.
+	#[test]
+	fn an_attempt_can_replace_the_rows_params() {
+		let (_dir, db) = open_db();
+		let id = schedule_in(&db, domain(), None);
+		let replaced = PolicyParams(vec![2]);
+
+		let started = block_on(
+			db.write(move |tx| start_attempt(tx, id, &extrinsic(9, 110, 32), Some(&replaced))),
+		)
+		.unwrap();
+
+		assert!(started);
+		let plan = read(&db, move |conn| entry(conn, id)).and_then(|entry| entry.plan);
+		assert_eq!(plan, Some(test_plan(vec![2])));
 	}
 
 	/// Two builds of one row must not both become attempts: only the first

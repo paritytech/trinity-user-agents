@@ -20,11 +20,6 @@ pub fn nfts_by_owner() -> DynamicAddress<(AccountId32,), ScarcityNft> {
 	dynamic("Scarcity", "NftsByOwner")
 }
 
-/// The `Scarcity::Instances` entry, naming who holds each instance.
-fn instances_entry() -> DynamicAddress<(u64,), AccountId32> {
-	dynamic("Scarcity", "Instances")
-}
-
 /// The `Scarcity::Locked` entry, naming the keys a failed transfer locked.
 fn locked_entry() -> DynamicAddress<(AccountId32,), ScarcityLock> {
 	dynamic("Scarcity", "Locked")
@@ -91,13 +86,6 @@ pub trait ScarcityChain: Send + Sync {
 		keys: &[ItemKey],
 	) -> Result<Vec<Option<ScarcityNft>>, StorageWatchError>;
 
-	/// Who holds each of `instances` at `at`.
-	async fn holders_at(
-		&self,
-		at: H256,
-		instances: &[u64],
-	) -> Result<Vec<Option<ItemKey>>, StorageWatchError>;
-
 	/// The lock on each of `keys` at `at`, and the chain time of `at`.
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError>;
 
@@ -148,22 +136,6 @@ impl ScarcityChain for ScarcityStorage {
 		self.storage.read_entries_at(self.genesis, at, &nfts_by_owner(), &owners).await
 	}
 
-	async fn holders_at(
-		&self,
-		at: H256,
-		instances: &[u64],
-	) -> Result<Vec<Option<ItemKey>>, StorageWatchError> {
-		let instances: Vec<_> = instances.iter().map(|instance| (*instance,)).collect();
-		let holders = self
-			.storage
-			.read_entries_at(self.genesis, at, &instances_entry(), &instances)
-			.await?;
-		Ok(holders
-			.into_iter()
-			.map(|holder| holder.map(|holder| ItemKey(holder.0)))
-			.collect())
-	}
-
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
 		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
 		let (locks_entry, time_entry) = (locked_entry(), timestamp_now_entry());
@@ -194,7 +166,7 @@ mod tests {
 
 	use futures::{executor::block_on, stream::BoxStream};
 	use parity_scale_codec::Encode;
-	use sp_crypto_hashing::{blake2_128, twox_64, twox_128};
+	use sp_crypto_hashing::{blake2_128, twox_128};
 	use subxt::{client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 
 	use super::*;
@@ -228,12 +200,6 @@ mod tests {
 	/// A key under `Blake2_128Concat`, as `NftsByOwner` and `Locked` hash theirs.
 	fn account_key(entry: (&str, &str), key: ItemKey) -> Vec<u8> {
 		map_key(entry, [blake2_128(&key.0).to_vec(), key.0.to_vec()].concat())
-	}
-
-	/// An instance under `Twox64Concat`, as `Instances` hashes it.
-	fn instance_key(instance: u64) -> Vec<u8> {
-		let encoded = instance.encode();
-		map_key(("Scarcity", "Instances"), [twox_64(&encoded).to_vec(), encoded].concat())
 	}
 
 	/// Storage served at [`AT`] by raw key. Keys are encoded with the Asset Hub
@@ -312,15 +278,6 @@ mod tests {
 		let held = nfts[0].map(HeldItem::from);
 		assert_eq!(held, Some(HeldItem { collection: 27, item: 13, instance: 330 }));
 		assert_eq!(nfts[1], None);
-	}
-
-	#[test]
-	fn reads_who_holds_each_instance() {
-		let reads = scarcity(vec![(instance_key(330), HOLDER.0.to_vec())]);
-
-		let holders = block_on(reads.holders_at(AT, &[330, 331])).unwrap();
-
-		assert_eq!(holders, vec![Some(HOLDER), None]);
 	}
 
 	#[test]

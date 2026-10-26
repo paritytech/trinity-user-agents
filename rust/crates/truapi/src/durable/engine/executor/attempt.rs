@@ -14,7 +14,7 @@ use crate::{
 			DurableTxEngine,
 			tracker::{Attempt, spawn_watch},
 		},
-		model::DurableTxId,
+		model::{DurableTxId, PolicyParams},
 	},
 	store::DbError,
 };
@@ -36,7 +36,8 @@ impl From<bool> for LedgerChange {
 	}
 }
 
-/// Gives waiting row `id` the attempt `extrinsic` makes and watches it.
+/// Gives waiting row `id` the attempt `extrinsic` makes, with `params` when
+/// the policy replaced them, and watches it.
 /// Ownership is taken before the row becomes `Pending`, so a recovery pass
 /// never decides an attempt its watch is about to follow.
 pub async fn start_built_attempt(
@@ -44,9 +45,10 @@ pub async fn start_built_attempt(
 	id: DurableTxId,
 	genesis: H256,
 	extrinsic: MortalExtrinsic,
+	params: Option<PolicyParams>,
 ) -> LedgerChange {
 	let claim = engine.ownership.acquire(id);
-	let recorded = record_attempt(engine, id, &extrinsic).await;
+	let recorded = record_attempt(engine, id, &extrinsic, params).await;
 	if recorded == LedgerChange::Unchanged {
 		engine.ownership.release(claim);
 		return recorded;
@@ -63,14 +65,18 @@ pub async fn give_up_submission(engine: &DurableTxEngine, id: DurableTxId) -> Le
 	write_or_warn(engine, id, failure, abandon).await
 }
 
-/// Writes the attempt onto the row while it still waits.
+/// Writes the attempt, and `params` when given, onto the row while it still
+/// waits.
 async fn record_attempt(
 	engine: &DurableTxEngine,
 	id: DurableTxId,
 	extrinsic: &MortalExtrinsic,
+	params: Option<PolicyParams>,
 ) -> LedgerChange {
 	let extrinsic = extrinsic.clone();
-	let start = move |tx: &rusqlite::Transaction<'_>| dao::start_attempt(tx, id, &extrinsic);
+	let start = move |tx: &rusqlite::Transaction<'_>| {
+		dao::start_attempt(tx, id, &extrinsic, params.as_ref())
+	};
 	write_or_warn(engine, id, "durable attempt could not be recorded", start).await
 }
 

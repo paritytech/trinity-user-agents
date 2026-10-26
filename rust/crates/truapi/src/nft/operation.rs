@@ -112,24 +112,24 @@ pub fn plan_transfers(
 		return Err(StartOperationError::OperationExists);
 	}
 	let sources = idle_items(tx, request.from, &request.items)?;
-	let (destinations, destination_is_fresh) = match request.destinations {
+	let destinations = match request.destinations {
 		TransferDestinations::AllocatedIn(purse) => {
-			(allocate_destinations(tx, purse, sources.len(), keys)?, true)
+			allocate_destinations(tx, purse, sources.len(), keys)?
 		},
-		TransferDestinations::Foreign(destination) => (vec![destination], false),
+		TransferDestinations::Foreign(destination) => vec![destination],
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
 	Ok(sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(IdleItem { key, slot, instance }, destination)| {
-			let source = key;
+		.map(|(IdleItem { key: source, slot, instance }, destination)| {
+			let signed_state_nonce = None;
 			TransferParams {
 				source,
 				slot,
 				instance,
 				destination,
-				destination_is_fresh,
+				signed_state_nonce,
 				give_up_after,
 			}
 			.into()
@@ -502,25 +502,5 @@ mod tests {
 		};
 		let params = block_on(purses.db.read(stored)).unwrap();
 		TransferParams::try_from(&crate::durable::PolicyParams(params)).unwrap()
-	}
-
-	/// Only a key allocated for the transfer proves, by holding the instance,
-	/// that the transfer landed; an outside key may have held it before.
-	#[test]
-	fn only_a_rebalance_marks_its_destination_fresh() {
-		let rebalanced = purses_holding(1);
-		start_operation(&rebalanced, rebalance_request(operation(1), &rebalanced.held)).unwrap();
-		let sent_out = purses_holding(1);
-		let items = sent_out.held.iter().copied().collect();
-		let request = TransferRequest {
-			operation: operation(1),
-			from: FROM,
-			items,
-			destinations: TransferDestinations::Foreign(FOREIGN),
-		};
-		start_operation(&sent_out, request).unwrap();
-
-		assert!(stored_params(&rebalanced).destination_is_fresh);
-		assert!(!stored_params(&sent_out).destination_is_fresh);
 	}
 }

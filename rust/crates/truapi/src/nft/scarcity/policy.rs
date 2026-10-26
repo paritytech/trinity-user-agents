@@ -44,10 +44,9 @@ pub struct TransferParams {
 	pub instance: u64,
 	/// The key it goes to.
 	pub destination: ItemKey,
-	/// Whether `destination` was allocated for this transfer, so no instance
-	/// was ever there before it. Only then does the instance at the
-	/// destination prove the transfer landed.
-	pub destination_is_fresh: bool,
+	/// The `state_nonce` the live attempt signed over, which the oracle
+	/// proves its landing by. `None` until an attempt is built.
+	pub signed_state_nonce: Option<u64>,
 	/// Unix time, in seconds of the host's clock, after which a transfer that
 	/// still waits is given up. Fixed at registration, so a restart never
 	/// extends it.
@@ -216,18 +215,20 @@ impl ScarcityTransferPolicy {
 		ready.or_else(|| give_up_after_limit(transfer, build.now))
 	}
 
-	/// `transfer` signed and ready, or `None` when it could not be signed.
+	/// `transfer` signed over `state_nonce` and ready, with that revision
+	/// recorded in its params, or `None` when it could not be signed.
 	async fn ready_to_submit(
 		&self,
 		transfer: &PlannedTransfer,
 		state_nonce: u64,
 		build: &BatchBuild,
 	) -> Option<Preparation> {
+		let params = TransferParams { signed_state_nonce: Some(state_nonce), ..transfer.params };
 		self.sign_planned_transfer(transfer, state_nonce, build)
 			.await
 			.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"))
 			.ok()
-			.map(Preparation::Ready)
+			.map(|extrinsic| Preparation::Ready { extrinsic, params: Some(params.into()) })
 	}
 
 	/// `transfer` signed by its source key. Fails without a session.
@@ -360,14 +361,6 @@ mod tests {
 			Ok(keys.iter().map(held).collect())
 		}
 
-		async fn holders_at(
-			&self,
-			_at: H256,
-			_instances: &[u64],
-		) -> Result<Vec<Option<ItemKey>>, StorageWatchError> {
-			unreachable!("the policy never asks who holds an instance")
-		}
-
 		async fn locks_at(
 			&self,
 			at: H256,
@@ -417,7 +410,7 @@ mod tests {
 			slot,
 			instance: INSTANCE,
 			destination: DESTINATION,
-			destination_is_fresh: true,
+			signed_state_nonce: None,
 			give_up_after,
 		};
 		let plan = SubmissionPlan { policy: PolicyId::new(TRANSFER_POLICY), params: params.into() };
@@ -459,7 +452,9 @@ mod tests {
 
 		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
 
-		let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
+		let Some(Preparation::Ready { extrinsic: signed, .. }) = prepared else {
+			panic!("built: {prepared:?}")
+		};
 		assert_eq!(signed.mortality, Mortality::new(FINALIZED, DEFAULT_MORTALITY_PERIOD).unwrap());
 	}
 
@@ -473,7 +468,9 @@ mod tests {
 
 		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
 
-		let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
+		let Some(Preparation::Ready { extrinsic: signed, .. }) = prepared else {
+			panic!("built: {prepared:?}")
+		};
 		let bytes = signed.extrinsic.bytes();
 		let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
 		let extensions = decoded.transaction_extension_payload().unwrap();
@@ -482,6 +479,21 @@ mod tests {
 			.find(|extension| extension.name() == "VerifyMultiSignature")
 			.unwrap();
 		assert!(bytes[verify.range()].ends_with(&registered.source.0));
+	}
+
+	/// The oracle proves a landing by the revision the live attempt signed,
+	/// so every build records it in the transfer's params.
+	#[test]
+	fn a_built_transfer_records_the_revision_it_signed() {
+		let registered = registered_transfer(0);
+
+		let prepared = prepare_one(&registered, holding(&registered, held_nft()));
+
+		let Some(Preparation::Ready { params: Some(params), .. }) = prepared else {
+			panic!("built without params: {prepared:?}")
+		};
+		let recorded = TransferParams::try_from(&params).unwrap().signed_state_nonce;
+		assert_eq!(recorded, Some(held_nft().state_nonce));
 	}
 
 	/// A reorg can briefly show the source key without its NFT, so the transfer
@@ -520,7 +532,7 @@ mod tests {
 
 		let prepared = prepare_one(&expired, holding(&expired, held_nft()));
 
-		assert!(matches!(prepared, Some(Preparation::Ready(_))));
+		assert!(matches!(prepared, Some(Preparation::Ready { .. })));
 	}
 
 	#[test]
@@ -547,7 +559,7 @@ mod tests {
 		let after_lock = prepare_one(&registered, locked(NOW));
 
 		assert_eq!(while_locked, None);
-		assert!(matches!(after_lock, Some(Preparation::Ready(_))));
+		assert!(matches!(after_lock, Some(Preparation::Ready { .. })));
 	}
 
 	#[test]

@@ -92,7 +92,9 @@ impl ScriptedPolicy {
 	pub fn building_everything() -> Self {
 		let builds = AtomicU8::new(0);
 		Self::answering_with(move |ids| {
-			let answers = ids.iter().map(|id| (*id, Preparation::Ready(next_build(&builds))));
+			let answers = ids.iter().map(|id| {
+				(*id, Preparation::Ready { extrinsic: next_build(&builds), params: None })
+			});
 			Ok(answers.collect())
 		})
 	}
