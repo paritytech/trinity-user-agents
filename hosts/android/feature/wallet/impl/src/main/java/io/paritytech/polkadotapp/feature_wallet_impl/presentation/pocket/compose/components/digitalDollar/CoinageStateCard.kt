@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.C
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoinsMetrics
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageRun
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageRunMarkers
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageStripLayout
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.holdings.HoldingGeometry
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
@@ -66,6 +67,7 @@ internal fun CoinageStateCard(
     state: CoinageUiState.TokensState,
     detailsVisible: Boolean,
     focusedCoin: String?,
+    coinSet: CoinageScene.CoinSet,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
     onHeadingClicked: () -> Unit
@@ -95,6 +97,7 @@ internal fun CoinageStateCard(
                     coins = state.coins,
                     isExpanded = detailsVisible,
                     focusedCoin = picked,
+                    coinSet = coinSet,
                     onMetrics = { metrics = it },
                     onCoinTapped = onCoinTapped,
                     onFlickedDown = onCoinsFlickedDown,
@@ -214,6 +217,7 @@ private fun CoinageStateCardPreview() {
                 ),
                 detailsVisible = false,
                 focusedCoin = null,
+                coinSet = CoinageScene.CoinSet.SHIPPED,
                 onCoinTapped = {},
                 onCoinsFlickedDown = {},
                 onHeadingClicked = {}

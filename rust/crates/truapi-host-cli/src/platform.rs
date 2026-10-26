@@ -32,8 +32,9 @@ use truapi::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-		SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
+		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+		UserConfirmationReview,
 	},
 	v01,
 };
@@ -46,6 +47,79 @@ use crate::{
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
+
+/// A persistence failure with its filesystem operation or serialization cause.
+#[derive(Debug, derive_more::Display, derive_more::From)]
+pub enum StorageError {
+	/// The destination cannot identify a parent directory.
+	#[display("storage path has no parent: {}", path.display())]
+	MissingParent { path: PathBuf },
+	/// The stored value could not be serialized.
+	#[display("{_0}")]
+	#[from]
+	Serialize(serde_json::Error),
+	/// The parent storage directory could not be created.
+	#[display("create storage dir")]
+	CreateStorageDirectory { source: std::io::Error },
+	/// The product's storage directory could not be created.
+	#[display("create product storage directory {}", path.display())]
+	CreateProductDirectory { path: PathBuf, source: std::io::Error },
+	/// A storage file or directory could not be created.
+	#[display("create {}", path.display())]
+	Create { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be written.
+	#[display("write {}", path.display())]
+	Write { path: PathBuf, source: std::io::Error },
+	/// A storage file could not be synchronized.
+	#[display("sync {}", path.display())]
+	Sync { path: PathBuf, source: std::io::Error },
+	/// An existing destination could not be removed.
+	#[cfg(windows)]
+	#[display("replace {}", path.display())]
+	Replace { path: PathBuf, source: std::io::Error },
+	/// A completed write could not be moved to its destination.
+	#[display("persist {}", path.display())]
+	Persist { path: PathBuf, source: std::io::Error },
+	/// The navigation transcript could not be appended.
+	#[display("could not record navigation in {}", path.display())]
+	RecordNavigation { path: PathBuf, source: std::io::Error },
+	/// The storage directory could not be synchronized.
+	#[cfg(unix)]
+	#[display("sync storage dir {}", path.display())]
+	SyncDirectory { path: PathBuf, source: std::io::Error },
+}
+
+impl std::error::Error for StorageError {
+	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+		match self {
+			Self::MissingParent { .. } => None,
+			Self::Serialize(source) => std::error::Error::source(source),
+			Self::CreateStorageDirectory { source } |
+			Self::CreateProductDirectory { source, .. } |
+			Self::Create { source, .. } |
+			Self::Write { source, .. } |
+			Self::Sync { source, .. } |
+			Self::Persist { source, .. } |
+			Self::RecordNavigation { source, .. } => Some(source),
+			#[cfg(windows)]
+			Self::Replace { source, .. } => Some(source),
+			#[cfg(unix)]
+			Self::SyncDirectory { source, .. } => Some(source),
+		}
+	}
+}
+
+impl From<StorageError> for v01::HostLocalStorageReadError {
+	fn from(error: StorageError) -> Self {
+		Self::Unknown { reason: format!("{:#}", anyhow::Error::new(error)) }
+	}
+}
+
+impl From<StorageError> for api::GenericError {
+	fn from(error: StorageError) -> Self {
+		Self { reason: format!("{:#}", anyhow::Error::new(error)) }
+	}
+}
 
 /// How the host answers confirmation prompts (the web/iOS "sign?" modals).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +170,7 @@ pub struct CliPlatform {
 	chain: WsChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
-	product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
 	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
@@ -217,9 +291,9 @@ impl CliPlatform {
 
 	fn persist_product_storage(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		values: &HashMap<String, Vec<u8>>,
-	) -> Result<(), String> {
+	) -> Result<(), StorageError> {
 		let Some(directory) = self
 			.product_storage_dir
 			.lock()
@@ -236,7 +310,7 @@ impl CliPlatform {
 		matches!(key, CoreStorageKey::DeviceEncryptionKey)
 	}
 
-	fn persist_device_storage(&self) -> Result<(), String> {
+	fn persist_device_storage(&self) -> Result<(), StorageError> {
 		let Some(path) = self.device_storage_path.as_deref() else {
 			return Ok(());
 		};
@@ -244,7 +318,7 @@ impl CliPlatform {
 		save_hex_key_map(path, &storage)
 	}
 
-	fn persist_core_storage(&self) -> Result<(), String> {
+	fn persist_core_storage(&self) -> Result<(), StorageError> {
 		let Some(path) =
 			self.core_storage_path.lock().expect("core storage path mutex poisoned").clone()
 		else {
@@ -260,7 +334,7 @@ impl CliPlatform {
 		self.state_dir.lock().expect("state path mutex poisoned").clone()
 	}
 
-	fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
+	fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), StorageError> {
 		let Some(scope) = &self.pairing_scope else {
 			return Ok(());
 		};
@@ -274,7 +348,7 @@ impl CliPlatform {
 		}
 
 		fs::create_dir_all(&target_state)
-			.map_err(|error| format!("create {}: {error}", target_state.display()))?;
+			.map_err(|source| StorageError::Create { path: target_state.clone(), source })?;
 		let target_product_dir = target_state.join("storage");
 		let target_core_path = target_state.join("core-storage.json");
 		let migrating_bootstrap = current_state.as_ref() == Some(&scope.bootstrap_dir);
@@ -418,8 +492,7 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
 #[async_trait]
 impl ProductStorage for CliPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
-		let scoped = ProductStorageKey::decode(&key)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
+		let scoped = ProductStorageKey::decode(&key)?;
 		Ok(self
 			.product_storage
 			.lock()
@@ -434,23 +507,21 @@ impl ProductStorage for CliPlatform {
 		key: String,
 		value: Vec<u8>,
 	) -> Result<(), v01::HostLocalStorageReadError> {
-		let scoped = ProductStorageKey::decode(&key)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
+		let scoped = ProductStorageKey::decode(&key)?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.insert(scoped.key().to_string(), value);
-		self.persist_product_storage(scoped.product_id(), values)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
+		self.persist_product_storage(scoped.product_id(), values)?;
+		Ok(())
 	}
 
 	async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
-		let scoped = ProductStorageKey::decode(&key)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
+		let scoped = ProductStorageKey::decode(&key)?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
-		self.persist_product_storage(scoped.product_id(), values)
-			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
+		self.persist_product_storage(scoped.product_id(), values)?;
+		Ok(())
 	}
 
 	fn subscribe_storage(
@@ -522,8 +593,8 @@ impl CoreStorage for CliPlatform {
 				.expect("core storage mutex poisoned")
 				.insert(Self::core_key(&key), value);
 		}
-		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }
-			.map_err(|reason| api::GenericError { reason })
+		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }?;
+		Ok(())
 	}
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
@@ -532,8 +603,8 @@ impl CoreStorage for CliPlatform {
 			let store = if device_scoped { &self.device_storage } else { &self.core_storage };
 			store.lock().expect("core storage mutex poisoned").remove(&Self::core_key(&key));
 		}
-		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }
-			.map_err(|reason| api::GenericError { reason })
+		if device_scoped { self.persist_device_storage() } else { self.persist_core_storage() }?;
+		Ok(())
 	}
 }
 
@@ -557,8 +628,11 @@ impl Navigation for CliPlatform {
 		if let Some(path) = &self.navigations_log {
 			let at =
 				SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-			record_navigation(path, &url, at)
-				.map_err(|reason| api::HostNavigateToError::Unknown { reason })?;
+			record_navigation(path, &url, at).map_err(|error| {
+				api::HostNavigateToError::Unknown {
+					reason: format!("{:#}", anyhow::Error::new(error)),
+				}
+			})?;
 		}
 		emit_notification_event(self.ui.as_ref(), SystemEvent::NavigationRequested { url });
 		Ok(())
@@ -570,15 +644,14 @@ impl Navigation for CliPlatform {
 /// Written before `navigate_to` resolves, so by the time the product's call
 /// returns the request is on disk. A write failure fails the call rather than
 /// silently dropping the record a test would assert on.
-fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), String> {
-	let line = serde_json::to_string(&serde_json::json!({ "url": url, "at": at }))
-		.map_err(|err| err.to_string())?;
+fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), StorageError> {
+	let line = serde_json::to_string(&serde_json::json!({ "url": url, "at": at }))?;
 	fs::OpenOptions::new()
 		.create(true)
 		.append(true)
 		.open(path)
 		.and_then(|mut file| writeln!(file, "{line}"))
-		.map_err(|err| format!("could not record navigation in {}: {err}", path.display()))
+		.map_err(|source| StorageError::RecordNavigation { path: path.to_path_buf(), source })
 }
 
 #[async_trait]
@@ -735,7 +808,7 @@ impl truapi::platform::AuthPresenter for CliPlatform {
 			let Some(user_id) = storage_user_id(info) &&
 			let Err(reason) = self.switch_pairing_user_storage(user_id)
 		{
-			tracing::warn!(%reason, %user_id, "could not switch pairing-host user storage");
+			tracing::warn!(reason = %format!("{:#}", anyhow::Error::new(reason)), %user_id, "could not switch pairing-host user storage");
 		}
 		let (connection, event) = match &state {
 			AuthState::Pairing { deeplink } => {
@@ -801,7 +874,7 @@ impl UserConfirmation for CliPlatform {
 
 /// Names the product that asked, for the reviews that carry one. A relayed
 /// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&str>) -> String {
+fn asking(calling_product_id: Option<&ProductId>) -> String {
 	match calling_product_id {
 		Some(product_id) => format!("Product {product_id}"),
 		None => "A paired host".to_string(),
@@ -817,7 +890,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign payload",
             format!(
                 "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -833,7 +906,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign raw data",
             format!(
                 "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -861,7 +934,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign statement proof",
             format!(
                 "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_deref()),
+                asking(review.calling_product_id.as_ref()),
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
@@ -873,7 +946,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "create transaction",
             format!(
                 "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 payload.signer.dot_ns_identifier,
             ),
         ),
@@ -969,8 +1042,8 @@ struct ProductStorageDocument {
 	values: HashMap<String, String>,
 }
 
-fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec<u8>>> {
-	let mut products = HashMap::<String, HashMap<String, Vec<u8>>>::new();
+fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, Vec<u8>>> {
+	let mut products = HashMap::<ProductId, HashMap<String, Vec<u8>>>::new();
 
 	let entries = match fs::read_dir(directory) {
 		Ok(entries) => Some(entries),
@@ -1009,78 +1082,73 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
 	products
 }
 
-fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec<u8>>)> {
-	let text = match fs::read_to_string(path) {
-		Ok(text) => text,
-		Err(error) => {
+fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
+	let text = fs::read_to_string(path)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not read product storage");
-			return None;
-		},
-	};
-	let document = match serde_json::from_str::<ProductStorageDocument>(&text) {
-		Ok(document) if document.version == 1 => document,
-		Ok(document) => {
-			tracing::warn!(
-				path = %path.display(),
-				version = document.version,
-				"unsupported product storage version"
-			);
-			return None;
-		},
-		Err(error) => {
+		})
+		.ok()?;
+	let document = serde_json::from_str::<ProductStorageDocument>(&text)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not decode product storage");
-			return None;
-		},
-	};
-	let normalized = match ProductStorageKey::new(&document.product_id, "") {
-		Ok(scoped) => scoped.product_id().to_string(),
-		Err(error) => {
+		})
+		.ok()?;
+	if document.version != 1 {
+		tracing::warn!(
+			path = %path.display(),
+			version = document.version,
+			"unsupported product storage version"
+		);
+		return None;
+	}
+	let normalized = document
+		.product_id
+		.parse::<ProductId>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid product id"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	let values = document
 		.values
 		.into_iter()
 		.map(|(key, value)| hex::decode(value).map(|bytes| (key, bytes)))
-		.collect::<Result<HashMap<_, _>, _>>();
-	let values = match values {
-		Ok(values) => values,
-		Err(error) => {
+		.collect::<Result<HashMap<_, _>, _>>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid value"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	Some((normalized, values))
 }
 
 fn save_product_storage(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
-) -> Result<(), String> {
-	fs::create_dir_all(directory).map_err(|error| {
-		format!("create product storage directory {}: {error}", directory.display())
+) -> Result<(), StorageError> {
+	fs::create_dir_all(directory).map_err(|source| StorageError::CreateProductDirectory {
+		path: directory.to_path_buf(),
+		source,
 	})?;
 	let document = ProductStorageDocument {
 		version: 1,
 		product_id: product_id.to_string(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
-	let text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+	let text = serde_json::to_string_pretty(&document)?;
 	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
-fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
+fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	let mut slug = product_id
+		.as_str()
 		.chars()
 		.map(|character| {
 			if character.is_ascii_alphanumeric() || matches!(character, '.' | '-') {
@@ -1095,7 +1163,7 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
 	if slug.is_empty() {
 		slug.push_str("product");
 	}
-	let digest = Sha256::digest(product_id.as_bytes());
+	let digest = Sha256::digest(product_id.as_str().as_bytes());
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
@@ -1155,41 +1223,44 @@ fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
 		.collect()
 }
 
-fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(), String> {
+fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(), StorageError> {
 	let json = JsonMap {
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
-	let text = serde_json::to_string_pretty(&json).map_err(|err| err.to_string())?;
+	let text = serde_json::to_string_pretty(&json)?;
 	atomic_write(path, text.as_bytes())
 }
 
-pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+/// Replace a persisted value after its contents have reached the filesystem.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 	let parent = match path.parent() {
 		Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
 		Some(parent) => parent,
-		None => return Err(format!("storage path has no parent: {}", path.display())),
+		None => return Err(StorageError::MissingParent { path: path.to_path_buf() }),
 	};
-	fs::create_dir_all(parent).map_err(|error| format!("create storage dir: {error}"))?;
+	fs::create_dir_all(parent).map_err(|source| StorageError::CreateStorageDirectory { source })?;
 	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
 	let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
 	let temporary =
 		path.with_file_name(format!(".{name}.{}.{temporary_id}.tmp", std::process::id()));
 	let mut file = fs::File::create(&temporary)
-		.map_err(|error| format!("create {}: {error}", temporary.display()))?;
+		.map_err(|source| StorageError::Create { path: temporary.clone(), source })?;
 	file.write_all(bytes)
-		.map_err(|error| format!("write {}: {error}", temporary.display()))?;
+		.map_err(|source| StorageError::Write { path: temporary.clone(), source })?;
 	file.sync_all()
-		.map_err(|error| format!("sync {}: {error}", temporary.display()))?;
+		.map_err(|source| StorageError::Sync { path: temporary.clone(), source })?;
 	drop(file);
 	#[cfg(windows)]
 	if path.exists() {
-		fs::remove_file(path).map_err(|error| format!("replace {}: {error}", path.display()))?;
+		fs::remove_file(path)
+			.map_err(|source| StorageError::Replace { path: path.to_path_buf(), source })?;
 	}
-	fs::rename(&temporary, path).map_err(|error| format!("persist {}: {error}", path.display()))?;
+	fs::rename(&temporary, path)
+		.map_err(|source| StorageError::Persist { path: path.to_path_buf(), source })?;
 	#[cfg(unix)]
 	fs::File::open(parent)
 		.and_then(|directory| directory.sync_all())
-		.map_err(|error| format!("sync storage dir {}: {error}", parent.display()))?;
+		.map_err(|source| StorageError::SyncDirectory { path: parent.to_path_buf(), source })?;
 	Ok(())
 }
 
@@ -1231,18 +1302,18 @@ fn read_current_pairing_user(bootstrap_dir: &Path) -> Option<String> {
 	Some(user_id)
 }
 
-fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(), String> {
+fn persist_current_pairing_user(bootstrap_dir: &Path, user_id: &str) -> Result<(), StorageError> {
 	fs::create_dir_all(bootstrap_dir)
-		.map_err(|error| format!("create {}: {error}", bootstrap_dir.display()))?;
+		.map_err(|source| StorageError::Create { path: bootstrap_dir.to_path_buf(), source })?;
 	let path = bootstrap_dir.join(CURRENT_PAIRING_USER_FILE);
 	let temporary =
 		bootstrap_dir.join(format!(".{CURRENT_PAIRING_USER_FILE}.{}.tmp", std::process::id()));
 	fs::write(&temporary, format!("{user_id}\n"))
-		.map_err(|error| format!("write {}: {error}", temporary.display()))?;
-	fs::rename(&temporary, &path).map_err(|error| format!("persist {}: {error}", path.display()))
+		.map_err(|source| StorageError::Write { path: temporary.clone(), source })?;
+	fs::rename(&temporary, &path).map_err(|source| StorageError::Persist { path, source })
 }
 
-fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), String> {
+fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(), StorageError> {
 	let keyed: HashMap<String, Vec<u8>> =
 		values.iter().map(|(key, value)| (hex::encode(key), value.clone())).collect();
 	save_string_map(path, &keyed)
@@ -1375,7 +1446,18 @@ mod tests {
 		let dir = tempdir().expect("tempdir");
 		let path = dir.path().join("missing").join("navigations.log");
 		let error = record_navigation(&path, "polkadot://dim2.dot", 1).unwrap_err();
-		assert!(error.contains("could not record navigation"), "{error}");
+		let StorageError::RecordNavigation { path: failed_path, source } = &error else {
+			panic!("expected the navigation operation and path: {error:?}");
+		};
+		assert_eq!((failed_path, source.kind()), (&path, std::io::ErrorKind::NotFound));
+		let reason = format!("could not record navigation in {}: {source}", path.display());
+		let source_kind = std::error::Error::source(&error)
+			.and_then(|source| source.downcast_ref::<std::io::Error>())
+			.map(std::io::Error::kind);
+		assert_eq!(
+			(source_kind, api::GenericError::from(error)),
+			(Some(std::io::ErrorKind::NotFound), api::GenericError { reason })
+		);
 	}
 
 	#[tokio::test]
@@ -1508,8 +1590,7 @@ mod tests {
 		// writes a session before it knows the username. Product KV is the state
 		// the comment there promises stays with its own user, so that is what
 		// isolation is asserted on.
-		let alice_key =
-			ProductStorageKey::new("demo-product.dot", "secret").expect("product storage key");
+		let alice_key = ProductStorageKey::new(ProductId::for_test("demo-product.dot"), "secret");
 		platform
 			.write(alice_key.encode(), b"alice-only".to_vec())
 			.await
@@ -1670,8 +1751,7 @@ mod tests {
 			ApprovalPolicy::AutoAccept,
 			None,
 		);
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -1766,11 +1846,10 @@ mod tests {
 	fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -1794,7 +1873,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				"product.dot".to_string(),
+				ProductId::for_test("product.dot"),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
@@ -1806,9 +1885,9 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some("dim2next.paseo".to_string()),
+				calling_product_id: Some(ProductId::for_test("dim2next.paseo")),
 				account: api::ProductAccountId {
-					dot_ns_identifier: "dim2.paseo".to_string(),
+					dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 					derivation_index: api::DerivationIndex::Index(0),
 				},
 				payload: vec![0x42; 128],
@@ -1829,10 +1908,10 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: "caller.dot".to_string(),
+			calling_product_id: ProductId::for_test("caller.dot"),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
-					dot_ns_identifier: "target.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("target.dot"),
 					derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
 				},
 				transcript_label: b"lottery".to_vec(),
@@ -1884,9 +1963,8 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new("first.dot", "theme").expect("first product key");
-		let localhost =
-			ProductStorageKey::new("localhost:3000", "theme").expect("localhost product key");
+		let first = ProductStorageKey::new(ProductId::for_test("first.dot"), "theme");
+		let localhost = ProductStorageKey::new(ProductId::for_test("localhost:3000"), "theme");
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -1940,7 +2018,8 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let key = ProductStorageKey::new("same.dot", "value").expect("product key");
+		let same_product = ProductId::for_test("same.dot");
+		let key = ProductStorageKey::new(same_product.clone(), "value");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),
@@ -1960,9 +2039,9 @@ mod tests {
 		});
 
 		let first_path =
-			product_storage_path(&temporary.path().join("storage").join("first"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("first"), &same_product);
 		let second_path =
-			product_storage_path(&temporary.path().join("storage").join("second"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("second"), &same_product);
 		assert!(first_path.is_file());
 		assert!(second_path.is_file());
 		assert_ne!(
