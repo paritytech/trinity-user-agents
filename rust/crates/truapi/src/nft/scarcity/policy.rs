@@ -11,7 +11,7 @@ use super::{
 	transfer::NftTransfer,
 };
 use crate::{
-	chain::{DEFAULT_MORTALITY_PERIOD, ExtrinsicService, MortalExtrinsic, Mortality},
+	chain::{ExtrinsicService, MortalExtrinsic},
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
@@ -114,10 +114,6 @@ struct TransferView {
 struct BatchBuild {
 	/// Builds every transfer of the batch born at the same finalized head.
 	extrinsics: ExtrinsicService,
-	/// The best head is so far past the finalized one that an era born there
-	/// would die before it could land, so nothing is built until finality
-	/// catches up.
-	finality_stalled: bool,
 	/// Unix time of the host's clock, which wait limits are measured in.
 	now: u64,
 }
@@ -130,11 +126,11 @@ impl BatchBuild {
 		genesis: H256,
 		context: TransferContext,
 	) -> Result<Self, PolicyError> {
-		let TransferContext { birth, best } = context;
-		let mortality = Mortality::new(birth, DEFAULT_MORTALITY_PERIOD).map_err(policy_error)?;
-		let finality_stalled = best.number + DEFAULT_MORTALITY_PERIOD / 2 >= mortality.death();
-		let extrinsics = extrinsics.cache_runtime_at(genesis, birth).await.map_err(policy_error)?;
-		Ok(Self { extrinsics, finality_stalled, now: current_unix_secs() })
+		let extrinsics = extrinsics
+			.cache_runtime_at(genesis, context.birth)
+			.await
+			.map_err(policy_error)?;
+		Ok(Self { extrinsics, now: current_unix_secs() })
 	}
 }
 
@@ -232,20 +228,18 @@ impl ScarcityTransferPolicy {
 		ready.or_else(|| give_up_after_limit(transfer, build.now))
 	}
 
-	/// `transfer` signed and ready, or `None` when finality stalled or it
-	/// could not be signed.
+	/// `transfer` signed and ready, or `None` when it could not be signed.
 	async fn ready_to_submit(
 		&self,
 		transfer: &PlannedTransfer,
 		state_nonce: u64,
 		build: &BatchBuild,
 	) -> Option<Preparation> {
-		if build.finality_stalled {
-			return None;
-		}
-		let signed = self.sign_planned_transfer(transfer, state_nonce, build).await;
-		let signed = signed.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"));
-		signed.ok().map(Preparation::Ready)
+		self.sign_planned_transfer(transfer, state_nonce, build)
+			.await
+			.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"))
+			.ok()
+			.map(Preparation::Ready)
 	}
 
 	/// `transfer` signed by its source key. Fails without a session.
@@ -351,7 +345,10 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain::{HashAndNumber, StorageWatchError, extrinsic_service_serving},
+		chain::{
+			DEFAULT_MORTALITY_PERIOD, HashAndNumber, Mortality, StorageWatchError,
+			extrinsic_service_serving,
+		},
 		durable::{DomainId, SubmissionPlan},
 		nft::{
 			NftLedger, PurseId, PurseTag,
@@ -385,9 +382,6 @@ mod tests {
 	struct ScriptedScarcity {
 		held: HashMap<ItemKey, ScarcityNft>,
 		locked_until: HashMap<ItemKey, u64>,
-		/// How many blocks the best head runs past [`BEST`], as when finality
-		/// stalls.
-		best_ahead_by: u64,
 	}
 
 	#[async_trait::async_trait]
@@ -420,8 +414,7 @@ mod tests {
 		}
 
 		async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
-			let best = HashAndNumber { number: BEST.number + self.best_ahead_by, ..BEST };
-			Ok(TransferContext { birth: FINALIZED, best })
+			Ok(TransferContext { birth: FINALIZED, best: BEST })
 		}
 	}
 
@@ -619,23 +612,6 @@ mod tests {
 
 		assert_eq!(prepare(&waiting), None);
 		assert_eq!(prepare(&expired), Some(Preparation::GiveUp));
-	}
-
-	/// An era born at a finalized head that best has nearly outrun would die
-	/// before landing and use up an attempt, so nothing is built until finality
-	/// catches up.
-	#[test]
-	fn a_transfer_waits_while_finality_lags_too_far_behind() {
-		let registered = registered_transfer(0);
-		let behind =
-			|blocks| ScriptedScarcity { best_ahead_by: blocks, ..holding(&registered, held_nft()) };
-		let lag_to_death = FINALIZED.number + DEFAULT_MORTALITY_PERIOD / 2 - BEST.number;
-
-		let stalled = prepare_one(&registered, behind(lag_to_death));
-		let lagging = prepare_one(&registered, behind(lag_to_death - 1));
-
-		assert_eq!(stalled, None);
-		assert!(matches!(lagging, Some(Preparation::Ready(_))));
 	}
 
 	/// A signer with no session.
