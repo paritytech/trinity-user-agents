@@ -39,7 +39,7 @@ use crate::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
 		ProductContext, ProductId,
 	},
-	time::Backoff,
+	time::{Backoff, RealTimer, retry},
 	unix_time::current_unix_millis,
 };
 
@@ -557,10 +557,8 @@ pub enum OpenFundingError {
 	Present(GenericError),
 }
 
-/// First wait before retrying a failed load of the sessions on resume.
-const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
-/// Longest wait between retries of that load.
-const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
+/// Pauses between retries of a failed load of the sessions on resume.
+const RESUME_RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
 
 impl RuntimeServices {
 	/// Install the host's funding surface and resume the sessions stored
@@ -597,9 +595,11 @@ impl RuntimeServices {
 			let registry = services.funding();
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
-			for retry_in in Backoff::new(RESUME_RETRY_FIRST, RESUME_RETRY_LONGEST) {
-				let loaded = registry
-					.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
+			let loaded = retry(
+				&RealTimer,
+				RESUME_RETRY_PAUSES,
+				|| {
+					registry.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
 						// Ended sessions the host has not recorded are
 						// handed over again, so its history gets every
 						// outcome.
@@ -610,20 +610,22 @@ impl RuntimeServices {
 							.collect();
 						((), pending)
 					})
-					.await;
-				match loaded {
-					Ok(()) => return registry.keep_expiring(&services),
+				},
+				|loaded, retry_in| match loaded {
+					Ok(()) => false,
 					// Left for the newer app that wrote them; retrying cannot
 					// read them.
-					Err(error @ FundingSessionError::NewerFormat { .. }) => {
-						tracing::warn!(%error, "funding stays unavailable");
-						break;
-					},
+					Err(FundingSessionError::NewerFormat { .. }) => false,
 					Err(error) => {
 						tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
-						futures_timer::Delay::new(retry_in).await;
+						true
 					},
-				}
+				},
+			)
+			.await;
+			match loaded {
+				Ok(()) => registry.keep_expiring(&services),
+				Err(error) => tracing::warn!(%error, "funding stays unavailable"),
 			}
 		}));
 	}

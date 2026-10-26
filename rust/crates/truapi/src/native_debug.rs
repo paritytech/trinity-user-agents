@@ -67,11 +67,9 @@ const WIRE_CODEC_VERSION: u32 = truapi::WIRE_CODEC_VERSION as u32;
 /// reaches the debugger instead of HTTP's port 80.
 const DEBUGGER_DEFAULT_PORT: u16 = 9231;
 
-/// Initial reconnect delay; doubles on each failed dial up to [`MAX_BACKOFF`].
-const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
-
-/// Cap on the reconnect backoff.
-const MAX_BACKOFF: Duration = Duration::from_secs(5);
+/// Pauses between reconnects: from 200 ms, doubling on each failed dial up to
+/// 5 s.
+const RECONNECT_PAUSES: Backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
 
 /// Cap on a single dial + WS handshake; a port that accepts TCP but never
 /// completes the upgrade must not park the writer task forever.
@@ -341,7 +339,7 @@ async fn writer_loop(
 	pending_dropped: Arc<AtomicU64>,
 	queued_bytes: Arc<AtomicUsize>,
 ) {
-	let mut backoff = Backoff::new(INITIAL_BACKOFF, MAX_BACKOFF);
+	let mut backoff = RECONNECT_PAUSES;
 	loop {
 		let Some(stream) = dial(url.as_str(), &addrs).await else {
 			tokio::time::sleep(backoff.next_pause()).await;

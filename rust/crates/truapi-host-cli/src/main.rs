@@ -44,7 +44,7 @@ mod update;
 use std::{
 	collections::HashMap,
 	fmt,
-	future::Future,
+	future::{Future, ready},
 	net::{Ipv4Addr, SocketAddr},
 	path::{Path, PathBuf},
 	process::ExitStatus,
@@ -74,7 +74,7 @@ use truapi::{
 	statement_allowance as alloc,
 	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
-	time::Backoff,
+	time::{Backoff, RealTimer, retry},
 };
 
 use crate::{
@@ -1963,6 +1963,11 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
+/// Pauses between restarts of a paired responder, and between attempts to
+/// forget a pairing host that disconnected.
+const RESPONDER_RETRY_PAUSES: Backoff =
+	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+
 fn spawn_supervised_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
@@ -1970,55 +1975,58 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
-		loop {
-			let result = runtime.resume_pairing(peer).await;
-			match result {
-				Ok(ResponderExit::PeerDisconnected) => {
-					if let Some((catalog, profile)) = &persisted {
-						loop {
-							match catalog.remove_paired_host(profile, &peer.statement_account_id) {
-								Ok(_) => break,
-								Err(error) => {
-									terminal_ui::output_event(SystemEvent::SigningHostError {
-										reason: format!(
-											"failed to remove disconnected paired device: {error}"
-										),
-									});
-									tokio::time::sleep(backoff.next_pause()).await;
-								},
-							}
-						}
-						if let Err(error) = runtime
-							.untrack_statement_renewal_account(&peer.statement_account_id)
-							.await
-						{
-							terminal_ui::output_event(SystemEvent::SigningHostError {
-								reason: format!(
-									"failed to stop renewing disconnected paired device: {}",
-									error.reason
-								),
-							});
-						}
-					}
+		let exit = retry(
+			&RealTimer,
+			RESPONDER_RETRY_PAUSES,
+			|| runtime.resume_pairing(peer),
+			|exit, _| match exit {
+				Ok(ResponderExit::PeerDisconnected) => false,
+				Ok(exit) => {
 					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+						outcome: format!("{exit:?}"),
 					});
-					return;
-				},
-				Ok(ResponderExit::SubscriptionEnded) => {
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
-					});
+					true
 				},
 				Err(error) => {
 					terminal_ui::output_event(SystemEvent::SigningHostError {
-						reason: error.reason,
+						reason: error.reason.clone(),
 					});
+					true
 				},
+			},
+		)
+		.await;
+		let Ok(exit @ ResponderExit::PeerDisconnected) = exit else {
+			return;
+		};
+		if let Some((catalog, profile)) = &persisted {
+			retry(
+				&RealTimer,
+				RESPONDER_RETRY_PAUSES,
+				|| ready(catalog.remove_paired_host(profile, &peer.statement_account_id).err()),
+				|failure, _| {
+					let Some(error) = failure else {
+						return false;
+					};
+					terminal_ui::output_event(SystemEvent::SigningHostError {
+						reason: format!("failed to remove disconnected paired device: {error}"),
+					});
+					true
+				},
+			)
+			.await;
+			if let Err(error) =
+				runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
+			{
+				terminal_ui::output_event(SystemEvent::SigningHostError {
+					reason: format!(
+						"failed to stop renewing disconnected paired device: {}",
+						error.reason
+					),
+				});
 			}
-			tokio::time::sleep(backoff.next_pause()).await;
 		}
+		terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
 	})
 }
 

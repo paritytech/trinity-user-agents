@@ -24,6 +24,7 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
+	time::{RealTimer, Timer, retry},
 };
 
 use super::{
@@ -540,7 +541,7 @@ impl PreimageHost for CallbackPlatform {
 			};
 			let found = stream::iter(retry.then_some(key))
 				.then(move |key| lookup_until_found(callbacks.clone(), key))
-				.map(|found| found.map(Some).map_err(v01::GenericError::from));
+				.map(|found| found.map_err(v01::GenericError::from));
 			let current = current.map_err(v01::GenericError::from);
 			stream::once(future::ready(current)).chain(stream::select(rx, found))
 		}
@@ -549,28 +550,39 @@ impl PreimageHost for CallbackPlatform {
 	}
 }
 
-/// Retry the host lookup until it returns bytes that hash to `digest` or an
-/// error.
+/// Retry a host lookup that missed until it returns bytes that hash to
+/// `digest` or an error.
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
-) -> Result<Vec<u8>, HostRejection> {
+) -> Result<Option<Vec<u8>>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
-	let pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES)
+	// The lookup that missed was the first attempt, so the first retry waits
+	// too, and `retry` takes the pauses between the retries after it.
+	RealTimer.sleep(PREIMAGE_RETRY_PAUSE_FAST).await;
+	let pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES - 1)
 		.chain(iter::repeat(PREIMAGE_RETRY_PAUSE_SLOW));
-	for (retry, pause) in iter::zip(1u32.., pauses) {
-		futures_timer::Delay::new(pause).await;
-		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
-		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
-			callbacks.on_core_log(
-				"truapi.native.preimage.found".to_string(),
-				format!("{key_hex} on retry {retry}"),
-			);
-			return Ok(value);
-		}
+	let mut retries = 0u32;
+	let found = retry(
+		&RealTimer,
+		pauses,
+		|| {
+			retries += 1;
+			callbacks.lookup_preimage(digest.to_vec()).map(move |looked_up| {
+				looked_up.map(|value| value.filter(|bytes| preimage_key(bytes) == digest))
+			})
+		},
+		|found, _| matches!(found, Ok(None)),
+	)
+	.await;
+	if let Ok(Some(_)) = found {
+		callbacks.on_core_log(
+			"truapi.native.preimage.found".to_string(),
+			format!("{key_hex} on retry {retries}"),
+		);
 	}
-	unreachable!("the slow pause repeats without end")
+	found
 }
 
 /// [`crate::platform::ChatPlatform`] served by host-provided

@@ -68,8 +68,8 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 
 // A rebind that keeps failing, for example once another socket holds the port,
 // must not retry in a tight loop; a successful rebind resets the pause.
-const RELISTEN_PAUSE_MIN: std::time::Duration = std::time::Duration::from_millis(50);
-const RELISTEN_PAUSE_MAX: std::time::Duration = std::time::Duration::from_secs(5);
+const RELISTEN_PAUSES: Backoff =
+	Backoff::new(std::time::Duration::from_millis(50), std::time::Duration::from_secs(5));
 const ACCEPT_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Per-session descriptor returned to the host: product uses `port + token`
@@ -482,7 +482,7 @@ async fn accept_loop(
 	let mut setup_tasks: VecDeque<tokio::task::JoinHandle<()>> = VecDeque::new();
 	// Absent while a lost listener waits to be bound again on the same port.
 	let mut listener = Some(listener);
-	let mut relisten_backoff = Backoff::new(RELISTEN_PAUSE_MIN, RELISTEN_PAUSE_MAX);
+	let mut relisten_backoff = RELISTEN_PAUSES;
 	loop {
 		tokio::select! {
 			// Shutdown first, so a stopping loop never binds its port again.

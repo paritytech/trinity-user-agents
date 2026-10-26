@@ -1,5 +1,5 @@
-//! Waits: [`Timer`], which tests can control, and [`Backoff`], the pauses
-//! between retries.
+//! Waits: [`Timer`], which tests can control, and [`retry`], which retries an
+//! operation with pauses such as a [`Backoff`] between attempts.
 
 use core::time::Duration;
 
@@ -23,10 +23,10 @@ impl Timer for RealTimer {
 	}
 }
 
-mod backoff;
 #[cfg(test)]
 mod manual;
+mod retry;
 
-pub use backoff::Backoff;
 #[cfg(test)]
 pub use manual::ManualTimer;
+pub use retry::{Backoff, retry};
