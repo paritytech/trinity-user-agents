@@ -511,26 +511,25 @@ const PREIMAGE_FAST_RETRIES: u32 = 5;
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		// Register the change receiver first so no event between the lookup
 		// and the subscription is lost, then await the current value lazily.
-		let rx = self.events.subscribe_preimage_changes(key.clone());
+		let rx = self.events.subscribe_preimage_changes(key.to_vec());
 		let callbacks = self.callbacks.clone();
 		async move {
-			let current = callbacks.lookup_preimage(key.clone()).await;
+			let current = callbacks.lookup_preimage(key.to_vec()).await;
 			// A miss can mean the fetch failed, and hosts are not required to
 			// notify the value later, so retry until the bytes hash to the key.
-			// Keys that are not 32 bytes can never match. An error is final:
-			// apps answer a failed fetch with `None`, and `HostRejection` has no
-			// case for a failure worth retrying.
-			let retry = <[u8; 32]>::try_from(key.as_slice()).ok().filter(|digest| match &current {
-				Ok(Some(value)) => preimage_key(value) != *digest,
+			// An error is final: apps answer a failed fetch with `None`, and
+			// `HostRejection` has no case for a failure worth retrying.
+			let retry = match &current {
+				Ok(Some(value)) => preimage_key(value) != key,
 				Ok(None) => true,
 				Err(HostRejection::Rejected { .. }) => false,
-			});
-			let found = stream::iter(retry)
-				.then(move |digest| lookup_until_found(callbacks.clone(), digest))
+			};
+			let found = stream::iter(retry.then_some(key))
+				.then(move |key| lookup_until_found(callbacks.clone(), key))
 				.map(|found| found.map(Some).map_err(v01::GenericError::from));
 			let current = current.map_err(v01::GenericError::from);
 			stream::once(future::ready(current)).chain(stream::select(rx, found))

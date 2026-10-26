@@ -1141,13 +1141,13 @@ fn native_theme_subscription_emits_current_then_notified_changes() {
 #[test]
 fn native_preimage_subscription_emits_current_then_notified_value() {
 	let (callbacks, events, platform) = event_platform();
-	let key = vec![7; 32];
+	let key = [7; 32];
 	callbacks
 		.preimages
 		.lock()
 		.expect("preimage map mutex poisoned")
-		.push((key.clone(), Some(vec![1, 2, 3])));
-	let mut stream = platform.lookup_preimage(key.clone());
+		.push((key.to_vec(), Some(vec![1, 2, 3])));
+	let mut stream = platform.lookup_preimage(key);
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	events.notify_preimage_changed(&key, Some(vec![4, 5, 6]));
@@ -1186,8 +1186,8 @@ fn host_preimage(callbacks: &EventCallbacks, key: &[u8], value: Option<Vec<u8>>)
 fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
 	let (callbacks, _events, platform) = event_platform();
 	let value = vec![1, 2, 3];
-	let key = preimage_key(&value).to_vec();
-	let mut stream = platform.lookup_preimage(key.clone());
+	let key = preimage_key(&value);
+	let mut stream = platform.lookup_preimage(key);
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	host_preimage(&callbacks, &key, Some(value.clone()));
@@ -1209,9 +1209,9 @@ fn native_preimage_subscription_delivers_a_value_the_host_finds_after_a_miss() {
 fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes() {
 	let (callbacks, _events, platform) = event_platform();
 	let value = vec![1, 2, 3];
-	let key = preimage_key(&value).to_vec();
+	let key = preimage_key(&value);
 	host_preimage(&callbacks, &key, Some(vec![9, 9, 9]));
-	let mut stream = platform.lookup_preimage(key.clone());
+	let mut stream = platform.lookup_preimage(key);
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	let while_wrong = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
@@ -1226,7 +1226,7 @@ fn native_preimage_subscription_keeps_asking_while_the_host_returns_other_bytes(
 #[test]
 fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_asking() {
 	let (callbacks, _events, platform) = event_platform();
-	let mut stream = platform.lookup_preimage(preimage_key(&[1, 2, 3]).to_vec());
+	let mut stream = platform.lookup_preimage(preimage_key(&[1, 2, 3]));
 
 	let first = futures::executor::block_on(stream.next()).unwrap();
 	*callbacks.preimage_rejection.lock().expect("preimage rejection mutex poisoned") =
@@ -1247,7 +1247,7 @@ fn native_preimage_subscription_delivers_a_rejection_during_retries_and_stops_as
 fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
 	let (callbacks, _events, platform) = event_platform();
 	let value = vec![1, 2, 3];
-	let key = preimage_key(&value).to_vec();
+	let key = preimage_key(&value);
 	host_preimage(&callbacks, &key, Some(value.clone()));
 	let mut stream = platform.lookup_preimage(key);
 
@@ -1255,20 +1255,6 @@ fn native_preimage_subscription_does_not_ask_again_after_a_hit() {
 	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
 
 	assert_eq!((first, later), (Ok(Some(value)), None));
-	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
-}
-
-/// Preimage keys are 32-byte blake2b-256 digests, so a key of any other
-/// length is not retried.
-#[test]
-fn native_preimage_subscription_does_not_ask_again_for_a_key_no_preimage_hashes_to() {
-	let (callbacks, _events, platform) = event_platform();
-	let mut stream = platform.lookup_preimage(vec![7; 20]);
-
-	let first = futures::executor::block_on(stream.next()).unwrap();
-	let later = next_preimage_within(&mut stream, PREIMAGE_QUIET_WINDOW);
-
-	assert_eq!((first, later), (Ok(None), None));
 	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 1);
 }
 
@@ -1381,7 +1367,7 @@ fn a_product_gets_a_preimage_the_host_finds_after_a_miss() {
 
 	let (callbacks, _execution, url) = preimage_bridge();
 	let value = vec![1, 2, 3];
-	let key = preimage_key(&value).to_vec();
+	let key = preimage_key(&value);
 
 	let answers = bridge_test_runtime().block_on(async {
 		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
@@ -1443,6 +1429,27 @@ fn a_closed_connection_stops_its_preimage_lookups() {
 
 	assert_eq!(first, Some(None));
 	assert_eq!(later, settled, "the host was asked again after the connection closed");
+}
+
+/// Preimage keys are 32-byte blake2b-256 digests, so the runtime answers a
+/// key of any other length with a miss and never asks the host.
+#[test]
+fn a_key_that_is_not_32_bytes_is_a_miss_without_asking_the_host() {
+	use futures::SinkExt;
+
+	let (callbacks, _execution, url) = preimage_bridge();
+
+	let answers = bridge_test_runtime().block_on(async {
+		let (mut ws, _) = tokio_tungstenite::connect_async(&url).await.expect("dial");
+		ws.send(start_preimage_lookup("lookup", &[7; 20])).await.expect("start lookup");
+		let first =
+			next_preimage_answer(&mut ws, "lookup", std::time::Duration::from_secs(5)).await;
+		let later = next_preimage_answer(&mut ws, "lookup", PREIMAGE_QUIET_WINDOW).await;
+		(first, later)
+	});
+
+	assert_eq!(answers, (Some(None), None));
+	assert_eq!(callbacks.preimage_lookups.load(Ordering::SeqCst), 0);
 }
 
 #[test]
