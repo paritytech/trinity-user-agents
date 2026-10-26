@@ -328,9 +328,11 @@ impl FundingRegistry {
 	/// is `amount`, when exactly one is, and otherwise on every such
 	/// session, since a top-up does not say which session it is for. A
 	/// withdrawal whose payout failed takes top-ups too, as its refund, and
-	/// asks for what it debited. Funds under an id any session of the
-	/// provider started before, ended ones included, are not recorded again.
-	/// Returns whether any session recorded them.
+	/// asks for what it debited. With no such session, a top-up the user
+	/// cancelled before paying takes them, as a payment that arrived anyway,
+	/// and opens again. Funds under an id any session of the provider started
+	/// before, ended ones included, are not recorded again. Returns whether
+	/// any session recorded them.
 	pub async fn record_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -348,10 +350,19 @@ impl FundingRegistry {
 			if used {
 				return (false, Vec::new());
 			}
-			let served = |session: &FundingSession| {
+			let in_flight = |session: &FundingSession| {
 				session.provider_id.as_deref() == Some(provider_id) &&
 					((!session.is_terminal() && session.direction == direction) ||
 						(direction == FundingDirection::In && session.awaits_refund()))
+			};
+			// A top-up the user cancelled takes funds only when no session in
+			// flight could, as a payment that arrives anyway.
+			let late = direction == FundingDirection::In && !sessions.values().any(in_flight);
+			let served = |session: &FundingSession| {
+				in_flight(session) ||
+					(late &&
+						session.provider_id.as_deref() == Some(provider_id) &&
+						session.takes_late_arrival(now_ms))
 			};
 			let asks = |session: &FundingSession| {
 				session.refund_due().or(session.amount).unwrap_or_default()
@@ -362,12 +373,18 @@ impl FundingRegistry {
 				.map(|session| session.intent.clone())
 				.collect();
 			let mut recorded = false;
+			let mut reopened = Vec::new();
 			for session in sessions.values_mut().filter(|session| {
 				served(session) && (matching.len() != 1 || matching.contains(&session.intent))
 			}) {
+				// A payment for a top-up the user cancelled arrived anyway.
+				if session.takes_late_arrival(now_ms) {
+					session.reopen_for_late_arrival();
+					reopened.push(session.intent.clone());
+				}
 				recorded |= session.record_start(host_id, amount);
 			}
-			(recorded, Vec::new())
+			(recorded, reopened)
 		})
 		.await
 	}
