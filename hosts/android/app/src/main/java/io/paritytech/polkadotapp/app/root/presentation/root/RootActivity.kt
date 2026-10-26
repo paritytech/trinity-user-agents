@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.root.presentation.root
 
 import android.content.Intent
+import android.content.res.Resources
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -9,6 +10,7 @@ import android.view.ViewGroup
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.annotation.StyleRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
@@ -45,11 +47,14 @@ import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEve
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.observe
+import io.paritytech.polkadotapp.common.utils.observeWhenCreated
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBar
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
 import javax.inject.Inject
 import kotlin.math.roundToInt
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @AndroidEntryPoint
 class RootActivity : AppCompatActivity(R.layout.activity_root) {
@@ -95,6 +100,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         intent?.let(::processIntent)
 
         handleDeeplinkOutcome()
+        syncSplashScreenTheme()
         if (BuildConfig.DEBUG) {
             setupDevResetOverlay()
         }
@@ -120,6 +126,14 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
         contextManager.detachActivity()
         navigationHolder.detach()
+    }
+
+    private fun syncSplashScreenTheme() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+
+        viewModel.appTheme.observeWhenCreated { theme ->
+            splashScreen.setSplashScreenTheme(theme.splashScreenTheme)
+        }
     }
 
     private fun handleDeeplinkOutcome() {
@@ -268,3 +282,13 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         }
     }
 }
+
+@get:StyleRes
+private val PolkadotAppTheme.splashScreenTheme: Int
+    get() = when (this) {
+        PolkadotAppTheme.BerlinNight -> Resources.ID_NULL
+        PolkadotAppTheme.BerlinDay -> RCommon.style.Theme_PolkadotApp_Splash_BerlinDay
+        PolkadotAppTheme.Lisbon -> RCommon.style.Theme_PolkadotApp_Splash_Lisbon
+        PolkadotAppTheme.Malta -> RCommon.style.Theme_PolkadotApp_Splash_Malta
+        PolkadotAppTheme.Tokyo -> RCommon.style.Theme_PolkadotApp_Splash_Tokyo
+    }

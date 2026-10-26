@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use futures::StreamExt;
-use truapi::{CallError, Subscription, latest};
+use truapi::{CallContext, CallError, Subscription, latest};
 
 use super::host_failure;
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
 	nft::{AllocateItemsError, ItemKey, PurseId, StartOperationError},
 	nft_purse::{NftPurses, PurseOwner, drain_needs_confirmation},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, UserConfirmationReview},
-	runtime::ProductRuntimeHost,
+	runtime::{ProductRuntimeHost, authority::AuthorityError},
 };
 
 /// How one call's error type names the refusals its operation can meet.
@@ -88,6 +88,7 @@ impl ProductRuntimeHost {
 	/// drain of a purse the caller does not own.
 	pub async fn rebalance_nft_purse(
 		&self,
+		cx: &CallContext,
 		request: latest::HostNftPurseRebalancePurseRequest,
 	) -> Result<(), CallError<latest::HostNftPurseRebalancePurseError>> {
 		self.require_session()?;
@@ -99,7 +100,7 @@ impl ProductRuntimeHost {
 		}
 		let (from, to) = (PurseId(from.0), PurseId(to.0));
 		let drain = rebalance_drain(&purses, from, to, items.len()).await?;
-		self.confirm_drain(drain, REBALANCE_REFUSALS.denied).await?;
+		self.confirm_drain(cx, drain, REBALANCE_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
 		let started = purses.rebalance(caller, from, to, items, idempotency_key).await;
 		started.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
@@ -109,6 +110,7 @@ impl ProductRuntimeHost {
 	/// confirming a drain of a purse the caller does not own.
 	pub async fn transfer_nft_item(
 		&self,
+		cx: &CallContext,
 		request: latest::HostNftPurseTransferItemRequest,
 	) -> Result<(), CallError<latest::HostNftPurseTransferItemError>> {
 		self.require_session()?;
@@ -120,7 +122,7 @@ impl ProductRuntimeHost {
 		let owner = purses.owner_of(from).await.map_err(host_failure)?.ok_or_else(not_found)?;
 		let to_key = NftPurseDrainDestination::ExternalKey { key: destination.0 };
 		let drain = Drain { from, owner, item_count: 1, destination: to_key };
-		self.confirm_drain(drain, TRANSFER_REFUSALS.denied).await?;
+		self.confirm_drain(cx, drain, TRANSFER_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
 		let started = purses.transfer(caller, from, item, destination, idempotency_key).await;
 		started.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))
@@ -150,7 +152,12 @@ impl ProductRuntimeHost {
 
 	/// Asks the user to confirm `drain` when the caller does not own its
 	/// purse. A refusal is `denied`.
-	async fn confirm_drain<E>(&self, drain: Drain, denied: E) -> Result<(), CallError<E>> {
+	async fn confirm_drain<E>(
+		&self,
+		cx: &CallContext,
+		drain: Drain,
+		denied: E,
+	) -> Result<(), CallError<E>> {
 		let caller = self.connection.product_id();
 		if !drain_needs_confirmation(caller, &drain.owner) {
 			return Ok(());
@@ -162,9 +169,11 @@ impl ProductRuntimeHost {
 			item_count: drain.item_count,
 			destination: drain.destination,
 		});
-		let confirmed = self.connection.confirm_user_action_if_needed(review).await;
-		let confirmed = confirmed.map_err(|error| host_failure(error.reason))?;
-		if confirmed { Ok(()) } else { Err(CallError::Domain(denied)) }
+		match self.confirm(cx, review).await {
+			Ok(()) => Ok(()),
+			Err(AuthorityError::Rejected) => Err(CallError::Domain(denied)),
+			Err(error) => Err(host_failure(error)),
+		}
 	}
 }
 

@@ -75,19 +75,19 @@ impl NftPurse for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]
 	async fn rebalance_purse(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		request: HostNftPurseRebalancePurseRequest,
 	) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>> {
-		version(request).exec(|request| self.rebalance_nft_purse(request)).await
+		version(request).exec(|request| self.rebalance_nft_purse(cx, request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.transfer_item"))]
 	async fn transfer_item(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		request: HostNftPurseTransferItemRequest,
 	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
-		version(request).exec(|request| self.transfer_nft_item(request)).await
+		version(request).exec(|request| self.transfer_nft_item(cx, request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]

@@ -47,7 +47,7 @@ pub enum DevServerError {
 	/// The `product_id` query is not an identifier the core runs a product
 	/// under.
 	#[error(transparent)]
-	InvalidProductId(ProductIdError),
+	InvalidProductId(#[from] ProductIdError),
 }
 
 /// Accepts `localhost` and loopback or private IPv4 hosts over `http`, with or
@@ -86,8 +86,7 @@ impl FromStr for DevServerProduct {
 			Some((_, named)) => named.into_owned(),
 			None => localhost_id,
 		};
-		let product_id =
-			product_id.parse::<ProductId>().map_err(DevServerError::InvalidProductId)?;
+		let product_id = product_id.parse::<ProductId>()?;
 		Ok(Self { product_id, origin, url: parsed.into() })
 	}
 }

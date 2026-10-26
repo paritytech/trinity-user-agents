@@ -1,5 +1,7 @@
 //! Item keys and where they sit in the derivation tree.
 
+use std::sync::Weak;
+
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::Keypair;
 
@@ -50,10 +52,34 @@ pub trait ItemKeyDeriver: Send + Sync {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError>;
 }
 
+/// For a deriver that owns the ledger, which must not keep it alive in turn.
+/// Once the deriver is gone there are no keys to derive.
+impl<Deriver: ItemKeyDeriver> ItemKeyDeriver for Weak<Deriver> {
+	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
+		let Some(deriver) = self.upgrade() else {
+			let reason = "the item key deriver was dropped".to_string();
+			return Err(AuthorityError::Unavailable { reason });
+		};
+		deriver.derive_item_keys(slots)
+	}
+}
+
 /// Signs with item keys. The secrets never leave the implementor.
 pub trait ItemSigner: Send + Sync {
 	/// A signer for the key at `slot`. Fails without a session.
 	fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, AuthorityError>;
+}
+
+/// For a signer that owns the durable engine, which must not keep it alive
+/// in turn. Once the signer is gone there is nothing to sign with.
+impl<Signer: ItemSigner> ItemSigner for Weak<Signer> {
+	fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
+		let Some(signer) = self.upgrade() else {
+			let reason = "the item signer was dropped".to_string();
+			return Err(AuthorityError::Unavailable { reason });
+		};
+		signer.item_signer(slot)
+	}
 }
 
 /// The public key at each of `slots`, derived from the root of `entropy`.

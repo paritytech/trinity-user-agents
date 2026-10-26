@@ -19,6 +19,7 @@ protocol MessageExchangeSignInHostCoordinating: AsyncApplicationServicing, AnyOb
 final class MessageExchangeSignInHostCoordinator {
     private let ownKeyId: Chat.Contact.Own
     private let serviceFactory: MessageExchageServiceMaking
+    private let signerResolver: PeerSessionSignerResolving
     private let chainId: ChainModel.Id
     private let chainRegistry: ChainRegistryProtocol
     private let hostsDataProviderFactory: PolkadotSignInHostDataProviderMaking
@@ -33,6 +34,7 @@ final class MessageExchangeSignInHostCoordinator {
     init(
         ownKeyId: Chat.Contact.Own,
         serviceFactory: MessageExchageServiceMaking,
+        signerResolver: PeerSessionSignerResolving,
         accountManager: ProductsAccountManaging,
         sponsorFactory: TransactionSponsorMaking,
         routers: ProductRoutersFacadeProtocol,
@@ -46,6 +48,7 @@ final class MessageExchangeSignInHostCoordinator {
     ) {
         self.ownKeyId = ownKeyId
         self.serviceFactory = serviceFactory
+        self.signerResolver = signerResolver
         self.chainId = chainId
         self.chainRegistry = chainRegistry
         self.hostsDataProviderFactory = hostsDataProviderFactory
@@ -101,6 +104,7 @@ extension MessageExchangeSignInHostCoordinator: MessageExchangeSignInHostCoordin
                     retryMatcher: StatementSubmitErrorMatcher.retryWhenTimeoutOrNoAllowance(),
                     logger: logger
                 ),
+                statementSignerResolver: signerResolver,
                 delegate: AnyPeerSessionDelegate(self)
             )
             await state.setExchangeService(service)
