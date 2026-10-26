@@ -64,7 +64,7 @@ from (`truapi`, `truapi-provider`); the
 filter has to name them explicitly, since a protocol change no longer shows up
 as an `ios/` diff.
 The Android host job compiles `TrUAPIHost.kt` against generated bindings;
-the separate iOS CI workflow builds and tests the embedding app.
+CI's `iOS app` job, `ios-app.yml`, builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution` methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to refresh your local build outputs. Nothing to commit: CI regenerates them. To publish from a release PR, add `@parity/ios-host <version>` to its `release:` title. After the release commit passes CI, the release workflow rebuilds and simulator-tests the XCFramework on macOS, uploads it, cuts the `<version>` tag, and opens the `Package.swift` follow-up pull request only after the asset is live. `publish.sh` remains available for an ad hoc manual release.
 
@@ -241,7 +241,7 @@ back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. An open
 render stream is one worker reference the core holds on the product's behalf;
 the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core
+`requestWorkerTransition`, never on the execution's. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
