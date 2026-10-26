@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -28,7 +29,7 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class AppFundingHostBridgeTest {
     private val overlay = mockk<FundingOverlay>()
     private val countryDetector = mockk<DeviceCountryDetector>()
-    private val bridge = AppFundingHostBridge(overlay, countryDetector)
+    private val bridge = AppFundingHostBridge(Lazy { overlay }, countryDetector)
 
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test

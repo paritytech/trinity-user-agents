@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import dagger.Lazy
 import io.parity.truapi.FundingHostBridge
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
@@ -29,7 +30,8 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 /** Serves the core's funding sessions through the app's [FundingOverlay]. */
 @Singleton
 class AppFundingHostBridge @Inject constructor(
-    private val overlay: FundingOverlay,
+    // Lazy: the overlay reaches the runtime, whose provider is built with this bridge.
+    private val overlay: Lazy<FundingOverlay>,
     private val countryDetector: DeviceCountryDetector,
 ) : FundingHostBridge {
     private val changedSessions = MutableSharedFlow<String>(
@@ -67,7 +69,7 @@ class AppFundingHostBridge @Inject constructor(
             amount = amount?.toBalance(),
         )
 
-        return when (overlay.present(request)) {
+        return when (overlay.get().present(request)) {
             FundingOverlayOutcome.STARTED -> FundingPresentOutcome.STARTED
             FundingOverlayOutcome.DISMISSED -> FundingPresentOutcome.DISMISSED
         }
@@ -79,7 +81,7 @@ class AppFundingHostBridge @Inject constructor(
             is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
 
-        return when (val outcome = overlay.presentProviderFrame(ProductId.fromStoredValue(providerId), intent, frameTarget)) {
+        return when (val outcome = overlay.get().presentProviderFrame(ProductId.fromStoredValue(providerId), intent, frameTarget)) {
             ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
             ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
             is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)

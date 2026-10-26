@@ -15,6 +15,7 @@ import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
+import java.util.Locale
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -45,14 +46,23 @@ class FundingUiMapperTest {
 
     @Test
     fun `the fee breakdown adds up to what the user pays`() {
-        val fees = requireNotNull(
-            flow()
-                .let { it.asking(requireNotNull(it.currentAsk())) }
-                .receiving(bothQuoted())
-                .toFeesUiState(),
-        )
+        val previous = Locale.getDefault()
+        Locale.setDefault(Locale.US)
+        try {
+            val fees = requireNotNull(
+                flow()
+                    .let { it.asking(requireNotNull(it.currentAsk())) }
+                    .receiving(bothQuoted())
+                    .toFeesUiState(),
+            )
 
-        assertEquals(listOf("50.00 EUR", "0.90 EUR", "0.10 EUR", "1.00 EUR", "51.00 EUR"), with(fees) { listOf(amount, providerFee, networkFee, totalFee, pay) })
+            assertEquals(
+                listOf("€50.00", "€0.90", "€0.10", "€1.00", "€51.00"),
+                with(fees) { listOf(amount, providerFee, networkFee, totalFee, pay) },
+            )
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 
     @Test
