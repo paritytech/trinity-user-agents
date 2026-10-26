@@ -81,7 +81,15 @@
       "Cargo.lock",
       ".github/workflows/ios-app.yml",
       ".github/actions/bootstrap-ios-core/",
-      ".github/actions/mac-preflight/"
+      ".github/actions/mac-preflight/",
+      ".github/actions/rust-nightly/",
+      ".github/actions/find-main-artifact/",
+      "hosts/ios/.github/actions/install/",
+      "scripts/lib/ios-simulator.mjs",
+      "scripts/bundle-truapi-dts.mjs",
+      "scripts/regen-explorer-versions.mjs",
+      "package.json",
+      "package-lock.json"
     ],
     "kotlin": [
       "android/",
