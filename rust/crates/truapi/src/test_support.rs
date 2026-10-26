@@ -743,7 +743,7 @@ pub fn failed_wallet_handshake_statement(deeplink: &str, reason: &str) -> Vec<u8
 /// tests catch a session that keys device-scoped material off the SSO channel
 /// key by mistake.
 pub fn wallet_device_encryption_public_key() -> [u8; 32] {
-	crate::host_logic::x25519_seal::x25519_public_key([9; 32])
+	crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0
 }
 
 fn wallet_handshake_success() -> pairing::v2::Success {

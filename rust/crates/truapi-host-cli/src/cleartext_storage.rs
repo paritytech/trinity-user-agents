@@ -15,12 +15,12 @@ use zeroize::Zeroizing;
 use crate::platform::atomic_write;
 
 /// The values stored in one file, read and replaced whole on every call.
-pub struct CliEncryptedStorage {
+pub struct CliCleartextStorage {
 	path: PathBuf,
 	writing: Mutex<()>,
 }
 
-impl CliEncryptedStorage {
+impl CliCleartextStorage {
 	/// The storage kept at `path`.
 	pub fn new(path: PathBuf) -> Self {
 		Self { path, writing: Mutex::new(()) }
@@ -28,7 +28,7 @@ impl CliEncryptedStorage {
 }
 
 #[async_trait]
-impl EncryptedStorage for CliEncryptedStorage {
+impl EncryptedStorage for CliCleartextStorage {
 	async fn read_encrypted(&self, key: &[u8]) -> Result<Option<Zeroizing<Vec<u8>>>, GenericError> {
 		let values = read_values(&self.path)?;
 		let Some(value) = values.get(&hex::encode(key)) else {
@@ -40,7 +40,7 @@ impl EncryptedStorage for CliEncryptedStorage {
 	}
 
 	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), GenericError> {
-		let _writing = self.writing.lock().expect("encrypted storage mutex poisoned");
+		let _writing = self.writing.lock().expect("cleartext storage mutex poisoned");
 		let mut values = read_values(&self.path)?;
 		values.insert(hex::encode(key), hex::encode(value));
 		let text = serde_json::to_string_pretty(&values)
@@ -62,7 +62,7 @@ fn read_values(path: &Path) -> Result<BTreeMap<String, String>, GenericError> {
 
 /// A failed file operation, naming the file.
 fn file_error(action: &str, path: &Path, error: impl std::fmt::Display) -> GenericError {
-	GenericError { reason: format!("{action} encrypted storage file {}: {error}", path.display()) }
+	GenericError { reason: format!("{action} cleartext storage file {}: {error}", path.display()) }
 }
 
 #[cfg(test)]
@@ -75,13 +75,13 @@ mod tests {
 	#[tokio::test]
 	async fn a_written_value_reads_back_from_a_new_store_and_others_are_absent() {
 		let directory = tempfile::tempdir().expect("temporary directory");
-		let path = directory.path().join("encrypted-storage.json");
-		CliEncryptedStorage::new(path.clone())
+		let path = directory.path().join("cleartext-storage.json");
+		CliCleartextStorage::new(path.clone())
 			.write_encrypted(b"key", b"secret")
 			.await
 			.unwrap();
 
-		let reopened = CliEncryptedStorage::new(path);
+		let reopened = CliCleartextStorage::new(path);
 		let stored = reopened.read_encrypted(b"key").await.unwrap();
 		let absent = reopened.read_encrypted(b"other").await.unwrap();
 

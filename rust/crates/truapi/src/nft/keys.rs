@@ -98,18 +98,18 @@ impl ItemSecret {
 /// `NftLedger::hand_off` calls it.
 pub trait ItemSecrets: Send + Sync {
 	/// The secret of each of `slots`, in order. Fails without a session.
-	fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError>;
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError>;
 }
 
 /// For an exporter that owns the ledger, which must not keep it alive in
 /// turn. Once the exporter is gone there are no secrets to export.
 impl<Exporter: ItemSecrets> ItemSecrets for Weak<Exporter> {
-	fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
 		let Some(exporter) = self.upgrade() else {
 			let reason = "the item secret exporter was dropped".to_string();
 			return Err(AuthorityError::Unavailable { reason });
 		};
-		exporter.item_secrets(slots)
+		exporter.derive_item_secrets(slots)
 	}
 }
 

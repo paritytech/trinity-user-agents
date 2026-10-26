@@ -36,7 +36,10 @@ use crate::{
 	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
+	host_logic::{
+		product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
+		x25519_seal::X25519PrivateKey,
+	},
 	nft::HoldingTracker,
 	nft_purse::{NftPurses, NftPursesDeps, keys_in_cheque},
 	platform::ProductId,
@@ -385,7 +388,7 @@ impl ChequeRoundTrip<'_> {
 
 		let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
 		let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
-		let opened = keys_in_cheque(secret, &cheque);
+		let opened = keys_in_cheque(&X25519PrivateKey::from(secret), &cheque);
 		assert_eq!(opened.iter().copied().collect::<BTreeSet<_>>(), expected);
 		assert_eq!(self.owner.instances_held_by(&opened).await.len(), items.len());
 		assert_eq!(available_keys(self.ledger, from).await, BTreeSet::new());

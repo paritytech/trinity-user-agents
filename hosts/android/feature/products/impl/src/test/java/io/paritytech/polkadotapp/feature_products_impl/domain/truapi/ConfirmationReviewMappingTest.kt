@@ -21,7 +21,6 @@ import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
-import uniffi.truapi.NftPurseChequeRecipient
 import uniffi.truapi.NftPurseDrainDestination
 import uniffi.truapi.NftPurseDrainReview
 import uniffi.truapi.NftPurseOwner
@@ -323,7 +322,7 @@ class ConfirmationReviewMappingTest {
                 fromPurse = 4u,
                 owner = NftPurseOwner.Product("owner.dot"),
                 itemCount = 1u,
-                destination = NftPurseDrainDestination.Cheque(recipient = NftPurseChequeRecipient.Static),
+                destination = NftPurseDrainDestination.Cheque,
             ),
         )
 

@@ -1446,7 +1446,7 @@ impl crate::nft::ItemSigner for SigningHost {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl crate::nft::ItemSecrets for SigningHost {
-	fn item_secrets(
+	fn derive_item_secrets(
 		&self,
 		slots: &[crate::nft::ItemSlot],
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {

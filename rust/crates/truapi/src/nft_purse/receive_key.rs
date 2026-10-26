@@ -2,12 +2,10 @@
 //! encrypt a cheque to it.
 
 use truapi::latest::{GenericError, NftPurseReceiveKey};
-use zeroize::Zeroizing;
 
 use super::{NftPurses, dao};
 use crate::{
-	host_logic::x25519_seal::generate_x25519_keypair, nft::PurseId, platform::ProductId,
-	store::DbError,
+	host_logic::x25519_seal::X25519Keypair, nft::PurseId, platform::ProductId, store::DbError,
 };
 
 /// Prefix of the encrypted storage key that holds a receive key's secret.
@@ -48,12 +46,11 @@ impl NftPurses {
 		if self.ledger.purse(into).await?.is_none() {
 			return Err(CreateReceiveKeyError::UnknownPurse(into));
 		}
-		let (secret, public) = generate_x25519_keypair().map_err(CreateReceiveKeyError::Random)?;
-		let secret = Zeroizing::new(secret);
-		let key = NftPurseReceiveKey(public);
+		let keypair = X25519Keypair::generate().map_err(CreateReceiveKeyError::Random)?;
+		let key = NftPurseReceiveKey(keypair.public_key().0);
 		let storage_key = receive_secret_storage_key(&key);
 		self.encrypted
-			.write_encrypted(&storage_key, secret.as_slice())
+			.write_encrypted(&storage_key, keypair.private_key().as_bytes())
 			.await
 			.map_err(CreateReceiveKeyError::SecretNotStored)?;
 		let creator = creator.clone();

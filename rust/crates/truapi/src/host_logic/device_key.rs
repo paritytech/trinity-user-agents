@@ -9,7 +9,7 @@
 use crate::platform::{CoreStorage, CoreStorageKey};
 use tracing::{instrument, warn};
 
-use crate::host_logic::x25519_seal::generate_x25519_keypair;
+use crate::host_logic::x25519_seal::X25519PrivateKey;
 
 /// Read this device's persisted X25519 encryption secret, generating and
 /// storing one on first use.
@@ -31,13 +31,13 @@ pub async fn read_or_create_device_encryption_secret(
 		}
 	}
 
-	let (secret, _) =
-		generate_x25519_keypair().map_err(|err| format!("device encryption key failed: {err}"))?;
+	let secret = X25519PrivateKey::generate()
+		.map_err(|err| format!("device encryption key failed: {err}"))?;
 	storage
-		.write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.to_vec())
+		.write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.as_bytes().to_vec())
 		.await
 		.map_err(|err| format!("device encryption key write failed: {err:?}"))?;
-	Ok(secret)
+	Ok(*secret.as_bytes())
 }
 
 #[cfg(test)]

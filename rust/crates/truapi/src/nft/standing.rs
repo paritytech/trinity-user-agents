@@ -34,21 +34,21 @@ pub enum ItemRefusal {
 }
 
 /// Each of `items` with its slot and instance, in order, when every one is
-/// idle in `purse`, or the first one that is not. Reads every standing in one
-/// query.
-pub fn idle_items(
+/// idle in `purse`. Otherwise refuses the first one that is not. Reads every
+/// standing in one query.
+pub fn idle_items<E: From<ItemRefusal> + From<DbError>>(
 	conn: &Connection,
 	purse: PurseId,
 	items: &BTreeSet<ItemKey>,
-) -> Result<Result<Vec<IdleItem>, ItemRefusal>, DbError> {
+) -> Result<Vec<IdleItem>, E> {
 	let keys: Vec<ItemKey> = items.iter().copied().collect();
 	let standings = dao::key_standings(conn, purse, &keys)?;
 	let idle_item = |key: &ItemKey| match standings.get(key) {
 		Some(KeyStanding::Idle { instance, slot }) => {
 			Ok(IdleItem { key: *key, slot: *slot, instance: *instance })
 		},
-		Some(KeyStanding::Spent) => Err(ItemRefusal::Unavailable(*key)),
-		None => Err(ItemRefusal::NotFound(*key)),
+		Some(KeyStanding::Spent) => Err(ItemRefusal::Unavailable(*key).into()),
+		None => Err(ItemRefusal::NotFound(*key).into()),
 	};
-	Ok(keys.iter().map(idle_item).collect())
+	keys.iter().map(idle_item).collect()
 }

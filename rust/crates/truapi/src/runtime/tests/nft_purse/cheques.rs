@@ -12,7 +12,7 @@ use super::{
 	*,
 };
 use crate::{
-	host_logic::x25519_seal::x25519_public_key,
+	host_logic::x25519_seal::X25519PrivateKey,
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, async_trait},
 	store::DbError,
 };
@@ -74,7 +74,7 @@ fn a_receive_key_keeps_its_secret_in_encrypted_storage_and_records_its_purse() {
 
 	let storage_key = [b"nft/receive-key/".as_slice(), &key.0].concat();
 	let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
-	assert_eq!(x25519_public_key(secret), key.0);
+	assert_eq!(public_key_of(secret), key.0);
 	assert_eq!(recorded_receive_keys(&purses), vec![(key.0, TICKETS, PRODUCT.to_owned())]);
 }
 
@@ -138,6 +138,10 @@ fn cheque_refusal(
 	CallError::Domain(HostNftPurseCreateChequeError::V1(error))
 }
 
+fn public_key_of(secret: [u8; 32]) -> [u8; 32] {
+	X25519PrivateKey::from(secret).public_key().0
+}
+
 fn to_receive_key(key: v01::NftPurseReceiveKey) -> v01::NftPurseChequeDestination {
 	v01::NftPurseChequeDestination::Ephemeral(key)
 }
@@ -162,7 +166,7 @@ fn a_cheque_from_an_own_purse_needs_no_confirmation_and_spends_its_items() {
 	sorted.sort_by_key(|key| key.0);
 	let expected = v01::NftPurseCheque {
 		version: 0,
-		id: crate::nft_purse::cheque_id_for(&to_receive_key(receive_key)),
+		id: cheque.id,
 		recipient: v01::NftPurseChequeRecipient::Ephemeral(receive_key),
 		items: sorted,
 		encrypted_secrets: cheque.encrypted_secrets.clone(),
@@ -180,7 +184,7 @@ fn a_cheque_from_roots_purse_asks_the_user_and_a_refusal_is_denied() {
 	let purses = product_purses(platform.clone());
 	let root = purses.root_purse();
 	let items = purses.held_items(root, 1);
-	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
 
 	let refused = create_cheque(&purses.host, root.0, to_receive_key(receive_key), items);
 
@@ -190,9 +194,7 @@ fn a_cheque_from_roots_purse_asks_the_user_and_a_refusal_is_denied() {
 		from_purse: root.0,
 		owner: v01::NftPurseOwner::Root,
 		item_count: 1,
-		destination: NftPurseDrainDestination::Cheque {
-			recipient: v01::NftPurseChequeRecipient::Ephemeral(receive_key),
-		},
+		destination: NftPurseDrainDestination::Cheque,
 	};
 	assert_eq!(drain_reviews(&platform), vec![review]);
 }
@@ -203,7 +205,7 @@ fn a_cheque_from_roots_purse_asks_the_user_and_a_refusal_is_denied() {
 fn a_second_cheque_for_the_same_receive_key_answers_operation_exists() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
 	let items = purses.held_items(PurseId(TICKETS), 2);
-	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
 	create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items[..1].to_vec()).unwrap();
 
 	let again =
@@ -215,7 +217,7 @@ fn a_second_cheque_for_the_same_receive_key_answers_operation_exists() {
 #[test]
 fn a_cheque_of_no_items_answers_no_items() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
-	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
 
 	let refused = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), vec![]);
 
@@ -225,7 +227,7 @@ fn a_cheque_of_no_items_answers_no_items() {
 #[test]
 fn a_cheque_from_an_unknown_purse_answers_purse_not_found() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
-	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
 	let item = v01::NftPurseItemKey([0x55; 32]);
 
 	let refused = create_cheque(&purses.host, 7, to_receive_key(receive_key), vec![item]);
@@ -239,8 +241,8 @@ fn a_cheque_from_an_unknown_purse_answers_purse_not_found() {
 fn a_cheque_over_items_in_use_or_not_held_is_refused() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
 	let items = purses.held_items(PurseId(TICKETS), 1);
-	let first = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
-	let second = v01::NftPurseReceiveKey(x25519_public_key([4; 32]));
+	let first = v01::NftPurseReceiveKey(public_key_of([3; 32]));
+	let second = v01::NftPurseReceiveKey(public_key_of([4; 32]));
 	create_cheque(&purses.host, TICKETS, to_receive_key(first), items.clone()).unwrap();
 
 	let in_use = create_cheque(&purses.host, TICKETS, to_receive_key(second), items);

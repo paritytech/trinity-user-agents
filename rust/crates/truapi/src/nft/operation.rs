@@ -121,7 +121,7 @@ pub fn plan_transfers(
 	if group_exists(tx, &nft_domain(), request.operation.group())? {
 		return Err(StartOperationError::OperationExists);
 	}
-	let sources = idle_items(tx, request.from, &request.items)??;
+	let sources = idle_items::<StartOperationError>(tx, request.from, &request.items)?;
 	let destinations = match request.destinations {
 		TransferDestinations::AllocatedIn(purse) => {
 			allocate_destinations(tx, purse, sources.len(), keys)?

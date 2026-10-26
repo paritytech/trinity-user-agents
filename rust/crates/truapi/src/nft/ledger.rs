@@ -7,10 +7,10 @@ use futures::{StreamExt, stream::BoxStream};
 
 use super::{
 	dao,
-	handoff::{HandoffError, HandoffRequest, idle_handoff_slots, record_handoff},
+	handoff::{HandoffError, HandoffRequest, record_handoff, validate_handoff},
 	holding::{HeldItem, record_holdings},
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets},
+	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
 		nft_domain, plan_transfers, progress_of, record_inputs,
@@ -188,7 +188,8 @@ impl NftLedger {
 		if request.keys.is_empty() {
 			return Err(HandoffError::NoItems);
 		}
-		let secrets = self.secrets_of(&request).await?;
+		let slots = self.validate_can_handoff(&request).await?;
+		let secrets = self.secrets.derive_item_secrets(&slots).map_err(HandoffError::Secrets)?;
 		let sealed = seal(&secrets).map_err(HandoffError::Seal)?;
 		drop(secrets);
 		self.db
@@ -197,14 +198,14 @@ impl NftLedger {
 		Ok(sealed)
 	}
 
-	/// The secret of each key of `request`, once the read checks pass.
-	async fn secrets_of<E: Send + 'static>(
+	/// Checks, in a read, that `request` can be handed off, and returns the
+	/// slot of each of its keys. The write that records it checks again.
+	async fn validate_can_handoff<E: Send + 'static>(
 		&self,
 		request: &HandoffRequest,
-	) -> Result<Vec<ItemSecret>, HandoffError<E>> {
+	) -> Result<Vec<ItemSlot>, HandoffError<E>> {
 		let read_request = request.clone();
-		let slots = self.db.read(move |conn| Ok(idle_handoff_slots(conn, &read_request))).await??;
-		self.secrets.item_secrets(&slots).map_err(HandoffError::Secrets)
+		self.db.read(move |conn| Ok(validate_handoff(conn, &read_request))).await?
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

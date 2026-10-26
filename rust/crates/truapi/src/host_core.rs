@@ -2225,7 +2225,7 @@ mod tests {
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
 			},
 			worker::WorkerTransition,
-			x25519_seal::x25519_public_key,
+			x25519_seal::X25519PrivateKey,
 		},
 		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};
@@ -4024,7 +4024,7 @@ mod tests {
 		let peer_encryption_secret = [0x42; 32];
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key(peer_encryption_secret),
+			encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 		};
 		let identity =
 			derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
@@ -4087,7 +4087,7 @@ mod tests {
 		let runtime = activated_signing_runtime(platform);
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 
 		let error = futures::executor::block_on(runtime.disconnect_paired_host(peer))

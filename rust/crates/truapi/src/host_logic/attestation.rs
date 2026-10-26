@@ -24,7 +24,7 @@ use crate::host_logic::{
 		derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 	},
 	sso::pairing::derive_identity_chat_private_key,
-	x25519_seal::x25519_public_key,
+	x25519_seal::X25519PrivateKey,
 };
 
 /// sr25519 proof-of-ownership message prefix (exact bytes; one space).
@@ -168,7 +168,8 @@ pub fn build_lite_registration(
 /// to a paired chat client. The 65-byte width predates X25519 and stayed when
 /// the curve changed; readers ignore the padding rather than validate it.
 fn derive_identifier_key(entropy: &[u8]) -> [u8; 65] {
-	let public_key = x25519_public_key(derive_identity_chat_private_key(entropy));
+	let chat_key = X25519PrivateKey::from(derive_identity_chat_private_key(entropy));
+	let public_key = chat_key.public_key().0;
 	let mut identifier_key = [0u8; 65];
 	identifier_key[0] = IDENTIFIER_KEY_TAG_X25519;
 	identifier_key[1..33].copy_from_slice(&public_key);
@@ -220,7 +221,9 @@ mod tests {
 		assert_eq!(reg.identifier_key[0], 0x00, "X25519 keypair type byte");
 		assert_eq!(
 			&reg.identifier_key[1..33],
-			&x25519_public_key(derive_identity_chat_private_key(&ENTROPY)),
+			&X25519PrivateKey::from(derive_identity_chat_private_key(&ENTROPY))
+				.public_key()
+				.0,
 			"the advertised key must match the chat identity private key this host serves"
 		);
 		assert_eq!(

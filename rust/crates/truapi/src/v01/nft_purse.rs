@@ -28,12 +28,6 @@ pub struct NftPurseIdempotencyKey(pub [u8; 32]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseReceiveKey(pub [u8; 32]);
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(NftPurseReceiveKey, Vec<u8>, {
-	lower: |key| key.0.to_vec(),
-	try_lift: |bytes| Ok(NftPurseReceiveKey(bytes.as_slice().try_into()?)),
-});
-
 /// Who owns an NFT purse.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
@@ -134,7 +128,6 @@ pub enum NftPurseChequeDestination {
 
 /// The part of a destination the recipient needs to find its decryption key.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum NftPurseChequeRecipient {
 	/// The receive key the cheque was made for.
 	Ephemeral(NftPurseReceiveKey),

@@ -51,7 +51,7 @@ use crate::{
 			establish_responder_session_info, v2,
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
-		x25519_seal::x25519_public_key,
+		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
 		services::RuntimeServices,
@@ -296,7 +296,9 @@ impl SsoResponderService {
 		let (identity, identity_chat_private_key) =
 			derive_responder_identity(&entropy, self.signing_host.network_suffix())
 				.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let device_enc_pub_key = x25519_public_key(self.services.device_encryption_secret().await?);
+		let device_enc_secret =
+			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
+		let device_enc_pub_key = device_enc_secret.public_key().0;
 		let session = responder_session_from_identity(&identity, peer)?;
 
 		let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
@@ -895,7 +897,7 @@ mod tests {
 
 		assert_eq!(
 			&registration.identifier_key[1..33],
-			&crate::host_logic::x25519_seal::x25519_public_key(served),
+			&crate::host_logic::x25519_seal::X25519PrivateKey::from(served).public_key().0,
 			"the advertised chat key is not the one served over pairing"
 		);
 	}
@@ -981,9 +983,8 @@ mod tests {
 	fn advertised_device_key_is_independent_of_the_identity() {
 		let (services, _signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
 
-		let advertised = x25519_public_key(
-			futures::executor::block_on(services.device_encryption_secret()).unwrap(),
-		);
+		let secret = futures::executor::block_on(services.device_encryption_secret()).unwrap();
+		let advertised = X25519PrivateKey::from(secret).public_key().0;
 
 		// The regression this guards: advertising the SSO channel key as the
 		// device key makes every device sharing an identity indistinguishable.
@@ -1073,7 +1074,7 @@ mod tests {
 	fn a_paired_device_is_reported_to_the_host() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		let (services, signing_host) = pairing_fixture("new");
 		let observer = Arc::new(RecordingPairingObserver::default());
@@ -1094,7 +1095,7 @@ mod tests {
 	fn a_handshake_that_never_landed_reports_no_device() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		// Neither "new" nor "known", so the submit is rejected.
 		let (services, signing_host) = pairing_fixture("ignored");
@@ -1120,7 +1121,7 @@ mod tests {
 	fn pairing_without_an_observer_still_answers_the_handshake() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		let (services, signing_host) = pairing_fixture("new");
 
@@ -1194,7 +1195,7 @@ mod tests {
 	fn persisted_peer_rebuilds_the_original_responder_session() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x53; 32],
-			encryption_public_key: x25519_public_key([0x64; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x64; 32]).public_key().0,
 		};
 		let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
 		let mut expected = establish_responder_session_info(

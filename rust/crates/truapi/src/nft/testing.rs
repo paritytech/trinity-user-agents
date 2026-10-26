@@ -103,7 +103,7 @@ impl ItemKeyDeriver for FixedEntropy {
 }
 
 impl ItemSecrets for FixedEntropy {
-	fn item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
 		item_secrets_from_entropy(&self.0, slots)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}

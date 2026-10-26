@@ -69,7 +69,7 @@ struct TrUAPIReviewPromptMapperTests {
             fromPurse: 4,
             owner: .product("other.dot"),
             itemCount: 2,
-            destination: .cheque(recipient: .static)
+            destination: .cheque
         ))
 
         #expect(request == .nftPurseDrain(

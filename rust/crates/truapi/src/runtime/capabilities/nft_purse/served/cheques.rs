@@ -9,7 +9,7 @@ use super::{host_failure, operations::Drain};
 use crate::{
 	host_logic::x25519_seal::SealError,
 	nft::{HandoffError, ItemKey, ItemRefusal, PurseId},
-	nft_purse::{CreateReceiveKeyError, cheque_recipient},
+	nft_purse::CreateReceiveKeyError,
 	platform::NftPurseDrainDestination,
 	runtime::ProductRuntimeHost,
 };
@@ -55,8 +55,8 @@ impl ProductRuntimeHost {
 		let not_found = CallError::Domain(latest::HostNftPurseCreateChequeError::PurseNotFound);
 		let owner = purses.owner_of(from).await.map_err(host_failure)?.ok_or(not_found)?;
 		let item_count = u32::try_from(items.len()).map_err(host_failure)?;
-		let destination = NftPurseDrainDestination::Cheque { recipient: cheque_recipient(&to) };
-		let drain = Drain { from, owner, item_count, destination };
+		let drain =
+			Drain { from, owner, item_count, destination: NftPurseDrainDestination::Cheque };
 		let denied = latest::HostNftPurseCreateChequeError::Denied;
 		self.confirm_drain(cx, drain, denied).await?;
 		let caller = self.connection.product_id();
