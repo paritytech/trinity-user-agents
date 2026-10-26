@@ -106,8 +106,8 @@ impl NativeTrUApiHostRuntime {
 			spawner.clone(),
 		));
 		assert!(
-			runtime.worker_ledger().install_demand_observer(platform.clone()),
-			"a freshly built runtime installs its worker demand observer once"
+			runtime.worker_ledger().install_worker_controller(platform.clone()),
+			"a freshly built runtime installs its worker controller once"
 		);
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
@@ -456,7 +456,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
+	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
 	/// [`Self::release_worker`]. An id that is not a product id is logged and
 	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {

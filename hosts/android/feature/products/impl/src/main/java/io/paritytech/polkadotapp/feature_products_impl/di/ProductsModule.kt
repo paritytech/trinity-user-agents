@@ -10,6 +10,7 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
+import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -119,6 +120,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketC
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIconImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
@@ -138,6 +140,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.AndroidHostMonotonicTimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.HostWebViewCreatedEventCapture
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.SentryHostWebViewCreatedEventCapture
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -164,6 +170,16 @@ import javax.inject.Singleton
 internal interface ProductsModule {
     @Multibinds
     fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
+    @Binds
+    fun bindHostWebViewCreatedEventCapture(
+        impl: SentryHostWebViewCreatedEventCapture,
+    ): HostWebViewCreatedEventCapture
+
+    @Binds
+    fun bindHostMonotonicTimeProvider(
+        impl: AndroidHostMonotonicTimeProvider,
+    ): HostMonotonicTimeProvider
 
     @Binds
     @Singleton
@@ -246,6 +262,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductExternalExtensionProvider(impl: ProductExternalExtensionProvider): ExternalExtensionProvider
+
+    @Binds
+    @IntoSet
+    fun bindProductIconImageLoaderRegistrar(impl: ProductIconImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
     @IntoSet

@@ -1829,7 +1829,7 @@ function buildProvider(
       }
       const renderId = nextRenderId++;
       // No worker reference is taken here: the core holds the one an open
-      // render is worth and reports it through `workerDemandChanged`.
+      // render is worth and requests it through `requestWorkerTransition`.
       state.renders.set(renderId, {
         coreId: core.coreId,
         onUpdate: (node) => sink.onUpdate(node),

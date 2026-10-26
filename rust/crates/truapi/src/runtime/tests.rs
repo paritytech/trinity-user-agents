@@ -5535,8 +5535,8 @@ impl DemandRecorder {
 	}
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for DemandRecorder {
-	fn worker_demand_changed(
+impl crate::host_logic::worker::WorkerController for DemandRecorder {
+	fn request_worker_transition(
 		&self,
 		product_id: &ProductId,
 		transition: crate::host_logic::worker::WorkerTransition,
@@ -5560,7 +5560,7 @@ fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
 		host.connection
 			.services()
 			.worker_ledger
-			.install_demand_observer(recorder.clone())
+			.install_worker_controller(recorder.clone())
 	);
 	let cx = CallContext::default();
 

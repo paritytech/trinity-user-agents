@@ -11,6 +11,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
+import io.paritytech.polkadotapp.common.data.image.fetchers.DataUriFetcher
 import io.paritytech.polkadotapp.common.data.image.fetchers.JsImageFetcher
 import io.paritytech.polkadotapp.common.data.image.interceptors.ImageLoaderInterceptor
 import io.paritytech.polkadotapp.common.data.image.keyers.JsImageKeyer
@@ -41,6 +42,7 @@ class ImagesModule {
                 add(JsImageKeyer())
 
                 add(jsImageFetcherFactory)
+                add(DataUriFetcher.Factory())
 
                 componentRegistrars.forEach { it.register(this) }
 
