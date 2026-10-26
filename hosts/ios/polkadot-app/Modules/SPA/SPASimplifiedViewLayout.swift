@@ -21,7 +21,7 @@ final class SPASimplifiedViewLayout: UIView {
 
     let loadStatusLabel: UILabel = {
         let label = UILabel()
-        label.font = .bodyMedium
+        label.font = .bodyMedium.monospaced()
         label.textColor = .fgSecondary
         label.textAlignment = .center
         label.numberOfLines = 0

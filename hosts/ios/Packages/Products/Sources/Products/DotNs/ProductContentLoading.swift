@@ -76,7 +76,3 @@ public extension ProductContentLoading {
         try await open(productId, policy: policy, onPhase: { _ in })
     }
 }
-
-public protocol ProductNetworkPathProviding: Sendable {
-    func pathStream() -> AnyAsyncSequence<Bool>
-}

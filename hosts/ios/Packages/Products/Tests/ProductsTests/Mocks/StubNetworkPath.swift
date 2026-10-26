@@ -1,9 +1,9 @@
 import AsyncExtensions
 import Foundation
 import os
-@testable import Products
+import StructuredConcurrency
 
-final class StubNetworkPath: ProductNetworkPathProviding, @unchecked Sendable {
+final class StubNetworkPath: NetworkPathProviding, @unchecked Sendable {
     private struct State {
         var requests = 0
         var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []

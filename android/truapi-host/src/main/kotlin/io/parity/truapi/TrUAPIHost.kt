@@ -373,6 +373,16 @@ interface HostBridge {
      */
     fun durableWorkChanged(pending: Boolean) {}
 
+    /**
+     * The 32-byte id of the current app installation, created on first use.
+     * NFT purse item keys are derived under it, so it must be the id the host
+     * registers for recovery. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection for a host that keeps no installation id.
+     */
+    @Throws(HostRejection::class)
+    suspend fun currentInstallation(): ByteArray =
+        throw HostRejection.Rejected("this host keeps no installation id")
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -519,6 +529,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun durableWorkChanged(pending: Boolean) {
         runCatching { bridge.durableWorkChanged(pending) }
     }
+
+    override suspend fun currentInstallation(): ByteArray =
+        withHostRejection { bridge.currentInstallation() }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }

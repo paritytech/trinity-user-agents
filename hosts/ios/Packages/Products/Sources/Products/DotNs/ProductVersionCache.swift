@@ -13,7 +13,6 @@ public actor ProductVersionCache {
     private let tldProvider: DotNsTldProviding
     private let resolverFactory: ProductResolverFactory
 
-
     public init(
         snapshot: DotNsRecordSnapshotProtocol,
         storage: DotNsLocalStorage,

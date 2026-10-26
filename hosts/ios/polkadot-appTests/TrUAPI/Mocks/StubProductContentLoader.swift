@@ -66,13 +66,19 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         let resolved = product ?? .legacy(id: productId)
         let contentIds = Set(ExecutableKind.allCases.map(resolved.contentId(for:)))
         let contents = Dictionary(uniqueKeysWithValues: contentIds.map { contentId in
-            (contentId, DotNsResolvedContent(contentHash: contentHash, localURL: contentURL.appendingPathComponent(contentId)))
+            (
+                contentId,
+                DotNsResolvedContent(contentHash: contentHash, localURL: contentURL.appendingPathComponent(contentId))
+            )
         })
 
         return ProductContent(
             resolved: resolved,
             contents: contents,
-            appContent: contents[resolved.appContentId] ?? DotNsResolvedContent(contentHash: contentHash, localURL: contentURL),
+            appContent: contents[resolved.appContentId] ?? DotNsResolvedContent(
+                contentHash: contentHash,
+                localURL: contentURL
+            ),
             version: ProductVersion(productId: productId, records: [:], contentHashes: [:]),
             source: .cache
         )

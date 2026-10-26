@@ -1,8 +1,8 @@
 import AsyncExtensions
 import Foundation
-import Products
+import StructuredConcurrency
 
-struct ProductNetworkPath: ProductNetworkPathProviding {
+struct ProductNetworkPath: NetworkPathProviding {
     func pathStream() -> AnyAsyncSequence<Bool> {
         NetworkPathMonitor().pathStream()
     }
