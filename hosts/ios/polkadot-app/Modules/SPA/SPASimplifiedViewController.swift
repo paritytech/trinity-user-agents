@@ -216,6 +216,7 @@ private extension SPASimplifiedViewController {
 
 extension SPASimplifiedViewController: SPAViewProtocol {
     var pageScrollView: UIScrollView { rootView.webView.scrollView }
+    var isOnScreen: Bool { viewIfLoaded?.window != nil }
 
     func navigate(to url: URL) {
         rootView.webView.load(URLRequest(url: url))

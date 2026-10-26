@@ -10,6 +10,7 @@ import ChainRegistry
 import BulletinChain
 import TrUAPIHost
 import DesignSystem
+import FoundationExt
 
 enum SPAViewFactory {
     @MainActor
@@ -216,7 +217,8 @@ extension SPAViewFactory {
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),
-            chatProviderFactory: ChatContactDataProviderFactory()
+            chatProviderFactory: ChatContactDataProviderFactory(),
+            applicationStateStreams: ApplicationStateStreamFactory()
         )
 
         let presenter = SPAPresenter(

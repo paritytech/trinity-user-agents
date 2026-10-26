@@ -10,6 +10,8 @@ final class SPAPresenter {
     let configuration: SPAConfiguration
     let hostProvider: ProductHostProviding
 
+    private var isShowingNewBuildPrompt = false
+
     init(
         interactor: SPAInteractorInputProtocol,
         wireframe: SPAWireframeProtocol,
@@ -48,7 +50,7 @@ extension SPAPresenter: SPAPresenterProtocol {
                 icon: .iconRefresh,
                 title: String(localized: .spaActionRefresh),
                 isEnabled: true,
-                handler: { [weak self] in self?.view?.reload() }
+                handler: { [weak self] in self?.didTapRefresh() }
             ),
             SPAMoreAction(
                 icon: .iconShare,
@@ -80,6 +82,10 @@ extension SPAPresenter: SPAPresenterProtocol {
         interactor.retry()
     }
 
+    func didTapRefresh() {
+        interactor.reloadLatestBuild()
+    }
+
     func hasChatEntry() -> Bool {
         interactor.hasChatEntry()
     }
@@ -109,12 +115,27 @@ extension SPAPresenter: SPAPresenterProtocol {
     func didUpdateWebViewTitle(_ title: String) {
         view?.updateTitle(title)
     }
+
+    func didBecomeVisible() {
+        interactor.checkForNewBuild()
+    }
 }
 
 extension SPAPresenter: SPAInteractorOutputProtocol {
     func didRequestNavigation(to url: URL) {
         view?.hideLoading()
         view?.navigate(to: url)
+    }
+
+    func didRequestReload() {
+        view?.reload()
+    }
+
+    func didFindNewBuild(productName: String) {
+        guard !isShowingNewBuildPrompt, view?.isOnScreen == true else { return }
+
+        isShowingNewBuildPrompt = true
+        wireframe.present(viewModel: makeNewBuildAlert(productName: productName), style: .alert, from: view)
     }
 
     func didPrepareChat(chatId: Chat.Id) {
@@ -132,5 +153,31 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
         )
 
         view?.showLoadFailure(content)
+    }
+}
+
+private extension SPAPresenter {
+    @MainActor
+    func makeNewBuildAlert(productName: String) -> AlertPresentableViewModel {
+        AlertPresentableViewModel(
+            title: String(localized: .spaNewBuildTitle(productName)),
+            message: String(localized: .spaNewBuildMessage(productName)),
+            actions: [
+                AlertPresentableAction(
+                    title: String(localized: .spaNewBuildReload),
+                    handler: { [weak self] in
+                        self?.isShowingNewBuildPrompt = false
+                        self?.didTapRefresh()
+                    }
+                ),
+                AlertPresentableAction(
+                    title: String(localized: .spaNewBuildLater),
+                    style: .cancel,
+                    handler: { [weak self] in
+                        self?.isShowingNewBuildPrompt = false
+                    }
+                )
+            ]
+        )
     }
 }

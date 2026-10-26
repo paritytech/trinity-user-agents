@@ -3,6 +3,7 @@ import Testing
 import AsyncExtensions
 import Products
 import TrUAPIHost
+import WebKit
 @testable import polkadot_app
 
 // MARK: - Helpers
@@ -44,14 +45,15 @@ private func makeRuntime(
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
     dotNsResolver: DotNsResolverProtocol = StubDotNsResolver(),
-    productResolver: ProductResolving = StubProductResolver()
+    productResolver: ProductResolving = StubProductResolver(),
+    schemeHandlerProxy: SchemeHandlerProxy = SchemeHandlerProxy()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
         dotNsResolver: dotNsResolver,
         productResolver: productResolver,
-        schemeHandlerProxy: SchemeHandlerProxy(),
+        schemeHandlerProxy: schemeHandlerProxy,
         logger: Logger.shared
     )
 }
@@ -136,6 +138,23 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
+    @Test @MainActor func dotNsStartServesTheResolvedBuildThroughTheProxy() async throws {
+        let contentDirectory = try makeBuildDirectory(indexHTML: "<html>build</html>")
+        defer { removeBuildDirectories(contentDirectory) }
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = contentDirectory
+        let proxy = SchemeHandlerProxy()
+        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver, schemeHandlerProxy: proxy)
+
+        let url = try await runtime.start(with: MockJSEngine())
+
+        #expect(url.path == "/")
+        #expect(servedData(through: proxy, at: url) == Data("<html>build</html>".utf8))
+
+        await runtime.dispose()
+    }
+
     /// A card's page loads the product's widget rather than its app, since the
     /// widget is what an expanded card runs.
     @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
@@ -216,4 +235,221 @@ struct SPARustRuntimeTests {
         let externalURL = try #require(URL(string: "https://example.com"))
         #expect(handler.decide(url: externalURL) == .intercept(externalURL))
     }
+
+    @Test @MainActor func useLatestBuildServesTheLatestBuildThroughTheProxy() async throws {
+        let buildA = try makeBuildDirectory(indexHTML: "<html>a</html>")
+        let buildB = try makeBuildDirectory(indexHTML: "<html>b</html>")
+        defer { removeBuildDirectories(buildA, buildB) }
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = buildA
+        let proxy = SchemeHandlerProxy()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver,
+            schemeHandlerProxy: proxy
+        )
+        let url = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        resolver.contentURL = buildB
+        try await runtime.useLatestBuild()
+
+        #expect(servedData(through: proxy, at: url) == Data("<html>b</html>".utf8))
+        await runtime.dispose()
+    }
+
+    @Test @MainActor func useLatestBuildKeepsTheServedBuildWhenTheLatestFailsToDownload() async throws {
+        let buildA = try makeBuildDirectory(indexHTML: "<html>a</html>")
+        defer { removeBuildDirectories(buildA) }
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = buildA
+        let proxy = SchemeHandlerProxy()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver,
+            schemeHandlerProxy: proxy
+        )
+        let url = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        resolver.failingContentNames = ["test.dot"]
+        await #expect(throws: URLError.self) {
+            try await runtime.useLatestBuild()
+        }
+
+        #expect(servedData(through: proxy, at: url) == Data("<html>a</html>".utf8))
+        await runtime.dispose()
+    }
+
+    @Test @MainActor func useLatestBuildSkipsTheDownloadWhenTheHashIsUnchanged() async throws {
+        let buildA = try makeBuildDirectory(indexHTML: "<html>a</html>")
+        defer { removeBuildDirectories(buildA) }
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = buildA
+        let proxy = SchemeHandlerProxy()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver,
+            schemeHandlerProxy: proxy
+        )
+        let url = try await runtime.start(with: MockJSEngine())
+
+        try await runtime.useLatestBuild()
+
+        #expect(resolver.resolvedNames == ["test.dot"])
+        #expect(servedData(through: proxy, at: url) == Data("<html>a</html>".utf8))
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildIsANoOpForADirectURLPage() async throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+        let resolver = StubDotNsResolver()
+        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+        _ = try await runtime.start(with: MockJSEngine())
+
+        try await runtime.useLatestBuild()
+
+        #expect(resolver.resolvedNames.isEmpty)
+        await runtime.dispose()
+    }
+
+    @Test @MainActor func useLatestBuildAfterDisposeThrowsAndPublishesNothing() async throws {
+        let buildA = try makeBuildDirectory(indexHTML: "<html>a</html>")
+        defer { removeBuildDirectories(buildA) }
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = buildA
+        let proxy = SchemeHandlerProxy()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver,
+            schemeHandlerProxy: proxy
+        )
+        let url = try await runtime.start(with: MockJSEngine())
+        await runtime.dispose()
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        await #expect(throws: CancellationError.self) {
+            try await runtime.useLatestBuild()
+        }
+
+        #expect(resolver.resolvedNames == ["test.dot"])
+        #expect(servedData(through: proxy, at: url) == Data("<html>a</html>".utf8))
+    }
+
+    @Test func hasNewBuildIsFalseWhileTheServedBuildIsLatest() async throws {
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: StubDotNsResolver()
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsTrueWhenThePublishedHashDiffersFromTheServedBuild() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == true)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseForAVersionWhoseDownloadFailed() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        resolver.failingContentNames = ["test.dot"]
+        await #expect(throws: URLError.self) {
+            try await runtime.useLatestBuild()
+        }
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseOnceTheLatestBuildIsServed() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        try await runtime.useLatestBuild()
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseForADirectURLPage() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(
+                contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+            ),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        #expect(resolver.resolvedNames.isEmpty)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseBeforeTheRuntimeStarts() async throws {
+        let resolver = StubDotNsResolver()
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+    }
+}
+
+private func makeBuildDirectory(indexHTML: String) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data(indexHTML.utf8).write(to: directory.appending(component: ProductBundle.indexHTML))
+    return directory
+}
+
+private func removeBuildDirectories(_ directories: URL...) {
+    for directory in directories {
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+@MainActor
+private func servedData(through proxy: SchemeHandlerProxy, at url: URL) -> Data? {
+    let task = StubSchemeTask(request: URLRequest(url: url))
+    proxy.webView(WKWebView(), start: task)
+    return task.servedData
 }
