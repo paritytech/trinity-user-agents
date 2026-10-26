@@ -47,6 +47,8 @@ struct WidgetImageResolverCachedTests {
         #expect(loaded.allSatisfy { $0 != nil })
     }
 
+    /// Read back from the disk cache too, where the picture outlives the
+    /// memory cache.
     @Test
     func loadsAnSVGAtTheSizeItDeclares() async throws {
         let file = URL.temporaryDirectory.appending(path: "test-picture-\(UUID().uuidString).svg")
@@ -57,11 +59,20 @@ struct WidgetImageResolverCachedTests {
         // SVGKit's first parse in a debug build asserts on a device its PPI table
         // does not list, such as the simulator. Release builds skip the assert.
         _ = SVGKImage(data: Data(svg.utf8))
-        let images = WidgetImageResolver.cached(logger: MockLogger()) { _ in file }
+        let cache = ImageCache(name: "svg-\(UUID().uuidString)")
+        defer { cache.clearDiskCache() }
+        let images = WidgetImageResolver.cached(
+            logger: MockLogger(),
+            options: { _ in [.targetCache(cache), .waitForCache] },
+            locate: { _ in file }
+        )
 
-        let image = await images(.archive(path: "art/logo.svg"))
+        let drawn = await images(.archive(path: "art/logo.svg"))
+        cache.clearMemoryCache()
+        let readBack = await images(.archive(path: "art/logo.svg"))
 
-        #expect(image?.size == CGSize(width: 20, height: 10))
+        #expect(drawn?.size == CGSize(width: 20, height: 10))
+        #expect(readBack?.size == CGSize(width: 20, height: 10))
     }
 
     /// Bytes no decoder reads are a failure, not an empty picture, and are not
