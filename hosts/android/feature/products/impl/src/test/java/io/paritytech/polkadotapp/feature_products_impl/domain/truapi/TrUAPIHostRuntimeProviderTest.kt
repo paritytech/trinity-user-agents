@@ -62,6 +62,7 @@ class TrUAPIHostRuntimeProviderTest {
         bundledProducts = mockk { every { fundingProviders() } returns emptyList() },
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
+        installations = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

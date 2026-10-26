@@ -72,11 +72,11 @@ pub struct LiteRegistration {
 }
 
 /// Error while building lite-person registration parameters.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum LiteRegistrationError {
 	/// RFC-0022 `uid.<suffix>` identity-account derivation failed.
 	#[error("uid identity derivation failed: {0}")]
-	CandidateDerivation(#[from] ProductAccountError),
+	CandidateDerivation(#[source] ProductAccountError),
 	/// Ring-VRF proof-of-ownership failed.
 	#[error("ring-VRF proof-of-ownership failed: {0:?}")]
 	ProofOfOwnership(VerifiableError),
@@ -118,8 +118,7 @@ pub fn build_lite_registration(
 		.secret
 		.sign_simple(SR25519_SIGNING_CONTEXT, &proof_message, &candidate.public)
 		.to_bytes();
-	let proof_of_ownership = BandersnatchVrfVerifiable::sign(&vrf_secret, &proof_message)
-		.map_err(LiteRegistrationError::ProofOfOwnership)?;
+	let proof_of_ownership = BandersnatchVrfVerifiable::sign(&vrf_secret, &proof_message)?;
 
 	let identifier_key = derive_identifier_key(entropy);
 

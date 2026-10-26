@@ -19,7 +19,9 @@ use super::{
 };
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailureKind},
-	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_runtime_call, system_events},
+	host_internal::extrinsic::tests::{
+		BULLETIN_METADATA_BYTES, bulletin_chain_state, runtime_call_serving_metadata, system_events,
+	},
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
@@ -56,6 +58,9 @@ pub struct Node {
 	follow_events: Vec<Value>,
 	watch_events: Vec<Value>,
 	next_operation: usize,
+	/// The `RuntimeMetadataPrefixed` bytes the node serves, the bulletin
+	/// fixture unless a test sets another.
+	pub metadata: &'static [u8],
 }
 
 impl Node {
@@ -80,6 +85,7 @@ impl Node {
 			follow_events: Vec::new(),
 			watch_events: Vec::new(),
 			next_operation: 0,
+			metadata: BULLETIN_METADATA_BYTES,
 		}
 	}
 
@@ -94,7 +100,7 @@ impl Node {
 
 	fn runtime_call(&self, method: &str, at: &Value) -> Vec<u8> {
 		if method != "TaggedTransactionQueue_validate_transaction" {
-			return bulletin_runtime_call(method).unwrap();
+			return runtime_call_serving_metadata(self.metadata, method).unwrap();
 		}
 		let valid = match self.validation {
 			Validation::Valid => true,

@@ -1,9 +1,11 @@
 # A signed build that installs on a phone, produced on demand rather than on
 # every commit.
 #
-# Its own workflow rather than a job in ios-pr.yml, because it exports ad-hoc,
+# Its own workflow rather than a job in ios-app.yml, because it exports ad-hoc,
 # signed by an Apple Distribution certificate against a profile naming
-# registered devices, and is asked for with a label of its own.
+# registered devices, and is asked for with a label of its own. on-label.yml
+# calls it for a pull request labelled ios-device-build, never one from a fork,
+# because the Parity machines are persistent and shared.
 #
 # It exports ad-hoc, which is signed by an Apple Distribution certificate
 # against a profile naming specific devices. It does not upload to Apple or to
@@ -13,15 +15,7 @@
 name: iOS device preview
 
 on:
-  pull_request:
-    # `labeled` is what starts it. `synchronize` keeps it current once the
-    # label is on, so the archive follows the branch instead of pinning to the
-    # commit that happened to be the head when someone asked.
-    types: [labeled, synchronize]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
@@ -45,17 +39,10 @@ env:
 jobs:
   build:
     name: Signed device build
-    # Narrow on purpose. `labeled` fires for every label, so matching only on
-    # the label being present lets anything else being added, by a person or by
-    # labeler.yml, start a second run for the same commit that cancels the one
-    # already building. Never from a fork, because the Parity machines are
-    # persistent and shared, and a label once set keeps every later push running.
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && ((github.event.action == 'labeled'
-           && github.event.label.name == 'ios-device-build')
-          || (github.event.action == 'synchronize'
-              && contains(github.event.pull_request.labels.*.name, 'ios-device-build')))
+    # A newer commit on the branch supersedes the archive being built.
+    concurrency:
+      group: ios-device-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     runs-on: parity-macos
     timeout-minutes: 45
     steps:

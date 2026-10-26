@@ -172,12 +172,13 @@ jobs:
     if: >-
       ${{ !cancelled() &&
       needs.build_nightly.outputs.succeeded == 'true' }}
+    # contents: write is for marking the simulator release as announced.
+    permissions:
+      contents: write
     steps:
-      # The action prints the message it renders. It rewrites the markdown entry
-      # the secret holds into an anchor, so what reaches the log is the bare URL,
-      # a substring of the secret rather than its value, and nothing redacts it.
-      # This repository is public, so registering the URL masks it for the rest
-      # of the job.
+      # The announcement carries the bare join URL, a substring of the secret
+      # rather than its value, which nothing redacts. This repository is public,
+      # so the URL is masked before anything in the job can echo it.
       - name: Mask the join link
         env:
           LINK: ${{ secrets.TESTFLIGHT_DISTRIBUTION_LINK }}
@@ -192,20 +193,24 @@ jobs:
             [ -n "${url}" ] && echo "::add-mask::${url}"
           done <<< "${urls}"
 
+      # The action below is held in this repository, so it has to be on disk.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/announce-nightly
+
       - name: Send nightly release notification
-        uses: novasamatech/github-actions/send-release-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
+        uses: ./.github/actions/announce-nightly
         with:
           platform: iOS
-          # The template renders the heading either way, so an empty range says
-          # so rather than showing an empty list.
-          pr_list: ${{ needs.build_nightly.outputs.pr_list_markdown != ''
-            && needs.build_nightly.outputs.pr_list_markdown
-            || '- No pull requests merged since the last nightly.' }}
+          # The changelog lives on the simulator prerelease, whose notes list
+          # what merged since the previous one.
+          changelog: >-
+            ${{ needs.build_simulator.outputs.tag != ''
+            && format('[Changelog for {0}]({1}/{2}/releases/tag/{0})', needs.build_simulator.outputs.tag, github.server_url, github.repository)
+            || 'No changelog link for this build: the simulator release did not publish.' }}
           release_info: |
             Nightly: ${{ needs.build_nightly.outputs.marketing_version }} (${{ needs.build_nightly.outputs.build_number }})
-          # One entry per line, because there are two of them and they install
-          # onto different things.
-          download_links_format: list
           # The TestFlight secret holds a ready-to-render markdown entry, label
           # included, so that an access hint stays out of this public repo. The
           # simulator asset is public, so its link is built here the way the
@@ -216,6 +221,8 @@ jobs:
             ${{ needs.build_simulator.outputs.download_url != ''
               && format('[Simulator .app]({0})', needs.build_simulator.outputs.download_url)
               || 'No simulator bundle for this build: that leg did not finish.' }}
-          bot_url: ${{ secrets.NOTIFICATION_BOT_URL }}
-          bot_api_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
-          matrix_room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
+          relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
+          relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+          room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
+          release_tag: ${{ needs.build_simulator.outputs.tag }}
+          github_token: ${{ github.token }}
