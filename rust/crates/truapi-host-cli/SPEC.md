@@ -1137,7 +1137,10 @@ other statement accounts keep running.
 
 Interactive mode and `--serve` restore every saved peer for the selected
 session. Background responders treat transient failures and ended subscriptions
-as retryable, with exponential backoff capped at 30 seconds. A remote
+as retryable, with exponential backoff capped at 30 seconds. After a session
+that ran for more than 30 seconds, the backoff starts again at one second. When
+the People chain cannot be reached, a responder sends its acknowledgement or
+response again for about 15 seconds before the session fails. A remote
 `Disconnected` protocol message stops retrying and removes only that peer from
 `paired-hosts.json` and allowance renewal. Other peers remain saved and active.
 
@@ -1151,7 +1154,9 @@ are pruned. Missing or overly distant peer expiry is retained for at most the
 seven-day SSO statement lifetime. At 1,024 live entries the ledger rejects a new
 request before executing it instead of evicting an unexpired replay marker.
 
-In `exec`, `/pair` waits for the responder to finish. With `--deeplink` plus
+In `exec`, `/pair` waits for the responder to finish. It restarts the responder
+after a failure, like a background responder, and finishes when the paired host
+disconnects. With `--deeplink` plus
 another `exec` command or a script, the responder runs only for that command's
 lifetime and is then stopped. One-shot `exec` and `--script` do not restore
 other saved responders.

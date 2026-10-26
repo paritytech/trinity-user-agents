@@ -138,14 +138,14 @@ impl StatementStore for ProductRuntimeHost {
 				self.statement_store_rpc()
 					.submit_sso(encoded, "statement-store")
 					.await
-					.map_err(|reason| {
+					.map_err(|error| {
 						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-							statement_store_rpc::is_no_allowance_rejection(&reason)
+							error.is_no_allowance()
 						{
 							self.accounts.forget_statement_store_allowance_key(signer);
 						}
 						CallError::Domain(latest::GenericError {
-							reason: format!("statement-store submit failed: {reason}"),
+							reason: format!("statement-store submit failed: {error}"),
 						})
 					})?;
 				self.connection.services.cache_statement(statement);

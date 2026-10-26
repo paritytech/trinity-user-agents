@@ -1962,72 +1962,80 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
-fn spawn_supervised_responder(
+/// Pause before the first restart of a responder. Each restart in a row
+/// doubles it, up to [`MAX_RESPONDER_RETRY_DELAY`].
+const FIRST_RESPONDER_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+/// Longest pause between responder restarts. A session that ran for longer
+/// than this before failing starts the pauses again from the first.
+const MAX_RESPONDER_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// Serve `host` until it sends `Disconnected`, restarting the responder after
+/// a failure or an ended subscription.
+async fn supervise_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
 	persisted: Option<(SessionCatalog, SessionProfile)>,
-) -> tokio::task::JoinHandle<()> {
-	tokio::spawn(async move {
-		let peer = paired_sso_peer(&host);
-		let mut retry_delay = std::time::Duration::from_secs(1);
-		loop {
-			let result = runtime.resume_pairing(peer).await;
-			match result {
-				Ok(ResponderExit::PeerDisconnected) => {
-					if let Some((catalog, profile)) = &persisted {
-						loop {
-							match catalog.remove_paired_host(profile, &peer.statement_account_id) {
-								Ok(_) => break,
-								Err(error) => {
-									terminal_ui::output_event(SystemEvent::SigningHostError {
-										reason: format!(
-											"failed to remove disconnected paired device: {error}"
-										),
-									});
-									tokio::time::sleep(retry_delay).await;
-									retry_delay =
-										(retry_delay * 2).min(std::time::Duration::from_secs(30));
-								},
-							}
-						}
-						if let Err(error) = runtime
-							.untrack_statement_renewal_account(&peer.statement_account_id)
-							.await
-						{
-							terminal_ui::output_event(SystemEvent::SigningHostError {
-								reason: format!(
-									"failed to stop renewing disconnected paired device: {}",
-									error.reason
-								),
-							});
+) {
+	let peer = paired_sso_peer(&host);
+	let mut retry_delay = FIRST_RESPONDER_RETRY_DELAY;
+	loop {
+		let session_started = std::time::Instant::now();
+		let result = runtime.resume_pairing(peer).await;
+		if session_started.elapsed() > MAX_RESPONDER_RETRY_DELAY {
+			retry_delay = FIRST_RESPONDER_RETRY_DELAY;
+		}
+		match result {
+			Ok(ResponderExit::PeerDisconnected) => {
+				if let Some((catalog, profile)) = &persisted {
+					loop {
+						match catalog.remove_paired_host(profile, &peer.statement_account_id) {
+							Ok(_) => break,
+							Err(error) => {
+								terminal_ui::output_event(SystemEvent::SigningHostError {
+									reason: format!(
+										"failed to remove disconnected paired device: {error}"
+									),
+								});
+								tokio::time::sleep(retry_delay).await;
+								retry_delay = (retry_delay * 2).min(MAX_RESPONDER_RETRY_DELAY);
+							},
 						}
 					}
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::PeerDisconnected),
-					});
-					return;
-				},
-				Ok(ResponderExit::SubscriptionEnded) => {
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
-					});
-				},
-				Err(error) => {
-					terminal_ui::output_event(SystemEvent::SigningHostError {
-						reason: error.reason,
-					});
-				},
-			}
-			tokio::time::sleep(retry_delay).await;
-			retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(30));
+					if let Err(error) =
+						runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
+					{
+						terminal_ui::output_event(SystemEvent::SigningHostError {
+							reason: format!(
+								"failed to stop renewing disconnected paired device: {}",
+								error.reason
+							),
+						});
+					}
+				}
+				terminal_ui::output_event(SystemEvent::SigningHostExit {
+					outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+				});
+				return;
+			},
+			Ok(ResponderExit::SubscriptionEnded) => {
+				terminal_ui::output_event(SystemEvent::SigningHostExit {
+					outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
+				});
+			},
+			Err(error) => {
+				terminal_ui::output_event(SystemEvent::SigningHostError { reason: error.reason });
+			},
 		}
-	})
+		tokio::time::sleep(retry_delay).await;
+		retry_delay = (retry_delay * 2).min(MAX_RESPONDER_RETRY_DELAY);
+	}
 }
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
 	let statement_account_id = host.statement_account_id();
 	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
-	let task = spawn_supervised_responder(session.runtime.clone(), host, persisted);
+	let task = tokio::spawn(supervise_responder(session.runtime.clone(), host, persisted));
 	session.responders.insert(statement_account_id, task);
 	terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
 }
@@ -2742,15 +2750,8 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 
 async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String) -> Result<()> {
 	let host = establish_paired_host(session, &deeplink).await?;
-	let exit = session
-		.runtime
-		.resume_pairing(paired_sso_peer(&host))
-		.await
-		.map_err(SessionOperationError::Pairing)?;
-	if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
-		remove_paired_host_locally(session, &host.statement_account_id()).await?;
-	}
-	terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
+	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
+	supervise_responder(session.runtime.clone(), host, persisted).await;
 	Ok(())
 }
 
