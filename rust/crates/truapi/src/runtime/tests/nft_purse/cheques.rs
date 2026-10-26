@@ -2,15 +2,20 @@
 
 use futures::executor::block_on;
 use truapi::versioned::nft_purse::{
-	HostNftPurseCreateReceiveKeyError, HostNftPurseCreateReceiveKeyRequest,
-	HostNftPurseCreateReceiveKeyResponse,
+	HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+	HostNftPurseCreateChequeResponse, HostNftPurseCreateReceiveKeyError,
+	HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 };
 
 use super::{
 	operations::{Purses, product_purses, product_purses_over},
 	*,
 };
-use crate::{host_logic::x25519_seal::x25519_public_key, platform::async_trait, store::DbError};
+use crate::{
+	host_logic::x25519_seal::x25519_public_key,
+	platform::{NftPurseDrainDestination, NftPurseDrainReview, async_trait},
+	store::DbError,
+};
 
 /// Encrypted storage that refuses every write, as a host without the callback does.
 struct RejectingStorage;
@@ -112,4 +117,151 @@ fn a_receive_key_whose_secret_was_not_stored_is_not_recorded() {
 	let expected = receive_key_refusal(v01::NftPurseCreateReceiveKeyError::Other(other));
 	assert_eq!(refused, Err(expected));
 	assert_eq!(recorded_receive_keys(&purses), vec![]);
+}
+
+fn create_cheque(
+	host: &ProductRuntimeHost,
+	from: u32,
+	to: v01::NftPurseChequeDestination,
+	items: Vec<v01::NftPurseItemKey>,
+) -> Result<v01::NftPurseCheque, CallError<HostNftPurseCreateChequeError>> {
+	let request = v01::HostNftPurseCreateChequeRequest { from: v01::NftPurseId(from), to, items };
+	let request = HostNftPurseCreateChequeRequest::V1(request);
+	let created = block_on(host.create_cheque(&CallContext::default(), request))?;
+	let HostNftPurseCreateChequeResponse::V1(response) = created;
+	Ok(response.cheque)
+}
+
+fn cheque_refusal(
+	error: v01::NftPurseCreateChequeError,
+) -> CallError<HostNftPurseCreateChequeError> {
+	CallError::Domain(HostNftPurseCreateChequeError::V1(error))
+}
+
+fn to_receive_key(key: v01::NftPurseReceiveKey) -> v01::NftPurseChequeDestination {
+	v01::NftPurseChequeDestination::Ephemeral(key)
+}
+
+fn drain_reviews(platform: &StubPlatform) -> Vec<NftPurseDrainReview> {
+	platform.nft_purse_drain_reviews.lock().unwrap().clone()
+}
+
+/// A product hands its own items to a receive key without being asked, gets
+/// the cheque to deliver, and the items are no longer its to spend.
+#[test]
+fn a_cheque_from_an_own_purse_needs_no_confirmation_and_spends_its_items() {
+	let platform = Arc::new(StubPlatform::default());
+	let purses = product_purses(platform.clone());
+	let items = purses.held_items(PurseId(TICKETS), 2);
+	let receive_key = create_receive_key(&purses.host, 1).unwrap();
+
+	let cheque = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items.clone());
+
+	let cheque = cheque.unwrap();
+	let mut sorted = items;
+	sorted.sort_by_key(|key| key.0);
+	assert_eq!(cheque.items, sorted);
+	assert_eq!(cheque.recipient, v01::NftPurseChequeRecipient::Ephemeral(receive_key));
+	assert_eq!(query(&purses.host, TICKETS, 10), Ok(empty_page()));
+	assert_eq!(drain_reviews(&platform), vec![]);
+}
+
+/// A product may not give away items of Root's purse unless the user says so,
+/// and the user sees that they leave in a cheque.
+#[test]
+fn a_cheque_from_roots_purse_asks_the_user_and_a_refusal_is_denied() {
+	let platform = Arc::new(StubPlatform::default());
+	let purses = product_purses(platform.clone());
+	let root = purses.root_purse();
+	let items = purses.held_items(root, 1);
+	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+
+	let refused = create_cheque(&purses.host, root.0, to_receive_key(receive_key), items);
+
+	assert_eq!(refused, Err(cheque_refusal(v01::NftPurseCreateChequeError::Denied)));
+	let review = NftPurseDrainReview {
+		calling_product_id: PRODUCT.parse().unwrap(),
+		from_purse: root.0,
+		owner: v01::NftPurseOwner::Root,
+		item_count: 1,
+		destination: NftPurseDrainDestination::Cheque {
+			recipient: v01::NftPurseChequeRecipient::Ephemeral(receive_key),
+		},
+	};
+	assert_eq!(drain_reviews(&platform), vec![review]);
+}
+
+/// A second cheque under the same id would hand the same transfer out twice,
+/// so the product is told it already made one.
+#[test]
+fn a_second_cheque_for_the_same_receive_key_answers_operation_exists() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let items = purses.held_items(PurseId(TICKETS), 2);
+	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items[..1].to_vec()).unwrap();
+
+	let again =
+		create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items[1..].to_vec());
+
+	assert_eq!(again, Err(cheque_refusal(v01::NftPurseCreateChequeError::OperationExists)));
+}
+
+#[test]
+fn a_cheque_of_no_items_answers_no_items() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+
+	let refused = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), vec![]);
+
+	assert_eq!(refused, Err(cheque_refusal(v01::NftPurseCreateChequeError::NoItems)));
+}
+
+#[test]
+fn a_cheque_from_an_unknown_purse_answers_purse_not_found() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let receive_key = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let item = v01::NftPurseItemKey([0x55; 32]);
+
+	let refused = create_cheque(&purses.host, 7, to_receive_key(receive_key), vec![item]);
+
+	assert_eq!(refused, Err(cheque_refusal(v01::NftPurseCreateChequeError::PurseNotFound)));
+}
+
+/// An item already in a cheque may be held by its recipient, so it is never
+/// handed out again, and an item the purse does not hold is not found.
+#[test]
+fn a_cheque_over_items_in_use_or_not_held_is_refused() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let items = purses.held_items(PurseId(TICKETS), 1);
+	let first = v01::NftPurseReceiveKey(x25519_public_key([3; 32]));
+	let second = v01::NftPurseReceiveKey(x25519_public_key([4; 32]));
+	create_cheque(&purses.host, TICKETS, to_receive_key(first), items.clone()).unwrap();
+
+	let in_use = create_cheque(&purses.host, TICKETS, to_receive_key(second), items);
+	let not_held = vec![v01::NftPurseItemKey([0x55; 32])];
+	let missing = create_cheque(&purses.host, TICKETS, to_receive_key(second), not_held);
+
+	assert_eq!(in_use, Err(cheque_refusal(v01::NftPurseCreateChequeError::ItemUnavailable)));
+	assert_eq!(missing, Err(cheque_refusal(v01::NftPurseCreateChequeError::ItemNotFound)));
+}
+
+/// A key anyone could decrypt to is the product's mistake, and nothing is
+/// handed off.
+#[test]
+fn a_cheque_to_a_low_order_static_key_answers_other_and_spends_nothing() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let items = purses.held_items(PurseId(TICKETS), 1);
+	let to = v01::NftPurseChequeDestination::Static {
+		encryption_key: v01::X25519PublicKey([0; 32]),
+		cheque_id: v01::NftPurseChequeId([9; 32]),
+	};
+
+	let refused = create_cheque(&purses.host, TICKETS, to, items.clone());
+
+	let reason = "sealing the item secrets failed: invalid X25519 public key".to_owned();
+	let other = v01::NftPurseCreateChequeError::Other(v01::GenericError { reason });
+	assert_eq!(refused, Err(cheque_refusal(other)));
+	let page = query(&purses.host, TICKETS, 10).unwrap();
+	let HostNftPurseQueryPurseResponse::V1(response) = page;
+	assert_eq!(response.page.items, items);
 }

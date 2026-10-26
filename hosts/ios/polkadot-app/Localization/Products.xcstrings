@@ -23,6 +23,17 @@
         }
       }
     },
+    "action.nftPurseDrain.toCheque.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to hand %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to another user in a cheque."
+          }
+        }
+      }
+    },
     "action.nftPurseDrain.toKey.body": {
       "extractionState": "manual",
       "localizations": {

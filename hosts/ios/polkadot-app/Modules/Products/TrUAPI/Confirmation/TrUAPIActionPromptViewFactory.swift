@@ -79,6 +79,13 @@ enum TrUAPIActionPromptViewFactory {
                 owner: owner,
                 key: hex
             ))
+        case .cheque:
+            String(localized: .Products.actionNftPurseDrainToChequeBody(
+                productId: productId,
+                itemCount: String(itemCount),
+                fromPurse: String(fromPurse),
+                owner: owner
+            ))
         }
     }
 }

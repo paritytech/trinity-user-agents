@@ -21,6 +21,7 @@ import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
+import uniffi.truapi.NftPurseChequeRecipient
 import uniffi.truapi.NftPurseDrainDestination
 import uniffi.truapi.NftPurseDrainReview
 import uniffi.truapi.NftPurseOwner
@@ -310,6 +311,30 @@ class ConfirmationReviewMappingTest {
             ownerProductId = null,
             itemCount = 2u,
             destination = TrUAPIConfirmation.NftPurseDrain.Destination.Purse(0u),
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
+    fun `nft purse drain into a cheque maps to the cheque destination`() {
+        val review = UserConfirmationReview.NftPurseDrain(
+            NftPurseDrainReview(
+                callingProductId = "drainer.dot",
+                fromPurse = 4u,
+                owner = NftPurseOwner.Product("owner.dot"),
+                itemCount = 1u,
+                destination = NftPurseDrainDestination.Cheque(recipient = NftPurseChequeRecipient.Static),
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = "drainer.dot",
+            fromPurse = 4u,
+            ownerProductId = "owner.dot",
+            itemCount = 1u,
+            destination = TrUAPIConfirmation.NftPurseDrain.Destination.Cheque,
         )
         assertEquals(expected, confirmation)
     }

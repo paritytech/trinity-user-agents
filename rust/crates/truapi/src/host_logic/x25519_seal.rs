@@ -49,10 +49,23 @@ pub struct SealedBox {
 /// Encrypts `plaintext` so only the holder of `recipient`'s secret can read it.
 /// Fails on a low-order `recipient`.
 pub fn seal_to(recipient: [u8; 32], plaintext: &[u8]) -> Result<SealedBox, SealError> {
-	let (ephemeral_secret, ephemeral_public) = generate_x25519_keypair()?;
+	let (ephemeral_secret, _) = generate_x25519_keypair()?;
+	let mut nonce = [0u8; AEAD_NONCE_LEN];
+	getrandom::getrandom(&mut nonce)?;
+	seal_with(ephemeral_secret, nonce, recipient, plaintext)
+}
+
+/// [`seal_to`] with a given ephemeral secret and nonce, so the output is
+/// fixed. Both must be fresh for every message.
+pub fn seal_with(
+	ephemeral_secret: [u8; 32],
+	nonce: [u8; AEAD_NONCE_LEN],
+	recipient: [u8; 32],
+	plaintext: &[u8],
+) -> Result<SealedBox, SealError> {
 	let key = aead_key(&shared_secret(ephemeral_secret, recipient)?);
-	let encrypted = encrypt(key, plaintext)?;
-	Ok(SealedBox { ephemeral_public, encrypted })
+	let encrypted = encrypt_with_nonce(key, plaintext, nonce)?;
+	Ok(SealedBox { ephemeral_public: x25519_public_key(ephemeral_secret), encrypted })
 }
 
 /// Decrypts what [`seal_to`] produced for the public key of `secret`.
@@ -146,6 +159,21 @@ mod tests {
 		let last = sealed.encrypted.len() - 1;
 		sealed.encrypted[last] ^= 1;
 		assert_eq!(open_sealed(secret, &sealed), Err(SealError::Decrypt));
+	}
+
+	/// Other hosts open what this host seals, so a fixed ephemeral key, nonce,
+	/// recipient and plaintext must always give the same bytes.
+	#[test]
+	fn a_fixed_ephemeral_key_and_nonce_seal_to_fixed_bytes() {
+		let recipient = x25519_public_key([3; 32]);
+
+		let sealed = seal_with([1; 32], [2; AEAD_NONCE_LEN], recipient, b"cheque").unwrap();
+
+		assert_eq!(sealed.ephemeral_public, x25519_public_key([1; 32]));
+		assert_eq!(
+			hex::encode(&sealed.encrypted),
+			"0202020202020202020202025c53e60d79544edad7cc6d7092017a87fb2c13d52476"
+		);
 	}
 
 	/// An all-zero shared secret would let anyone decrypt, so a low-order key

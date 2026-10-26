@@ -12,18 +12,20 @@ mod browser {
 		CallContext, CallError, Subscription,
 		api::NftPurse,
 		versioned::nft_purse::{
-			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
-			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
-			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
-			HostNftPurseCreateReceiveKeyError, HostNftPurseCreateReceiveKeyRequest,
-			HostNftPurseCreateReceiveKeyResponse, HostNftPurseListPursesError,
-			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-			HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
-			HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
-			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
-			HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
-			HostNftPurseRebalancePurseResponse, HostNftPurseTransferItemError,
-			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+			HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+			HostNftPurseCreateChequeResponse, HostNftPurseCreateItemsError,
+			HostNftPurseCreateItemsRequest, HostNftPurseCreateItemsResponse,
+			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+			HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
+			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
+			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
+			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
+			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
+			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
+			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+			HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -60,6 +62,14 @@ mod browser {
 			_cx: &CallContext,
 			_request: HostNftPurseListPursesRequest,
 		) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn create_cheque(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseCreateChequeRequest,
+		) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
 			Err(CallError::Unsupported)
 		}
 

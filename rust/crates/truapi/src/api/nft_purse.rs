@@ -172,7 +172,13 @@ pub trait NftPurse: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Hand items off in a cheque that the product delivers.
+	/// Hand items off in a cheque that the product delivers. The items are
+	/// spent from then on. The cheque id is the destination's: derived from
+	/// the receive key, or the given static `cheque_id`. A product creating a
+	/// second cheque with the same id gets `OperationExists`.
+	/// `encrypted_secrets` is the ephemeral X25519 key, then the 12-byte nonce,
+	/// then the ChaCha20-Poly1305 ciphertext of the SCALE-encoded 64-byte
+	/// sr25519 secrets in `items` order.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.createCheque({

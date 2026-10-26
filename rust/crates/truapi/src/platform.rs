@@ -53,8 +53,8 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
-		RemotePermission, RemotePermissionRequest, RingLocation,
+		NftPurseChequeRecipient, NftPurseOwner, ProductAccountId, ProductAccountTxPayload,
+		ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -2708,6 +2708,11 @@ pub enum NftPurseDrainDestination {
 	ExternalKey {
 		/// The key's public bytes.
 		key: Bytes32,
+	},
+	/// A cheque the product delivers to its recipient.
+	Cheque {
+		/// Who can open the cheque.
+		recipient: NftPurseChequeRecipient,
 	},
 }
 

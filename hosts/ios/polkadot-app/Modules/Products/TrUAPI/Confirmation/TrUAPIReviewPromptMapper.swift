@@ -59,6 +59,7 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
         let destination: NftPurseDrainTarget = switch review.destination {
         case let .purse(purse): .purse(purse)
         case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
+        case .cheque: .cheque
         }
         return .nftPurseDrain(
             productId: review.callingProductId,

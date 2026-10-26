@@ -9,12 +9,13 @@ use truapi::{
 	api::NftPurse,
 	latest,
 	versioned::nft_purse::{
-		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
-		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
-		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
-		HostNftPurseCreateReceiveKeyError, HostNftPurseCreateReceiveKeyRequest,
-		HostNftPurseCreateReceiveKeyResponse, HostNftPurseListPursesError,
-		HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+		HostNftPurseCreateChequeResponse, HostNftPurseCreateItemsError,
+		HostNftPurseCreateItemsRequest, HostNftPurseCreateItemsResponse,
+		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
+		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
 		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
 		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
@@ -83,6 +84,15 @@ impl NftPurse for ProductRuntimeHost {
 	) -> Result<HostNftPurseCreateReceiveKeyResponse, CallError<HostNftPurseCreateReceiveKeyError>>
 	{
 		version(request).exec(|request| self.create_nft_receive_key(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_cheque"))]
+	async fn create_cheque(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseCreateChequeRequest,
+	) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
+		version(request).exec(|request| self.create_nft_cheque(cx, request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]

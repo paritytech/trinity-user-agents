@@ -76,11 +76,15 @@ impl<E> OperationRefusals<E> {
 }
 
 /// A drain of `item_count` items out of `from` to `destination`.
-struct Drain {
-	from: PurseId,
-	owner: PurseOwner,
-	item_count: u32,
-	destination: NftPurseDrainDestination,
+pub struct Drain {
+	/// The purse the items leave.
+	pub from: PurseId,
+	/// Who owns that purse.
+	pub owner: PurseOwner,
+	/// How many items leave it.
+	pub item_count: u32,
+	/// Where they go.
+	pub destination: NftPurseDrainDestination,
 }
 
 impl ProductRuntimeHost {
@@ -156,7 +160,7 @@ impl ProductRuntimeHost {
 
 	/// Asks the user to confirm `drain` when the caller does not own its
 	/// purse. A refusal is `denied`.
-	async fn confirm_drain<E>(
+	pub async fn confirm_drain<E>(
 		&self,
 		cx: &CallContext,
 		drain: Drain,

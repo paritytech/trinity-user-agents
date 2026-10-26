@@ -1,10 +1,18 @@
 //! Handing NFT items to another user: receive keys on the receiving side, and
 //! cheques on the sending side.
 
-use truapi::{CallError, latest};
+use std::collections::BTreeSet;
 
-use super::host_failure;
-use crate::{nft::PurseId, nft_purse::CreateReceiveKeyError, runtime::ProductRuntimeHost};
+use truapi::{CallContext, CallError, latest};
+
+use super::{host_failure, operations::Drain};
+use crate::{
+	host_logic::x25519_seal::SealError,
+	nft::{HandOffError, ItemKey, ItemRefusal, PurseId},
+	nft_purse::{CreateReceiveKeyError, cheque_recipient},
+	platform::NftPurseDrainDestination,
+	runtime::ProductRuntimeHost,
+};
 
 impl ProductRuntimeHost {
 	/// A receive key into the purse the product named. Any product may receive
@@ -23,6 +31,60 @@ impl ProductRuntimeHost {
 		let key = created.map_err(create_receive_key_failure)?;
 		Ok(latest::HostNftPurseCreateReceiveKeyResponse { key })
 	}
+
+	/// Hands items of a purse off in a cheque, after confirming a drain of a
+	/// purse the caller does not own. The items are spent from then on.
+	pub async fn create_nft_cheque(
+		&self,
+		cx: &CallContext,
+		request: latest::HostNftPurseCreateChequeRequest,
+	) -> Result<
+		latest::HostNftPurseCreateChequeResponse,
+		CallError<latest::HostNftPurseCreateChequeError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseCreateChequeRequest { from, to, items } = request;
+		let items: BTreeSet<ItemKey> = items.iter().map(|key| ItemKey(key.0)).collect();
+		if items.is_empty() {
+			return Err(CallError::Domain(latest::HostNftPurseCreateChequeError::NoItems));
+		}
+		let from = PurseId(from.0);
+		let not_found = CallError::Domain(latest::HostNftPurseCreateChequeError::PurseNotFound);
+		let owner = purses.owner_of(from).await.map_err(host_failure)?.ok_or(not_found)?;
+		let item_count = u32::try_from(items.len()).map_err(host_failure)?;
+		let destination = NftPurseDrainDestination::Cheque { recipient: cheque_recipient(&to) };
+		let drain = Drain { from, owner, item_count, destination };
+		let denied = latest::HostNftPurseCreateChequeError::Denied;
+		self.confirm_drain(cx, drain, denied).await?;
+		let caller = self.connection.product_id();
+		let cheque = purses.create_cheque(caller, from, &to, items).await;
+		let cheque = cheque.map_err(create_cheque_failure)?;
+		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
+	}
+}
+
+/// The product's refusals as its domain errors, everything else as the
+/// host's failure. A low-order recipient key is the product's.
+fn create_cheque_failure(
+	error: HandOffError<SealError>,
+) -> CallError<latest::HostNftPurseCreateChequeError> {
+	let refusal = match error {
+		HandOffError::NoItems => latest::HostNftPurseCreateChequeError::NoItems,
+		HandOffError::TagInUse => latest::HostNftPurseCreateChequeError::OperationExists,
+		HandOffError::Item(ItemRefusal::NotFound(_)) => {
+			latest::HostNftPurseCreateChequeError::ItemNotFound
+		},
+		HandOffError::Item(ItemRefusal::Unavailable(_)) => {
+			latest::HostNftPurseCreateChequeError::ItemUnavailable
+		},
+		HandOffError::Seal(SealError::LowOrderKey) => {
+			let reason = latest::GenericError { reason: error.to_string() };
+			latest::HostNftPurseCreateChequeError::Other(reason)
+		},
+		other => return host_failure(other),
+	};
+	CallError::Domain(refusal)
 }
 
 /// An unknown purse, or a host that kept no secret, is the product's answer.

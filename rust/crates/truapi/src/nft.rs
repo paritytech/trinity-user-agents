@@ -19,6 +19,7 @@ mod standing;
 #[cfg(test)]
 mod testing;
 
+pub use handoff::{HandOffError, HandoffRequest, HandoffTag};
 pub use holding::HeldItem;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
@@ -34,5 +35,6 @@ pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
 };
+pub use standing::ItemRefusal;
 #[cfg(test)]
 pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};

@@ -4,6 +4,7 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
+mod cheque;
 mod dao;
 mod operation;
 mod receive_key;
@@ -16,6 +17,7 @@ use truapi::latest::{
 	NftPursePurse, RemotePermission,
 };
 
+pub use cheque::cheque_recipient;
 pub use operation::drain_needs_confirmation;
 pub use receive_key::CreateReceiveKeyError;
 
