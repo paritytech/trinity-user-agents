@@ -11,17 +11,20 @@ protocol VoucherAllocating: Actor {
 /// previous installation's vouchers never move this installation's counter. The store reserves each
 /// item atomically, so concurrent mints never collide.
 actor VoucherAllocator: VoucherAllocating {
+    private let installationProvider: any CoinageBackedUpInstallationProviding
     private let installationStore: any CoinageCurrentInstallationStoring
     private let delayProvider: VoucherDelayProviderProtocol
     private let voucherRepository: AnyDataProviderRepository<Voucher>
     private let keyFactory: any VoucherKeyDeriving
 
     init(
+        installationProvider: any CoinageBackedUpInstallationProviding,
         installationStore: any CoinageCurrentInstallationStoring,
         delayProvider: VoucherDelayProviderProtocol,
         voucherRepository: AnyDataProviderRepository<Voucher>,
         keyFactory: any VoucherKeyDeriving
     ) {
+        self.installationProvider = installationProvider
         self.installationStore = installationStore
         self.delayProvider = delayProvider
         self.voucherRepository = voucherRepository
@@ -49,7 +52,7 @@ actor VoucherAllocator: VoucherAllocating {
 
 private extension VoucherAllocator {
     func nextIndex() async throws -> CoinageKeyIndex {
-        let installation = try await installationStore.getOrCreateCurrent()
+        let installation = try await installationProvider.backedUpInstallation()
         return try await CoinageKeyIndex(installation: installation, item: installationStore.nextVoucherItem())
     }
 }
