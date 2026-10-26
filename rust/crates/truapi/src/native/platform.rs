@@ -1,4 +1,4 @@
-use core::{ops::ControlFlow, time::Duration};
+use core::{iter, ops::ControlFlow, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -517,7 +517,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: u32 = 5;
+const PREIMAGE_FAST_RETRIES: usize = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -559,24 +559,23 @@ async fn lookup_until_found(
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
 	let mut retries = 0u32;
+	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
 	let found = retry_after(
 		(),
 		&RealTimer,
-		|| async {
-			match callbacks.lookup_preimage(digest.to_vec()).await {
-				Ok(Some(value)) if preimage_key(&value) == digest => ControlFlow::Break(Ok(value)),
-				Ok(_) => ControlFlow::Continue(()),
-				Err(rejection) => ControlFlow::Break(Err(rejection)),
-			}
-		},
-		|()| {
+		|| {
 			retries += 1;
-			if retries <= PREIMAGE_FAST_RETRIES {
-				PREIMAGE_RETRY_PAUSE_FAST
-			} else {
-				PREIMAGE_RETRY_PAUSE_SLOW
+			async {
+				match callbacks.lookup_preimage(digest.to_vec()).await {
+					Ok(Some(value)) if preimage_key(&value) == digest => {
+						ControlFlow::Break(Ok(value))
+					},
+					Ok(_) => ControlFlow::Continue(()),
+					Err(rejection) => ControlFlow::Break(Err(rejection)),
+				}
 			}
 		},
+		|()| fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW),
 	)
 	.await;
 	if found.is_ok() {
