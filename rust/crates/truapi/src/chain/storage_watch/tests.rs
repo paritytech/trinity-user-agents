@@ -20,7 +20,7 @@ use super::{
 	DecodableAtBlock, DecodedEntryChanges, RETRY_DELAY, RawStorageChanges, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,
 	codec::{decode_value_or_default, encode_storage_keys},
-	diffed, distinct_until_changed,
+	diffed,
 };
 use crate::{
 	chain::{
@@ -457,15 +457,4 @@ fn a_watch_of_an_entry_the_runtime_lacks_reports_why_and_ends() {
 	assert!(matches!(first, Some(Err(StorageWatchError::Incompatible { .. }))), "{first:?}");
 	assert!(ended);
 	assert_eq!(timer.sleeps(), 0);
-}
-
-/// A product is shown each status once, but every failed read, because a
-/// failure says nothing about whether the status changed.
-#[test]
-fn repeated_values_pass_once_and_every_error_passes() {
-	let items = stream::iter([Ok(1), Ok(1), Err("lost"), Err("lost"), Ok(1), Ok(2)]).boxed();
-
-	let distinct: Vec<Result<u8, &str>> = block_on(distinct_until_changed(items).collect());
-
-	assert_eq!(distinct, vec![Ok(1), Err("lost"), Err("lost"), Ok(2)]);
 }

@@ -18,7 +18,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use subxt::{Metadata, storage::Address, utils::H256};
 
 use super::HashAndNumber;
-use crate::{chain_runtime::RuntimeFailure, time::Timer};
+use crate::{chain_runtime::RuntimeFailure, stream_extensions::StreamExtensions, time::Timer};
 
 mod codec;
 mod diff;
@@ -266,41 +266,8 @@ fn single_error<T: Send + 'static>(
 fn stop_after_permanent_failure<T: Send + 'static>(
 	changes: BoxStream<'static, Result<T, StorageWatchError>>,
 ) -> BoxStream<'static, Result<T, StorageWatchError>> {
-	take_until_inclusive(changes, |change| {
-		change.as_ref().is_err_and(StorageWatchError::is_permanent)
-	})
-}
-
-/// `items` up to and including the first one `is_last` picks, then nothing.
-pub fn take_until_inclusive<T: Send + 'static>(
-	items: BoxStream<'static, T>,
-	is_last: impl Fn(&T) -> bool + Send + 'static,
-) -> BoxStream<'static, T> {
-	stream::unfold(Some((items, is_last)), |state| async move {
-		let (mut items, is_last) = state?;
-		let item = items.next().await?;
-		let rest = (!is_last(&item)).then_some((items, is_last));
-		Some((item, rest))
-	})
-	.boxed()
-}
-
-/// `items` without each `Ok` value equal to the last `Ok` value passed on.
-/// Every `Err` passes on, and does not count as a value.
-pub fn distinct_until_changed<T, E>(
-	items: BoxStream<'static, Result<T, E>>,
-) -> BoxStream<'static, Result<T, E>>
-where
-	T: PartialEq + Clone + Send + 'static,
-	E: Send + 'static,
-{
-	let mut last = None;
-	let is_new = move |item: &Result<T, E>| {
-		let Ok(value) = item else { return ready(true) };
-		let previous = last.replace(value.clone());
-		ready(previous.as_ref() != Some(value))
-	};
-	items.filter(is_new).boxed()
+	changes
+		.take_until_inclusive(|change| change.as_ref().is_err_and(StorageWatchError::is_permanent))
 }
 
 /// Turns raw changes of one entry back into the caller's keys and values.

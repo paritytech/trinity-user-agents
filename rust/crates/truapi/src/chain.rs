@@ -40,7 +40,7 @@ pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use storage_watch::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
-	StorageWatchError, WatchedHead, WatchedStorage, distinct_until_changed, take_until_inclusive,
+	StorageWatchError, WatchedHead, WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;

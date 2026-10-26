@@ -16,10 +16,11 @@ use super::{RawChangeStream, STORAGE_WATCH, all_keys_answered_or_err, group_valu
 use crate::{
 	chain::{
 		DecodableAtBlock, HashAndNumber, RawStorageChanges,
-		storage_watch::{StorageSnapshot, take_until_inclusive, value_hash},
+		storage_watch::{StorageSnapshot, value_hash},
 		subxt_chain::{failure, numbered},
 	},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
+	stream_extensions::StreamExtensions,
 };
 
 /// The keys one subscription notification changed, by position among the
@@ -254,7 +255,7 @@ fn record_hashes(
 
 /// `changes` up to and including the first failure, then nothing.
 fn stop_after_first_failure(changes: RawChangeStream) -> RawChangeStream {
-	take_until_inclusive(changes, Result::is_err)
+	changes.take_until_inclusive(Result::is_err)
 }
 
 /// One notification's changes, with `System.LastRuntimeUpgrade` taken out.

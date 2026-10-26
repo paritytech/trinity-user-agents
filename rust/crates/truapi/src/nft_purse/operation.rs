@@ -14,7 +14,6 @@ use truapi::latest::{
 
 use super::{NftPurses, PurseOwner};
 use crate::{
-	chain::{distinct_until_changed, take_until_inclusive},
 	durable::RegistrationError,
 	nft::{
 		ItemKey, OperationKey, PurseId, StartOperationError, TransferDestinations,
@@ -22,6 +21,7 @@ use crate::{
 	},
 	platform::ProductId,
 	store::DbError,
+	stream_extensions::StreamExtensions,
 };
 
 impl NftPurses {
@@ -75,14 +75,11 @@ impl NftPurses {
 		idempotency_key: NftPurseIdempotencyKey,
 	) -> BoxStream<'static, Result<Option<NftPurseStatus>, DbError>> {
 		let operation = operation_key(caller, idempotency_key);
-		let statuses = self
-			.ledger
+		self.ledger
 			.observe_operation(&operation)
 			.map(|transfers| transfers.map(status_of))
-			.boxed();
-		take_until_inclusive(distinct_until_changed(statuses), |read| {
-			read.as_ref().is_ok_and(is_terminal)
-		})
+			.distinct_until_changed()
+			.take_until_inclusive(|read| read.as_ref().is_ok_and(is_terminal))
 	}
 }
 
