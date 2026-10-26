@@ -3,7 +3,6 @@ import Testing
 import ChainRegistry
 import SubstrateSdk
 import TrUAPIHost
-import Coinage
 @testable import polkadot_app
 
 // MARK: - Helpers
@@ -29,17 +28,9 @@ private func makeHostBridge(
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
-        installationRepository: AlwaysNewInstallation(),
+        backedUpInstallation: TrUAPIBackedUpInstallation(),
         logger: Logger.shared
     )
-}
-
-private struct AlwaysNewInstallation: CoinageCurrentInstallationRepositoryProtocol {
-    func getOrCreateCurrent(
-        newInstallation: @escaping @Sendable () throws -> CoinageInstallationId
-    ) async throws -> CoinageInstallationId {
-        try newInstallation()
-    }
 }
 
 // MARK: - Tests
