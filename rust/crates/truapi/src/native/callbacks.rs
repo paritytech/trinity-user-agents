@@ -197,6 +197,14 @@ pub trait HostCallbacks: Send + Sync {
 	/// with. Arrives on a core thread: hand it off rather than blocking.
 	fn durable_work_changed(&self, pending: bool);
 
+	/// The 32-byte id of the current app installation, created on first use.
+	/// Item keys of NFT purses are derived under it, so it must be the one
+	/// the host registers for recovery.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection>;
+
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
 		&self,
