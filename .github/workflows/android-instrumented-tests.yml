@@ -1,6 +1,5 @@
 # Instrumented tests, which need a booted emulator and so cannot run on every
-# commit: the runner is macOS, which bills at several times the Linux rate on a
-# public repository, and a cold emulator costs minutes before the first test.
+# commit: a cold emulator costs minutes before the first test.
 #
 # Started by a label rather than by every push, and by dispatch so the workflow
 # itself can be exercised without opening a pull request to carry the label.
@@ -35,7 +34,7 @@ jobs:
           && github.event.label.name == 'ci:android-emulator-tests')
       || (github.event.action != 'labeled'
           && contains(github.event.pull_request.labels.*.name, 'ci:android-emulator-tests'))
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,14 +56,41 @@ jobs:
           keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
 
+      - name: Build the app and test APKs
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
+          APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}
+          LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+          TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+        run: ./gradlew :app:assembleGpDebug :app:assembleGpDebugAndroidTest --no-daemon
+
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       # The same values the distribution builds use, because the tests run
       # against the real configuration rather than a placeholder one: the
       # application id has to match the Google configuration decoded above,
       # and the signing config reads the keystore's credentials.
-      #
-      # Hardware acceleration needs the emulator's architecture to match the
-      # runner's, which is why this is arm64 rather than the x86 image the
-      # Linux runners would want.
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
@@ -87,21 +113,23 @@ jobs:
           CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         with:
-          api-level: 30
-          arch: arm64-v8a
+          api-level: 34
+          arch: x86_64
           target: google_apis
           profile: pixel_5
           disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated
           working-directory: hosts/android
           # Flavours are declared only in the app module, so this resolves
           # there and runs that module's tests. The instrumented tests in the
           # library modules are not covered, as upstream did not cover them.
-          script: ./gradlew connectedGpDebugAndroidTest --no-daemon
+          script: ./gradlew :app:connectedGpDebugAndroidTest --no-daemon
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: instrumented-test-report
           path: hosts/android/app/build/reports/androidTests/

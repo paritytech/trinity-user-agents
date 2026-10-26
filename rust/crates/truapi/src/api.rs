@@ -11,6 +11,7 @@ pub mod funding;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -36,6 +37,7 @@ pub use funding::Funding;
 pub use game::Game;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
+pub use nft_purse::NftPurse;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -63,6 +65,7 @@ pub trait TrUApi:
 	+ Game
 	+ LocalStorage
 	+ Locale
+	+ NftPurse
 	+ Notifications
 	+ Payment
 	+ Permissions
@@ -93,6 +96,7 @@ impl<T> TrUApi for T where
 		+ Game
 		+ LocalStorage
 		+ Locale
+		+ NftPurse
 		+ Notifications
 		+ Payment
 		+ Permissions

@@ -96,10 +96,10 @@ The [permission model](docs/rfcs/0002-permission-model.md) separates outbound do
 Android permission prompts belong to one request and close when it finishes or is cancelled,
 including cancellation while the app is backgrounded.
 
-The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
-on every supported network) only for device permissions and for legacy-account signing
-other than watermarked raw bytes. All other operations it handles bypass permission
-prompts and recorded decisions.
+The shared Rust core asks trusted products (`peopl`, `dim2` and `stash`,
+on every supported network) only for legacy-account signing other than
+watermarked raw bytes. All other operations it handles bypass permission prompts
+and recorded decisions. Device permissions still need the OS grant.
 
 ## Repository layout
 
@@ -147,6 +147,8 @@ scripts/refresh-host-import.sh
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
+scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
+                           ci.yml change gates
 ```
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
@@ -271,6 +273,22 @@ The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
 
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+`createItems` derives receiving keys in a purse on the hard path
+`//nft//<purse>//<installation>//<index>`, under the installation the host
+reports through `currentInstallation`. A tracker watches
+`Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
+`queryPurse` pages through the keys that hold an NFT. The same grant covers
+both. Calls that move items answer unavailable for now. A host without a core
+database, such as the browser core, answers `Unsupported` to the four served
+calls.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -330,6 +348,8 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
 The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 

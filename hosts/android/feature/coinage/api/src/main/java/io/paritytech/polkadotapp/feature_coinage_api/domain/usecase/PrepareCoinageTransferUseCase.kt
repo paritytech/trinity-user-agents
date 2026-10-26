@@ -28,11 +28,12 @@ interface PrepareCoinageTransferUseCase {
     suspend fun prepareMemo(plan: TransferPlan, retryUntil: Instant): Result<PreparedTransferMemo>
 
     /**
-     * Builds the memo and reserves its coins like [prepareMemo], without building or submitting any
+     * Builds the memo like [prepareMemo], without reserving its coins or building or submitting any
      * transaction: they are built afterwards, in the background, and retried the same way.
      *
-     * [PreparedTransferMemo.handoffCommit] also registers those transactions, so it must run inside the
-     * database transaction that persists the memo: a crash then either loses both or keeps both.
+     * [PreparedTransferMemo.handoffCommit] writes the reservation, already final, and registers those
+     * transactions in one step, so it must run inside the database transaction that persists the memo: a crash
+     * or a cancelled send then either loses all of it or keeps all of it.
      */
     @OptIn(ExperimentalTime::class)
     context(diagnostics: StalenessReportCollector)

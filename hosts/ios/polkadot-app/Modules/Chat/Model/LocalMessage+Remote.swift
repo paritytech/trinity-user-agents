@@ -47,7 +47,6 @@ extension Chat.LocalMessage.Content {
              .edited,
              .reply,
              .chatAccepted,
-             .multiChatAccepted,
              .deviceAdded,
              .deviceRemoved,
              .call,
@@ -56,6 +55,10 @@ extension Chat.LocalMessage.Content {
 
         case let .richText(richText):
             richText.isReadyToSend
+
+        // Published on the identity route by the acceptance delivery pipeline, never by the session.
+        case .multiChatAccepted:
+            false
 
         case .unsupported,
              .staticTextImageContent,

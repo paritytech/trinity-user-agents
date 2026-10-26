@@ -16,7 +16,11 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::v01;
 
-use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTransition};
+use crate::{
+	DevicePairingObserver, PairedSsoPeer,
+	host_logic::worker::WorkerTransition,
+	installation::{InstallationId, InstallationIdProvider},
+};
 
 use super::{
 	callbacks::{
@@ -111,6 +115,14 @@ impl DevicePairingObserver for CallbackPlatform {
 }
 
 #[async_trait]
+impl InstallationIdProvider for CallbackPlatform {
+	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
+		let id = self.callbacks.current_installation().await?;
+		InstallationId::try_from(id)
+	}
+}
+
+#[async_trait]
 impl Navigation for CallbackPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.callbacks
@@ -130,11 +142,7 @@ impl Notifications for CallbackPlatform {
 			notification.text.clone(),
 		);
 
-		let id = self
-			.callbacks
-			.push_notification(notification)
-			.await
-			.map_err(v01::GenericError::from)?;
+		let id = self.callbacks.push_notification(notification).await?;
 		Ok(v01::HostPushNotificationResponse { id })
 	}
 
@@ -227,11 +235,7 @@ impl Features for CallbackPlatform {
 			format!("{request:?}"),
 		);
 
-		let supported = self
-			.callbacks
-			.feature_supported(request)
-			.await
-			.map_err(v01::GenericError::from)?;
+		let supported = self.callbacks.feature_supported(request).await?;
 		Ok(v01::HostFeatureSupportedResponse { supported })
 	}
 
