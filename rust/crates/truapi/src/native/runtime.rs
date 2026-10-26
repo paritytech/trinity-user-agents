@@ -82,6 +82,15 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
+		// Core notices reach this host's log regardless of trace level, which
+		// defaults to ERROR and so drops everything the core would otherwise
+		// say about itself.
+		crate::logging::set_host_notice_sink({
+			let callbacks = callbacks.clone();
+			Arc::new(move |marker: &str, detail: &str| {
+				callbacks.on_core_log(marker.to_string(), detail.to_string());
+			})
+		});
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }

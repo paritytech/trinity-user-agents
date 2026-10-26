@@ -1533,13 +1533,17 @@ impl ChainConnection {
 		if holding.len() >= FOLLOWS_A_NODE_BUDGETS {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
-			// follows when it does. Name the state while it is still legible.
-			warn!(
-				chain = %encode_hex(&self.genesis_hash),
-				holding = holding.len(),
-				budget = FOLLOWS_A_NODE_BUDGETS,
-				follows = %holding.join(", "),
-				"chain connection is at the node's follow budget; the next follow on it will be refused"
+			// follows when it does. A notice rather than a `warn!` because the
+			// hosts that need to read this run at the default `ERROR` level.
+			crate::logging::notice(
+				"truapi.chain.follow_budget_reached",
+				&format!(
+					"chain {} holds {} of {} follows; the next follow on it will be refused: {}",
+					encode_hex(&self.genesis_hash),
+					holding.len(),
+					FOLLOWS_A_NODE_BUDGETS,
+					holding.join(", "),
+				),
 			);
 		}
 		true

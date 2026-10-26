@@ -21,7 +21,7 @@
 
 use core::fmt::{self, Write as _};
 use std::sync::{
-	OnceLock,
+	Arc, Mutex, OnceLock,
 	atomic::{AtomicBool, Ordering},
 };
 
@@ -40,6 +40,39 @@ use tracing_subscriber::{
 
 static RELOAD_HANDLE: OnceLock<reload::Handle<LevelFilter, Registry>> = OnceLock::new();
 static TRACE_SPANS: AtomicBool = AtomicBool::new(false);
+
+/// What a host installs to receive core notices: a marker slug and a
+/// free-form detail, called from whatever thread raised the notice.
+pub type HostNoticeSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Host sink for core notices, when a host has one.
+///
+/// A `Mutex` rather than a `OnceLock` so a test can install one and take it
+/// away again; notices are rare, so the lock is never hot.
+static HOST_NOTICES: Mutex<Option<HostNoticeSink>> = Mutex::new(None);
+
+/// Send core notices to `sink`, replacing any previous one. Hosts that surface
+/// a lifecycle log call this once; the rest leave it unset and notices only
+/// reach tracing.
+pub fn set_host_notice_sink(sink: HostNoticeSink) {
+	*HOST_NOTICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sink);
+}
+
+/// Report something a host operator needs to see regardless of trace level.
+///
+/// The level filter exists to keep routine traffic off a host's log, and it
+/// defaults to `ERROR`, so a `warn!` never reaches a device. A notice is for
+/// the few conditions that are worth a host log entry on their own: it goes to
+/// the host's sink directly, and to tracing as well for hosts that read that
+/// instead. `marker` is a stable slug a log can be filtered by; `detail` is
+/// free-form.
+pub fn notice(marker: &str, detail: &str) {
+	let sink = HOST_NOTICES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+	if let Some(sink) = sink {
+		sink(marker, detail);
+	}
+	tracing::warn!(target: "truapi::notice", marker, detail, "core notice");
+}
 
 /// Verbosity applied until a host calls [`set_level`], and the fallback for an
 /// unrecognised level string. `ERROR` is reserved for protocol violations, so
@@ -231,6 +264,33 @@ mod tests {
 	/// The floor must stay at `ERROR` so a host that never calls
 	/// `setLogLevel` still sees protocol violations, and a typo must not be
 	/// able to silence them.
+	/// A notice reaches the host's sink even though the level filter is at its
+	/// default, which is what a `warn!` cannot do.
+	#[test]
+	fn a_notice_reaches_the_host_sink_at_the_default_level() {
+		init();
+		set_level(DEFAULT_LEVEL);
+		let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+		let recorder = seen.clone();
+		set_host_notice_sink(Arc::new(move |marker: &str, detail: &str| {
+			recorder.lock().unwrap().push((marker.to_string(), detail.to_string()));
+		}));
+
+		notice("truapi.test.marker", "something a host operator needs to see");
+
+		assert_eq!(
+			seen.lock().unwrap().clone(),
+			vec![(
+				"truapi.test.marker".to_string(),
+				"something a host operator needs to see".to_string()
+			)],
+			"the sink receives the notice with the default ERROR filter in place",
+		);
+
+		// Leave no sink behind for other tests in this binary.
+		*HOST_NOTICES.lock().unwrap() = None;
+	}
+
 	#[test]
 	fn parse_level_defaults_to_the_error_floor() {
 		assert_eq!(DEFAULT_LEVEL, LevelFilter::ERROR);
