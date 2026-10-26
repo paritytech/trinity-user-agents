@@ -1232,32 +1232,12 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	})
 }
 
-/// [`transaction_call_error`] for the legacy-account method, whose v0.1 error
-/// has no `ChainUnavailable`.
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
 fn legacy_transaction_call_error(
 	err: AuthorityError,
 ) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
-	CallError::Domain(match err {
-		AuthorityError::Rejected | AuthorityError::Disconnected => {
-			latest::HostCreateTransactionWithLegacyAccountError::Rejected
-		},
-		AuthorityError::ConfirmationFailed(error) => {
-			return CallError::HostFailure {
-				reason: format!("create transaction confirmation failed: {error:?}"),
-			};
-		},
-		AuthorityError::Cancelled(err) => {
-			latest::HostCreateTransactionWithLegacyAccountError::Unknown { reason: err.to_string() }
-		},
-		AuthorityError::NotSupported { reason } => {
-			latest::HostCreateTransactionWithLegacyAccountError::NotSupported { reason }
-		},
-		AuthorityError::Unavailable { reason } |
-		AuthorityError::ChainUnavailable { reason } |
-		AuthorityError::Unknown { reason } => {
-			latest::HostCreateTransactionWithLegacyAccountError::Unknown { reason }
-		},
-	})
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
 }
 
 #[crate::platform::async_trait]

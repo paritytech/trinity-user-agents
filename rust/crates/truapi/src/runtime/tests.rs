@@ -6463,16 +6463,27 @@ fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 
 /// `ChainUnavailable` is the one creation failure a product may retry on
 /// alone, so it must reach the wire as itself rather than fold into `Unknown`.
+/// The legacy-account method stays on v0.1, which has no such variant, so it
+/// reports the same failure as `Unknown` with the same reason.
 #[test]
 fn a_node_that_cannot_be_asked_reaches_create_transaction_as_chain_unavailable() {
-	use super::transaction_call_error;
+	use super::{legacy_transaction_call_error, transaction_call_error};
 	use crate::runtime::authority::AuthorityError;
 
 	let reason = "cannot select a metadata block".to_string();
+	let chain_unavailable = || AuthorityError::ChainUnavailable { reason: reason.clone() };
 
 	assert_eq!(
-		transaction_call_error(AuthorityError::ChainUnavailable { reason: reason.clone() }),
-		CallError::Domain(v02::HostCreateTransactionError::ChainUnavailable { reason })
+		(
+			transaction_call_error(chain_unavailable()),
+			legacy_transaction_call_error(chain_unavailable()),
+		),
+		(
+			CallError::Domain(v02::HostCreateTransactionError::ChainUnavailable {
+				reason: reason.clone()
+			}),
+			CallError::Domain(v01::HostCreateTransactionError::Unknown { reason: reason.clone() }),
+		)
 	);
 }
 

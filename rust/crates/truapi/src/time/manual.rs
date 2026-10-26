@@ -42,6 +42,12 @@ impl ManualTimer {
 	pub fn sleeps(&self) -> usize {
 		self.sleeps.load(Ordering::SeqCst)
 	}
+
+	/// How long each sleep still waiting has left, in the order they started.
+	pub fn remaining(&self) -> Vec<Duration> {
+		let state = self.state.lock();
+		state.sleepers.iter().map(|(deadline, _)| *deadline - state.now).collect()
+	}
 }
 
 impl Timer for ManualTimer {

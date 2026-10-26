@@ -29,11 +29,12 @@ pub enum HostCreateTransactionError {
 	UnknownContact,
 	/// The node serving the chain the transaction is for could not be asked
 	/// for the current block or its runtime, as while a halted chain is
-	/// redialed, so the host built and signed nothing. The same call can
-	/// succeed later, but the chain can stay down, so bound the attempts.
+	/// redialed, or gave no answer in time, so the host built and signed
+	/// nothing. The same call can succeed later, but the chain can stay down,
+	/// so bound the attempts.
 	///
-	/// A chain the host cannot connect to at all, and a node that never
-	/// answers until the call times out, fail as `Unknown`.
+	/// A chain the host cannot connect to at all, a provider that cannot
+	/// follow the chain, and a runtime the host cannot use fail as `Unknown`.
 	ChainUnavailable {
 		/// Human-readable failure reason.
 		reason: String,

@@ -2,14 +2,15 @@
 //!
 //! v0.2 gives `create_transaction` its own error for a node that could not be
 //! asked for the chain's current state, and its request and response keep the
-//! v0.1 shape. A v0.1 caller
-//! cannot decode the new variant, so it receives `Unknown` with the same
-//! reason.
+//! v0.1 shape. A v0.1 caller cannot decode the new variant, so it receives
+//! `Unknown` with the same reason.
 //!
-//! `create_transaction_with_legacy_account` stays on v0.1. A pairing host
-//! always relays it to the signing host, whose answer carries no such
-//! variant, so a v0.2 for it would only stop new products reaching hosts that
-//! do not serve one yet.
+//! `create_transaction_with_legacy_account` stays on v0.1. Only a signing host
+//! builds it itself and can meet that failure; a pairing host relays it to
+//! the signing host, whose answer carries no such variant. A v0.2 would serve
+//! that one host role while stopping new products from reaching every host
+//! that does not serve it yet, so the method reports the failure as
+//! `Unknown`.
 
 use crate::{
 	v01, v02,
@@ -83,28 +84,26 @@ impl IntoLatest for HostCreateTransactionError {
 
 impl FromLatest for HostCreateTransactionError {
 	fn from_latest(latest: Self::Latest, target: u8) -> Self {
-		if target >= 2 {
-			return Self::V2(latest);
-		}
-		Self::V1(match latest {
-			v02::HostCreateTransactionError::FailedToDecode => {
-				v01::HostCreateTransactionError::FailedToDecode
-			},
-			v02::HostCreateTransactionError::Rejected => v01::HostCreateTransactionError::Rejected,
-			v02::HostCreateTransactionError::NotSupported { reason } => {
+		if target >= 2 { Self::V2(latest) } else { Self::V1(latest.into_v01()) }
+	}
+}
+
+impl v02::HostCreateTransactionError {
+	/// This error as a v0.1 caller can decode it: `ChainUnavailable`, which
+	/// v0.1 lacks, becomes `Unknown` with the same reason.
+	pub fn into_v01(self) -> v01::HostCreateTransactionError {
+		match self {
+			Self::FailedToDecode => v01::HostCreateTransactionError::FailedToDecode,
+			Self::Rejected => v01::HostCreateTransactionError::Rejected,
+			Self::NotSupported { reason } => {
 				v01::HostCreateTransactionError::NotSupported { reason }
 			},
-			v02::HostCreateTransactionError::PermissionDenied => {
-				v01::HostCreateTransactionError::PermissionDenied
-			},
-			v02::HostCreateTransactionError::Unknown { reason } |
-			v02::HostCreateTransactionError::ChainUnavailable { reason } => {
+			Self::PermissionDenied => v01::HostCreateTransactionError::PermissionDenied,
+			Self::Unknown { reason } | Self::ChainUnavailable { reason } => {
 				v01::HostCreateTransactionError::Unknown { reason }
 			},
-			v02::HostCreateTransactionError::UnknownContact => {
-				v01::HostCreateTransactionError::UnknownContact
-			},
-		})
+			Self::UnknownContact => v01::HostCreateTransactionError::UnknownContact,
+		}
 	}
 }
 
@@ -185,8 +184,8 @@ mod tests {
 
 	#[test]
 	fn create_transaction_with_legacy_account_stays_on_v01() {
-		// A pairing host relays it, so it can never report the v0.2 variant,
-		// and a V2 request would only fail on hosts that do not serve one.
+		// Only a signing host could report the v0.2 variant for it, and a V2
+		// request would fail on every host that does not serve one.
 		assert_eq!(HostCreateTransactionWithLegacyAccountRequest::LATEST, 1);
 	}
 

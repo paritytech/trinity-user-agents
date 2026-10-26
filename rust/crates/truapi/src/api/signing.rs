@@ -44,7 +44,8 @@ pub trait Signing: Send + Sync {
 	///
 	/// A host that builds the transaction itself fails the call as
 	/// `ChainUnavailable` when the node serving the chain cannot be asked for
-	/// its current state. Nothing was signed, so the same call can be made
+	/// its current state or does not answer in time. Nothing was signed, so the
+	/// same call can be made
 	/// again. Bound the attempts, since the chain can stay down, and expect a
 	/// call that needed the user's confirmation to ask for it again.
 	///
