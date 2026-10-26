@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import io.paritytech.polkadotapp.test_shared.any
@@ -53,7 +52,7 @@ class VideoGameDeepLinkHandlerTest {
 
         verifyReported(GameReminderEvent.Tapped(game, START))
         verify(router).openGameProduct(game)
-        verifyReported(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
+        verifyReported(GameReminderEvent.ProductOpened(game, START))
         verify(reminder).cancel(game)
     }
 
@@ -69,7 +68,7 @@ class VideoGameDeepLinkHandlerTest {
         order.verify(accountRepository).getWalletAccount()
         order.verify(router).openGameProduct(game)
         order.verify(reminder).cancel(game)
-        order.verify(telemetry).report(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
+        order.verify(telemetry).report(GameReminderEvent.ProductOpened(game, START))
     }
 
     @Test
@@ -91,7 +90,7 @@ class VideoGameDeepLinkHandlerTest {
 
         assertTrue(result.isFailure)
         verify(reminder, never()).cancel(game)
-        verify(telemetry, never()).report(GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM))
+        verify(telemetry, never()).report(GameReminderEvent.ProductOpened(game, START))
     }
 
     private suspend fun handle(link: Uri) = coroutineScope { with(ComputationalScope(this)) { handler.handle(link) } }

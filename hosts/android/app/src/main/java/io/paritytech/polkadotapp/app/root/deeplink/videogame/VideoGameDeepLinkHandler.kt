@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.WEEKLY_GAME_HOST
 import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.isProductGameLink
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderEvent
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderOpenSource
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderTelemetry
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -48,7 +47,7 @@ class VideoGameDeepLinkHandler @Inject constructor(
 
             videoGameRouter.openGameProduct(productId)
             productGameReminder.cancel(productId)
-            telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis, GameReminderOpenSource.ALARM))
+            telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis))
 
             DeeplinkProcessingOutcome.NoOp
         }

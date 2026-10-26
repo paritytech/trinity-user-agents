@@ -45,10 +45,10 @@ class GameReminderTelemetryTest {
     }
 
     @Test
-    fun `product opened carries its source`() {
-        val event = GameReminderEvent.ProductOpened(game, START, GameReminderOpenSource.ALARM).toSentryEvent(NOW)
+    fun `product opened does not invent an open source`() {
+        val event = GameReminderEvent.ProductOpened(game, START).toSentryEvent(NOW)
         assertEquals("host.reminder.product_opened", event.message?.formatted)
-        assertEquals("alarm", event.getTag("reminder.open_source"))
+        assertNull(event.getTag("reminder.open_source"))
     }
 
     @Test

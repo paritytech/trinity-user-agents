@@ -19,11 +19,13 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     lateinit var alarmHandler: GameReminderAlarmHandler
 
     override fun onReceive(context: Context, intent: Intent) {
-        val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)
-        if (type !is VideoGameNotificationType.ProductGameStartsSoon) return
-        val productId = ProductId.fromStoredValue(type.productId)
-        if (intent.action == ACTION_POST_NOTIFICATION) {
-            alarmHandler.onAlarm(productId, ringAlarm = context.canScheduleExactAlarms())
+        if (intent.action != ACTION_POST_NOTIFICATION) return
+
+        when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
+            is VideoGameNotificationType.ProductGameStartsSoon ->
+                alarmHandler.onAlarm(ProductId.fromStoredValue(type.productId), ringAlarm = context.canScheduleExactAlarms())
+
+            null -> Unit
         }
     }
 }

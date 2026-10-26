@@ -38,7 +38,6 @@ sealed interface GameReminderEvent {
     data class ProductOpened(
         override val productId: ProductId,
         override val startsAtMillis: Long?,
-        val source: GameReminderOpenSource,
     ) : GameReminderEvent
 
     data class Cancelled(override val productId: ProductId, override val startsAtMillis: Long) : GameReminderEvent
@@ -53,10 +52,6 @@ enum class GameReminderSkipReason(val value: String) {
     NOT_AUTHORIZED("not_authorized"),
     START_IN_PAST("start_in_past"),
     FAILED("failed"),
-}
-
-enum class GameReminderOpenSource(val value: String) {
-    ALARM("alarm"),
 }
 
 class GameReminderTelemetry @Inject constructor(
@@ -95,9 +90,9 @@ internal fun GameReminderEvent.toSentryEvent(nowMillis: Long) = SentryEvent().ap
             setTag("host.app_state", if (event.foreground) "active" else "background")
             setTag("reminder.still_scheduled", event.stillScheduled.toString())
         }
-        is GameReminderEvent.ProductOpened -> setTag("reminder.open_source", event.source.value)
         is GameReminderEvent.NotScheduled -> setTag("reminder.skip_reason", event.reason.value)
         is GameReminderEvent.Tapped,
+        is GameReminderEvent.ProductOpened,
         is GameReminderEvent.Cancelled -> Unit
     }
 }
