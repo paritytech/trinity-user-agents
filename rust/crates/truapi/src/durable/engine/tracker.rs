@@ -241,6 +241,7 @@ mod tests {
 			engine::DurableRequest,
 			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus},
 		},
+		time::ManualTimer,
 	};
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -248,8 +249,8 @@ mod tests {
 		durable::{
 			oracle::{DurableRegistry, Unobservable},
 			testing::{
-				FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner,
-				engine_with_spawner, extrinsic, without_plan,
+				FakeChain, GENESIS, block, block_hash, counting_spawner, engine_with_spawner,
+				extrinsic, without_plan,
 			},
 		},
 		test_support::wait_until,
