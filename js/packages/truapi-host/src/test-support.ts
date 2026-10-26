@@ -77,7 +77,10 @@ export function makeHostCallbacks(
       ...overrides.permissions,
     },
     features: { ...defaults.features, ...overrides.features },
-    extrinsicVersion: { ...defaults.extrinsicVersion, ...overrides.extrinsicVersion },
+    extrinsicVersion: {
+      ...defaults.extrinsicVersion,
+      ...overrides.extrinsicVersion,
+    },
     productStorage: {
       ...defaults.productStorage,
       ...overrides.productStorage,
