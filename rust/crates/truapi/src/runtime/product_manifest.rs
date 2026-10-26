@@ -27,7 +27,10 @@ use crate::{
 		DotnsCallError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args,
 		decode_address, decode_string, discover_pop_controller, namehash_under,
 	},
-	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
+	runtime::{
+		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		services::RuntimeServices,
+	},
 	unix_time::current_unix_secs,
 };
 
@@ -55,7 +58,7 @@ pub async fn fetch_root_manifest(
 	let mut lookup = DotnsLookup::pinned_to_best_block(
 		chain,
 		asset_hub_chain_genesis_hash,
-		&format!("manifest:{product_id}"),
+		DotnsLookupKind::Manifest(product_id),
 	)
 	.await?;
 

@@ -22,7 +22,7 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::DotnsLookup,
+	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
 	session_usernames::SessionUsernames,
 };
 
@@ -181,7 +181,7 @@ async fn lookup_dotns_identity(
 		let mut lookup = DotnsLookup::pinned_to_best_block(
 			chain,
 			asset_hub_chain_genesis_hash,
-			&format!("identity:{}", hex::encode(account_id)),
+			DotnsLookupKind::Identity,
 		)
 		.await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {
