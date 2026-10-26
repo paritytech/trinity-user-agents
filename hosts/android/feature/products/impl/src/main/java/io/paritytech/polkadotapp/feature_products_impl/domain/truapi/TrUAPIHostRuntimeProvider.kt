@@ -224,7 +224,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
+        override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
             val demand = when (transition) {
                 WorkerTransition.START -> WorkerDemand.START
                 WorkerTransition.STOP -> WorkerDemand.STOP
