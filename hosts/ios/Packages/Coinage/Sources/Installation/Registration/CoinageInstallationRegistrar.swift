@@ -12,8 +12,6 @@ public enum CoinageAccountBackupStatus: Hashable, Sendable {
     /// Not final within the expected time, or a reorg dropped it after it was included.
     case delayed
     case completed
-
-    public var needsAttention: Bool { self == .delayed }
 }
 
 public protocol CoinageAccountBackupObserving: Sendable {
@@ -51,8 +49,13 @@ final class CoinageInstallationRegistrar: CoinageInstallationRegistering, @unche
     private let timing: Timing
     private let logger: (any SDKLoggerProtocol)?
 
-    private let status = AsyncCurrentValueSubject<CoinageAccountBackupStatus>(.registering)
+    /// Nil until the earlier registration is read, so an installation already backed up never reads as
+    /// registering on launch.
+    private let status = AsyncCurrentValueSubject<CoinageAccountBackupStatus?>(nil)
     private let run = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+    private let earlierRegistration = OSAllocatedUnfairLock<Task<InstallationRegistrationTarget?, Never>?>(
+        initialState: nil
+    )
     private let completed = OSAllocatedUnfairLock(initialState: false)
 
     init(
@@ -78,7 +81,8 @@ final class CoinageInstallationRegistrar: CoinageInstallationRegistering, @unche
     }
 
     func subscribeStatus() -> AnyAsyncSequence<CoinageAccountBackupStatus> {
-        status.eraseToAnyAsyncSequence()
+        resolveEarlierRegistration()
+        return status.compactMap { $0 }.eraseToAnyAsyncSequence()
     }
 
     func start() {
@@ -91,6 +95,8 @@ final class CoinageInstallationRegistrar: CoinageInstallationRegistering, @unche
 
 private extension CoinageInstallationRegistrar {
     func register() async {
+        let finalizedBefore = await resolveEarlierRegistration().value
+
         let overdue = Task { [timing, weak self] in
             do {
                 try await timing.clock.sleep(for: timing.expectedRegistrationTime)
@@ -102,8 +108,62 @@ private extension CoinageInstallationRegistrar {
         defer { overdue.cancel() }
 
         guard let target = await awaitTarget() else { return }
+        if target != finalizedBefore {
+            reportRegistering()
+        }
         await registerUntilFinalized(target)
         reportCompleted()
+    }
+
+    /// Read on the first subscription rather than at `start()`, which waits for the chain context, so a
+    /// registration that already finalized never holds an allocation until then.
+    @discardableResult
+    func resolveEarlierRegistration() -> Task<InstallationRegistrationTarget?, Never> {
+        earlierRegistration.withLock { task in
+            if let task { return task }
+
+            let newTask = Task { [weak self] () -> InstallationRegistrationTarget? in
+                guard let self else { return nil }
+                let finalized = await finalizedRegistration()
+                reportInitial(isCompleted: finalized != nil)
+                return finalized
+            }
+            task = newTask
+            return newTask
+        }
+    }
+
+    func finalizedRegistration() async -> InstallationRegistrationTarget? {
+        do {
+            let installation = try await currentInstallationStore.getOrCreateCurrent()
+            guard let contract = await configProvider.contractAddress() else { return nil }
+
+            let target = InstallationRegistrationTarget(contract: contract, installation: installation)
+            let entries = try await engine.getGroupEntries(
+                domain: .coinageInstallation,
+                groupId: target.registrationGroup
+            )
+            return entries.contains { $0.status == .finalizedSuccess } ? target : nil
+        } catch {
+            logger?.warning("Installation registration: could not read the earlier registration: \(error)")
+            return nil
+        }
+    }
+
+    func reportInitial(isCompleted: Bool) {
+        completed.withLock { completed in
+            guard status.value == nil else { return }
+            completed = isCompleted
+            send(isCompleted ? .completed : .registering)
+        }
+    }
+
+    /// The target differs from the one that finalized earlier, so that registration covers nothing now.
+    func reportRegistering() {
+        completed.withLock { completed in
+            completed = false
+            send(.registering)
+        }
     }
 
     /// Under the lock, so the overdue timer cannot overwrite a `completed` that lands between its check

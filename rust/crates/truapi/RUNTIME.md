@@ -230,9 +230,12 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, then calls
+`start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
 
 ### Durable transactions
 
@@ -257,7 +260,7 @@ presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
-records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be
@@ -294,6 +297,7 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
