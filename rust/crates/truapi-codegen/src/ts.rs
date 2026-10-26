@@ -1462,7 +1462,6 @@ fn write_observable_helper(out: &mut String) {
           decodeItem,
           decodeInterrupt,
           onSubscribe,
-          reopenOnReset,
         }}: {{
           transport: TrUApiTransport;
           ids: MethodIds;
@@ -1474,7 +1473,6 @@ fn write_observable_helper(out: &mut String) {
           // omitted.
           decodeInterrupt?: (payload: Uint8Array) => Reason | undefined;
           onSubscribe?: (subscription: Subscription) => {{ unsubscribe(): void }};
-          reopenOnReset?: boolean;
         }}): ObservableLike<Item, Reason> {{
           const observable: ObservableLike<Item, Reason> = {{
             subscribe(observer: Partial<Observer<Item, Reason>> = {{}}): Subscription {{
@@ -1502,7 +1500,6 @@ fn write_observable_helper(out: &mut String) {
               raw = transport.subscribeRaw({{
                 ids,
                 payload,
-                reopenOnReset,
                 onReceive: (payload) => {{
                   if (closed) return;
                   try {{
@@ -1930,7 +1927,6 @@ fn emit_method(
 				error_codec,
 				version,
 				request_name,
-				method.wire.reopen_on_reset,
 			)?;
 		},
 		(kind, return_type) => {
@@ -2083,7 +2079,6 @@ fn emit_subscribe_method(
 	error_codec: String,
 	version: u32,
 	request_name: Option<&str>,
-	reopen_on_reset: bool,
 ) -> Result<()> {
 	let observable_args = format!("{item_type_ts}, {}", err.inner_type_ts);
 	let signature = if payload.param_list.is_empty() {
@@ -2120,15 +2115,6 @@ fn emit_subscribe_method(
         "
 	)
 	.unwrap();
-	if reopen_on_reset {
-		writedoc!(
-			out,
-			"
-              reopenOnReset: true,
-            "
-		)
-		.unwrap();
-	}
 	if item_is_wrapper {
 		writedoc!(
 			out,

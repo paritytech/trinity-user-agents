@@ -52,7 +52,6 @@ export function createHostConnection(
   let stopped = false;
   let receive: ((frame: Uint8Array) => void) | undefined;
   let reset: ((error: Error) => void) | undefined;
-  let connected: (() => void) | undefined;
   let legacy: { receive(frame: Uint8Array): void; close(): void } | undefined;
   let legacyPort: MessagePort | undefined;
   let status: ConnectionStatus = "disconnected";
@@ -129,18 +128,10 @@ export function createHostConnection(
       .then((result) => {
         if (result.isErr()) throw result.error;
         if (current !== connection) throw new ConnectionResetError();
-        const firstCheck = !connection.verified;
         connection.verified = true;
         connection.checkedAt = now();
         retries = 0;
         setStatus("connected");
-        if (firstCheck) {
-          try {
-            connected?.();
-          } catch {
-            /* A verified connection stays usable for every other caller. */
-          }
-        }
       })
       .catch((error) => {
         retire(connection, error);
@@ -194,12 +185,6 @@ export function createHostConnection(
         reset = callback;
         return () => {
           reset = undefined;
-        };
-      },
-      subscribeReady(callback) {
-        connected = callback;
-        return () => {
-          connected = undefined;
         };
       },
       dispose: stop,

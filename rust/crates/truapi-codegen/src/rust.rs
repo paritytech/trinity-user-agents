@@ -160,7 +160,7 @@ mod tests {
 					args: vec![TypeRef::Named { name: "ErrWrapper".to_string(), args: vec![] }],
 				},
 			},
-			wire: WireAttrs { id: Some(request_id), ..WireAttrs::default() },
+			wire: WireAttrs { host_initiated: false, internal: false, id: Some(request_id) },
 			docs: None,
 		}
 	}
@@ -177,7 +177,7 @@ mod tests {
 					args: vec![TypeRef::Named { name: "GenericError".to_string(), args: vec![] }],
 				},
 			},
-			wire: WireAttrs { id: Some(start_id), ..WireAttrs::default() },
+			wire: WireAttrs { host_initiated: false, internal: false, id: Some(start_id) },
 			docs: None,
 		}
 	}

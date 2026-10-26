@@ -35,10 +35,6 @@ pub fn service(args: TokenStream, item: TokenStream) -> TokenStream {
 /// `#[wire(id = N, internal)]` keeps a method out of the generated product
 /// SDK while retaining host dispatch. It does not authenticate the caller.
 ///
-/// `#[wire(id = N, reopen_on_reset)]` marks a product-started subscription
-/// whose items the host buffers across connections. The generated client
-/// starts it again on the next connection after a reset instead of ending it.
-///
 /// Expands to the original method plus hidden doc tags that `truapi-codegen`
 /// extracts from rustdoc JSON to build the wire table and versioned clients.
 #[proc_macro_attribute]

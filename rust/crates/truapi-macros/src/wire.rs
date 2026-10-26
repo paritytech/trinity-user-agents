@@ -16,7 +16,6 @@ use syn::{
 struct WireArgs {
 	host_initiated: bool,
 	internal: bool,
-	reopen_on_reset: bool,
 	id: Option<u8>,
 }
 
@@ -37,16 +36,11 @@ impl Parse for WireArgs {
 					return Err(syn::Error::new(key.span(), "duplicate `internal`"));
 				}
 				args.internal = true;
-			} else if key == "reopen_on_reset" {
-				if args.reopen_on_reset {
-					return Err(syn::Error::new(key.span(), "duplicate `reopen_on_reset`"));
-				}
-				args.reopen_on_reset = true;
 			} else {
 				if key != "id" {
 					return Err(syn::Error::new(
 						key.span(),
-						"expected `id = N`, `host_initiated`, `internal`, or `reopen_on_reset`",
+						"expected `id = N`, `host_initiated`, or `internal`",
 					));
 				}
 				input.parse::<Token![=]>()?;
@@ -112,9 +106,6 @@ fn wire_tags(args: &WireArgs) -> Vec<String> {
 	if args.internal {
 		tags.push("@wire_internal".to_string());
 	}
-	if args.reopen_on_reset {
-		tags.push("@wire_reopen_on_reset".to_string());
-	}
 	tags
 }
 
@@ -163,13 +154,6 @@ pub fn expand_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn reopen_on_reset_survives_as_a_doc_tag_for_codegen() {
-		let args = syn::parse_str::<WireArgs>("id = 1, reopen_on_reset").unwrap();
-
-		assert_eq!(wire_tags(&args), ["@wire_id=1", "@wire_reopen_on_reset"]);
-	}
 
 	#[test]
 	fn internal_methods_keep_their_wire_id_and_other_flags() {

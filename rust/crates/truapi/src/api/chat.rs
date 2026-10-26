@@ -118,10 +118,7 @@ pub trait Chat: Send + Sync {
 	/// );
 	/// console.log("action received:", item);
 	/// ```
-	///
-	/// The host holds actions for the product while no stream is open, and the
-	/// client opens the stream again after a lost host connection.
-	#[wire(id = 4, reopen_on_reset)]
+	#[wire(id = 4)]
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,

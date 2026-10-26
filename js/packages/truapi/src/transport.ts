@@ -264,16 +264,6 @@ export interface SubscribeRawParams {
    * the subscription.
    **/
   onClose?: (error: Error) => void;
-
-  /**
-   * Keep the subscription across provider resets instead of closing it. Only
-   * for streams whose items the host buffers across connections, so nothing
-   * is lost or repeated in between. The stream waits, unsent, for the
-   * provider's next ready connection and starts there; a connection that
-   * fails before it is ready leaves it waiting for the one after. It never
-   * dials on its own, and it still ends when the transport closes for good.
-   **/
-  reopenOnReset?: boolean;
 }
 
 /** Product-side registration for one host-initiated subscription method. **/
@@ -442,12 +432,6 @@ export interface WireProvider {
 
   /** End current operations while keeping the provider available for new work. */
   subscribeReset?(callback: (error: Error) => void): () => void;
-
-  /**
-   * Register a callback for each connection the provider brings up and
-   * verifies, including one that replaces a connection a reset ended.
-   **/
-  subscribeReady?(callback: () => void): () => void;
 
   /**
    * Release provider resources and close the underlying pipe.

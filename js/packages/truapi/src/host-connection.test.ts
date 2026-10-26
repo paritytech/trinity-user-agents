@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, jest } from "bun:test";
 import { createHostConnection } from "./host-connection.js";
-import { createClient, type TrUApiClient } from "./generated/client.js";
+import { createClient } from "./generated/client.js";
 import { createTransport } from "./client.js";
 import {
     ConnectionResetError,
@@ -9,7 +9,6 @@ import {
     decodeWireMessage,
     encodeWireMessage,
     MESSAGE_TYPE_RECEIVE,
-    MESSAGE_TYPE_START,
     type ProtocolMessage,
     type WebSocketWireProvider,
 } from "./transport.js";
@@ -87,56 +86,6 @@ function host(createProvider?: (url: string) => WebSocketWireProvider) {
             answer = value;
         },
     };
-}
-
-/**
- * Open a product stream, drop the connection once the host has started it, then
- * send `item` on the next connection and report what the product saw.
- */
-async function deliverAcrossReset<Item>(
-    stream: {
-        ids: { trait: number; method: number };
-        subscribe(
-            client: TrUApiClient,
-            observer: { next(item: Item): void; error(error: unknown): void },
-        ): void;
-        encode(item: Item): Uint8Array;
-    },
-    item: Item,
-) {
-    const fixture = host();
-    const client = fixture.connection.client;
-    await client.system.handshake();
-    const received: Item[] = [];
-    const errors: unknown[] = [];
-    stream.subscribe(client, {
-        next: (next) => received.push(next),
-        error: (error) => errors.push(error),
-    });
-    const starts = () =>
-        fixture.frames.filter(
-            (frame) =>
-                frame.payload.traitId === stream.ids.trait &&
-                frame.payload.methodId === stream.ids.method &&
-                frame.payload.messageType === MESSAGE_TYPE_START,
-        );
-    await until(() => starts().length === 1);
-
-    fixture.sockets[0]!.close();
-    await until(() => starts().length === 2);
-    fixture.sockets[1]!.send(
-        encodeWireMessage({
-            requestId: starts()[1]!.requestId,
-            payload: {
-                traitId: stream.ids.trait,
-                methodId: stream.ids.method,
-                messageType: MESSAGE_TYPE_RECEIVE,
-                value: stream.encode(item),
-            },
-        })._unsafeUnwrap(),
-    );
-    await until(() => received.length === 1);
-    return { received, errors };
 }
 
 const permission: T.RemotePermissionRequest = {
@@ -301,50 +250,6 @@ describe("shared SDK host connection", () => {
                     frame.payload.traitId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
             ),
         ).toHaveLength(2);
-    });
-
-    // The host holds actions while the product has no stream open, so a stream
-    // that a reset ended for good would strand every later press or message. It
-    // has to start again on the next connection without the product noticing.
-    it("reopens the renderer action stream on the next connection after a reset", async () => {
-        const press: T.HostRendererActionSubscribeItem = {
-            context: {
-                tag: "ChatMessage",
-                value: { roomId: "jollity", messageId: "card", messageType: "jollity.gamecard" },
-            },
-            actionId: "open-card",
-            payload: "0x",
-        };
-
-        const delivered = await deliverAcrossReset(
-            {
-                ids: W.RENDERER_ACTION_SUBSCRIBE,
-                subscribe: (client, observer) => client.renderer.actionSubscribe().subscribe(observer),
-                encode: (item) => T.VersionedHostRendererActionSubscribeItem.enc({ tag: "V1", value: item }),
-            },
-            press,
-        );
-
-        expect(delivered).toEqual({ received: [press], errors: [] });
-    });
-
-    it("reopens the chat action stream on the next connection after a reset", async () => {
-        const message: T.HostChatActionSubscribeItem = {
-            roomId: "jollity",
-            peer: "native",
-            payload: { tag: "MessagePosted", value: { tag: "Text", value: { text: "play" } } },
-        };
-
-        const delivered = await deliverAcrossReset(
-            {
-                ids: W.CHAT_ACTION_SUBSCRIBE,
-                subscribe: (client, observer) => client.chat.actionSubscribe().subscribe(observer),
-                encode: (item) => T.VersionedHostChatActionSubscribeItem.enc({ tag: "V1", value: item }),
-            },
-            message,
-        );
-
-        expect(delivered).toEqual({ received: [message], errors: [] });
     });
 
     it("keeps legacy replies separate and does not replace the legacy port after a disconnect", async () => {
@@ -538,42 +443,6 @@ describe("shared SDK connection failure timing", () => {
         fixture.sockets[2]!.open();
         await untilPrepared(() => fixture.statuses.at(-1) === "connected");
         expect(fixture.sockets).toHaveLength(3);
-    });
-
-    // On resume the product can notice the dead socket before the host has
-    // rebound its listener, so the first reconnect is refused. That must not end
-    // a stream the host buffers for: it waits for the connection the retry brings
-    // up, starts there, and dials nothing of its own.
-    it("keeps a reopening stream through a refused reconnect and starts it on the next connection", async () => {
-        visibleDocument();
-        const fixture = controlledHost();
-        const errors: unknown[] = [];
-        fixture.connection.client.renderer
-            .actionSubscribe()
-            .subscribe({ error: (error) => errors.push(error) });
-        const starts = (socket: number) =>
-            fixture.sockets[socket]!.sent.filter(
-                (message) =>
-                    message.payload.traitId === W.RENDERER_ACTION_SUBSCRIBE.trait &&
-                    message.payload.methodId === W.RENDERER_ACTION_SUBSCRIBE.method &&
-                    message.payload.messageType === MESSAGE_TYPE_START,
-            );
-        fixture.sockets[0]!.open();
-        await untilPrepared(() => starts(0).length === 1);
-
-        fixture.sockets[0]!.close();
-        fixture.advance(0);
-        fixture.sockets[1]!.close();
-        await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
-        fixture.advance(250);
-        fixture.sockets[2]!.open();
-        await untilPrepared(() => starts(2).length === 1);
-
-        expect({
-            errors,
-            sockets: fixture.sockets.length,
-            sameStream: starts(2)[0]!.requestId === starts(0)[0]!.requestId,
-        }).toEqual({ errors: [], sockets: 3, sameStream: true });
     });
 
     // A host that stays unreachable must not keep a visible page dialing.
@@ -815,5 +684,39 @@ describe("shared SDK connection failure timing", () => {
             sockets: 1,
             status: "disconnected",
         });
+    });
+
+    // An SDK that reopens a reset stream waits for a "connected" that follows a
+    // status that is not. That only finds the new connection if the status
+    // leaves "connected" between the reset and the reconnect; reopening on the
+    // old status would dial a host that is not listening yet.
+    it("reports a status other than connected between a stream's reset and the next connection", async () => {
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        let reopenedOn: { sockets: number; verified: boolean } | undefined;
+        client.theme.subscribe().subscribe({
+            error: (error) => {
+                if (!(error.cause instanceof ConnectionResetError)) return;
+                let lost = false;
+                fixture.connection.subscribeConnectionStatus((status) => {
+                    if (status !== "connected") lost = true;
+                    else if (lost && !reopenedOn)
+                        reopenedOn = {
+                            sockets: fixture.sockets.length,
+                            verified: fixture.statuses.at(-1) === "connected",
+                        };
+                });
+            },
+        });
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.sockets[0]!.sent.length === 2);
+
+        fixture.sockets[0]!.close();
+        expect(reopenedOn).toBeUndefined();
+        fixture.advance(0);
+        fixture.sockets[1]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+
+        expect(reopenedOn).toEqual({ sockets: 2, verified: true });
     });
 });
