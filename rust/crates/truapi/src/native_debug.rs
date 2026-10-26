@@ -40,6 +40,7 @@ use tracing::debug;
 use crate::{
 	generated::wire_table::TRUAPI_WIRE_SCHEMA_HASH,
 	host_core::{DebugEvent, DebugSink},
+	time::Backoff,
 };
 
 /// Bounded so a stalled or absent debugger applies backpressure as counted
@@ -340,11 +341,10 @@ async fn writer_loop(
 	pending_dropped: Arc<AtomicU64>,
 	queued_bytes: Arc<AtomicUsize>,
 ) {
-	let mut backoff = INITIAL_BACKOFF;
+	let mut backoff = Backoff::new(INITIAL_BACKOFF, MAX_BACKOFF);
 	loop {
 		let Some(stream) = dial(url.as_str(), &addrs).await else {
-			tokio::time::sleep(backoff).await;
-			backoff = (backoff * 2).min(MAX_BACKOFF);
+			tokio::time::sleep(backoff.next_pause()).await;
 			// The sink was dropped while we were retrying: give up.
 			if inbox.is_closed() {
 				return;
@@ -365,7 +365,7 @@ async fn writer_loop(
 						// before the (moving) send so the counter can't drift.
 						queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
 						match write.send(Message::Text(line)).await {
-							Ok(()) => backoff = INITIAL_BACKOFF,
+							Ok(()) => backoff.reset(),
 							Err(_) => {
 								debug!("truapi debug sink: socket closed, reconnecting");
 								// The in-flight line is lost across this reconnect.
@@ -392,8 +392,7 @@ async fn writer_loop(
 			}
 		}
 		// Reconnect after an established socket dropped: back off here too.
-		tokio::time::sleep(backoff).await;
-		backoff = (backoff * 2).min(MAX_BACKOFF);
+		tokio::time::sleep(backoff.next_pause()).await;
 		if inbox.is_closed() {
 			return;
 		}

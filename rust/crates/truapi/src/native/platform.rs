@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{iter, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -516,7 +516,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: u32 = 5;
+const PREIMAGE_FAST_RETRIES: usize = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -557,24 +557,20 @@ async fn lookup_until_found(
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
-	let mut retries = 0u32;
-	loop {
-		let pause = if retries < PREIMAGE_FAST_RETRIES {
-			PREIMAGE_RETRY_PAUSE_FAST
-		} else {
-			PREIMAGE_RETRY_PAUSE_SLOW
-		};
+	let pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES)
+		.chain(iter::repeat(PREIMAGE_RETRY_PAUSE_SLOW));
+	for (retry, pause) in iter::zip(1u32.., pauses) {
 		futures_timer::Delay::new(pause).await;
-		retries += 1;
 		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
 		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
 			callbacks.on_core_log(
 				"truapi.native.preimage.found".to_string(),
-				format!("{key_hex} on retry {retries}"),
+				format!("{key_hex} on retry {retry}"),
 			);
 			return Ok(value);
 		}
 	}
+	unreachable!("the slow pause repeats without end")
 }
 
 /// [`crate::platform::ChatPlatform`] served by host-provided

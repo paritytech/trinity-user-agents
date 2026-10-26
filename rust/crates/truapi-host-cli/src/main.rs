@@ -74,6 +74,7 @@ use truapi::{
 	statement_allowance as alloc,
 	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
+	time::Backoff,
 };
 
 use crate::{
@@ -1969,7 +1970,7 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let mut retry_delay = std::time::Duration::from_secs(1);
+		let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 		loop {
 			let result = runtime.resume_pairing(peer).await;
 			match result {
@@ -1984,9 +1985,7 @@ fn spawn_supervised_responder(
 											"failed to remove disconnected paired device: {error}"
 										),
 									});
-									tokio::time::sleep(retry_delay).await;
-									retry_delay =
-										(retry_delay * 2).min(std::time::Duration::from_secs(30));
+									tokio::time::sleep(backoff.next_pause()).await;
 								},
 							}
 						}
@@ -2018,8 +2017,7 @@ fn spawn_supervised_responder(
 					});
 				},
 			}
-			tokio::time::sleep(retry_delay).await;
-			retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(30));
+			tokio::time::sleep(backoff.next_pause()).await;
 		}
 	})
 }

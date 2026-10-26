@@ -39,6 +39,7 @@ use crate::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
 		ProductContext, ProductId,
 	},
+	time::Backoff,
 	unix_time::current_unix_millis,
 };
 
@@ -596,8 +597,7 @@ impl RuntimeServices {
 			let registry = services.funding();
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
-			let mut retry_in = RESUME_RETRY_FIRST;
-			loop {
+			for retry_in in Backoff::new(RESUME_RETRY_FIRST, RESUME_RETRY_LONGEST) {
 				let loaded = registry
 					.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
 						// Ended sessions the host has not recorded are
@@ -612,7 +612,7 @@ impl RuntimeServices {
 					})
 					.await;
 				match loaded {
-					Ok(()) => break registry.keep_expiring(&services),
+					Ok(()) => return registry.keep_expiring(&services),
 					// Left for the newer app that wrote them; retrying cannot
 					// read them.
 					Err(error @ FundingSessionError::NewerFormat { .. }) => {
@@ -622,7 +622,6 @@ impl RuntimeServices {
 					Err(error) => {
 						tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
 						futures_timer::Delay::new(retry_in).await;
-						retry_in = (retry_in * 2).min(RESUME_RETRY_LONGEST);
 					},
 				}
 			}

@@ -1,4 +1,5 @@
-//! [`Timer`]: waits that tests can control.
+//! Waits: [`Timer`], which tests can control, and [`Backoff`], the pauses
+//! between retries.
 
 use core::time::Duration;
 
@@ -22,8 +23,10 @@ impl Timer for RealTimer {
 	}
 }
 
+mod backoff;
 #[cfg(test)]
 mod manual;
 
+pub use backoff::Backoff;
 #[cfg(test)]
 pub use manual::ManualTimer;

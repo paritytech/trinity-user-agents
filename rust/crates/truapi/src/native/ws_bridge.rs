@@ -42,7 +42,7 @@ use tokio_tungstenite::{
 };
 
 use super::executor::shared_native_executor;
-use crate::{FrameSink, ProductRuntime};
+use crate::{FrameSink, ProductRuntime, time::Backoff};
 
 // Allow reconnect overlap without one execution exhausting the shared limit.
 const MAX_WS_CONNECTIONS_PER_EXECUTION: usize = 8;
@@ -482,7 +482,7 @@ async fn accept_loop(
 	let mut setup_tasks: VecDeque<tokio::task::JoinHandle<()>> = VecDeque::new();
 	// Absent while a lost listener waits to be bound again on the same port.
 	let mut listener = Some(listener);
-	let mut relisten_pause = RELISTEN_PAUSE_MIN;
+	let mut relisten_backoff = Backoff::new(RELISTEN_PAUSE_MIN, RELISTEN_PAUSE_MAX);
 	loop {
 		tokio::select! {
 			// Shutdown first, so a stopping loop never binds its port again.
@@ -533,16 +533,16 @@ async fn accept_loop(
 					connection_setup(stream, peer, registry, logger).await;
 				}));
 			}
-			_ = tokio::time::sleep(relisten_pause), if listener.is_none() => {
+			_ = tokio::time::sleep(relisten_backoff.peek()), if listener.is_none() => {
 				match bind_loopback(port).and_then(TcpListener::from_std) {
 					Ok(rebound) => {
 						logger("truapi.ws_bridge.relistened", &format!("port={port}"));
 						listener = Some(rebound);
-						relisten_pause = RELISTEN_PAUSE_MIN;
+						relisten_backoff.reset();
 					}
 					Err(err) => {
 						logger("truapi.ws_bridge.relisten_failed", &err.to_string());
-						relisten_pause = (relisten_pause * 2).min(RELISTEN_PAUSE_MAX);
+						relisten_backoff.next_pause();
 					}
 				}
 			}
