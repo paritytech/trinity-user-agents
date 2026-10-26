@@ -23,10 +23,16 @@ use crate::{
 		TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+	installation::InstallationIdProvider,
+	nft::{HoldingTracker, NftLedger},
+	nft_purse::NftPurses,
 };
 use async_trait::async_trait;
 use truapi::latest;
@@ -62,6 +68,8 @@ pub struct RuntimeServices {
 	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
 	/// The host's balance view, once installed.
 	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
+	/// Funding sessions shared by every product runtime of this host.
+	funding: Arc<crate::runtime::funding::FundingRegistry>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
@@ -88,6 +96,16 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// The NFT ledger (purse records and item keys) over the core database,
+	/// installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	nft_ledger: OnceLock<NftLedger>,
+	/// Keeps the ledger's holdings in step with the chain, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	holding_tracker: OnceLock<HoldingTracker>,
+	/// Provider of the installation id NFT purse item keys are derived under.
+	#[cfg(not(target_arch = "wasm32"))]
+	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -145,8 +163,12 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let statement_store =
-			StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			chain.clone(),
+			people_chain_genesis_hash,
+			spawner.clone(),
+		);
 		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
 		Arc::new(Self {
 			platform,
@@ -154,6 +176,7 @@ impl RuntimeServices {
 			chat_platform: None,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
+			funding: Default::default(),
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
@@ -167,6 +190,12 @@ impl RuntimeServices {
 			core_db: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			holding_tracker: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			installation_provider: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
@@ -248,6 +277,11 @@ impl RuntimeServices {
 	/// installed it.
 	pub fn install_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.pocket_platform.set(platform).is_ok()
+	}
+
+	/// Funding sessions shared by every product runtime of this host.
+	pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
+		&self.funding
 	}
 
 	/// Install the host's top-up engine. Set-once; returns whether this call
@@ -375,6 +409,39 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the NFT ledger. Set-once, like the database it runs on.
+	/// Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
+		self.nft_ledger.set(ledger).is_ok()
+	}
+
+	/// Install the tracker of NFT holdings, which runs for as long as the
+	/// services live. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
+		self.holding_tracker.set(tracker).is_ok()
+	}
+
+	/// Install the provider of the installation id. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_installation_provider(&self, provider: Arc<dyn InstallationIdProvider>) -> bool {
+		self.installation_provider.set(provider).is_ok()
+	}
+
+	/// The provider of the installation id, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn installation_provider(&self) -> Option<Arc<dyn InstallationIdProvider>> {
+		self.installation_provider.get().cloned()
+	}
+
+	/// NFT purses, once their ledger is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn nft_purses(&self) -> Option<NftPurses> {
+		self.nft_ledger.get().cloned().map(NftPurses::new)
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

@@ -63,6 +63,7 @@ afterEvaluate {
 dependencies {
     api(project(":feature:products:api"))
 
+    implementation(libs.sentry.android)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.webkit)

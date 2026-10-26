@@ -13,7 +13,6 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(fundingStates: [AssetFundingStatusView.FundingState])
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didShowBackupNotification()
     func didHideBackupNotification()
 
@@ -63,7 +62,6 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(price: PriceData?)
     func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
     func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
@@ -71,7 +69,11 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous
     /// holdings, which is the mismatch `CoinageSummary` exists to prevent.
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings)
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    )
     #if TESTNET_FEATURE
         func didCompleteTopUp(_ result: Result<Void, Error>)
     #endif

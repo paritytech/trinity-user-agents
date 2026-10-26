@@ -8,8 +8,8 @@
 use super::*;
 
 use crate::{
-	platform::CoreStorage,
-	runtime::product_manifest::{CachedManifest, manifest_cache_key},
+	platform::{CoreStorage, CoreStorageKey},
+	runtime::product_manifest::CachedManifest,
 	test_support::account_id,
 	unix_time::current_unix_secs,
 };
@@ -26,15 +26,16 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
-	futures::executor::block_on(
-		platform.write_core_storage(manifest_cache_key(owner), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 
 fn dim2_account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: "dim2.paseo".to_string(),
+		dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }
@@ -69,8 +70,8 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner =
-		derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).expect("owner key derives");
+	let owner = derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
 	)
@@ -306,5 +307,95 @@ fn an_approved_signature_does_not_wait_for_another_prompt() {
 	assert!(
 		matches!(signed, Some(Ok(_))),
 		"the approved payload signature does not wait: {signed:?}",
+	);
+}
+
+fn peopl_account_request() -> HostAccountGetRequest {
+	HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	})
+}
+
+/// A product's prompts open on its own connection, so a host that builds one
+/// platform per product execution shows them as that product's, not the host's.
+#[test]
+fn a_product_is_asked_on_its_own_connection() {
+	let runtime_platform = Arc::new(StubPlatform::default());
+	let connection_platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowOnce].into(),
+		),
+		..StubPlatform::default()
+	});
+	let (services, activation) = signing_runtime_with_platform(runtime_platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("the local session activates");
+	let runtime = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters {
+			platform: connection_platform.clone(),
+			..crate::host_core::ConnectionAdapters::from_services(&services)
+		},
+		activation.clone(),
+		activation,
+		ProductContext::new(ProductId::for_test("myapp.dot")),
+	);
+
+	let _ = futures::executor::block_on(
+		runtime.get_account(&CallContext::default(), peopl_account_request()),
+	);
+	let _ = futures::executor::block_on(
+		runtime.sign_payload(&CallContext::default(), payload_request(account_id("myapp.dot", 0))),
+	);
+
+	let reviews = |platform: &StubPlatform| {
+		(
+			platform.account_access_reviews.lock().unwrap().len(),
+			platform.sign_payload_reviews.lock().unwrap().len(),
+		)
+	};
+	assert_eq!((reviews(&connection_platform), reviews(&runtime_platform)), ((1, 1), (0, 0)));
+}
+
+/// A product that gives up on its request stops waiting for the account-access
+/// prompt, as a paired host's withdrawn request does.
+#[test]
+fn a_cancelled_account_request_stops_waiting_for_the_prompt() {
+	let (_release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		account_access_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+		..StubPlatform::default()
+	});
+	let (services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("the local session activates");
+	let runtime = product_runtime(services, activation);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("get-account-cancelled".to_string(), cancel.clone());
+
+	let (result, ()) = futures::executor::block_on(async {
+		futures::select! {
+			outcome = async {
+				futures::join!(runtime.get_account(&cx, peopl_account_request()), async {
+					cancel.cancel()
+				})
+			}.fuse() => outcome,
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the request kept waiting for the prompt after it was cancelled")
+			},
+		}
+	});
+
+	assert!(
+		matches!(
+			result,
+			Err(CallError::Domain(HostAccountGetError::V1(
+				v01::HostAccountGetError::Unknown { .. }
+			)))
+		),
+		"{result:?}"
 	);
 }

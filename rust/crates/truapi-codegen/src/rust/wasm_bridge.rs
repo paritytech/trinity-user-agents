@@ -49,7 +49,7 @@ pub fn generate_wasm_bridge(
         use wasm_bindgen::JsValue;
 
         use super::{{
-            WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
+            WasmPlatform, call_js_function, decode_bytes, decode_js_item, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
             invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
         }};
@@ -294,26 +294,28 @@ fn emit_result_method(
 	let args = js_arg_vec(method, ctx)?;
 	let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
-	let map_err = error_mapper(err, ctx)?;
-
 	let body = if is_unit(ok) {
-		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
+		formatdoc! {
+			"{call}.await?;
+			Ok(())",
+			call = bridge_call("invoke_unit", &method.name, &args, &[]),
+		}
 	} else if is_bool(ok) {
-		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)
+		format!("Ok({}.await?)", bridge_call("invoke_bool", &method.name, &args, &[]),)
 	} else if is_bytes(ok) {
-		await_chain(&bridge_call("invoke_bytes_return", &method.name, &args, &[]), &map_err)
+		format!("Ok({}.await?)", bridge_call("invoke_bytes_return", &method.name, &args, &[]),)
 	} else if is_optional_bytes(ok) {
-		await_chain(
-			&bridge_call(
+		format!(
+			"Ok({}.await?)",
+			bridge_call(
 				"invoke_optional_bytes_return",
 				&method.name,
 				&args,
 				&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
 			),
-			&map_err,
 		)
 	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) {
-		formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
+		formatdoc_decode_result(method, ok, &raw, &args, ctx)?
 	} else {
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
@@ -396,16 +398,18 @@ fn formatdoc_decode_result(
 	ok: &TypeRef,
 	raw: &str,
 	args: &str,
-	map_err: &str,
 	ctx: &BridgeCtx<'_>,
 ) -> Result<String> {
 	let ty = rust_type(ok, ctx)?;
 	let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
-	let await_bytes = await_chain(&call, &format!("{map_err}?"));
-	Ok(format!(
-		"let bytes = {await_bytes};\ndecode_bytes::<{ty}>(\n    bytes,\n    {:?},\n)\n{map_err}",
-		format!("{raw} response did not decode"),
-	))
+	Ok(formatdoc! {
+		"let bytes = {call}.await?;
+        Ok(decode_bytes::<{ty}>(
+            bytes,
+            {message:?},
+        )?)",
+		message = format!("{raw} response did not decode"),
+	})
 }
 
 fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -455,14 +459,6 @@ fn bridge_call(name: &str, field: &str, second_arg: &str, extra_args: &[String])
 	}
 	out.push(')');
 	out
-}
-
-fn await_chain(call: &str, map_err: &str) -> String {
-	if call.contains('\n') {
-		format!("{call}\n.await\n{map_err}")
-	} else {
-		format!("{call}\n    .await\n    {map_err}")
-	}
 }
 
 fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -602,15 +598,6 @@ fn stream_parser(
 		return Ok(fn_name);
 	}
 	bail!("unsupported stream item type: {ok:?}")
-}
-
-fn error_mapper(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-	let name = named_type_name(err)?;
-	if name == "GenericError" {
-		return Ok(".map_err(generic)".to_string());
-	}
-	let err_ty = rust_type(err, ctx)?;
-	Ok(format!(".map_err(|reason| {err_ty}::Unknown {{ reason }})"))
 }
 
 fn validate_errors(traits: &[&PlatformTrait], ctx: &BridgeCtx<'_>) -> Result<()> {

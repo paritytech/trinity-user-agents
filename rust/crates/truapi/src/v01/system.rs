@@ -2,12 +2,13 @@ use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
 use super::common::GenericError;
+use crate::product_id::ProductId;
 
 /// Response containing the product context bound to the current host runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostGetProductContextResponse {
 	/// Full canonical identifier used for authorization and account derivation.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Request to query whether a feature is supported by the host.
@@ -22,7 +23,7 @@ pub enum HostFeatureSupportedRequest {
 }
 
 /// Error from [`crate::api::System::navigate_to`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostNavigateToError {
 	/// The target host is not authorized for outbound access: the user answered
@@ -32,6 +33,7 @@ pub enum HostNavigateToError {
 	PermissionDenied,
 	/// Catch-all.
 	#[display("{reason}")]
+	#[from]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

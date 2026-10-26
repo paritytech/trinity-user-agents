@@ -2,12 +2,58 @@ name: host-playground e2e
 
 # Runs host-playground inside the iOS and Android host apps built from this commit.
 # See e2e/host-playground/README.md.
+# Each nightly calls this for its own platform and commit. on-label.yml calls
+# it for both platforms on a pull request labelled host-playground-e2e, never
+# one from a fork.
 on:
-  schedule:
-    - cron: "0 18 * * *"
-  pull_request:
-    types: [labeled, synchronize]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      platform:
+        description: "android or ios, or empty for both"
+        required: false
+        type: string
+        default: ""
+      ref:
+        description: "Commit to test. Defaults to the calling run's commit."
+        required: false
+        type: string
+        default: ""
+      release_tag:
+        description: "Nightly prerelease whose notes get the results."
+        required: false
+        type: string
+        default: ""
+    # Each caller passes only its own platform's.
+    secrets:
+      GOOGLE_SERVICES_JSON_BASE64:
+        required: false
+      CI_GITHUB_KEYSTORE_KEY_FILE:
+        required: false
+      CI_KEYSTORE_PASS:
+        required: false
+      CI_KEYSTORE_KEY_ALIAS:
+        required: false
+      CI_KEYSTORE_KEY_PASS:
+        required: false
+      FIRESTORE_DATABASE_ID:
+        required: false
+      GOOGLE_OAUTH_ID:
+        required: false
+      GOOGLE_PROJECT_ID:
+        required: false
+      NIGHTLY_FUNDING_MNEMONIC:
+        required: false
+      E2E_ANDROID_MNEMONIC:
+        required: false
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64:
+        required: false
+      MELD_BASIC_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN_IOS:
+        required: false
+      E2E_IOS_MNEMONIC:
+        required: false
 
 permissions:
   contents: read
@@ -15,17 +61,13 @@ permissions:
 jobs:
   android:
     name: Android emulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'android'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
-      group: host-playground-e2e-android-${{ github.event.pull_request.number || github.ref }}
+      group: host-playground-e2e-android-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    # In a nightly the results go to its prerelease, so a red run must not fail the night.
+    continue-on-error: ${{ inputs.release_tag != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -33,9 +75,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -127,7 +170,7 @@ jobs:
 
       - name: Upload the results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: host-playground-e2e-android
           path: ${{ env.OUT }}
@@ -136,18 +179,14 @@ jobs:
 
   ios:
     name: iOS simulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'ios'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
-      group: host-playground-e2e-ios-${{ github.event.pull_request.number || github.ref }}
+      group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    runs-on: macos-26
+    continue-on-error: ${{ inputs.release_tag != '' }}
+    # The Parity pool, out of the hosted macOS queue.
+    runs-on: parity-macos
     timeout-minutes: 150
     env:
       IOS_BUNDLE_ID: "io.parity.polkadotapp"
@@ -156,9 +195,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/mac-preflight
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -177,7 +219,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build the E2E simulator app
@@ -234,9 +276,48 @@ jobs:
 
       - name: Upload the results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: host-playground-e2e-ios
           path: ${{ env.OUT }}
           retention-days: 7
           if-no-files-found: ignore
+
+  # Its own job, so only it holds a token that can edit a release.
+  publish:
+    name: Add the results to the nightly prerelease
+    needs: [android, ios]
+    if: ${{ !cancelled() && inputs.release_tag != '' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: host-playground-e2e-*
+          path: ${{ runner.temp }}/e2e
+
+      - name: Add the results to the prerelease notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.release_tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          COMMIT="$(git rev-parse HEAD)"
+          export COMMIT
+          gh release view "${TAG}" --json body --jq .body > "${RUNNER_TEMP}/notes-before.md"
+          node e2e/host-playground/release-notes.mjs "${RUNNER_TEMP}/e2e" "${RUNNER_TEMP}/notes-before.md" \
+            > "${RUNNER_TEMP}/notes.md"
+          gh release edit "${TAG}" --notes-file "${RUNNER_TEMP}/notes.md"

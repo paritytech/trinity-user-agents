@@ -92,9 +92,19 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.HostPaymentBalanceSubscribeException
+import uniffi.truapi.HostPaymentException
+import uniffi.truapi.HostPaymentRequest
+import uniffi.truapi.HostPaymentStatusSubscribeItem
+import uniffi.truapi.HostPaymentTopUpException
+import uniffi.truapi.HostPaymentTopUpRequest
+import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeBalanceCallbacks
+import uniffi.truapi.NativePaymentCallbacks
 import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.NativeTopUpCallbacks
 import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
@@ -307,8 +317,8 @@ interface HostBridge {
     fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
-     * Observe demand on a product's worker crossing zero. `Start` means run
-     * the worker now, `Stop` that nothing wants it any more. Every transition
+     * Request a product worker transition. `Start` means run the worker now;
+     * `Stop` means it is no longer needed and may stop. Every transition
      * arrives here in ledger order, the ones the app asks for by taking a
      * reference of its own included.
      *
@@ -320,7 +330,7 @@ interface HostBridge {
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
-    fun workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    fun requestWorkerTransition(productId: String, transition: WorkerTransition) {}
 
     /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
@@ -358,10 +368,20 @@ interface HostBridge {
      * While [pending] is true, keep a background task running that awaits
      * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
      * Reported on change, starting with the state the runtime finds at
-     * launch. Runtime-wide, like [workerDemandChanged], and arrives on a core
+     * launch. Runtime-wide, like [requestWorkerTransition], and arrives on a core
      * thread: marshal the work off rather than blocking.
      */
     fun durableWorkChanged(pending: Boolean) {}
+
+    /**
+     * The 32-byte id of the current app installation, created on first use.
+     * NFT purse item keys are derived under it, so it must be the id the host
+     * registers for recovery. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection for a host that keeps no installation id.
+     */
+    @Throws(HostRejection::class)
+    suspend fun currentInstallation(): ByteArray =
+        throw HostRejection.Rejected("this host keeps no installation id")
 
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
@@ -496,8 +516,8 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
-        runCatching { bridge.workerDemandChanged(productId, transition) }
+    override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
+        runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
@@ -509,6 +529,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun durableWorkChanged(pending: Boolean) {
         runCatching { bridge.durableWorkChanged(pending) }
     }
+
+    override suspend fun currentInstallation(): ByteArray =
+        withHostRejection { bridge.currentInstallation() }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }
@@ -760,6 +783,121 @@ private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGa
 }
 
 /**
+ * Native top-up engine, which claims a source's funds into the user's balance.
+ * Install with [TrUAPIHostRuntime.setTopUp], once. A runtime without one
+ * answers top-ups with `Unsupported`.
+ *
+ * The core has already checked the session, the source keys and the amount,
+ * and hashed the product into every id it passes, so ids never collide across
+ * products. Report each status after the one [topUpStatus] answered with
+ * [TrUAPIHostRuntime.notifyTopUpStatus]; a terminal one ends the stream.
+ */
+interface TopUpHostBridge {
+    /**
+     * Start top-up [request] for [productId], returning once the host has
+     * accepted it. Its amount is a decimal string of CASH units.
+     */
+    @Throws(HostPaymentTopUpException::class)
+    suspend fun topUp(productId: String, request: HostPaymentTopUpRequest)
+
+    /**
+     * The current status of [productId]'s top-up [id], or `null` when the host
+     * holds no such top-up. Runs inline on the core's thread.
+     */
+    @Throws(HostRejection::class)
+    fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
+}
+
+/**
+ * Native payment engine, which pays from the user's balance to an account.
+ * Install with [TrUAPIHostRuntime.setPayments], once. A runtime without one
+ * answers payment requests with `Unsupported`.
+ *
+ * The core hashes the product into every id it passes. Answer
+ * `InsufficientBalance` whenever the balance is short: the core turns it into
+ * `Rejected` for a product without balance access. Report each status after
+ * the one [paymentStatus] answered with [TrUAPIHostRuntime.notifyPaymentStatus].
+ */
+interface PaymentHostBridge {
+    /**
+     * Ask the user to approve payment [request] for [productId], returning once
+     * they have decided and the host took it on. Its amount is a decimal string
+     * of CASH units.
+     */
+    @Throws(HostPaymentException::class)
+    suspend fun requestPayment(productId: String, request: HostPaymentRequest)
+
+    /**
+     * The current status of [productId]'s payment [id], or `null` when the host
+     * holds no such payment. Runs inline on the core's thread.
+     */
+    @Throws(HostRejection::class)
+    fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem?
+}
+
+/**
+ * Native balance view, which shares what a payment can spend with a product.
+ * Install with [TrUAPIHostRuntime.setBalance], once, and report each change
+ * with [TrUAPIHostRuntime.notifyBalance]. The core owns balance access, so do
+ * not prompt for it here.
+ */
+interface BalanceHostBridge {
+    /**
+     * The user's balance in [purse] (`null` for the main purse), as a decimal
+     * string of CASH units: what a payment request can spend now. It is the same
+     * for every product; [productId] only names the one asking.
+     */
+    @Throws(HostPaymentBalanceSubscribeException::class)
+    suspend fun balance(productId: String, purse: UInt?): String
+}
+
+private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
+    override suspend fun topUp(productId: String, request: HostPaymentTopUpRequest) =
+        try {
+            bridge.topUp(productId, request)
+        } catch (error: HostPaymentTopUpException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    override fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
+        withHostRejection { bridge.topUpStatus(productId, id) }
+}
+
+private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
+    override suspend fun requestPayment(productId: String, request: HostPaymentRequest) =
+        try {
+            bridge.requestPayment(productId, request)
+        } catch (error: HostPaymentException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    override fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem? =
+        withHostRejection { bridge.paymentStatus(productId, id) }
+}
+
+private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
+    override suspend fun balance(productId: String, purse: UInt?): String =
+        try {
+            bridge.balance(productId, purse)
+        } catch (error: HostPaymentBalanceSubscribeException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentBalanceSubscribeException.Unknown(hostRejectionReason(error))
+                .apply { initCause(error) }
+        }
+}
+
+/**
  * Bootstrap helper for the native localhost WebSocket bridge that a product
  * execution starts.
  */
@@ -824,6 +962,59 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.notifyContactsChanged()
     }
 
+    // Co-own the payment adapters for as long as the runtime holds them.
+    private var topUpRetainer: NativeTopUpCallbacks? = null
+    private var paymentRetainer: NativePaymentCallbacks? = null
+    private var balanceRetainer: NativeBalanceCallbacks? = null
+
+    /**
+     * Install the host's top-up engine. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setTopUp(topUp: TopUpHostBridge): Boolean {
+        val adapter = TopUpCallbackAdapter(topUp)
+        topUpRetainer = adapter
+        return inner.setTopUpCallbacks(adapter)
+    }
+
+    /** Report a later status of [productId]'s top-up [id] to the products following it. */
+    fun notifyTopUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
+        inner.notifyTopUpStatus(productId, id, status)
+    }
+
+    /**
+     * Install the host's payment engine. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setPayments(payments: PaymentHostBridge): Boolean {
+        val adapter = PaymentCallbackAdapter(payments)
+        paymentRetainer = adapter
+        return inner.setPaymentCallbacks(adapter)
+    }
+
+    /** Report a later status of [productId]'s payment [id] to the products following it. */
+    fun notifyPaymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
+        inner.notifyPaymentStatus(productId, id, status)
+    }
+
+    /**
+     * Install the host's balance view. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setBalance(balance: BalanceHostBridge): Boolean {
+        val adapter = BalanceCallbackAdapter(balance)
+        balanceRetainer = adapter
+        return inner.setBalanceCallbacks(adapter)
+    }
+
+    /**
+     * Report the new balance of [purse] (`null` for the main purse), a decimal
+     * string of CASH units, to the products following it.
+     */
+    fun notifyBalance(purse: UInt?, available: String) {
+        inner.notifyBalance(purse, available)
+    }
+
     /**
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
@@ -857,7 +1048,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /**
      * Take one reference on the product's worker for a modality holder that is
      * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.workerDemandChanged], which is where the host starts the
+     * [HostBridge.requestWorkerTransition], which is where the host starts the
      * worker. Pair every call with one [releaseWorker].
      */
     fun acquireWorker(productId: String) {

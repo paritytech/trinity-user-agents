@@ -1,7 +1,8 @@
 import BigInt
-import Clocks
-import IssueMonitoring
 import Foundation
+import IssueMonitoring
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import Testing
 @testable import Individuality
@@ -13,7 +14,7 @@ struct PGASAccountProvisionerTests {
 
     private static let claimTimeout: Duration = .seconds(120)
 
-    private let clock = TestClock<Duration>()
+    private let clock = ManualClock()
     private let allowance: FakeAllowanceManager
     private let balances = FakeBalanceProvider()
     private let provisioner: PGASAccountProvisioner
@@ -23,6 +24,7 @@ struct PGASAccountProvisionerTests {
         allowance.balances = balances
         provisioner = PGASAccountProvisioner(
             allowanceManager: allowance,
+            domain: .coinage,
             balanceProvider: balances,
             issueDiagnostics: .make(flow: "pgas-allowance", reporter: NoopIssueReporter()),
             claimTimeout: Self.claimTimeout,
@@ -94,16 +96,10 @@ struct PGASAccountProvisionerTests {
         let attempt = Task { [provisioner] in
             try await provisioner.ensureCovers(account: Self.account, required: Self.required)
         }
-        await settle()
-        await clock.advance(by: Self.claimTimeout)
+        defer { attempt.cancel() }
+        try await withTimeout(.hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
 
         await #expect(throws: PGASClaimTimeoutError.self) { try await attempt.value }
-    }
-
-    private func settle() async {
-        for _ in 0 ..< 20 {
-            await Task.yield()
-        }
     }
 }
 
@@ -136,7 +132,8 @@ private final class FakeAllowanceManager: AllowanceManaging, @unchecked Sendable
     func allocate(
         accountId: AccountId,
         policy: OnExistingAllowancePolicy,
-        priority _: AllowanceRecord.Priority
+        priority _: AllowanceRecord.Priority,
+        domain _: AllowanceRecord.Domain
     ) async throws {
         claims.append((accountId, policy))
         if let error { throw error }

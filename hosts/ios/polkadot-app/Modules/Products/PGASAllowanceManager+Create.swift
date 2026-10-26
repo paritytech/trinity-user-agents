@@ -70,7 +70,7 @@ extension PGASAllowanceManager {
 
         let slotInfoProvider = PGASSlotInfoProvider(
             chainId: ahChain.chainId,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
             networkSuffixProvider: tldProvider,
@@ -80,7 +80,7 @@ extension PGASAllowanceManager {
 
         let allocator = PGASSlotAllocator(
             submissionChainId: ahChain.chainId,
-            originChainId: AppConfig.Chains.usernameChain,
+            originChainId: AppConfig.Chains.peopleChain,
             originFactory: pgasOriginFactory,
             submitter: SlotAssignmentSubmitter(monitorFactory: monitorFactory),
             slotInfoProvider: slotInfoProvider

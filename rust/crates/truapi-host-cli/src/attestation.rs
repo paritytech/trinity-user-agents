@@ -24,12 +24,13 @@ use truapi::host_logic::{
 	attestation::{build_lite_registration, signing_context_for},
 	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 	product_account::{
-		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_root_keypair_from_entropy,
-		identity_product_id, product_public_key_to_address,
+		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
+		derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
 	},
 };
 
 use crate::{
+	accounts::IdentityDerivationError,
 	dotns_read::{AssetHubReader, runtime_version},
 	network::NetworkConfig,
 };
@@ -38,6 +39,14 @@ use crate::{
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
+
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("backend auth identity derivation failed")]
+struct BackendIdentityDerivationError(ProductAccountError);
+
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid entropy")]
+struct RootKeyDerivationError(ProductAccountError);
 
 /// Access tokens for the username routes, keyed by backend and authenticated
 /// account. The backend requires a username registration's candidate account
@@ -78,7 +87,7 @@ async fn backend_token(
 	network_suffix: &str,
 ) -> Result<BackendToken> {
 	let auth_client_id = derive_identity_keypair(auth_entropy, network_suffix)
-		.map_err(|err| anyhow::anyhow!("backend auth identity derivation failed: {err}"))?
+		.map_err(BackendIdentityDerivationError::from)?
 		.public
 		.to_bytes();
 	if let Ok(token) = std::env::var(IDENTITY_BACKEND_TOKEN_ENV) &&
@@ -159,7 +168,7 @@ async fn mint_backend_token(
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
 	let keypair = derive_identity_keypair(auth_entropy, network_suffix)
-		.map_err(|err| anyhow::anyhow!("backend auth identity derivation failed: {err}"))?;
+		.map_err(BackendIdentityDerivationError::from)?;
 	let client_id = keypair.public.to_bytes();
 
 	// The proof signs SHA256(challenge || clientId || SHA256(body)). It must
@@ -227,7 +236,7 @@ where
 	let refreshed = backend_token(client, backend_base, auth_entropy, network_suffix)
 		.await
 		.context("refresh identity backend token after 401 Unauthorized")?;
-	request(&refreshed.value).send().await.map_err(Into::into)
+	Ok(request(&refreshed.value).send().await?)
 }
 
 /// Inputs for one attestation run.
@@ -258,7 +267,7 @@ pub async fn lite_username_available(
 	auth_entropy: &[u8],
 	username_base: &str,
 ) -> Result<bool> {
-	let backend_base = network.identity_backend_base;
+	let backend_base = network.identity_backend()?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
@@ -341,9 +350,10 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 
 	submit_registration(&client, config, signed_at, &registration).await?;
 
-	let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
+	let lite_username =
+		wait_for_lite_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
-	identity.lite_username.context("registered dotNS identity has no lite username")
+	Ok(lite_username)
 }
 
 /// The People and Asset Hub signing contexts the registration signatures go
@@ -372,12 +382,12 @@ async fn registration_signing_contexts(
 /// whatever base the account record asked for.
 pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+		.map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
-		.lite_username
+		.and_then(|identity| identity.into_lite_username())
 		.context("attested signer has no dotNS lite username")
 }
 
@@ -388,10 +398,10 @@ pub async fn lookup_registered_username(
 	entropy: &[u8],
 ) -> Result<Option<String>> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+		.map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.full_username.or(identity.lite_username))
+	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
 
 #[derive(Deserialize)]
@@ -460,7 +470,7 @@ async fn search_backend_prefix(
 ) -> Result<Vec<String>> {
 	const PAGE_LIMIT: &str = "1000";
 
-	let backend_base = network.identity_backend_base;
+	let backend_base = network.identity_backend()?;
 	let url = format!("{backend_base}/usernames/search");
 	let prefix = initial.to_string();
 	let mut cursor = None;
@@ -530,11 +540,10 @@ fn normalize_searched_username(username: &str) -> String {
 /// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
 pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
-	let root = derive_root_keypair_from_entropy(entropy)
-		.map_err(|err| anyhow::anyhow!("invalid entropy: {err}"))?;
+	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+		.map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
 
@@ -543,12 +552,11 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 	{
 		let address = product_public_key_to_address(public);
 		match reader.dotns_identity(&public).await {
-			Ok(identity) => match identity.full_username.or(identity.lite_username) {
-				Some(username) => {
-					println!("IDENTITY_FOUND path={label} account={address} username={username}")
-				},
-				None => println!("IDENTITY_NONE path={label} account={address}"),
+			Ok(Some(identity)) => {
+				let username = identity.primary_username();
+				println!("IDENTITY_FOUND path={label} account={address} username={username}")
 			},
+			Ok(None) => println!("IDENTITY_NONE path={label} account={address}"),
 			Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
 		}
 	}
@@ -632,24 +640,28 @@ fn hex0x(bytes: &[u8]) -> String {
 	format!("0x{}", hex::encode(bytes))
 }
 
-async fn wait_for_dotns_username(
+async fn wait_for_lite_username(
 	reader: &mut AssetHubReader,
 	candidate: &[u8; 32],
-) -> Result<truapi::host_logic::dotns_gateway::DotnsIdentity> {
+) -> Result<String> {
 	// First-time lite registration is backend-async and can lag the HTTP
 	// response. The record is permanent once written. Later runs therefore
 	// resolve on the first poll.
 	const MAX_ATTEMPTS: usize = 30;
 	for attempt in 1..=MAX_ATTEMPTS {
-		match reader.dotns_identity(candidate).await {
-			Ok(identity) if identity.lite_username.is_some() => {
+		let lite_username = reader
+			.dotns_identity(candidate)
+			.await
+			.map(|identity| identity.and_then(|identity| identity.into_lite_username()));
+		match lite_username {
+			Ok(Some(lite_username)) => {
 				crate::terminal_ui::update_activity(
 					"signer",
 					"Setting up signer",
 					Some("dotNS identity ready".to_string()),
 					crate::terminal_ui::ActivityState::Running,
 				);
-				return Ok(identity);
+				return Ok(lite_username);
 			},
 			Ok(_) => {
 				crate::terminal_ui::update_activity(
@@ -660,7 +672,9 @@ async fn wait_for_dotns_username(
 				);
 				debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
 			},
-			Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
+			Err(err) => {
+				warn!(err = %format!("{err:#}"), "dotNS username poll attempt {attempt} failed")
+			},
 		}
 		if attempt < MAX_ATTEMPTS {
 			tokio::time::sleep(Duration::from_secs(4)).await;
@@ -874,10 +888,7 @@ mod tests {
 		let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
 		let server = tokio::spawn(serve_auth_retry(listener));
 		let entropy = [11u8; 16];
-		let auth_client_id = derive_identity_keypair(&entropy, "paseo")
-			.map_err(|err| anyhow::anyhow!("derive test auth identity: {err}"))?
-			.public
-			.to_bytes();
+		let auth_client_id = derive_identity_keypair(&entropy, "paseo")?.public.to_bytes();
 
 		{
 			let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
