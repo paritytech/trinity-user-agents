@@ -857,6 +857,61 @@
         }
       }
     },
+    "chat.signing.consent.accept" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use username"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.decline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This chat can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message.with.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your chat with %1$(username)@ can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send from your username?"
+          }
+        }
+      }
+    },
     "chat.timestamp.hours" : {
       "extractionState" : "manual",
       "localizations" : {

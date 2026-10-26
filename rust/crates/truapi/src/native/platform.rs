@@ -142,11 +142,7 @@ impl Notifications for CallbackPlatform {
 			notification.text.clone(),
 		);
 
-		let id = self
-			.callbacks
-			.push_notification(notification)
-			.await
-			.map_err(v01::GenericError::from)?;
+		let id = self.callbacks.push_notification(notification).await?;
 		Ok(v01::HostPushNotificationResponse { id })
 	}
 
@@ -239,11 +235,7 @@ impl Features for CallbackPlatform {
 			format!("{request:?}"),
 		);
 
-		let supported = self
-			.callbacks
-			.feature_supported(request)
-			.await
-			.map_err(v01::GenericError::from)?;
+		let supported = self.callbacks.feature_supported(request).await?;
 		Ok(v01::HostFeatureSupportedResponse { supported })
 	}
 

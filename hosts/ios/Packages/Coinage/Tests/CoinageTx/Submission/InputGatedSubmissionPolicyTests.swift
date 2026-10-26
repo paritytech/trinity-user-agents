@@ -4,6 +4,7 @@ import ExtrinsicService
 import Foundation
 import os
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// When the gated policy builds, waits, or gives up — the part every coinage policy shares. The rebuild
@@ -231,7 +232,7 @@ private extension InputGatedSubmissionPolicyTests {
                 timing: InputWaitTiming(
                     holdOut: .seconds(60),
                     idleLimit: .seconds(60),
-                    dateProvider: StubDateProvider(now)
+                    dateProvider: FixedDateProvider(now)
                 ),
                 logger: nil
             ),

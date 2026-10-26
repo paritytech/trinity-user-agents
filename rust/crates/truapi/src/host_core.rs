@@ -397,10 +397,7 @@ impl PairingHostRuntime {
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.logout_and_reset_pairing().await.map_err(Into::into)
 	}
 
 	/// Clear one product's capability state while preserving the active
@@ -410,10 +407,7 @@ impl PairingHostRuntime {
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.clear_product_state(product_id).await.map_err(Into::into)
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -471,10 +465,7 @@ impl PairingHostRuntime {
 	/// sync. Generated and persisted on first read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
 	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services
-			.device_encryption_secret()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.services.device_encryption_secret().await.map_err(Into::into)
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -526,7 +517,7 @@ impl PairingHostRuntime {
 			.session()
 			.activate_external_session(blob)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -536,11 +527,7 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.session()
-			.activate_stored_session()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.session().activate_stored_session().await.map_err(Into::into)
 	}
 
 	/// Notify the pairing runtime that the persisted auth-session blob may
@@ -590,9 +577,15 @@ impl PairingHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.pairing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 }
 
@@ -1122,9 +1115,15 @@ impl SigningHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.signing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1189,10 +1188,7 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.respond_to_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.respond_to_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that allowance allocation is under way, so it leaves
@@ -1208,7 +1204,7 @@ impl SigningHostRuntime {
 		self.sso_responder
 			.notify_pairing_allowance_allocation(deeplink)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that pairing failed, so it reports `reason` and
@@ -1228,16 +1224,13 @@ impl SigningHostRuntime {
 		self.sso_responder
 			.notify_pairing_failed(announced, reason)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
 	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.establish_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.establish_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Resume a previously paired host from its persisted public peer keys.
@@ -1249,10 +1242,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.resume_pairing(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1261,10 +1251,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.disconnect_paired_host(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
 	/// Answer one SSO request using this signing host.
@@ -1366,7 +1353,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.track_statement_renewal_targets(targets)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Every statement account the renewal ledger currently tracks.
@@ -1377,10 +1364,7 @@ impl SigningHostRuntime {
 	pub async fn statement_renewal_targets(
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_targets()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_targets().await.map_err(Into::into)
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -1391,9 +1375,7 @@ impl SigningHostRuntime {
 	/// from what it will prune.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
 	pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_owner_key()
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_owner_key().map_err(Into::into)
 	}
 
 	/// Stop renewing one fixed statement account.
@@ -1405,7 +1387,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.untrack_statement_renewal_account(account_id)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Run one statement-store renewal pass now and return per-target
@@ -1416,10 +1398,7 @@ impl SigningHostRuntime {
 	pub async fn renew_statement_allowances(
 		&self,
 	) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError> {
-		self.signing_host
-			.renew_statement_allowances()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.renew_statement_allowances().await.map_err(Into::into)
 	}
 
 	/// Start the periodic statement-store renewal loop (hourly, plus a tick
@@ -1581,10 +1560,7 @@ impl HostAdmin {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.set_permission_authorization_status(request, status)
-			.await
+		self.product_runtime.set_permission_authorization_status(request, status).await
 	}
 }
 
@@ -1640,7 +1616,7 @@ impl CoreAdmin for HostAdmin {
 			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	async fn get_product_subtree_public_key(
@@ -2244,6 +2220,49 @@ mod tests {
 		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
 			.expect("activation succeeds");
 		runtime
+	}
+
+	/// An answer changed in settings applies at once: a product that was allowed
+	/// once is asked again after the user resets its account access.
+	#[test]
+	fn a_settings_change_to_account_access_ends_allow_once() {
+		use crate::{
+			platform::{PermissionAuthorizationRequest, PermissionDecision},
+			runtime::ProductAuthority,
+		};
+
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+			),
+			..StubPlatform::default()
+		});
+		let runtime = activated_signing_runtime(platform.clone());
+		let (requester, target) =
+			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+		let access = || {
+			futures::executor::block_on(runtime.signing_host.consent().account_access(
+				&requester,
+				&target,
+				platform.as_ref(),
+			))
+			.expect("the stub answers every prompt")
+		};
+
+		let allowed_once = access();
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&requester,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: "peopl.dot".to_string(),
+			},
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.expect("the reset is stored");
+
+		assert_eq!(
+			(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
+			(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+		);
 	}
 
 	/// Install `session` once the boot reconcile has reported the empty

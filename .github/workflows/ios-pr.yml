@@ -24,8 +24,8 @@ on:
   # The core crates are here because neither binding set is committed, so a
   # UniFFI surface change leaves no hosts/ios diff to key on. That is the same
   # reasoning as the sdk_swift gate in ci.yml. Keep this list in step with that
-  # gate and with ios-firebase-debug-distribution.yml, which builds the app
-  # from the same inputs.
+  # gate, with ios-firebase-debug-distribution.yml, which builds the app from
+  # the same inputs, and with the ios entry in .github/hosts.json.
   pull_request:
     # `labeled` so adding ios-simulator-build starts the jobs without a push.
     types: [opened, synchronize, reopened, labeled]
