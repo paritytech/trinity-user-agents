@@ -261,6 +261,9 @@ impl HostCallbacks for EventCallbacks {
 	fn durable_work_changed(&self, pending: bool) {
 		self.durable_work.lock().expect("durable work mutex poisoned").push(pending);
 	}
+	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+		Ok(vec![7; 32])
+	}
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
 	}
@@ -1834,6 +1837,9 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
+		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+			Ok(vec![0; 32])
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -1997,6 +2003,9 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn worker_demand_changed(&self, _product_id: ProductId, _transition: WorkerTransition) {}
 		fn durable_work_changed(&self, _pending: bool) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
+		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
+			Ok(vec![0; 32])
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
