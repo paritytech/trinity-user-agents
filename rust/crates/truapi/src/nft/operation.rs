@@ -324,7 +324,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_rebalance_registers_one_waiting_move_per_item_into_fresh_keys_of_the_destination() {
+	fn a_rebalance_registers_one_waiting_transfer_per_item_into_fresh_keys_of_the_destination() {
 		let purses = purses_holding(2);
 
 		start_operation(&purses, rebalance_request(operation(1), &purses.held)).unwrap();
@@ -339,7 +339,7 @@ mod tests {
 	}
 
 	#[test]
-	fn an_item_spent_by_a_live_move_is_not_available() {
+	fn an_item_spent_by_a_live_transfer_is_not_available() {
 		let purses = purses_holding(2);
 
 		start_operation(&purses, rebalance_request(operation(1), &purses.held[..1])).unwrap();
@@ -348,7 +348,7 @@ mod tests {
 	}
 
 	#[test]
-	fn an_item_is_available_again_once_its_move_failed() {
+	fn an_item_is_available_again_once_its_transfer_failed() {
 		let purses = purses_holding(1);
 		start_operation(&purses, rebalance_request(operation(1), &purses.held)).unwrap();
 
@@ -359,7 +359,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_handed_off_item_is_not_available_whatever_its_moves_say() {
+	fn a_handed_off_item_is_not_available_whatever_its_transfers_say() {
 		let purses = purses_holding(1);
 		let key = purses.held[0];
 		let hand_off = move |tx: &rusqlite::Transaction<'_>| {
@@ -434,7 +434,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_transfer_moves_one_item_to_the_foreign_key_without_allocating() {
+	fn a_transfer_sends_one_item_to_the_foreign_key_without_allocating() {
 		let purses = purses_holding(1);
 		let request = TransferRequest {
 			operation: operation(1),
@@ -454,7 +454,7 @@ mod tests {
 	}
 
 	#[test]
-	fn an_operation_never_registered_has_no_moves() {
+	fn an_operation_never_registered_has_no_transfers() {
 		let purses = purses_holding(1);
 
 		assert_eq!(transfers_of(&purses, &operation(9)), vec![]);
@@ -468,7 +468,7 @@ mod tests {
 	/// A transfer stops waiting a fixed time after it is registered, whatever
 	/// happens to the host meanwhile.
 	#[test]
-	fn each_move_is_registered_with_its_wait_limit() {
+	fn each_transfer_is_registered_with_its_wait_limit() {
 		let purses = purses_holding(1);
 		let before = crate::unix_time::current_unix_secs();
 

@@ -2,7 +2,6 @@
 //! a transfer under a product's idempotency key, and the status a product
 //! observes for it.
 
-use core::future::ready;
 use std::collections::BTreeSet;
 
 use futures::{StreamExt, stream::BoxStream};
@@ -15,7 +14,7 @@ use truapi::latest::{
 
 use super::{NftPurses, PurseOwner};
 use crate::{
-	chain::take_until_inclusive,
+	chain::{distinct_until_changed, take_until_inclusive},
 	durable::RegistrationError,
 	nft::{
 		ItemKey, OperationKey, PurseId, StartOperationError, TransferDestinations,
@@ -79,12 +78,11 @@ impl NftPurses {
 		let statuses = self
 			.ledger
 			.observe_operation(&operation)
-			.map(|transfers| transfers.map(status_of));
-		let changes = statuses
-			.scan(LastStatus::default(), |last, read| ready(Some(last.report_if_changed(read))))
-			.filter_map(ready)
+			.map(|transfers| transfers.map(status_of))
 			.boxed();
-		take_until_inclusive(changes, |read| read.as_ref().is_ok_and(is_terminal))
+		take_until_inclusive(distinct_until_changed(statuses), |read| {
+			read.as_ref().is_ok_and(is_terminal)
+		})
 	}
 }
 
@@ -164,26 +162,6 @@ impl hash_db::Hasher for ClearingHasher {
 
 	fn hash(bytes: &[u8]) -> [u8; 32] {
 		blake2_256(bytes)
-	}
-}
-
-/// The last status a product was shown, so a repeat is not shown again.
-#[derive(Default)]
-struct LastStatus(Option<Option<NftPurseStatus>>);
-
-impl LastStatus {
-	/// Returns `read` unless it repeats the last status shown, and remembers
-	/// it. A failed read is always returned.
-	fn report_if_changed(
-		&mut self,
-		read: Result<Option<NftPurseStatus>, DbError>,
-	) -> Option<Result<Option<NftPurseStatus>, DbError>> {
-		let Ok(status) = read else { return Some(read) };
-		if self.0.as_ref() == Some(&status) {
-			return None;
-		}
-		self.0 = Some(status.clone());
-		Some(Ok(status))
 	}
 }
 
@@ -320,17 +298,6 @@ mod tests {
 			panic!("the stream did not end after its terminal status")
 		};
 		assert!(matches!(statuses[..], [Ok(Some(NftPurseStatus::Cleared { .. }))]), "{statuses:?}");
-	}
-
-	#[test]
-	fn repeated_statuses_are_reported_once() {
-		let mut last = LastStatus::default();
-
-		let first = last.report_if_changed(Ok(Some(NftPurseStatus::InProgress)));
-		let repeat = last.report_if_changed(Ok(Some(NftPurseStatus::InProgress)));
-
-		assert_eq!(first.map(Result::unwrap), Some(Some(NftPurseStatus::InProgress)));
-		assert!(repeat.is_none());
 	}
 
 	const TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);

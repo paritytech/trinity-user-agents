@@ -285,6 +285,24 @@ pub fn take_until_inclusive<T: Send + 'static>(
 	.boxed()
 }
 
+/// `items` without each `Ok` value equal to the last `Ok` value passed on.
+/// Every `Err` passes on, and does not count as a value.
+pub fn distinct_until_changed<T, E>(
+	items: BoxStream<'static, Result<T, E>>,
+) -> BoxStream<'static, Result<T, E>>
+where
+	T: PartialEq + Clone + Send + 'static,
+	E: Send + 'static,
+{
+	let mut last = None;
+	let is_new = move |item: &Result<T, E>| {
+		let Ok(value) = item else { return ready(true) };
+		let previous = last.replace(value.clone());
+		ready(previous.as_ref() != Some(value))
+	};
+	items.filter(is_new).boxed()
+}
+
 /// Turns raw changes of one entry back into the caller's keys and values.
 struct EntryChangesDecoder<A: Address> {
 	address: A,

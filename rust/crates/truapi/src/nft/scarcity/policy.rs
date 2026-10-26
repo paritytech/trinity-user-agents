@@ -532,7 +532,7 @@ mod tests {
 	/// Waiting is bounded, so an NFT that is gone for good does not keep its
 	/// item in use forever.
 	#[test]
-	fn a_move_still_waiting_past_its_limit_is_given_up() {
+	fn a_transfer_still_waiting_past_its_limit_is_given_up() {
 		let expired = registered_transfer_until(0, current_unix_secs() - 1);
 		let mut locked = holding(&expired, held_nft());
 		locked.locked_until.insert(expired.source, NOW + 1);
@@ -546,7 +546,7 @@ mod tests {
 
 	/// The limit only bounds waiting: a transfer the chain allows is still built.
 	#[test]
-	fn a_move_past_its_limit_is_still_built_when_nothing_holds_it_back() {
+	fn a_transfer_past_its_limit_is_still_built_when_nothing_holds_it_back() {
 		let expired = registered_transfer_until(0, current_unix_secs() - 1);
 
 		let prepared = prepare_one(&expired, holding(&expired, held_nft()));
