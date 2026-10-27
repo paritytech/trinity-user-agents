@@ -77,7 +77,6 @@ import {
   saveAddress,
   type Destination,
   type DockAddresses,
-  type ProductDestination,
 } from "./shell.js";
 import { drawPocket } from "./pocket-screen.js";
 import {
@@ -574,6 +573,10 @@ const appsShelf = new AppsShelf(
     open(key) {
       const back = DESTINATIONS.find((known) => known === key) ?? null;
       if (isProductDestination(back)) void selectDestination(back);
+      else if (held.has(key))
+        void serial(async () => {
+          bringApp(key);
+        });
     },
     close: closeApp,
   },
@@ -791,7 +794,14 @@ interface Held {
   sandbox: string;
   domains: string[];
 }
-const held = new Map<ProductDestination, Held>();
+/**
+ * The products running behind the one in front: a dock destination's under
+ * the destination, and an app opened by a link or an address under
+ * {@link appKey}, one per product, until it is closed.
+ */
+const held = new Map<string, Held>();
+/** Where an app that belongs to no destination is held. */
+const appKey = (productId: string): string => `app:${productId}`;
 
 /**
  * Session changes and product opens run one at a time, in order. Opening a
@@ -1054,14 +1064,19 @@ function renderDock(): void {
   renderShelf();
 }
 
-/** The products open in this tab: the one in front, then those running behind. */
+/** When each open product was opened, so the shelf keeps them in that order. */
+const openedOrder = new WeakMap<OpenProduct, number>();
+let openings = 0;
+
+/** The products open in this tab, in the order they were opened, the one in front marked. */
 function openApps(): ShelfApp[] {
   const app = (
     key: string,
     open: OpenProduct,
     how: Opened | null,
     front: boolean,
-  ): ShelfApp => ({
+  ): ShelfApp & { instance: OpenProduct } => ({
+    instance: open,
     key,
     // A name reads as itself; a URL product by its id, such as its host.
     name:
@@ -1071,12 +1086,15 @@ function openApps(): ShelfApp[] {
     productId: open.productId,
     front,
   });
+  const order = (open: OpenProduct) => openedOrder.get(open) ?? 0;
   return [
     ...(product === null ? [] : [app("front", product, opened, true)]),
     ...[...held].map(([key, entry]) =>
       app(key, entry.product, entry.opened, false),
     ),
-  ];
+  ]
+    .sort((left, right) => order(left.instance) - order(right.instance))
+    .map(({ instance: _instance, ...shown }) => shown);
 }
 
 const focusCapsule = element<HTMLButtonElement>("dev-toggle");
@@ -1129,13 +1147,13 @@ function closeApp(key: string): void {
       log(`closed ${name}`);
       return;
     }
-    const back = DESTINATIONS.find((known) => known === key) ?? null;
-    const entry = isProductDestination(back) ? held.get(back) : undefined;
-    if (!isProductDestination(back) || entry === undefined) return;
+    const entry = held.get(key);
+    if (entry === undefined) return;
     entry.product.dispose();
-    held.delete(back);
+    held.delete(key);
+    const back = DESTINATIONS.find((known) => known === key) ?? null;
     log(
-      `closed ${entry.product.productId}, which ran behind ${DESTINATION_LABELS[back]}`,
+      `closed ${entry.product.productId}, which ran behind${isProductDestination(back) ? ` ${DESTINATION_LABELS[back]}` : ""}`,
     );
     renderProduct();
   });
@@ -1210,9 +1228,9 @@ function renderHostScreens(): void {
 
 /**
  * The circles over a product in front: Minimize when the product can run
- * behind (it belongs to Browse), else Close, and More. Minimize sends it
- * behind, as choosing another destination does; the Apps shelf and Browse
- * bring it back.
+ * behind (an App, which every product opened by name or URL is), else Close,
+ * and More. Minimize sends it behind, as choosing another destination does;
+ * the Apps shelf brings it back, and Browse its own product.
  */
 function renderAppChrome(shown: boolean): void {
   appChrome.hidden = !shown;
@@ -1220,7 +1238,7 @@ function renderAppChrome(shown: boolean): void {
   productFrame.dataset.appChrome = String(shown);
   renderAppArea();
   if (!shown) setAppMenu(false);
-  const holds = isProductDestination(destination);
+  const holds = holdKey() !== null;
   appMinimize.hidden = !holds;
   appClose.hidden = holds;
 }
@@ -1824,17 +1842,28 @@ function closeHeld(): void {
 }
 
 /**
- * Send the product in front behind the dock, still running, or end it when no
- * destination owns it. Either way nothing is in front afterwards.
+ * Where the product in front runs behind: its destination, or its own key as
+ * an app. Null when it cannot run behind, as a Pocket card's Widget cannot.
+ */
+function holdKey(): string | null {
+  if (product === null) return null;
+  if (isProductDestination(destination)) return destination;
+  return product.executionKind === "App" ? appKey(product.productId) : null;
+}
+
+/**
+ * Send the product in front behind the dock, still running, or end it when it
+ * cannot run behind. Either way nothing is in front afterwards.
  */
 function leaveFront(): void {
-  if (!isProductDestination(destination) || product === null) {
+  const key = holdKey();
+  if (key === null || product === null) {
     closeProduct();
     return;
   }
   loading.clear();
   product.setVisible(false);
-  held.set(destination, {
+  held.set(key, {
     product,
     opened,
     entered: openedWithOverride,
@@ -1951,12 +1980,38 @@ function navigateFromProduct(url: string): Promise<void> {
   if (known !== null) void selectDestination(known);
   else
     void serial(async (runtime) => {
+      let parsed: Address;
+      try {
+        parsed = parseTypedAddress(where.address, activeNetwork);
+      } catch (error) {
+        productStatus.textContent = errorText(error);
+        log(productStatus.textContent);
+        return;
+      }
+      const { id } = effectiveProductIdFor(parsed, "");
+      // An app already open comes to the front as it was, as on iOS.
+      if (destination === null && holdKey() === appKey(id)) return;
+      if (bringApp(appKey(id))) return;
       leaveFront();
       destination = null;
       renderProduct();
-      await openSaved(runtime, where.address);
+      await openResolved(runtime, parsed, id, false);
     });
   return Promise.resolve();
+}
+
+/**
+ * Bring the app held under `key` to the front, sending the one in front
+ * behind. False when no app is held there. Runs inside {@link serial}.
+ */
+function bringApp(key: string): boolean {
+  const back = held.get(key);
+  if (back === undefined) return false;
+  leaveFront();
+  held.delete(key);
+  destination = null;
+  resumeFront(back);
+  return true;
 }
 
 /** Where a navigation ends up and how it got there. */
@@ -2069,6 +2124,8 @@ async function openTarget(
         },
       },
     );
+    openings += 1;
+    openedOrder.set(handle, openings);
     opened = {
       address: target.address,
       via: target.via,
@@ -2275,9 +2332,16 @@ function openAddress(): void {
   if (entered && overrideOrigin !== null && overrideOrigin !== scopeOf(address))
     log(`product id ${productId} now applies to ${scopeOf(address)}`);
   void serial(async (runtime) => {
-    // An address typed over a host screen opens as a product of its own.
-    if (!isProductDestination(destination)) destination = null;
     const before = opened;
+    // An address typed over a host screen or an app opens as an app of its
+    // own; one already running behind comes to the front instead.
+    if (!isProductDestination(destination)) {
+      if (holdKey() !== appKey(productId)) {
+        if (bringApp(appKey(productId))) return;
+        leaveFront();
+      }
+      destination = null;
+    }
     await openResolved(runtime, address, productId, entered);
     // It did not open: say why where the address was typed.
     if (opened === null || opened === before) {
