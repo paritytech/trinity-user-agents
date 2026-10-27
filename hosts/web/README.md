@@ -244,10 +244,10 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
   circles or a device's island, and the product is told of no inset, so it adds none of its own. The band does not fold
   away on scroll as the iOS one does: the host cannot see a product's scrolling. At the bottom the frame ends above the
   Docklet. Whether the iOS web view also ends above its tab bar was not settled from the vendored iOS source. On the
-  left, **Minimize** for a product that belongs to Browse: it goes back to the last host screen and keeps running, and
-  Browse or the shelf brings it back. A product that cannot run behind, such as one opened from a link or a Pocket card,
-  gets **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer tools'
-  Product tab) and **Close**.
+  left, **Minimize** for a product that can run behind, which every App can: it goes back to the last host screen and
+  keeps running, and the shelf (or Browse, for Browse's own product) brings it back. A Pocket card's Widget cannot run
+  behind and gets **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer
+  tools' Product tab) and **Close**.
 
 - **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
   its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
@@ -260,9 +260,12 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
   belongs to the session that opened it. Only the one in front is opened again.
 - **Opening one product from another.** A product's `navigateTo` for a name of this network, as `https://name.tld`,
   `polkadot://name.tld` or `polkadotapp://name.tld`, opens that product in front of the destination it came from. The
-  destination keeps running. Choosing a destination ends a product opened this way. A name that is already a
-  destination's product resumes that destination instead of running a second copy. Any other `http` or `https` address
-  goes to the browser, and anything else is refused.
+  destination keeps running, and so does the product opened this way: it joins the Apps shelf, in the order products
+  were opened, and runs behind other screens until it is closed from the shelf or More. An address typed in the search
+  field over a host screen or such an app opens an app of its own the same way. A name that is already a destination's
+  product resumes that destination, and one already open as an app comes in front as it was left, as the iOS host does:
+  no second copy starts, and its page does not change. Any other `http` or `https` address goes to the browser, and
+  anything else is refused.
 - **The Pocket screen.** The host draws it, laid out as the native Pocket is (the Android `PocketScreen`): a large title
   over two stacked cards, the digital dollar and then Humanity. The host itself reads nothing and signs nothing for it.
   - **Humanity:** the card the native host pins, backed by the personhood product `peopl.<tld>` (`peopl.paseo` on
@@ -1157,6 +1160,12 @@ the list stays inside the app above the field; a person found by username is che
 a contact chosen with the keyboard opens their chat with focus in the composer; `Escape` gives focus back to the Pill; a
 URL looks no one up and Enter opens it; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks
 that a person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
+
+`browser/open-apps.spec.ts` checks the products open in a tab, with three names served from one synthetic archive on a
+fake Asset Hub and every socket closed: Browse's product opens another with `navigateTo`, and the shelf lists both with
+the new one in front; going back to Browse keeps both and Browse's document; a third app keeps the other two; the shelf
+brings an app back without a reload; opening an app that is already open brings it in front with no second frame;
+Minimize keeps it in the shelf; Close in More ends only it; and signing out ends every app.
 
 `browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
 closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no
