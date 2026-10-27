@@ -15,6 +15,9 @@ struct MessageListModel {
     /// The state of each end of the window. Only a product-source room pages.
     var paging: ChatPagingState = .complete
     var readiness: ChatRoomReadiness = .ready
+    /// The messages that replies quote and the window does not hold, by their ids. Only a product-source room
+    /// has them.
+    var replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
 
     var hasNewMessages: Bool {
         newMessageCount > 0
@@ -35,10 +38,71 @@ struct MessageListModel {
     func isEdited(_ messageId: Chat.MessageId) -> Bool {
         latestEditByMessageId[messageId] != nil
     }
+
+    /// The message that a reply quotes: a message of the window, or the quote that the product gave.
+    func getQuotedMessage(by messageId: Chat.MessageId) -> Chat.LocalMessage? {
+        getMessage(by: messageId) ?? replyPreviews[messageId]
+    }
 }
 
 enum MessageListSection: Hashable {
     case today
     case yesterday
     case other(date: Date)
+}
+
+extension MessageListModel {
+    /// The model with an edit for each message that the product edited. The edit carries the text that the
+    /// message shows now, so the room screen marks the message as edited.
+    func addingEdits(_ editedAt: [Chat.MessageId: Chat.Timestamp]) -> MessageListModel {
+        var edits = latestEditByMessageId
+
+        for (messageId, timestamp) in editedAt {
+            guard let message = getMessage(by: messageId), let text = message.content.editableText else {
+                continue
+            }
+
+            edits[messageId] = Chat.EditedMessage(
+                messageId: messageId,
+                newContent: .init(text: text, attachments: nil),
+                origin: message.origin,
+                chatId: message.chatId,
+                timestamp: timestamp
+            )
+        }
+
+        var model = MessageListModel(
+            allMessages: allMessages,
+            messagesById: messagesById,
+            orderedSections: orderedSections,
+            messagesBySection: messagesBySection,
+            reactionsByMessageId: reactionsByMessageId,
+            latestEditByMessageId: edits,
+            initiallyUnreadMessage: initiallyUnreadMessage,
+            firstUnreadMessageId: firstUnreadMessageId,
+            oldestNewReactionTargetMessageId: oldestNewReactionTargetMessageId,
+            newMessageCount: newMessageCount
+        )
+        model.paging = paging
+        model.readiness = readiness
+        model.replyPreviews = replyPreviews
+        return model
+    }
+}
+
+private extension Chat.LocalMessage.Content {
+    /// The text of a text message, a reply or the caption of a media message. Other content kinds show no edit
+    /// text.
+    var editableText: String? {
+        switch self {
+        case let .text(text):
+            text
+        case let .reply(reply):
+            reply.ownContent.text
+        case let .richText(richText):
+            richText.text
+        default:
+            nil
+        }
+    }
 }

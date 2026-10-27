@@ -41,6 +41,8 @@ data class ChatFeedSnapshot(
     val revisions: Map<ChatMessageId, MessageRevision>,
     val paging: ChatPagingState,
     val readiness: ChatRoomReadiness,
+    /** The replied messages that [messages] does not hold, by id, drawn only as the quote of their replies. */
+    val replyQuotes: Map<ChatMessageId, ChatMessage> = emptyMap(),
 )
 
 /** What the room screen can ask at each end of the window. */

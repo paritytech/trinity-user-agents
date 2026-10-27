@@ -8,6 +8,35 @@ let productUserParticipantId = "user"
 // native person chat: a text with Markdown and links, or an info row.
 
 extension ChatMessage {
+    /// The message as the room screen draws it.
+    ///
+    /// - Parameters:
+    ///   - chatId: The chat of the room.
+    ///   - extensionId: The extension of the product. Messages of other participants come from it.
+    ///   - isSeen: True when the user saw the message on this device and the product has not marked it read yet.
+    func localMessage(
+        chatId: Chat.Id,
+        extensionId: ChatExtension.Id,
+        isSeen: Bool = false
+    ) -> Chat.LocalMessage {
+        let localStatus: Chat.LocalMessage.Status = isFromUser
+            ? .outgoing(status.outgoingStatus)
+            : .incoming(isUnreadByUser && !isSeen ? .new : .seen)
+
+        return Chat.LocalMessage(
+            messageId: messageId,
+            chatId: chatId,
+            origin: isFromUser ? .user : .chatExtension(extensionId),
+            creationSource: .localDevice,
+            status: localStatus,
+            timestamp: timestamp,
+            content: nativeContent,
+            reactions: localReactions(chatId: chatId, extensionId: extensionId),
+            compactionId: nil,
+            relatedMessages: []
+        )
+    }
+
     /// The message as the chat list draws it in the preview line of the room.
     func previewMessage() -> Chat.RoomPreviewMessage {
         let localStatus: Chat.LocalMessage.Status = isFromUser
@@ -52,6 +81,29 @@ extension ChatMessage {
         )
 
         return [edit]
+    }
+
+    /// One reaction for each count of a summary. The user reaction has the user origin. The product gives no time
+    /// for a reaction in the summary, so each reaction takes the time of the message plus its place in the
+    /// summaries: the native chat then orders the emojis of the same count as the product does.
+    private func localReactions(chatId: Chat.Id, extensionId: ChatExtension.Id) -> [Chat.MessageReaction] {
+        let origins = reactions.flatMap { summary in
+            let total = Int(summary.count)
+            let others = summary.reactedByUser ? max(total - 1, 0) : total
+            let userReaction: [Chat.LocalMessage.Origin] = summary.reactedByUser ? [.user] : []
+            let productReactions = Array(repeating: Chat.LocalMessage.Origin.chatExtension(extensionId), count: others)
+            return (userReaction + productReactions).map { (emoji: summary.emoji, origin: $0) }
+        }
+
+        return origins.enumerated().map { offset, reaction in
+            Chat.MessageReaction(
+                messageId: messageId,
+                emoji: reaction.emoji,
+                origin: reaction.origin,
+                chatId: chatId,
+                timestamp: timestamp + UInt64(offset)
+            )
+        }
     }
 }
 

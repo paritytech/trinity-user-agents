@@ -13,8 +13,8 @@ fun interface ProductFeedRegistration {
 
 /**
  * The room screens that show a room whose messages the product keeps. The host stores none of the updates
- * of such a room: an update for a room that no screen shows goes nowhere, and the screen asks the product
- * again when it opens.
+ * of such a room: an update for a room that no screen shows changes only the page cache of the room, and the
+ * screen asks the product again when it opens.
  */
 interface ProductFeedListeners {
     /** Keeps [listener], a room screen, until the registration is cancelled. */
