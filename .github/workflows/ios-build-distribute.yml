@@ -62,8 +62,6 @@ on:
         required: true
       MATCH_PASSWORD:
         required: true
-      MELD_BASIC_AUTH_TOKEN:
-        required: false
       NOTIFICATION_BOT_TOKEN:
         required: false
       NOTIFICATION_BOT_URL:
@@ -287,7 +285,6 @@ jobs:
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       # The distribute action runs the unit tests before it archives. xcpretty
       # drops the failing test names, and on a reused runner the result bundle
