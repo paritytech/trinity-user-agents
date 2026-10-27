@@ -1,7 +1,5 @@
 //! Stream combinators that `futures` lacks, called like its own.
 
-use core::future::ready;
-
 use futures::stream::{self, BoxStream, Stream, StreamExt};
 
 /// Combinators for every stream that can be boxed.
@@ -33,6 +31,8 @@ pub trait StreamExtensions: Stream + Sized + Send + 'static {
 		T: PartialEq + Clone + Send + 'static,
 		E: Send + 'static,
 	{
+		use core::future::ready;
+
 		let mut last = None;
 		let is_new = move |item: &Result<T, E>| {
 			let Ok(value) = item else { return ready(true) };
