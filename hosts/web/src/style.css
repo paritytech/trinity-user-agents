@@ -52,8 +52,15 @@ body {
   color: var(--text);
 }
 
+/* The left edge sets the width; the app keeps 360 px however the window changes. */
 body[data-devtools="open"][data-dev-side="right"] {
-  grid-template-columns: minmax(0, 1fr) var(--devtools-width);
+  grid-template-columns:
+    minmax(0, 1fr)
+    clamp(
+      320px,
+      var(--devtools-w, var(--devtools-width)),
+      max(320px, calc(100vw - 360px))
+    );
   grid-template-areas: "stage devtools";
 }
 
@@ -3005,7 +3012,22 @@ body[data-dev-side="bottom"] .devtools {
   background: #78a9ff;
 }
 
-body[data-dev-side="right"] .devtools-resize,
+/* On the right the same handle is the left edge, and sets the width. */
+body[data-dev-side="right"] .devtools-resize {
+  inset: 0 auto 0 0;
+  width: 10px;
+  height: auto;
+  cursor: col-resize;
+}
+
+body[data-dev-side="right"] .devtools-resize::after {
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 36px;
+  margin: -18px 0 0;
+}
+
 .devtools-grab {
   display: none;
 }

@@ -14,7 +14,9 @@ import {
   type RunningHost,
   closeTools,
   openTools,
+  showAddress,
   startHost,
+  startUrlProduct,
   testBrowser,
 } from "./fixtures.js";
 
@@ -310,6 +312,138 @@ describe("the developer tools", () => {
   );
 
   test(
+    "the left edge sets the width on the right, apart from the height at the bottom, and the product keeps running",
+    async () => {
+      const product = await startUrlProduct(host.origin);
+      const { context, page } = await openHost({ width: 1440, height: 900 });
+      const handle = "#devtools-resize";
+      const width = async () => (await box(page, "#devtools")).width;
+      const height = async () => (await box(page, "#devtools")).height;
+      const aria = () =>
+        page.locator(handle).evaluate((node) => ({
+          orientation: node.getAttribute("aria-orientation"),
+          label: node.getAttribute("aria-label"),
+          now: node.getAttribute("aria-valuenow"),
+          min: node.getAttribute("aria-valuemin"),
+          max: node.getAttribute("aria-valuemax"),
+        }));
+      try {
+        await page.click('[data-dev-tab="preview"]');
+        await page.selectOption("#viewport", { label: PHONE });
+        await closeTools(page);
+        // A product opens only once the core runs.
+        await page
+          .locator("#core-status")
+          .filter({ hasText: "Core ready" })
+          .waitFor({ state: "attached" });
+        await showAddress(page);
+        await page.fill("#address", product.url);
+        await page.press("#address", "Enter");
+        const origin = new URL(product.url).origin;
+        const deadline = Date.now() + STEP_MS;
+        let frame = null;
+        while (frame === null) {
+          if (Date.now() > deadline)
+            throw new Error("the product did not open");
+          frame =
+            page
+              .frames()
+              .find((candidate) => candidate.url().startsWith(origin)) ?? null;
+          if (frame === null) await page.waitForTimeout(100);
+        }
+        await frame.waitForFunction(() => "__loadedAt" in window);
+        const loadedAt = await frame.evaluate(
+          () => (window as unknown as { __loadedAt: number }).__loadedAt,
+        );
+        await openTools(page, "inspector");
+        await page.click('.devtools-side [data-dev-side="right"]');
+        expect(await width()).toBe(480);
+        expect(await aria()).toEqual({
+          orientation: "vertical",
+          label: "Developer tools width",
+          now: "480",
+          min: "320",
+          max: "1080",
+        });
+
+        // Dragged 100 px to the left, the tools are 100 px wider.
+        const edge = await box(page, handle);
+        const y = edge.top + edge.height / 2;
+        await page.mouse.move(edge.left + 5, y);
+        await page.mouse.down();
+        await page.mouse.move(edge.left - 45, y);
+        await page.mouse.move(edge.left - 95, y);
+        await page.mouse.up();
+        expect(await width()).toBe(580);
+        expect((await aria()).now).toBe("580");
+        expect(
+          await page.evaluate(() => [
+            document.body.style.userSelect,
+            document.body.style.cursor,
+          ]),
+        ).toEqual(["", ""]);
+        await productFitted(page);
+        expect(await productSize(page)).toEqual({ width: 393, height: 852 });
+
+        // The keyboard: Left widens, Right narrows, Home and End are the bounds.
+        await page.focus(handle);
+        await page.keyboard.press("ArrowLeft");
+        expect(await width()).toBe(604);
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("ArrowRight");
+        expect(await width()).toBe(556);
+        await page.keyboard.press("End");
+        expect(await width()).toBe(1080);
+        await page.keyboard.press("Home");
+        expect(await width()).toBe(320);
+        for (let step = 0; step < 15; step += 1)
+          await page.keyboard.press("ArrowLeft");
+        expect(await width()).toBe(680);
+
+        // A narrower window keeps 360 px for the app; a wider one gives the width back.
+        await page.setViewportSize({ width: 960, height: 900 });
+        await page.waitForFunction(
+          () => document.getElementById("devtools")!.offsetWidth === 600,
+        );
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.waitForFunction(
+          () => document.getElementById("devtools")!.offsetWidth === 680,
+        );
+
+        // At the bottom the same edge sets the height, and leaves the width alone.
+        await page.click('.devtools-side [data-dev-side="bottom"]');
+        const bottomHeight = await height();
+        expect((await aria()).orientation).toBe("horizontal");
+        expect((await aria()).label).toBe("Developer tools height");
+        await page.focus(handle);
+        await page.keyboard.press("ArrowUp");
+        expect(await height()).toBe(bottomHeight + 24);
+        await page.click('.devtools-side [data-dev-side="right"]');
+        expect(await width()).toBe(680);
+
+        // Neither drag nor key reloaded the product.
+        expect(
+          await frame.evaluate(
+            () => (window as unknown as { __loadedAt: number }).__loadedAt,
+          ),
+        ).toBe(loadedAt);
+
+        // Both sizes are kept for the next visit.
+        await page.reload();
+        await scriptReady(page);
+        await openTools(page, "inspector");
+        expect(await width()).toBe(680);
+        await page.click('.devtools-side [data-dev-side="bottom"]');
+        expect(await height()).toBe(bottomHeight + 24);
+      } finally {
+        await context.close();
+        product.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "a narrow window keeps the tools a sheet over the app",
     async () => {
       const { context, page } = await openHost({ width: 600, height: 900 });
@@ -340,6 +474,8 @@ describe("the developer tools", () => {
         ).toBe("fixed");
         expect(await page.locator("#scrim").isVisible()).toBe(true);
         expect((await box(page, "#devtools")).width).toBe(600);
+        // The sheet is not resized.
+        expect(await page.locator("#devtools-resize").isVisible()).toBe(false);
         // The sheet has no side switch, and Hide keeps its shape.
         expect(await roundButtons(page)).toEqual([
           {
