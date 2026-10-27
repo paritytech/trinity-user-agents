@@ -76,17 +76,31 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ProductExecutionKind.WORKER` execution. The bridge carries the requests of Chat Extension v2. `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomConfig` accepts only that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers a rejection. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
+
+| Request | What the host does |
+| --- | --- |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update and posted message |
+| `setRoomConfig` | Keeps the configuration the product declared for a room across restarts. The core calls it for the product's `setRoomConfig` |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomFooter` | Shows the text input, or nothing |
+
+The core checks that the product created the room before it calls any of these.
 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeChatFeedRejection
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -110,6 +124,15 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
     override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
     override fun listRooms(): List<ChatRoom> = store.rooms()
+
+    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
+        store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+
+    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) = store.setConfig(roomId, config)
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+        if (!store.apply(roomId, update, persist)) throw NativeChatFeedRejection.UnknownMessage()
+    }
 }
 
 val runtime = TrUAPIHostRuntime(
@@ -127,7 +150,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.CHAT),
+    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()

@@ -618,6 +618,34 @@ describe("createMockHost TestHostAPI parity", () => {
     ).toEqual(["alpha", "mike", "zulu"]);
   });
 
+  it("keeps the declarations of each chat room until the room is deleted", async () => {
+    // The Rust `MockPlatform::chat_room_declarations` gives the same view, so
+    // a test reads the declarations of a room on either host.
+    const host = createMockHost();
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const config = {
+      productSource: true,
+      reactionDetails: false,
+      reportSeen: true,
+    };
+    await host.callbacks.chat!.setChatRoomConfig!(product, {
+      roomId: "main",
+      config,
+    });
+
+    expect(host.chatRoomDeclarations("main")).toEqual({ feed: [], config });
+    expect(host.chatRoomDeclarations("other")).toBeUndefined();
+    expect(
+      await host.callbacks.chat!.readChatRoomConfig!(product, "main"),
+    ).toEqual(config);
+
+    await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
+    expect(host.chatRoomDeclarations("main")).toBeUndefined();
+  });
+
   it("simulateDisconnect ends a live response stream, not just the status", async () => {
     // A knob that relabelled the status and refused reconnect would still
     // leave a product parked on `responses()` forever, which is the one thing

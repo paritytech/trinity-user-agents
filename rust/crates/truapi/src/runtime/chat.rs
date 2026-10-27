@@ -17,3 +17,25 @@ pub fn chat_platform_for(
 	}
 	chat.cloned().ok_or(ProductRuntimeError::Unsupported)
 }
+
+/// Call budgets the core holds each product room to, shared by every
+/// connection of one host runtime.
+pub struct ChatRateLimits {
+	/// `update_feed` calls.
+	pub feed: crate::platform::ChatRateLimiter,
+	/// `set_room_preview` calls.
+	pub preview: crate::platform::ChatRateLimiter,
+}
+
+impl Default for ChatRateLimits {
+	fn default() -> Self {
+		Self {
+			feed: crate::platform::ChatRateLimiter::new(
+				crate::platform::CHAT_FEED_UPDATES_PER_SECOND,
+			),
+			preview: crate::platform::ChatRateLimiter::new(
+				crate::platform::CHAT_PREVIEW_UPDATES_PER_SECOND,
+			),
+		}
+	}
+}

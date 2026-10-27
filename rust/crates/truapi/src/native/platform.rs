@@ -685,6 +685,71 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.map(Ok)
 		.boxed()
 	}
+
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
+		self.chat.room_config(room_id).await.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomConfigRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_config(request.room_id, request.config)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomMetadataRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_metadata(request.room_id, request.metadata)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomPreviewRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_preview(request.room_id, request.preview)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatDeleteRoomRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat.delete_room(request.room_id).await.map_err(v01::GenericError::from)?;
+		if let Ok(rooms) = self.chat.list_rooms().await {
+			self.events.notify_chat_rooms_changed(rooms);
+		}
+		Ok(())
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<(), truapi::latest::HostChatUpdateFeedError> {
+		self.chat
+			.update_feed(request.room_id, request.update, persist)
+			.await
+			.map_err(Into::into)
+	}
 }
 
 /// [`crate::platform::PocketPlatform`] served by host-provided

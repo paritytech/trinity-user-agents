@@ -36,12 +36,18 @@ pub use crate::{
 
 use truapi::{
 	latest::{
-		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
+		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
+		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
+		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary,
+		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomConfig, ChatRoomMetadata,
+		ChatRoomPreview, ChatUserAction, CodeFormat, FundingDirection, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomConfigRequest,
+		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
 		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
@@ -53,8 +59,9 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
-		RemotePermissionRequest, RingLocation,
+		ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
+		ProductChatMessagesQueryRequest, ProductChatReactionsQueryItem, ProductProofContext,
+		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -582,6 +589,427 @@ pub fn validate_chat_icon(field: &'static str, icon: &str) -> Result<String, Cha
 	}
 }
 
+/// Largest accepted length for a room description, in bytes.
+pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
+
+/// Largest accepted number of reaction summaries on one message.
+pub const CHAT_REACTIONS_MAX: usize = 64;
+
+/// Largest page of messages a host may ask for.
+pub const CHAT_MESSAGES_PAGE_MAX: u32 = 100;
+
+/// Largest accepted length for a page cursor, in bytes.
+pub const CHAT_CURSOR_MAX_BYTES: usize = 1024;
+
+/// Largest accepted number of `update_feed` calls for one room in one second.
+pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
+
+/// Largest accepted number of `set_room_preview` calls for one room in one
+/// second.
+pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
+
+/// The largest file a [`ChatResource::Hop`] names: the largest the native chat sends.
+pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
+
+/// The longest node URL of a [`ChatResource::Hop`].
+pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
+
+/// The length of each coin key of a chat payment: an sr25519 secret key.
+pub const CHAT_PAYMENT_COIN_KEY_BYTES: usize = 64;
+
+/// The most coins one chat payment carries.
+pub const CHAT_PAYMENT_COINS_MAX: usize = 1024;
+
+/// Validate a user action a host sends to the product: the id a host chose
+/// for a new message or a payment is an identifier like every message id,
+/// and a payment carries well-formed coin keys.
+pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserAction, ChatFieldError> {
+	Ok(match action {
+		ChatUserAction::NewMessage { body, reply_to, message_id, timestamp } => {
+			ChatUserAction::NewMessage {
+				body,
+				reply_to,
+				message_id: message_id
+					.map(|id| normalize_chat_identifier("messageId", &id))
+					.transpose()?,
+				timestamp,
+			}
+		},
+		ChatUserAction::SendPayment { message_id, timestamp, total_value, coin_keys } => {
+			validate_chat_payment_coin_keys(&coin_keys)?;
+			ChatUserAction::SendPayment {
+				message_id: normalize_chat_identifier("messageId", &message_id)?,
+				timestamp,
+				total_value,
+				coin_keys,
+			}
+		},
+		action => action,
+	})
+}
+
+/// Validate the coin keys of a chat payment: at least one, at most
+/// [`CHAT_PAYMENT_COINS_MAX`], each an sr25519 secret key.
+pub fn validate_chat_payment_coin_keys(coin_keys: &[Vec<u8>]) -> Result<(), ChatFieldError> {
+	let field = "coinKeys";
+	if coin_keys.is_empty() {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if coin_keys.len() > CHAT_PAYMENT_COINS_MAX {
+		return Err(ChatFieldError::TooMany { field, limit: CHAT_PAYMENT_COINS_MAX });
+	}
+	if coin_keys.iter().any(|key| key.len() != CHAT_PAYMENT_COIN_KEY_BYTES) {
+		return Err(ChatFieldError::WrongLength { field, length: CHAT_PAYMENT_COIN_KEY_BYTES });
+	}
+	Ok(())
+}
+
+/// Validate the resource of a media item: a HOP file.
+fn validate_chat_media_resource(
+	field: &'static str,
+	resource: ChatResource,
+) -> Result<ChatResource, ChatFieldError> {
+	let ChatResource::Hop { identifier, ticket, node, size } = &resource;
+	if identifier.len() != 32 || ticket.len() != 32 {
+		return Err(ChatFieldError::WrongLength { field, length: 32 });
+	}
+	if !node.starts_with("wss://") {
+		return Err(ChatFieldError::RejectedScheme { field });
+	}
+	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
+	}
+	if *size == 0 || *size > CHAT_HOP_FILE_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_FILE_MAX_BYTES as usize });
+	}
+	Ok(resource)
+}
+
+/// A media type is matched against allowlists, so it is lower-cased and
+/// screened like a name.
+fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<String, ChatFieldError> {
+	let mime_type = validate_chat_name(field, mime_type)?.to_ascii_lowercase();
+	if mime_type.is_empty() {
+		return Err(ChatFieldError::Empty { field });
+	}
+	Ok(mime_type)
+}
+
+/// Bound and screen a description. It is content that can span lines, so it
+/// keeps line breaks and is not normalized.
+fn validate_chat_description(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
+	if value.len() > CHAT_DESCRIPTION_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
+	}
+	validate_chat_body(field, value)
+}
+
+/// Bound and screen an opaque page cursor.
+fn validate_chat_cursor(field: &'static str, cursor: String) -> Result<String, ChatFieldError> {
+	if cursor.len() > CHAT_CURSOR_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_CURSOR_MAX_BYTES });
+	}
+	if cursor.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
+	}
+	Ok(cursor)
+}
+
+/// Reject a list longer than `limit`.
+fn check_chat_count<T>(
+	field: &'static str,
+	items: &[T],
+	limit: usize,
+) -> Result<(), ChatFieldError> {
+	if items.len() > limit {
+		return Err(ChatFieldError::TooMany { field, limit });
+	}
+	Ok(())
+}
+
+/// Validate the name and description of a room.
+pub fn validate_chat_room_metadata(
+	metadata: ChatRoomMetadata,
+) -> Result<ChatRoomMetadata, ChatFieldError> {
+	Ok(ChatRoomMetadata {
+		name: validate_chat_name("name", &metadata.name)?,
+		description: metadata
+			.description
+			.map(|description| validate_chat_description("description", &description))
+			.transpose()?,
+	})
+}
+
+/// Validate how a room shows in the chat list.
+pub fn validate_chat_room_preview(
+	preview: ChatRoomPreview,
+) -> Result<ChatRoomPreview, ChatFieldError> {
+	Ok(ChatRoomPreview {
+		last_message: preview.last_message.map(validate_chat_message).transpose()?,
+		last_call: preview.last_call.map(validate_chat_message).transpose()?,
+		last_reaction: preview
+			.last_reaction
+			.map(|reaction| {
+				Ok::<_, ChatFieldError>(ChatPreviewReaction {
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					by_user: reaction.by_user,
+					message: reaction.message.map(validate_chat_message).transpose()?,
+					removed: reaction.removed,
+				})
+			})
+			.transpose()?,
+		..preview
+	})
+}
+
+/// Validate what a message says.
+///
+/// A size rejection names `text`, the field a product shrinks by sending
+/// less.
+pub fn validate_chat_message_body(
+	body: ChatMessageBody,
+) -> Result<ChatMessageBody, ChatFieldError> {
+	Ok(match body {
+		ChatMessageBody::Text { text } => {
+			ChatMessageBody::Text { text: validate_chat_body("text", &text)? }
+		},
+		ChatMessageBody::RichText { text, media } => {
+			check_chat_count("media", &media, CHAT_MEDIA_MAX)?;
+			ChatMessageBody::RichText {
+				text: text.map(|text| validate_chat_body("text", &text)).transpose()?,
+				media: media.into_iter().map(validate_chat_media_item).collect::<Result<_, _>>()?,
+			}
+		},
+		body @ (ChatMessageBody::Event(_) |
+		ChatMessageBody::Call(_) |
+		ChatMessageBody::Payment(_)) => body,
+	})
+}
+
+fn validate_chat_media_item(item: ChatMediaItem) -> Result<ChatMediaItem, ChatFieldError> {
+	Ok(match item {
+		ChatMediaItem::Image { resource, meta } => ChatMediaItem::Image {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+		},
+		ChatMediaItem::Video { resource, meta } => ChatMediaItem::Video {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+		},
+		ChatMediaItem::File { resource, meta, file_name } => ChatMediaItem::File {
+			resource: validate_chat_media_resource("media", resource)?,
+			meta: validate_chat_media_meta(meta)?,
+			file_name: validate_chat_file_name("fileName", &file_name)?,
+		},
+	})
+}
+
+fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFieldError> {
+	Ok(ChatMediaMeta {
+		mime_type: validate_chat_mime_type("mimeType", &meta.mime_type)?,
+		placeholder: meta
+			.placeholder
+			.map(|placeholder| validate_chat_name("placeholder", &placeholder))
+			.transpose()?,
+		alt: meta.alt.map(|alt| validate_chat_name("alt", &alt)).transpose()?,
+		duration_ms: None,
+		..meta
+	})
+}
+
+/// Validate one message, as a product writes it into a feed or answers it in
+/// a page.
+pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFieldError> {
+	check_chat_count("reactions", &message.reactions, CHAT_REACTIONS_MAX)?;
+	let mut seen = BTreeSet::new();
+	let reactions = message
+		.reactions
+		.into_iter()
+		.map(|reaction| {
+			let emoji = validate_chat_emoji("emoji", &reaction.emoji)?;
+			if !seen.insert(emoji.clone()) {
+				return Err(ChatFieldError::Duplicate { field: "emoji" });
+			}
+			Ok(ChatReactionSummary { emoji, ..reaction })
+		})
+		.collect::<Result<_, _>>()?;
+	Ok(ChatMessage {
+		message_id: normalize_chat_identifier("messageId", &message.message_id)?,
+		origin: ChatMessageOrigin {
+			participant_id: normalize_chat_identifier(
+				"participantId",
+				&message.origin.participant_id,
+			)?,
+		},
+		timestamp: message.timestamp,
+		body: validate_chat_message_body(message.body)?,
+		status: message.status,
+		reply_to: message
+			.reply_to
+			.map(|reply_to| normalize_chat_identifier("replyTo", &reply_to))
+			.transpose()?,
+		reply_preview: message
+			.reply_preview
+			.map(|preview| {
+				Ok::<_, ChatFieldError>(ChatReplyPreview {
+					origin: ChatMessageOrigin {
+						participant_id: normalize_chat_identifier(
+							"participantId",
+							&preview.origin.participant_id,
+						)?,
+					},
+					body: validate_chat_message_body(preview.body)?,
+				})
+			})
+			.transpose()?,
+		edited_at: message.edited_at,
+		reactions,
+		request: message.request,
+	})
+}
+
+/// Validate one change to the messages of a room.
+pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdate, ChatFieldError> {
+	let message_id = |id: &str| normalize_chat_identifier("messageId", id);
+	let participant_id = |id: &str| normalize_chat_identifier("participantId", id);
+	Ok(match update {
+		ChatFeedUpdate::New(message) => ChatFeedUpdate::New(validate_chat_message(message)?),
+		ChatFeedUpdate::Edited { message_id: id, body, edited_at } => ChatFeedUpdate::Edited {
+			message_id: message_id(&id)?,
+			body: validate_chat_message_body(body)?,
+			edited_at,
+		},
+		ChatFeedUpdate::ReactionPlaced { message_id: id, participant_id: by, emoji } => {
+			ChatFeedUpdate::ReactionPlaced {
+				message_id: message_id(&id)?,
+				participant_id: participant_id(&by)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
+			}
+		},
+		ChatFeedUpdate::ReactionRemoved { message_id: id, participant_id: by, emoji } => {
+			ChatFeedUpdate::ReactionRemoved {
+				message_id: message_id(&id)?,
+				participant_id: participant_id(&by)?,
+				emoji: validate_chat_emoji("emoji", &emoji)?,
+			}
+		},
+		ChatFeedUpdate::StatusChanged { message_id: id, status } => {
+			ChatFeedUpdate::StatusChanged { message_id: message_id(&id)?, status }
+		},
+		ChatFeedUpdate::Replaced(message) => {
+			ChatFeedUpdate::Replaced(validate_chat_message(message)?)
+		},
+	})
+}
+
+/// Validate a page of messages a host asks for.
+pub fn validate_chat_messages_query(
+	request: ProductChatMessagesQueryRequest,
+) -> Result<ProductChatMessagesQueryRequest, ChatFieldError> {
+	let cursor = |cursor: Option<String>| {
+		cursor.map(|cursor| validate_chat_cursor("cursor", cursor)).transpose()
+	};
+	Ok(ProductChatMessagesQueryRequest {
+		room_id: normalize_chat_identifier("roomId", &request.room_id)?,
+		anchor: match request.anchor {
+			ChatPageAnchor::After { cursor: after } => {
+				ChatPageAnchor::After { cursor: cursor(after)? }
+			},
+			ChatPageAnchor::Before { cursor: before } => {
+				ChatPageAnchor::Before { cursor: cursor(before)? }
+			},
+		},
+		page_size: check_chat_page_size(request.page_size, CHAT_MESSAGES_PAGE_MAX)?,
+	})
+}
+
+fn check_chat_page_size(page_size: u32, max: u32) -> Result<u32, ChatFieldError> {
+	if !(1..=max).contains(&page_size) {
+		return Err(ChatFieldError::OutOfRange { field: "pageSize", min: 1, max: max.into() });
+	}
+	Ok(page_size)
+}
+
+/// Validate a page of messages a product answers for a page of `page_size`.
+pub fn validate_chat_messages_page(
+	page: ProductChatMessagesQueryItem,
+	page_size: u32,
+) -> Result<ProductChatMessagesQueryItem, ChatFieldError> {
+	check_chat_count("messages", &page.messages, page_size as usize)?;
+	Ok(ProductChatMessagesQueryItem {
+		messages: page.messages.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
+		next: page.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
+	})
+}
+
+/// Validate who reacted to a message, as a product answers it.
+pub fn validate_chat_reactions_answer(
+	answer: ProductChatReactionsQueryItem,
+) -> Result<ProductChatReactionsQueryItem, ChatFieldError> {
+	Ok(ProductChatReactionsQueryItem {
+		reactions: answer
+			.reactions
+			.into_iter()
+			.map(|reaction| {
+				Ok(ChatReactionDetail {
+					participant_id: normalize_chat_identifier(
+						"participantId",
+						&reaction.participant_id,
+					)?,
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					timestamp: reaction.timestamp,
+				})
+			})
+			.collect::<Result<_, ChatFieldError>>()?,
+	})
+}
+
+/// Token bucket for each `(product, room)` pair: at most `per_second` calls in
+/// one second, refilled at the same rate.
+pub struct ChatRateLimiter {
+	per_second: u32,
+	buckets: std::sync::Mutex<std::collections::HashMap<(String, String), ChatRateBucket>>,
+}
+
+struct ChatRateBucket {
+	/// Tokens left, in thousandths of a token.
+	milli_tokens: u64,
+	/// Milliseconds since the Unix epoch of the last refill.
+	refilled_at_ms: u64,
+}
+
+impl ChatRateLimiter {
+	/// A limiter that accepts `per_second` calls for each room in one second.
+	pub fn new(per_second: u32) -> Self {
+		Self { per_second, buckets: Default::default() }
+	}
+
+	/// Take one token for `room_id` of `product_id` at `now_ms`, milliseconds
+	/// since the Unix epoch. `false` when the room used its budget.
+	pub fn try_acquire(&self, product_id: &str, room_id: &str, now_ms: u64) -> bool {
+		let capacity = u64::from(self.per_second) * 1000;
+		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
+		let bucket = buckets
+			.entry((product_id.to_string(), room_id.to_string()))
+			.or_insert(ChatRateBucket { milli_tokens: capacity, refilled_at_ms: now_ms });
+		let elapsed_ms = now_ms.saturating_sub(bucket.refilled_at_ms);
+		bucket.milli_tokens = capacity
+			.min(bucket.milli_tokens.saturating_add(elapsed_ms * u64::from(self.per_second)));
+		bucket.refilled_at_ms = bucket.refilled_at_ms.max(now_ms);
+		if bucket.milli_tokens < 1000 {
+			return false;
+		}
+		bucket.milli_tokens -= 1000;
+		true
+	}
+
+	/// Drop the budget of a deleted room.
+	pub fn forget(&self, product_id: &str, room_id: &str) {
+		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
+		buckets.remove(&(product_id.to_string(), room_id.to_string()));
+	}
+}
+
 /// Scheme a URL parser would resolve, with the characters parsers ignore
 /// removed so `java\tscript:` and a leading NUL cannot hide one.
 fn icon_scheme(candidate: &str) -> Option<String> {
@@ -724,6 +1152,24 @@ pub enum ChatFieldError {
 	RejectedScheme {
 		/// Offending field name.
 		field: &'static str,
+	},
+	/// The field does not have the one length it must have.
+	#[display("{field} must be exactly {length} bytes")]
+	WrongLength {
+		/// Offending field name.
+		field: &'static str,
+		/// Required length.
+		length: usize,
+	},
+	/// The value is outside its accepted range.
+	#[display("{field} must be from {min} to {max}")]
+	OutOfRange {
+		/// Offending field name.
+		field: &'static str,
+		/// Smallest accepted value.
+		min: u64,
+		/// Largest accepted value.
+		max: u64,
 	},
 }
 
@@ -2043,6 +2489,45 @@ mod tests {
 	}
 
 	#[test]
+	fn a_payment_the_user_sends_carries_one_message_id_and_real_coin_keys() {
+		let payment = |message_id: &str, coin_keys: Vec<Vec<u8>>| ChatUserAction::SendPayment {
+			message_id: message_id.to_string(),
+			timestamp: 1_763_164_800_000,
+			total_value: 5_000_000,
+			coin_keys,
+		};
+		let key = vec![7u8; CHAT_PAYMENT_COIN_KEY_BYTES];
+
+		// The host tracks the payment under this id, so it is screened as an
+		// identifier like any message id.
+		assert_eq!(
+			validate_chat_user_action(payment(" pay-1 ", vec![key.clone()])),
+			Ok(payment("pay-1", vec![key.clone()]))
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay\u{200d}-1", vec![key.clone()])),
+			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+		// A payment with no coins, too many coins or a key that is no sr25519
+		// secret would reach the contact as a payment nobody can claim.
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", Vec::new())),
+			Err(ChatFieldError::Empty { field: "coinKeys" })
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", vec![key; CHAT_PAYMENT_COINS_MAX + 1])),
+			Err(ChatFieldError::TooMany { field: "coinKeys", limit: CHAT_PAYMENT_COINS_MAX })
+		);
+		assert_eq!(
+			validate_chat_user_action(payment("pay-1", vec![vec![7u8; 32]])),
+			Err(ChatFieldError::WrongLength { field: "coinKeys", length: 64 })
+		);
+		// The keys spend the coins, so a logged action never shows them.
+		let printed = format!("{:?}", payment("pay-1", vec![vec![0xab; 64]]));
+		assert!(printed.contains("1 keys") && !printed.contains("171"), "{printed}");
+	}
+
+	#[test]
 	fn auth_session_storage_key_has_stable_encoding() {
 		assert_eq!(CoreStorageKey::AuthSession.encode(), [0]);
 	}
@@ -2399,6 +2884,267 @@ mod tests {
 		.map(|review| review.encode()[0]);
 
 		assert_eq!(discriminants, [9, 11]);
+	}
+
+	fn text_message(message_id: &str) -> ChatMessage {
+		ChatMessage {
+			message_id: message_id.to_string(),
+			origin: ChatMessageOrigin { participant_id: "product".to_string() },
+			timestamp: 1,
+			body: ChatMessageBody::Text { text: "hi".to_string() },
+			status: truapi::latest::ChatMessageStatus::Sent,
+			reply_to: None,
+			reply_preview: None,
+			edited_at: None,
+			reactions: Vec::new(),
+			request: false,
+		}
+	}
+
+	fn image_item(resource: ChatResource) -> ChatMediaItem {
+		ChatMediaItem::Image {
+			resource,
+			meta: ChatMediaMeta {
+				mime_type: "image/png".to_string(),
+				size_bytes: None,
+				width: None,
+				height: None,
+				placeholder: None,
+				alt: None,
+				duration_ms: None,
+			},
+		}
+	}
+
+	fn hop(identifier: usize, node: &str, size: u64) -> ChatResource {
+		ChatResource::Hop {
+			identifier: vec![1; identifier],
+			ticket: vec![2; 32],
+			node: node.to_string(),
+			size,
+		}
+	}
+
+	// A node that is not `wss://` is not one the apps dial.
+	#[test]
+	fn a_hop_file_is_media_with_a_wss_node() {
+		let file = hop(32, "wss://hop.example", 1_000);
+		assert_eq!(validate_chat_media_resource("media", file.clone()), Ok(file));
+		assert_eq!(
+			validate_chat_media_resource("media", hop(31, "wss://hop.example", 1_000)),
+			Err(ChatFieldError::WrongLength { field: "media", length: 32 })
+		);
+		assert_eq!(
+			validate_chat_media_resource("media", hop(32, "https://hop.example", 1_000)),
+			Err(ChatFieldError::RejectedScheme { field: "media" })
+		);
+		assert!(
+			validate_chat_media_resource(
+				"media",
+				hop(32, "wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
+			)
+			.is_err()
+		);
+	}
+
+	#[test]
+	fn a_message_carries_at_most_the_media_budget() {
+		let many = |count| ChatMessageBody::RichText {
+			text: None,
+			media: (0..count).map(|_| image_item(hop(32, "wss://hop.example", 1))).collect(),
+		};
+		assert!(validate_chat_message_body(many(CHAT_MEDIA_MAX)).is_ok());
+		assert_eq!(
+			validate_chat_message_body(many(CHAT_MEDIA_MAX + 1)),
+			Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
+		);
+	}
+
+	// `text` is the field a product shrinks by sending less, so its size
+	// rejection keeps that name for `MessageTooLarge`.
+	#[test]
+	fn a_message_body_is_bounded_in_text() {
+		let text = |len| ChatMessageBody::Text { text: "x".repeat(len) };
+		assert!(validate_chat_message_body(text(CHAT_BODY_MAX_BYTES)).is_ok());
+		assert_eq!(
+			validate_chat_message_body(text(CHAT_BODY_MAX_BYTES + 1)),
+			Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+		);
+		let caption = ChatMessageBody::RichText {
+			text: Some("x".repeat(CHAT_BODY_MAX_BYTES + 1)),
+			media: Vec::new(),
+		};
+		assert_eq!(
+			validate_chat_message_body(caption),
+			Err(ChatFieldError::TooLong { field: "text", limit: CHAT_BODY_MAX_BYTES })
+		);
+	}
+
+	#[test]
+	fn a_message_is_screened_in_every_identifier_and_bounded_in_reactions() {
+		assert_eq!(
+			validate_chat_message(text_message(" m1 ")).map(|message| message.message_id),
+			Ok("m1".to_string())
+		);
+		assert_eq!(
+			validate_chat_message(text_message("m\u{200d}1")),
+			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+		let reacted = |count: usize| ChatMessage {
+			reactions: (0..count)
+				.map(|index| ChatReactionSummary {
+					emoji: format!("e{index}"),
+					count: 1,
+					reacted_by_user: false,
+					unseen: false,
+				})
+				.collect(),
+			..text_message("m1")
+		};
+		assert!(validate_chat_message(reacted(CHAT_REACTIONS_MAX)).is_ok());
+		assert_eq!(
+			validate_chat_message(reacted(CHAT_REACTIONS_MAX + 1)),
+			Err(ChatFieldError::TooMany { field: "reactions", limit: CHAT_REACTIONS_MAX })
+		);
+		assert_eq!(
+			validate_chat_feed_update(ChatFeedUpdate::ReactionPlaced {
+				message_id: "m1".to_string(),
+				participant_id: "user\u{202e}".to_string(),
+				emoji: "👍".to_string(),
+			}),
+			Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+		);
+	}
+
+	#[test]
+	fn room_declarations_are_bounded_as_the_limits_say() {
+		let metadata = |description: usize| ChatRoomMetadata {
+			name: "Support".to_string(),
+			description: Some("x".repeat(description)),
+		};
+		assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
+		assert_eq!(
+			validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES + 1)),
+			Err(ChatFieldError::TooLong {
+				field: "description",
+				limit: CHAT_DESCRIPTION_MAX_BYTES
+			})
+		);
+		assert_eq!(
+			validate_chat_room_metadata(ChatRoomMetadata {
+				name: "x".repeat(CHAT_FIELD_MAX_BYTES + 1),
+				..metadata(0)
+			}),
+			Err(ChatFieldError::TooLong { field: "name", limit: CHAT_FIELD_MAX_BYTES })
+		);
+
+		// The preview carries messages, screened as a page message is.
+		let preview = |message: ChatMessage| ChatRoomPreview {
+			timestamp: None,
+			badge: None,
+			last_message: None,
+			last_reaction: Some(ChatPreviewReaction {
+				emoji: "👍".to_string(),
+				by_user: false,
+				message: Some(message),
+				removed: false,
+			}),
+			unseen_reactions: 1,
+			last_call: None,
+		};
+		assert!(validate_chat_room_preview(preview(text_message("m1"))).is_ok());
+		assert_eq!(
+			validate_chat_room_preview(preview(text_message("m\u{202e}1"))),
+			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+	}
+
+	#[test]
+	fn a_query_asks_a_bounded_page() {
+		let messages = |page_size, cursor: usize| ProductChatMessagesQueryRequest {
+			room_id: "room".to_string(),
+			anchor: ChatPageAnchor::Before { cursor: Some("c".repeat(cursor)) },
+			page_size,
+		};
+		assert!(
+			validate_chat_messages_query(messages(CHAT_MESSAGES_PAGE_MAX, CHAT_CURSOR_MAX_BYTES))
+				.is_ok()
+		);
+		for page_size in [0, CHAT_MESSAGES_PAGE_MAX + 1] {
+			assert_eq!(
+				validate_chat_messages_query(messages(page_size, 1)),
+				Err(ChatFieldError::OutOfRange {
+					field: "pageSize",
+					min: 1,
+					max: CHAT_MESSAGES_PAGE_MAX.into()
+				})
+			);
+		}
+		assert_eq!(
+			validate_chat_messages_query(messages(1, CHAT_CURSOR_MAX_BYTES + 1)),
+			Err(ChatFieldError::TooLong { field: "cursor", limit: CHAT_CURSOR_MAX_BYTES })
+		);
+	}
+
+	// A product answers no more than the host asked for, so a page cannot grow
+	// the cache past what the screen requested.
+	#[test]
+	fn an_answer_holds_no_more_than_the_page_asked() {
+		let page = |count: usize| ProductChatMessagesQueryItem {
+			messages: (0..count).map(|index| text_message(&format!("m{index}"))).collect(),
+			next: None,
+		};
+		assert!(validate_chat_messages_page(page(3), 3).is_ok());
+		assert_eq!(
+			validate_chat_messages_page(page(4), 3),
+			Err(ChatFieldError::TooMany { field: "messages", limit: 3 })
+		);
+	}
+
+	// The quote of a reply is screened like the message it quotes.
+	#[test]
+	fn the_quote_of_a_reply_is_screened() {
+		let quoting = |participant_id: &str| ChatMessage {
+			reply_to: Some("m0".to_string()),
+			reply_preview: Some(ChatReplyPreview {
+				origin: ChatMessageOrigin { participant_id: participant_id.to_string() },
+				body: ChatMessageBody::Text { text: "earlier".to_string() },
+			}),
+			..text_message("m1")
+		};
+
+		assert_eq!(validate_chat_message(quoting(" contact ")), Ok(quoting("contact")));
+		assert_eq!(
+			validate_chat_message(quoting("con\u{202e}tact")),
+			Err(ChatFieldError::UnsafeCharacter { field: "participantId" })
+		);
+	}
+
+	// The 21st feed update in one second is refused, and the budget comes back
+	// at the rate it is spent.
+	#[test]
+	fn the_rate_limiter_holds_each_room_to_its_budget() {
+		let limiter = ChatRateLimiter::new(CHAT_FEED_UPDATES_PER_SECOND);
+		let start = 1_000_000;
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			assert!(limiter.try_acquire("chat.dot", "room", start));
+		}
+		assert!(!limiter.try_acquire("chat.dot", "room", start));
+		// Another room and another product keep their own budgets.
+		assert!(limiter.try_acquire("chat.dot", "other", start));
+		assert!(limiter.try_acquire("other.dot", "room", start));
+		// At 20 per second one token comes back every 50 ms.
+		assert!(!limiter.try_acquire("chat.dot", "room", start + 49));
+		assert!(limiter.try_acquire("chat.dot", "room", start + 50));
+		assert!(!limiter.try_acquire("chat.dot", "room", start + 50));
+
+		let previews = ChatRateLimiter::new(CHAT_PREVIEW_UPDATES_PER_SECOND);
+		for _ in 0..CHAT_PREVIEW_UPDATES_PER_SECOND {
+			assert!(previews.try_acquire("chat.dot", "room", start));
+		}
+		assert!(!previews.try_acquire("chat.dot", "room", start));
+		previews.forget("chat.dot", "room");
+		assert!(previews.try_acquire("chat.dot", "room", start));
 	}
 }
 
@@ -2829,6 +3575,77 @@ pub trait ChatPlatform: Send + Sync {
 		&self,
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+
+	/// The configuration the product last declared for a room, or the default
+	/// configuration when it declared none. The core reads it to decide
+	/// whether a room keeps its messages in the host and which queries the
+	/// product answers.
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<ChatRoomConfig, GenericError> {
+		Ok(ChatRoomConfig::default())
+	}
+
+	/// Replace the configuration of a room whole and keep it across restarts.
+	/// The core has already checked the product hosts the room.
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomConfigRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomConfig"))
+	}
+
+	/// Replace the name and description of a room.
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomMetadataRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomMetadata"))
+	}
+
+	/// Replace how a room shows in the chat list.
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomPreviewRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomPreview"))
+	}
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen. The core calls it only for a room the product hosts.
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatDeleteRoomRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("deleteChatRoom"))
+	}
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change, because it keeps the messages of the room. Without
+	/// it the host applies the change only to an open room screen and the chat
+	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+	/// and, for an edit of a message the product did not write, `NotOwner`.
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatUpdateFeedRequest,
+		_persist: bool,
+	) -> Result<(), HostChatUpdateFeedError> {
+		Err(HostChatUpdateFeedError::Unknown {
+			reason: chat_method_not_served("updateChatFeed").reason,
+		})
+	}
+}
+
+/// The failure of a chat platform method a host does not serve yet.
+fn chat_method_not_served(method: &str) -> GenericError {
+	GenericError { reason: format!("this host does not serve {method}") }
 }
 
 /// A funding session as the host overlay needs it to open on the right screen.

@@ -27,15 +27,21 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomConfig,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomConfigRequest,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatUpdateFeedRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostFundingStatusSubscribeItem,
@@ -1431,6 +1437,64 @@ export interface ChatPlatform {
   subscribeChatRooms(
     product: ProductContext,
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
+
+  /**
+   * The configuration the product last declared for a room, or the default
+   * configuration when it declared none. The core reads it to decide
+   * whether a room keeps its messages in the host and which queries the
+   * product answers.
+   */
+  readChatRoomConfig?(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomConfig>;
+
+  /**
+   * Replace the configuration of a room whole and keep it across restarts.
+   * The core has already checked the product hosts the room.
+   */
+  setChatRoomConfig?(
+    product: ProductContext,
+    request: HostChatSetRoomConfigRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace the name and description of a room.
+   */
+  setChatRoomMetadata?(
+    product: ProductContext,
+    request: HostChatSetRoomMetadataRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace how a room shows in the chat list.
+   */
+  setChatRoomPreview?(
+    product: ProductContext,
+    request: HostChatSetRoomPreviewRequest,
+  ): Promise<void>;
+
+  /**
+   * Delete a room with its messages, cache and declarations, and close its
+   * screen. The core calls it only for a room the product hosts.
+   */
+  deleteChatRoom?(
+    product: ProductContext,
+    request: HostChatDeleteRoomRequest,
+  ): Promise<void>;
+
+  /**
+   * Apply one change to the messages of a room. With `persist` the host
+   * stores the change, because it keeps the messages of the room. Without
+   * it the host applies the change only to an open room screen and the chat
+   * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+   * and, for an edit of a message the product did not write, `NotOwner`.
+   */
+  updateChatFeed?(
+    product: ProductContext,
+    request: HostChatUpdateFeedRequest,
+    persist: boolean,
+  ): Promise<void>;
 }
 
 /**

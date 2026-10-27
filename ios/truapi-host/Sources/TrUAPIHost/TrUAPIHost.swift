@@ -260,11 +260,91 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
 
     /// Set what a product's native Chat room shows below its messages, and
-    /// keep it until the product sets another.
+    /// keep it until the product sets another. A room without a footer shows
+    /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
+
+    /// Return the configuration the product last declared for a room, or
+    /// ``ChatRoomConfig/hostDefault`` when it declared none. The core reads it
+    /// before each feed update, posted message and query of the room.
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig
+
+    /// Replace the configuration of a room whole, and keep it across
+    /// restarts, when the product declares one with `setRoomConfig`. A room
+    /// the product declared none for has ``ChatRoomConfig/hostDefault``. A
+    /// change of `productSource` discards the stored messages or the cached
+    /// pages of the room.
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws
+
+    /// Replace the name and description of a room.
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
+
+    /// Replace how a room shows in the chat list.
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws
+
+    /// Delete a room with its messages, cache and declarations, and close its
+    /// screen. A room that does not exist is not an error.
+    func deleteRoom(roomId: String) async throws
+
+    /// Apply one change to the messages of a room. With `persist` the host
+    /// stores the change. Without it the host applies the change only to an
+    /// open room screen and to the chat list preview.
+    ///
+    /// Throw ``NativeChatFeedRejection`` to refuse the change. The product
+    /// receives each case as its own error, and any other error as
+    /// ``NativeChatFeedRejection/Rejected(reason:)``.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws
+}
+
+/// Defaults for a host that does not serve the Chat Extension v2 requests yet.
+/// The product receives a rejection for each request, except for metadata,
+/// which the host ignores and keeps the name and icon of `createRoom`, and for
+/// a configuration that keeps the behaviour the host serves anyway.
+public extension ChatHostBridge {
+    func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
+        .hostDefault
+    }
+
+    func setRoomConfig(roomId _: String, config: ChatRoomConfig) async throws {
+        guard config == .hostDefault else { throw unservedChatRequest("setRoomConfig") }
+    }
+
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {
+        throw unservedChatRequest("setRoomPreview")
+    }
+
+    func deleteRoom(roomId _: String) async throws {
+        throw unservedChatRequest("deleteRoom")
+    }
+
+    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {
+        throw NativeChatFeedRejection.Rejected(reason: unservedChatRequestReason("updateFeed"))
+    }
+}
+
+/// The resource type of Chat Extension v2, under a name that a host app with a
+/// `ChatResource` type of its own can still write.
+public typealias TrUAPIChatResource = ChatResource
+
+public extension ChatRoomConfig {
+    /// The configuration of a room that declares nothing: the host stores the
+    /// messages and serves every part of the room itself.
+    static var hostDefault: ChatRoomConfig {
+        ChatRoomConfig(productSource: false, reactionDetails: false, reportSeen: false)
+    }
+}
+
+private func unservedChatRequestReason(_ request: String) -> String {
+    "this host does not serve chat \(request)"
+}
+
+private func unservedChatRequest(_ request: String) -> HostRejection {
+    HostRejection.Rejected(reason: unservedChatRequestReason(request))
 }
 
 /// Native Pocket collection surface. Implement and pass to
@@ -513,6 +593,50 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
 
     func listRooms() async throws -> [ChatRoom] {
         try await withHostRejection { try await bridge.listRooms() }
+    }
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        try await withHostRejection { try await bridge.roomConfig(roomId: roomId) }
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomConfig(roomId: roomId, config: config)
+        }
+    }
+
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomMetadata(roomId: roomId, metadata: metadata)
+        }
+    }
+
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomPreview(roomId: roomId, preview: preview)
+        }
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        try await withHostRejection { try await bridge.deleteRoom(roomId: roomId) }
+    }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+        try await withFeedRejection {
+            try await bridge.updateFeed(roomId: roomId, update: update, persist: persist)
+        }
+    }
+
+    /// Pass a ``NativeChatFeedRejection`` to the product as it is, and any
+    /// other error as ``NativeChatFeedRejection/Rejected(reason:)``.
+    private func withFeedRejection(_ operation: () async throws -> Void) async throws {
+        do {
+            try await operation()
+        } catch let rejection as NativeChatFeedRejection {
+            throw rejection
+        } catch {
+            throw NativeChatFeedRejection.Rejected(reason: hostRejectionReason(error))
+        }
     }
 }
 

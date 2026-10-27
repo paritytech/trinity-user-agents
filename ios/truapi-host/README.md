@@ -116,9 +116,30 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving the Chat modality implements `ChatHostBridge` and passes it
+when it opens the product's `.worker` execution. Hosts without it pass nothing
+and Chat calls answer unsupported.
+
+The bridge carries the requests of Chat Extension v2. `createRoom`,
+`registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default.
+The other requests have defaults for a host that does not serve them yet:
+`roomConfig` answers `ChatRoomConfig.hostDefault`, `setRoomConfig` accepts only
+that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`,
+and every other request answers a rejection. A room the product declares
+nothing for is a room the host stores, with the name and icon of `createRoom`
+and the text input.
+
+| Request | What the host does |
+| --- | --- |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update and posted message |
+| `setRoomConfig` | Keeps the configuration the product declared for a room across restarts. The core calls it for the product's `setRoomConfig` |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomFooter` | Shows the text input, or nothing |
+
+The core checks that the product created the room before it calls any of
+these, and bounds and screens every field.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -155,6 +176,20 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
+
+    func roomConfig(roomId: String) throws -> ChatRoomConfig {
+        store.config(roomId) ?? .hostDefault
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) throws {
+        store.setConfig(roomId, config: config)
+    }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws {
+        guard store.apply(update, to: roomId, persist: persist) else {
+            throw NativeChatFeedRejection.UnknownMessage
+        }
+    }
 }
 
 let runtime = try TrUAPIHostRuntime(
@@ -172,7 +207,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .worker),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()

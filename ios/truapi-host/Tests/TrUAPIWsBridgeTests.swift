@@ -277,7 +277,7 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
+// Every member is written out, also the members with a default.
 final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,
@@ -298,6 +298,18 @@ final class StubChatHostBridge: ChatHostBridge {
     func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
 
     func listRooms() async throws -> [ChatRoom] { [] }
+
+    func roomConfig(roomId _: String) async throws -> ChatRoomConfig { .hostDefault }
+
+    func setRoomConfig(roomId _: String, config _: ChatRoomConfig) async throws {}
+
+    func setRoomMetadata(roomId _: String, metadata _: ChatRoomMetadata) async throws {}
+
+    func setRoomPreview(roomId _: String, preview _: ChatRoomPreview) async throws {}
+
+    func deleteRoom(roomId _: String) async throws {}
+
+    func updateFeed(roomId _: String, update _: ChatFeedUpdate, persist _: Bool) async throws {}
 }
 
 // Conforms to `PocketHostBridge` so a new requirement there fails this job.
