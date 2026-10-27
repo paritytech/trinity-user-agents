@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -29,6 +30,10 @@ class ChatFeedInteractorProductRoomTest {
     private val roomSourceContextFactory = mockk<ChatRoomSourceContextFactory> {
         every { create(any()) } returns roomSource
     }
+    private val attachmentStager = mockk<ProductAttachmentStager>(relaxed = true) {
+        coEvery { editPending(any(), any(), any()) } returns false
+        coEvery { toggleReactionPending(any(), any()) } returns false
+    }
 
     @Test
     fun `closing a room closes its source`() {
@@ -38,16 +43,27 @@ class ChatFeedInteractorProductRoomTest {
     }
 
     @Test
-    fun `a text in a room the product keeps goes to the product, not to the host database`() = runBlocking<Unit> {
+    fun `a text in a room the product keeps waits in the outbox, and the room shows its newest messages`() = runBlocking<Unit> {
         coEvery { roomSource.productSource() } returns productSource
 
         val outcome = interactor().sendTextMessage(roomId, "hello", replyToMessageId = "m0")
 
         assertEquals(ChatSourceActionOutcome.Done, outcome)
-        coVerify {
-            productSource.perform(match { it is ChatSourceAction.Send && it.replyTo == "m0" && (it.content as ChatMessage.Content.Text).text == "hello" })
-        }
+        coVerify { attachmentStager.enqueueText(roomId, "hello", "m0") }
+        coVerify { productSource.perform(ChatSourceAction.ShowNewest) }
         coVerify(exactly = 0) { chatEngine.sendUserMessage(any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `an edit and a reaction on a message in the outbox wait there`() = runBlocking<Unit> {
+        coEvery { attachmentStager.editPending("p1", "new", any()) } returns true
+        coEvery { attachmentStager.toggleReactionPending("p1", "👍") } returns true
+
+        val interactor = interactor()
+        assertEquals(ChatSourceActionOutcome.Done, interactor.sendEdit(roomId, "p1", "new"))
+        assertEquals(ChatSourceActionOutcome.Done, interactor.toggleUserReaction(roomId, "p1", "👍", emptyList()))
+
+        coVerify(exactly = 0) { roomSource.productSource() }
     }
 
     @Test
@@ -110,5 +126,6 @@ class ChatFeedInteractorProductRoomTest {
         attachmentFileStorage = mockk(relaxed = true),
         hopNodeUrlProvider = mockk(relaxed = true),
         roomSourceContextFactory = roomSourceContextFactory,
+        attachmentStager = attachmentStager,
     )
 }

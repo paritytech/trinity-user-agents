@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListener
@@ -38,9 +37,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * The window opens on the newest page and pages older with the cursor of each page. The source never asks
  * `After`: it asks a dropped page again with its own `Before` request, and when the newest page comes back it
- * pages older until a page meets the window. Feed updates change the window in place. The messages, edits and
- * reactions of the user go to the product through `user_action`. The window shows an edit or a reaction before the
- * answer arrives, and a message once the product has it.
+ * pages older until a page meets the window. Feed updates change the window in place. The edits and reactions of the
+ * user go to the product through `user_action`, and the window shows their result before the answer arrives. The
+ * messages that the user sends go through the outbox of the room, which the room screen merges in.
  *
  * The room shows no loading row and no failure: a page that did not
  * arrive is asked again, silently, after a delay that grows with each failure.
@@ -186,7 +185,11 @@ class ProductMessageSource(
     }
 
     override suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome = when (action) {
-        is ChatSourceAction.Send -> userActions.async { send(action) }.await()
+        // The outbox sends the message. Then the room shows its newest messages.
+        ChatSourceAction.ShowNewest -> {
+            if (onSource { !window.isAtNewestEnd }) reload()
+            ChatSourceActionOutcome.Done
+        }
         is ChatSourceAction.Edit -> userActions.async { edit(action) }.await()
         is ChatSourceAction.ToggleReaction -> userActions.async { toggleReaction(action.messageId, action.emoji) }.await()
         is ChatSourceAction.MarkSeen -> onSource {
@@ -371,25 +374,6 @@ class ProductMessageSource(
     // endregion
 
     // region User actions
-
-    // The room shows its newest messages, and the message once the product has it.
-    private suspend fun send(action: ChatSourceAction.Send): ChatSourceActionOutcome {
-        if (onSource { !window.isAtNewestEnd }) reload()
-
-        val result = querying.userAction(chatId, ChatUserActionModel.NewMessage(action.content, action.replyTo))
-        val error = result.exceptionOrNull()
-        if (error != null) {
-            if (error is CancellationException) throw error
-            Timber.w(error, "A message of a product room failed")
-            return ChatSourceActionOutcome.Refused((error as? ProductChatQueryException.Rejected)?.reason)
-        }
-
-        (result.getOrNull() as? ChatUserActionOutcome.MessageCreated)?.let { created ->
-            window.insertLive(created.message)
-            emit()
-        }
-        return ChatSourceActionOutcome.Done
-    }
 
     private suspend fun edit(action: ChatSourceAction.Edit): ChatSourceActionOutcome {
         val original = window.messages[action.messageId] ?: return ChatSourceActionOutcome.Refused(reason = null)

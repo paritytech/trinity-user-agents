@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
@@ -273,52 +272,22 @@ class ProductMessageSourceTest {
     // region User actions
 
     @Test
-    fun `a sent message goes to the product, and the window shows it once the product has it`() = runBlocking<Unit> {
-        val history = ProductRoomHistory(count = 2)
-        val created = productMessage(2, participant = "user")
-        val querying = ScriptedProductChatQuerying(
-            answerPage = history.answer,
-            answerAction = { Result.success(ChatUserActionOutcome.MessageCreated(created)) },
-        )
-        val source = openedSource(querying)
+    fun `after a send the room shows its newest messages, and asks them again only when they are out of the window`() =
+        runBlocking<Unit> {
+            val history = ProductRoomHistory(count = 2_000)
+            val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+            val source = openedSource(querying)
 
-        val outcome = source.perform(ChatSourceAction.Send(text("hello"), replyTo = "m1"))
+            assertEquals(ChatSourceActionOutcome.Done, source.perform(ChatSourceAction.ShowNewest))
+            assertEquals(1, querying.pageRequests.size)
 
-        assertEquals(ChatSourceActionOutcome.Done, outcome)
-        val sent = querying.actionRequests.single() as ChatUserActionModel.NewMessage
-        assertEquals("hello", (sent.content as ChatMessage.Content.Text).text)
-        assertEquals("m1", sent.replyTo)
-        assertEquals(listOf("m0", "m1", "m2"), source.oldestFirstIds())
-        assertTrue(source.snapshot.messages.first().origin is ChatMessageOrigin.User)
-    }
+            repeat(20) { source.loadOlder() }
+            assertEquals(ChatPagingState.Edge.MORE, source.snapshot.paging.newer)
+            source.perform(ChatSourceAction.ShowNewest)
 
-    @Test
-    fun `a message that the product refuses shows the reason and stays out of the window`() = runBlocking<Unit> {
-        val history = ProductRoomHistory(count = 2)
-        val querying = ScriptedProductChatQuerying(
-            answerPage = history.answer,
-            answerAction = { Result.failure(ProductChatQueryException.Rejected("Too long")) },
-        )
-        val source = openedSource(querying)
-
-        val outcome = source.perform(ChatSourceAction.Send(text("hello"), replyTo = null))
-
-        assertEquals(ChatSourceActionOutcome.Refused("Too long"), outcome)
-        assertEquals(listOf("m0", "m1"), source.oldestFirstIds())
-    }
-
-    @Test
-    fun `a message sent while the newest page is out of the window brings the newest page back`() = runBlocking<Unit> {
-        val history = ProductRoomHistory(count = 2_000)
-        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
-        val source = openedSource(querying)
-        repeat(20) { source.loadOlder() }
-        assertEquals(ChatPagingState.Edge.MORE, source.snapshot.paging.newer)
-
-        source.perform(ChatSourceAction.Send(text("hello"), replyTo = null))
-
-        assertEquals(history.ids(1_950..1_999), source.oldestFirstIds())
-    }
+            assertEquals(history.ids(1_950..1_999), source.oldestFirstIds())
+            assertTrue(querying.actionRequests.isEmpty())
+        }
 
     @Test
     fun `a refused edit restores the body`() = runBlocking<Unit> {
