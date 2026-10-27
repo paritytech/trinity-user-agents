@@ -266,6 +266,29 @@
         </details>
       </section>
 
+      <section id="workers" aria-labelledby="workers-title">
+        <h2 id="workers-title">Workers</h2>
+        <p class="note">
+          A product's background part. It runs while you are signed in and this
+          tab is open. Its rooms show in Chat.
+        </p>
+        <form id="worker-form" autocomplete="off">
+          <label for="worker-name" class="visually-hidden">Product name</label>
+          <div class="field-row">
+            <input
+              id="worker-name"
+              type="text"
+              spellcheck="false"
+              autocapitalize="off"
+              placeholder="myapp.paseo"
+            />
+            <button id="worker-add" type="submit">Add</button>
+          </div>
+        </form>
+        <ul id="worker-list" class="worker-list" hidden></ul>
+        <p id="worker-status" class="status" aria-live="polite"></p>
+      </section>
+
       <section aria-labelledby="versions-title">
         <h2 id="versions-title">Versions</h2>
         <p

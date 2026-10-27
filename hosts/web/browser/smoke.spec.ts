@@ -110,6 +110,29 @@ async function openMenu(page: Page): Promise<void> {
     await page.click("#menu-toggle");
 }
 
+async function closeMenu(page: Page): Promise<void> {
+  if ((await page.getAttribute("body", "data-menu")) === "open")
+    await page.click("#menu-toggle");
+}
+
+/** Menu → Workers: add `name` and wait until its worker runs. */
+async function addWorker(page: Page, name: string): Promise<void> {
+  await openMenu(page);
+  await page.fill("#worker-name", name);
+  await page.press("#worker-name", "Enter");
+  await page
+    .locator(`#worker-list [data-worker="${name}"][data-state="running"]`)
+    .waitFor();
+  await closeMenu(page);
+}
+
+/** Menu → Developer → Chat demo: press `action`, such as `demo-start`. */
+async function chatDemo(page: Page, action: string): Promise<void> {
+  await openMenu(page);
+  await page.click(`#chat-demo [data-action="${action}"]`);
+  await closeMenu(page);
+}
+
 async function openSection(page: Page, selector: string): Promise<void> {
   await openMenu(page);
   await page
@@ -788,15 +811,9 @@ describe("product worker chat", () => {
         const page = await openHost(context);
         await signIn(page);
         await page.click('#dock [data-destination="chat"]');
-        await page.click('[data-action="manage-workers"]');
-        await page.fill('[data-focus="worker-name"]', WORKER_NAME);
-        await page.press('[data-focus="worker-name"]', "Enter");
-        await page
-          .locator(`[data-worker="${WORKER_NAME}"][data-state="running"]`)
-          .waitFor();
+        await addWorker(page, WORKER_NAME);
         expect(await page.locator("#worker-frames iframe").count()).toBe(1);
 
-        await page.click('[aria-label="Back to chats"]');
         const row = page.locator(
           `[data-conversation="product:${WORKER_NAME}/fixture"]`,
         );
@@ -945,7 +962,9 @@ describe("product worker chat", () => {
 
         // Another wallet has no workers and no product rooms.
         await signInWith(page, SYNTHETIC_MNEMONIC);
-        await page.locator('[data-action="manage-workers"]').waitFor();
+        await page
+          .locator("#worker-status", { hasText: "No workers." })
+          .waitFor({ state: "attached" });
         expect(await page.locator('[data-provider^="product:"]').count()).toBe(
           0,
         );
@@ -1236,13 +1255,7 @@ describe("chat as a product", () => {
           .waitFor({ state: "attached" });
         await signInWith(page, SYNTHETIC_MNEMONIC);
         await page.click('#dock [data-destination="chat"]');
-        await page.click('[data-action="manage-workers"]');
-        await page.fill('[data-focus="worker-name"]', PRODUCT);
-        await page.press('[data-focus="worker-name"]', "Enter");
-        await page
-          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
-          .waitFor();
-        await page.click('[aria-label="Back to chats"]');
+        await addWorker(page, PRODUCT);
 
         const workerFrame = page
           .frames()
@@ -1364,7 +1377,7 @@ describe("the local chat product demo", () => {
   }
 
   test(
-    "starts the synthetic chat product from the Workers page as a product worker, and serves its rooms, pages, sends, feed and calls",
+    "starts the synthetic chat product from the Developer menu as a product worker, and serves its rooms, pages, sends, feed and calls",
     async () => {
       const context = await browser.newContext();
       context.setDefaultTimeout(STEP_MS);
@@ -1395,25 +1408,36 @@ describe("the local chat product demo", () => {
           .waitFor({ state: "attached" });
         await signInWith(page, SYNTHETIC_MNEMONIC);
 
-        // Chat, Workers, Start demo.
+        // Chat, then Menu → Developer → Chat demo → Start.
         await page.click('#dock [data-destination="chat"]');
-        await page.click('[data-action="manage-workers"]');
-        const panel = page.locator(".local-demo");
-        expect(await panel.innerText()).toContain(
+        // The Chat screen has no Workers page and no demo panel.
+        expect(
+          await page.locator("#chat-screen [data-action^='demo-']").count(),
+        ).toBe(0);
+        await openMenu(page);
+        const panel = page.locator("#chat-demo");
+        expect(await panel.textContent()).toContain(
           "not the Verbosity chat product",
         );
         const PRODUCT = `localhost:${new URL(host.origin).port}`;
-        expect(await panel.innerText()).toContain(`Product id ${PRODUCT}`);
+        expect(await panel.textContent()).toContain(`Product id ${PRODUCT}`);
         const before = outside.length;
-        await page.click('[data-action="demo-start"]');
+        await page.click('#chat-demo [data-action="demo-start"]');
+        await openMenu(page);
         await page
-          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
+          .locator(
+            `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
+          )
           .waitFor();
         expect(
-          await page.locator(`[data-worker="${PRODUCT}"]`).innerText(),
+          await page
+            .locator(`#worker-list [data-worker="${PRODUCT}"]`)
+            .innerText(),
         ).toContain("added by this host");
-        await page.locator('.local-demo[data-demo="running"]').waitFor();
-        await page.click('[aria-label="Back to chats"]');
+        await page
+          .locator('#chat-demo[data-demo="running"]')
+          .waitFor({ state: "attached" });
+        await closeMenu(page);
 
         const workerFrame = page
           .frames()
@@ -1618,21 +1642,19 @@ describe("the local chat product demo", () => {
 
         // Restart: a fresh product, which lost what it was sent.
         await page.click('[aria-label="Back to chats"]');
-        await page.click('[data-action="manage-workers"]');
-        await page.click('[data-action="demo-restart"]');
+        await chatDemo(page, "demo-restart");
         await page
-          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
-          .waitFor();
-        await page.click('[aria-label="Back to chats"]');
+          .locator(
+            `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
+          )
+          .waitFor({ state: "attached" });
         await page.locator(ada, { hasText: "#120" }).waitFor();
 
         // Stop: the worker frame, its rooms and its provider go.
-        await page.click('[data-action="manage-workers"]');
-        await page.click('[data-action="demo-stop"]');
-        await page.locator(`[data-worker="${PRODUCT}"]`).waitFor({
+        await chatDemo(page, "demo-stop");
+        await page.locator(`#worker-list [data-worker="${PRODUCT}"]`).waitFor({
           state: "detached",
         });
-        await page.click('[aria-label="Back to chats"]');
         await page.locator(ada).waitFor({ state: "detached" });
         expect(
           page
@@ -1642,11 +1664,12 @@ describe("the local chat product demo", () => {
 
         // Started again, then signing out stops it, and signing back in
         // does not start it: nothing is saved.
-        await page.click('[data-action="manage-workers"]');
-        await page.click('[data-action="demo-start"]');
+        await chatDemo(page, "demo-start");
         await page
-          .locator(`[data-worker="${PRODUCT}"][data-state="running"]`)
-          .waitFor();
+          .locator(
+            `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
+          )
+          .waitFor({ state: "attached" });
         await openMenu(page);
         await page.click("#sign-out");
         await page.waitForFunction(
@@ -1655,11 +1678,12 @@ describe("the local chat product demo", () => {
         );
         await signInWith(page, SYNTHETIC_MNEMONIC);
         await page.click('#dock [data-destination="chat"]');
-        await page.click('[data-action="manage-workers"]');
-        await page.locator('.local-demo[data-demo="stopped"]').waitFor();
-        expect(await page.locator(`[data-worker="${PRODUCT}"]`).count()).toBe(
-          0,
-        );
+        await page
+          .locator('#chat-demo[data-demo="stopped"]')
+          .waitFor({ state: "attached" });
+        expect(
+          await page.locator(`#worker-list [data-worker="${PRODUCT}"]`).count(),
+        ).toBe(0);
       } finally {
         await context.close();
       }

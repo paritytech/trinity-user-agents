@@ -517,6 +517,46 @@ textarea {
   gap: 8px;
 }
 
+/* The menu's Workers section: one line per worker, Remove on the right. */
+.worker-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.worker-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.worker-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.worker-state {
+  grid-column: 1;
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.worker-list li[data-state="failed"] .worker-state,
+#worker-status[data-state="error"] {
+  color: var(--warning);
+}
+
+.worker-list .quiet {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin: 0;
+}
+
 .field-row button {
   flex: none;
 }
@@ -1875,58 +1915,6 @@ button.chat-reaction {
 
 .product-card[data-state="fallback"] .product-card-note {
   color: var(--chat-warning);
-}
-
-.product-worker-form {
-  flex: none;
-  padding: 0 0 16px;
-}
-
-.local-demo {
-  margin: 0 0 20px;
-  padding: 12px 14px;
-  border: 1px dashed var(--chat-line);
-  border-radius: 14px;
-}
-
-.local-demo .chat-identity-line,
-.local-demo .chat-row-preview {
-  display: block;
-  margin: 0 0 8px;
-}
-
-.local-demo-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.product-worker-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.product-worker {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 2px 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--chat-line);
-}
-
-.product-worker .chat-row-preview {
-  grid-column: 1;
-  white-space: normal;
-}
-
-.product-worker .chat-link {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
-}
-
-.product-worker[data-state="failed"] .chat-row-preview {
-  color: var(--chat-danger);
 }
 
 /*
