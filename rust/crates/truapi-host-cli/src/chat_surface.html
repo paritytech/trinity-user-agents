@@ -1,0 +1,1236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>truapi-host chat</title>
+<script>
+// Runs before the worker bootstrap: the product sandbox later gates WebSocket in this page.
+const NativeWebSocket = window.WebSocket;
+const surface = { socket: null, queue: [], onFrame: null, onState: null, delay: 500 };
+function surfaceConnect() {
+  const socket = new NativeWebSocket(`ws://${location.host}/chat/ws`);
+  surface.socket = socket;
+  socket.onopen = () => { surface.delay = 500; if (surface.onState) surface.onState(true); };
+  socket.onmessage = (event) => {
+    let frame;
+    try { frame = JSON.parse(event.data); } catch (_) { return; }
+    if (surface.onFrame) surface.onFrame(frame); else surface.queue.push(frame);
+  };
+  socket.onclose = () => {
+    if (surface.onState) surface.onState(false);
+    setTimeout(surfaceConnect, surface.delay);
+    surface.delay = Math.min(surface.delay * 2, 8000);
+  };
+}
+surfaceConnect();
+
+// The worker bundle runs as a module script in this page, so its console is
+// this console. Captured here, ahead of the boot, so the first lines of a
+// starting worker are not lost; the pane below draws from this buffer.
+const workerLog = { entries: [], dropped: 0, limit: 2000, onEntry: null };
+function recordLog(level, args) {
+  const text = args.map((arg) => {
+    if (typeof arg === "string") return arg;
+    if (arg instanceof Error) return arg.stack || arg.message;
+    try { return JSON.stringify(arg); } catch (_) { return String(arg); }
+  }).join(" ").replace(/^\d{2}:\d{2}:\d{2}\.\d{3} /, "");
+  const tagged = /^\[(TRC|DBG|INF|WRN|ERR|FTL)\]/.exec(text);
+  const entry = { level: tagged ? tagged[1] : level, text, at: new Date() };
+  workerLog.entries.push(entry);
+  if (workerLog.entries.length > workerLog.limit) { workerLog.entries.shift(); workerLog.dropped += 1; }
+  if (workerLog.onEntry) workerLog.onEntry(entry);
+}
+for (const [method, level] of [["log", "DBG"], ["debug", "DBG"], ["info", "INF"], ["warn", "WRN"], ["error", "ERR"]]) {
+  const original = console[method].bind(console);
+  console[method] = (...args) => { original(...args); recordLog(level, args); };
+}
+window.addEventListener("error", (event) => recordLog("ERR", [event.message || String(event.error)]));
+window.addEventListener("unhandledrejection", (event) => recordLog("ERR", ["unhandled rejection:", event.reason]));
+</script>
+<style>
+:root {
+  --bg: #0e1012;
+  --rail: #14171a;
+  --panel: #191d21;
+  --line: #262b31;
+  --ink: #e6e2d8;
+  --muted: #8a8f96;
+  --faint: #5a6068;
+  --accent: #d6ff5c;
+  --accent-ink: #151a05;
+  --warn: #ffb547;
+  --ok: #5ce0a0;
+  --err: #ff6b6b;
+  --product: #20252b;
+  --person: #d6ff5c;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --ui: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: radial-gradient(1200px 600px at 80% -10%, #1b2410 0%, transparent 60%), var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--ui);
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(14, 16, 18, 0.85);
+}
+.brand { font: 600 13px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.brand b { color: var(--accent); font-weight: 600; }
+#product { font: 15px var(--mono); color: var(--ink); }
+.spacer { flex: 1; }
+.pill {
+  font: 12px var(--mono); padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.pill::before { content: "\25CF  "; }
+.pill.warn { color: var(--warn); border-color: rgba(255, 181, 71, 0.4); }
+.pill.ok { color: var(--ok); border-color: rgba(92, 224, 160, 0.4); }
+.pill.off { color: var(--err); border-color: rgba(255, 107, 107, 0.4); }
+button {
+  font: 12px var(--mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.on { border-color: var(--accent); color: var(--accent); }
+.panes { display: flex; gap: 2px; }
+.panes button { border-radius: 0; margin-left: -1px; }
+.panes button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.panes button:last-child { border-radius: 0 6px 6px 0; }
+main { display: grid; min-height: 0; }
+main.dragging { cursor: col-resize; user-select: none; }
+main.dragging * { pointer-events: none; }
+.gutter { position: relative; z-index: 1; }
+.gutter::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px;
+  cursor: col-resize; background: transparent; transition: background 120ms;
+}
+.gutter:hover::after, .gutter.active::after { background: var(--accent); }
+.gutter[hidden] { display: none; }
+nav { background: var(--rail); border-right: 1px solid var(--line); overflow-y: auto; padding: 10px 0; }
+nav[hidden] { display: none; }
+nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 6px 18px 10px; }
+.room {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 18px; border: 0; border-left: 3px solid transparent; border-radius: 0;
+  background: none; text-align: left; font: 14px var(--ui);
+}
+.room:hover { background: var(--panel); color: var(--ink); }
+.room.active { background: var(--panel); border-left-color: var(--accent); }
+.avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 10px; overflow: hidden;
+  display: grid; place-items: center; background: #2a3037; color: var(--accent);
+  font: 600 15px var(--mono);
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
+section { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
+.roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
+.roomhead h1 { font: 500 19px var(--sans); margin: 0; }
+.roomhead code { font: 11px var(--mono); color: var(--faint); }
+#thread { overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.empty { margin: auto; text-align: center; color: var(--muted); max-width: 360px; }
+.empty p { font: italic 18px var(--sans); color: var(--ink); margin: 0 0 8px; }
+.empty code { font: 12px var(--mono); color: var(--warn); }
+.msg { display: flex; gap: 10px; align-items: flex-end; max-width: 72%; }
+.msg.fresh { animation: rise 0.18s ease-out; }
+.msg.person { align-self: flex-end; flex-direction: row-reverse; }
+.msg.event { align-self: center; max-width: none; }
+@keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+.bubble {
+  background: var(--product); border: 1px solid var(--line);
+  border-radius: 14px 14px 14px 4px; padding: 9px 13px; min-width: 60px; overflow-wrap: anywhere;
+}
+.person .bubble { background: var(--person); color: var(--accent-ink); border-color: transparent; border-radius: 14px 14px 4px 14px; }
+.person .bubble a { color: var(--accent-ink); }
+.text { white-space: pre-wrap; }
+.mid { display: block; margin-top: 4px; font: 10px var(--mono); color: var(--faint); text-align: right; }
+.person .mid { color: rgba(21, 26, 5, 0.55); }
+a { color: var(--accent); }
+.media { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.file { display: flex; gap: 10px; align-items: center; }
+.file .glyph { font: 600 10px var(--mono); padding: 8px 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); }
+.file small { display: block; font: 11px var(--mono); color: var(--muted); }
+.note { align-self: center; font: 12px var(--mono); color: var(--faint); }
+footer { border-top: 1px solid var(--line); padding: 12px 22px 10px; background: rgba(20, 23, 26, 0.6); }
+.compose { display: flex; gap: 10px; align-items: flex-end; }
+textarea {
+  flex: 1; resize: none; min-height: 42px; max-height: 160px;
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font: 14px var(--ui);
+}
+textarea:focus { outline: none; border-color: var(--accent); }
+textarea:disabled { opacity: 0.5; }
+#send { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); height: 42px; font-weight: 600; }
+#send:disabled { opacity: 0.4; cursor: default; }
+.hint { display: flex; justify-content: space-between; margin-top: 6px; font: 11px var(--mono); color: var(--faint); min-height: 16px; }
+#status.ok { color: var(--ok); }
+#status.warn { color: var(--warn); }
+#status.err { color: var(--err); }
+aside {
+  display: grid; min-height: 0; border-left: 1px solid var(--line); background: var(--rail);
+  grid-template-rows: auto 1fr auto;
+}
+aside[hidden], section[hidden] { display: none; }
+.loghead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.loghead h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 0; flex: 1; }
+.loghead input {
+  width: 150px; font: 12px var(--mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+.loghead input:focus { outline: none; border-color: var(--accent); }
+.loghead button { padding: 4px 9px; }
+.loghead button.on { border-color: var(--accent); color: var(--accent); }
+#loglines { overflow-y: auto; padding: 8px 0; font: 12px/1.5 var(--mono); }
+.logline { display: flex; gap: 10px; padding: 1px 14px; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+.logline time { flex: none; color: var(--faint); }
+.logline.INF { color: var(--ink); }
+.logline.WRN { color: var(--warn); }
+.logline.ERR, .logline.FTL { color: var(--err); }
+.logfoot { padding: 6px 14px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--faint); display: flex; justify-content: space-between; }
+[hidden] { display: none !important; }
+.room .rowtext { flex: 1; min-width: 0; }
+.room .rowname { display: flex; align-items: center; gap: 6px; }
+.room .rowname b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room .pin { font: 10px var(--mono); color: var(--accent); }
+.room .line { display: block; font: 12px var(--ui); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font: 600 11px/20px var(--mono); text-align: center; }
+.roomhead { flex-wrap: wrap; }
+.roomhead .titles { flex: 1; min-width: 0; }
+.roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
+.paging { align-self: center; font: 12px var(--mono); color: var(--muted); }
+.paging.err { color: var(--err); }
+.msg.other .who { display: block; font: 11px var(--mono); color: var(--accent); margin-bottom: 3px; }
+.msg .tools { align-self: center; opacity: 0; transition: opacity 120ms; }
+.msg:hover .tools, .msg:focus-within .tools { opacity: 1; }
+.msg .tools button { padding: 2px 7px; }
+.msg.flash .bubble { outline: 2px solid var(--warn); }
+.quote { display: block; border-left: 3px solid var(--accent); padding: 2px 8px; margin-bottom: 6px; font-size: 12px; opacity: 0.85; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.person .quote { border-left-color: var(--accent-ink); }
+.meta { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; font: 10px var(--mono); color: var(--faint); }
+.person .meta { color: rgba(21, 26, 5, 0.6); }
+.meta .tick.Read { color: #2e7dff; }
+.meta .tick.Failed { color: var(--err); font-weight: 700; }
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { font: 12px var(--ui); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+.chip.mine { border-color: var(--accent); color: var(--accent); }
+.mediaitem { display: flex; flex-direction: column; gap: 3px; max-width: 260px; }
+.mediaitem small { font: 10px var(--mono); color: var(--muted); }
+.mediabox { display: grid; place-items: center; text-align: center; min-width: 160px; min-height: 90px; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; font: 11px var(--mono); color: var(--muted); background: rgba(0, 0, 0, 0.25); word-break: break-all; }
+.unsupported { font-style: italic; }
+.composer { display: flex; flex-direction: column; gap: 6px; }
+.banner { display: flex; justify-content: space-between; align-items: center; font: 12px var(--mono); color: var(--muted); border-left: 3px solid var(--accent); padding: 2px 8px; }
+.banner button { padding: 1px 7px; }
+.menu { position: fixed; z-index: 10; min-width: 200px; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.menu button { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 6px 14px; font: 13px var(--ui); }
+.menu button.destructive { color: var(--err); }
+.menu .picker { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 10px; }
+.menu .picker button { width: auto; padding: 3px 6px; font-size: 16px; }
+.sheet { position: fixed; inset: 0; z-index: 9; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.sheet > div { width: min(440px, 92vw); max-height: 80vh; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.sheet h3 { margin: 0 0 10px; font: 600 13px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.person-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 4px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; text-align: left; font: 13px var(--ui); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand"><b>truapi</b> chat</span>
+  <span id="product">connecting</span>
+  <span class="spacer"></span>
+  <span id="link" class="pill off">socket closed</span>
+  <span id="worker" class="pill">worker: unknown</span>
+  <span class="panes">
+    <button id="toggle-rooms" type="button">Rooms</button>
+    <button id="toggle-chat" type="button">Chat</button>
+    <button id="toggle-log" type="button">Logs</button>
+  </span>
+  <button id="restart" type="button">Restart worker</button>
+</header>
+<main id="main">
+  <nav id="rooms-pane">
+    <h2>Rooms</h2>
+    <div id="rooms"></div>
+  </nav>
+  <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
+  <section id="chat-pane">
+    <div class="roomhead" id="roomhead"></div>
+    <div id="thread"></div>
+    <footer id="footer">
+      <div class="composer">
+        <div id="banner" class="banner" hidden></div>
+        <form class="compose" id="compose">
+          <textarea id="input" rows="1" placeholder="Message" disabled></textarea>
+          <button id="send" type="submit" disabled>Send</button>
+        </form>
+      </div>
+      <div class="hint"><span id="status"></span><span id="hinttext">Enter to send, Shift+Enter for newline</span></div>
+    </footer>
+  </section>
+  <div class="gutter" id="gutter-log" title="Drag to resize"></div>
+  <aside id="logpane">
+    <div class="loghead">
+      <h2>Worker log</h2>
+      <input id="logfilter" type="search" placeholder="filter" spellcheck="false">
+      <button id="logpause" type="button" title="Stop following new lines">Pause</button>
+      <button id="logclear" type="button">Clear</button>
+    </div>
+    <div id="loglines"></div>
+    <div class="logfoot"><span id="logcount"></span><span>console of the worker in this page</span></div>
+  </aside>
+</main>
+<div id="menu" class="menu" hidden></div>
+<div id="sheet" class="sheet" hidden><div id="sheetbody"></div></div>
+<script>
+// The chat surface: what a phone shows of the rooms a product declared.
+// Everything the host keeps arrives on the socket; everything the person does
+// leaves as one operation. Rooms the product keeps (productSource) are paged
+// from the product through the host, and the person's changes in them wait
+// for the product's answer.
+const USER = "user";
+const PRODUCT = "product";
+const PAGE_SIZE = 40;
+const REACTIONS = ["\u{1F44D}", "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
+const TEXT_COLLAPSE = 4000;
+const params = new URLSearchParams(location.search);
+
+const state = {
+  productId: "",
+  worker: { configured: true, connected: 0 },
+  timeouts: { page: 10000, send: 30000, action: 10000, query: 5000 },
+  rooms: new Map(),
+  // roomId -> messages in screen order (host store, or the product's pages plus updates).
+  messages: new Map(),
+  selected: params.get("room"),
+  // Whether the person chose a room, which a `?room=` link then leaves alone.
+  picked: false,
+  opened: null,
+  // roomId -> { next, loading, error, asked: Set } for rooms the product keeps.
+  paging: new Map(),
+  // roomId -> sends the product did not answer yet: { tempId, text, replyTo, status, reqId }.
+  temps: new Map(),
+  seenSent: new Map(),
+  // Messages already drawn once, as "roomId\nmessageId".
+  drawn: new Set(),
+  replyTo: null,
+  editing: null,
+};
+const $ = (id) => document.getElementById(id);
+let statusTimer = null;
+let reqSeq = 0;
+let tempSeq = 0;
+const pending = new Map();
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = String(text);
+  return node;
+}
+
+function safeUrl(url) {
+  return /^(https?:|data:|blob:)/i.test(String(url || "")) ? String(url) : null;
+}
+
+function shortKey(key) {
+  const k = String(key || "");
+  return k.length > 18 ? `${k.slice(0, 10)}…${k.slice(-6)}` : k;
+}
+
+function avatar(icon, name, small) {
+  const box = el("span", small ? "avatar sm" : "avatar", (String(name || "?").trim()[0] || "?").toUpperCase());
+  const src = safeUrl(icon);
+  if (src) {
+    const img = el("img");
+    img.alt = "";
+    img.onload = () => { box.textContent = ""; box.appendChild(img); };
+    img.src = src;
+  }
+  return box;
+}
+
+function roomAvatar(room, small) {
+  return avatar(room.icon, room.name, small);
+}
+
+function link(url, label) {
+  const href = safeUrl(url);
+  if (!href) return el("span", null, label);
+  const a = el("a", null, label);
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function humanSize(bytes) {
+  if (bytes == null) return "size unknown";
+  const n = Number(bytes) || 0;
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(1)) + " " + units[i];
+}
+
+function clock(ms) {
+  if (ms == null) return "";
+  const d = new Date(Number(ms));
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function send(op) {
+  if (!surface.socket || surface.socket.readyState !== 1) { setStatus("socket not connected", "err"); return false; }
+  surface.socket.send(JSON.stringify(op));
+  return true;
+}
+
+// An operation that gets an `answer`. The callback receives the frame.
+function ask(op, fields, onAnswer) {
+  const reqId = ++reqSeq;
+  pending.set(reqId, onAnswer || (() => {}));
+  if (!send(Object.assign({ op, reqId }, fields))) {
+    pending.delete(reqId);
+    (onAnswer || (() => {}))({ kind: "answer", op, reqId, error: { tag: "SocketClosed" } });
+  }
+  return reqId;
+}
+
+function setStatus(text, tone) {
+  const node = $("status");
+  node.textContent = text;
+  node.className = tone || "";
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { node.textContent = ""; node.className = ""; }, 5000);
+}
+
+function describeError(error) {
+  if (!error) return "unknown error";
+  return error.reason ? `${error.tag}: ${error.reason}` : error.tag;
+}
+
+// Text into `parent`, with its URLs as links. A punctuation mark at the end
+// of a URL stays text.
+function linkify(text, parent) {
+  String(text).split(/(https?:\/\/[^\s<>"]+)/g).forEach((part, index) => {
+    if (index % 2 === 0) { parent.appendChild(document.createTextNode(part)); return; }
+    const url = part.replace(/[.,;:!?)]+$/, "");
+    parent.appendChild(link(url, url));
+    if (url.length < part.length) parent.appendChild(document.createTextNode(part.slice(url.length)));
+  });
+  return parent;
+}
+
+function plainText(text) {
+  return linkify(text, el("div", "text"));
+}
+
+function collapsible(node, length) {
+  if (length <= TEXT_COLLAPSE) return node;
+  const box = el("div");
+  node.style.maxHeight = "220px";
+  node.style.overflow = "hidden";
+  const more = el("button", null, "Show more");
+  more.type = "button";
+  more.onclick = () => { node.style.maxHeight = ""; more.remove(); };
+  box.append(node, more);
+  return box;
+}
+
+// ------------------------------------------------------------------ bodies
+
+// A media item is a file in the HOP pool, which this page does not claim.
+function mediaNode(item) {
+  const box = el("div", "mediaitem");
+  box.dataset.media = item.kind;
+  const meta = item.meta || {};
+  const res = item.resource || {};
+  const where = `HOP file ${shortKey(res.identifier)} on ${res.node || "an unknown node"}, ${humanSize(meta.sizeBytes ?? res.size)}`;
+  if (item.kind === "File") {
+    const file = el("div", "file");
+    file.appendChild(el("span", "glyph", (String(meta.mimeType || "file").split("/")[1] || "file").slice(0, 4).toUpperCase()));
+    const info = el("div");
+    info.appendChild(el("span", null, item.fileName || "file"));
+    info.appendChild(el("small", null, `${meta.mimeType || "unknown"} · ${where}`));
+    file.appendChild(info);
+    box.appendChild(file);
+    return box;
+  }
+  box.appendChild(el("div", "mediabox", `${item.kind === "Video" ? "▶ video" : "image"}\n${where}\nnot fetched on the dev page`));
+  const caption = [meta.mimeType, meta.width && meta.height ? `${meta.width}×${meta.height}` : null].filter(Boolean).join(" · ");
+  if (meta.alt || caption) box.appendChild(el("small", null, [meta.alt, caption].filter(Boolean).join(" · ")));
+  return box;
+}
+
+function bodyNode(roomId, msg) {
+  const b = msg.body || {};
+  const box = el("div", "body");
+  box.dataset.body = b.type;
+  if (b.type === "Text") {
+    box.appendChild(collapsible(plainText(b.text), b.text.length));
+  } else if (b.type === "RichText") {
+    if (b.text != null) box.appendChild(collapsible(plainText(b.text), b.text.length));
+    if ((b.media || []).length) {
+      const media = el("div", "media");
+      for (const item of b.media) media.appendChild(mediaNode(item));
+      box.appendChild(media);
+    }
+  } else if (b.type === "Event") {
+    box.dataset.event = b.event;
+    box.appendChild(el("div", "text", b.text));
+  } else if (b.type === "Call") {
+    box.dataset.call = b.closed ? "closed" : b.answeredAt != null ? "answered" : "ringing";
+    box.appendChild(el("div", "text", `${b.video ? "\u{1F3A5}" : "\u{1F4DE}"} ${b.text}`));
+  } else if (b.type === "Payment") {
+    box.appendChild(el("div", "text", `\u{1F4B8} ${b.legacy ? "Transfer" : "Payment"} of ${b.amount}`));
+  } else {
+    box.appendChild(el("div", "text unsupported", `unsupported body: ${JSON.stringify(b)}`));
+  }
+  return box;
+}
+
+function quoteText(msg) {
+  if (!msg) return null;
+  const b = msg.body || {};
+  if (b.type === "RichText" && !b.text && (b.media || []).length) return `[${b.media[0].kind}]`;
+  return String(msg.preview || "").split("\n")[0];
+}
+
+// --------------------------------------------------------------- rooms
+
+function roomOf(roomId) { return state.rooms.get(roomId); }
+function messagesOf(roomId) {
+  if (!state.messages.has(roomId)) state.messages.set(roomId, []);
+  return state.messages.get(roomId);
+}
+function isSource(room) { return !!(room && room.config && room.config.productSource); }
+
+function sortedRooms() {
+  return [...state.rooms.values()].sort((a, b) => {
+    const ta = (a.list && a.list.timestamp) || 0, tb = (b.list && b.list.timestamp) || 0;
+    if (ta !== tb) return tb - ta;
+    return String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function badgeNode(badge) {
+  if (!badge || badge.type !== "UnreadCount") return null;
+  const node = el("span", "badge", badge.count);
+  node.dataset.badge = String(badge.count);
+  return node;
+}
+
+function renderRooms() {
+  const list = $("rooms");
+  list.textContent = "";
+  for (const room of sortedRooms()) list.appendChild(roomRow(room));
+}
+
+function roomRow(room) {
+  const button = el("button", room.roomId === state.selected ? "room active" : "room");
+  button.type = "button";
+  button.dataset.roomId = room.roomId;
+  button.appendChild(roomAvatar(room));
+  const text = el("span", "rowtext");
+  const name = el("span", "rowname");
+  name.appendChild(el("b", null, room.name));
+  if (room.list && room.list.unseenReactions > 0) name.appendChild(el("span", "pin", "\u{2764}\u{FE0F}"));
+  // A newer call the product names apart from the newest message: this page
+  // keeps the line on the message and marks the call beside the name.
+  if (room.list && room.list.lastCall) name.appendChild(el("span", "pin", room.list.lastCall.text));
+  text.appendChild(name);
+  const reaction = room.list && room.list.lastReaction;
+  const line = reaction ? `${reaction.byUser ? "You" : room.name} ${reaction.removed ? "removed a reaction" : `reacted with ${reaction.emoji}`}`
+    : room.list && room.list.text != null ? `${room.list.origin === USER ? "You: " : ""}${room.list.text}` : null;
+  if (line) {
+    const node = el("span", "line", line);
+    node.dataset.preview = line;
+    text.appendChild(node);
+  } else {
+    text.appendChild(el("span", "line", room.description || room.roomId));
+  }
+  button.appendChild(text);
+  const badge = badgeNode(room.list && room.list.badge);
+  if (badge) button.appendChild(badge);
+  button.onclick = () => selectRoom(room.roomId);
+  return button;
+}
+
+function selectRoom(roomId) {
+  state.picked = true;
+  if (state.selected === roomId && state.opened === roomId) return;
+  state.selected = roomId;
+  state.replyTo = null;
+  state.editing = null;
+  openSelected();
+  renderRooms();
+  renderRoom(true);
+}
+
+// A room the product keeps is paged from the newest message each time it
+// opens.
+function openSelected() {
+  if (state.opened === state.selected) return;
+  state.opened = null;
+  const room = roomOf(state.selected);
+  if (!room || !surface.socket || surface.socket.readyState !== 1) return;
+  state.opened = room.roomId;
+  if (isSource(room)) {
+    state.messages.set(room.roomId, []);
+    state.paging.set(room.roomId, { next: undefined, loading: false, error: null, asked: new Set() });
+    loadPage(room.roomId, null);
+  }
+}
+
+function loadPage(roomId, cursor) {
+  const paging = state.paging.get(roomId);
+  if (!paging || paging.loading) return;
+  const key = cursor == null ? "<newest>" : cursor;
+  if (paging.asked.has(key) && !paging.error) return;
+  paging.asked.add(key);
+  paging.loading = true;
+  paging.error = null;
+  renderRoom(false);
+  ask("messages", { roomId, before: true, cursor, pageSize: PAGE_SIZE }, (frame) => {
+    paging.loading = false;
+    if (frame.error) {
+      paging.error = frame.error;
+      paging.asked.delete(key);
+    } else {
+      const list = messagesOf(roomId);
+      const known = new Set(list.map((m) => m.messageId));
+      const older = frame.ok.messages.filter((m) => !known.has(m.messageId));
+      list.unshift(...older);
+      paging.next = frame.ok.next == null ? null : frame.ok.next;
+    }
+    const thread = $("thread");
+    const fromBottom = thread.scrollHeight - thread.scrollTop;
+    renderRoom(cursor == null);
+    if (cursor != null) thread.scrollTop = thread.scrollHeight - fromBottom;
+  });
+}
+
+function participantName(roomId, id) {
+  if (id === USER) return "You";
+  const room = roomOf(roomId);
+  if (id === PRODUCT) return room ? room.name : state.productId;
+  return id;
+}
+
+// ------------------------------------------------------------- the room
+
+function statusTick(status) {
+  return { Preparing: "◷", Sent: "✓", Delivered: "✓✓", Read: "✓✓", Failed: "⚠ failed" }[status] || status;
+}
+
+function renderMessage(room, msg, temp) {
+  const roomId = room.roomId;
+  const mine = msg.origin === USER;
+  const kind = msg.body && msg.body.type === "Event" ? "event" : mine ? "person" : msg.origin === PRODUCT ? "product" : "other";
+  const row = el("div", `msg ${kind}`);
+  // Only a message drawn for the first time rises in; a redraw stays still.
+  const drawn = `${roomId}\n${msg.messageId}`;
+  if (!state.drawn.has(drawn)) { state.drawn.add(drawn); row.classList.add("fresh"); }
+  row.dataset.messageId = msg.messageId;
+  row.dataset.origin = msg.origin;
+  row.dataset.status = msg.status;
+  if (msg.editedAt != null) row.dataset.edited = "true";
+  if (msg.request) row.dataset.request = "true";
+  if (temp) row.dataset.temp = "true";
+  if (kind === "event") {
+    row.appendChild(el("span", "note", `${participantName(roomId, msg.origin)}: ${msg.body.text}`));
+    return row;
+  }
+  if (!mine) row.appendChild(msg.origin === PRODUCT ? roomAvatar(room, true) : avatar(null, participantName(roomId, msg.origin), true));
+  const bubble = el("div", "bubble");
+  if (msg.origin !== USER && msg.origin !== PRODUCT) bubble.appendChild(el("span", "who", participantName(roomId, msg.origin)));
+  if (msg.request) bubble.appendChild(el("span", "who", mine ? "Request message sent" : "Request message"));
+  if (msg.replyTo) {
+    const target = messagesOf(roomId).find((m) => m.messageId === msg.replyTo);
+    const quote = el("span", "quote", target ? quoteText(target) : `reply to ${msg.replyTo}`);
+    quote.dataset.replyTo = msg.replyTo;
+    quote.onclick = () => jumpTo(roomId, msg.replyTo);
+    bubble.appendChild(quote);
+  }
+  bubble.appendChild(bodyNode(roomId, msg));
+  if ((msg.reactions || []).length) {
+    const chips = el("div", "reactions");
+    for (const reaction of msg.reactions) {
+      const chip = el("button", reaction.reactedByUser ? "chip mine" : "chip", `${reaction.emoji} ${reaction.count}`);
+      chip.type = "button";
+      chip.dataset.emoji = reaction.emoji;
+      chip.title = room.config.reactionDetails ? "Click to toggle, right-click for who reacted" : "Click to toggle";
+      chip.onclick = () => react(roomId, msg, reaction.emoji, !reaction.reactedByUser);
+      chip.oncontextmenu = (event) => { if (room.config.reactionDetails) { event.preventDefault(); whoReacted(roomId, msg.messageId); } };
+      chips.appendChild(chip);
+    }
+    bubble.appendChild(chips);
+  }
+  const meta = el("span", "meta");
+  if (msg.editedAt != null) meta.appendChild(el("span", "edited", `edited ${clock(msg.editedAt)}`));
+  meta.appendChild(el("span", null, clock(msg.timestamp)));
+  meta.appendChild(el("span", "mid", msg.messageId));
+  if (mine || msg.status !== "Sent") {
+    const tick = el("span", `tick ${msg.status}`, statusTick(msg.status));
+    tick.title = msg.status;
+    meta.appendChild(tick);
+  }
+  bubble.appendChild(meta);
+  row.appendChild(bubble);
+  const tools = el("span", "tools");
+  const more = el("button", null, "⋯");
+  more.type = "button";
+  more.title = "Message menu";
+  more.dataset.menu = msg.messageId;
+  more.onclick = (event) => openMessageMenu(room, msg, temp, event);
+  tools.appendChild(more);
+  row.appendChild(tools);
+  row.oncontextmenu = (event) => { event.preventDefault(); openMessageMenu(room, msg, temp, event); };
+  return row;
+}
+
+function renderHeader2() {
+  const head = $("roomhead");
+  head.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room) {
+    head.appendChild(el("h1", null, "No room"));
+    return;
+  }
+  head.appendChild(roomAvatar(room, true));
+  const titles = el("div", "titles");
+  const h1 = el("h1", null, room.name);
+  h1.id = "roomname";
+  titles.appendChild(h1);
+  if (room.description) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
+  titles.appendChild(el("code", null, `${room.roomId} · ${isSource(room) ? "product source" : "host store"}`));
+  head.appendChild(titles);
+}
+
+function renderRoom(forceBottom) {
+  renderHeader2();
+  const thread = $("thread");
+  const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
+  thread.textContent = "";
+  const room = roomOf(state.selected);
+  if (!room) {
+    thread.appendChild(emptyState("Waiting for the worker to register a room",
+      state.worker.configured ? null : "pass --worker-bundle to truapi-host dev"));
+    renderFooter(null);
+    return;
+  }
+  const messages = messagesOf(room.roomId);
+  const temps = state.temps.get(room.roomId) || [];
+  if (isSource(room)) {
+    const paging = state.paging.get(room.roomId) || {};
+    let line = null;
+    if (paging.loading) line = el("div", "paging", "loading…");
+    else if (paging.error) {
+      line = el("div", "paging err", `could not load: ${describeError(paging.error)} `);
+      const retry = el("button", null, "Retry");
+      retry.type = "button";
+      retry.onclick = () => loadPage(room.roomId, messages.length ? paging.next : null);
+      line.appendChild(retry);
+    } else if (paging.next) {
+      line = el("button", "paging", "Load older messages");
+      line.type = "button";
+      line.id = "older";
+      line.onclick = () => loadPage(room.roomId, paging.next);
+    } else if (paging.next === null && messages.length) line = el("div", "paging", "start of the conversation");
+    if (line) thread.appendChild(line);
+  }
+  if (!messages.length && !temps.length) {
+    const empty = emptyState("No messages");
+    empty.id = "placeholder";
+    thread.appendChild(empty);
+  }
+  for (const msg of messages) thread.appendChild(renderMessage(room, msg, false));
+  for (const temp of temps) {
+    thread.appendChild(renderMessage(room, {
+      messageId: temp.tempId, origin: USER, timestamp: temp.at, status: temp.status,
+      body: { type: "Text", text: temp.text }, replyTo: temp.replyTo, reactions: [], preview: temp.text,
+    }, temp));
+  }
+  if (pinned) thread.scrollTop = thread.scrollHeight;
+  renderFooter(room);
+  reportSeen(room);
+}
+
+function emptyState(title, hint) {
+  const box = el("div", "empty");
+  box.appendChild(el("p", null, title));
+  if (hint) box.appendChild(el("code", null, hint));
+  return box;
+}
+
+function jumpTo(roomId, messageId, tries) {
+  const node = document.querySelector(`#thread [data-message-id="${CSS.escape(messageId)}"]`);
+  if (node) {
+    node.scrollIntoView({ block: "center" });
+    node.classList.add("flash");
+    setTimeout(() => node.classList.remove("flash"), 1200);
+    return;
+  }
+  const paging = state.paging.get(roomId);
+  if (paging && paging.next && (tries || 0) < 20) {
+    loadPage(roomId, paging.next);
+    setTimeout(() => jumpTo(roomId, messageId, (tries || 0) + 1), 400);
+  } else setStatus(`message ${messageId} is not loaded`, "warn");
+}
+
+// The newest message on screen is reported once each time it changes.
+function reportSeen(room) {
+  if (state.opened !== room.roomId || document.hidden) return;
+  const messages = messagesOf(room.roomId);
+  const newest = messages[messages.length - 1];
+  if (!newest || state.seenSent.get(room.roomId) === newest.messageId) return;
+  state.seenSent.set(room.roomId, newest.messageId);
+  ask("seen", { roomId: room.roomId, messageId: newest.messageId });
+}
+
+// ---------------------------------------------------------------- footer
+
+function renderFooter(room) {
+  const input = $("input");
+  const footer = room ? room.footer || { type: "TextInput" } : null;
+  $("compose").hidden = !footer || footer.type !== "TextInput";
+  $("footer").dataset.footer = footer ? footer.type : "";
+  input.disabled = !room;
+  $("send").disabled = !room;
+  const banner = $("banner");
+  banner.textContent = "";
+  const target = state.editing || state.replyTo;
+  banner.hidden = !room || !target;
+  if (room && target) {
+    const msg = messagesOf(room.roomId).find((m) => m.messageId === target);
+    banner.appendChild(el("span", null, `${state.editing ? "Editing" : "Replying to"} ${target}: ${quoteText(msg) || ""}`));
+    const cancel = el("button", null, "✕");
+    cancel.type = "button";
+    cancel.onclick = () => { if (state.editing) input.value = ""; state.editing = null; state.replyTo = null; renderFooter(room); };
+    banner.appendChild(cancel);
+  }
+}
+
+// ------------------------------------------------------------------ send
+
+function postText(room, text, replyTo) {
+  if (isSource(room)) {
+    // Drawn at once as Preparing; the product's MessageCreated replaces it.
+    // The product sends the message under the id and time the page chose.
+    const temp = {
+      tempId: `local-${++tempSeq}`, messageId: crypto.randomUUID(), text, replyTo, status: "Preparing", at: Date.now(),
+    };
+    const temps = state.temps.get(room.roomId) || [];
+    temps.push(temp);
+    state.temps.set(room.roomId, temps);
+    sendTemp(room, temp);
+  } else {
+    ask("post", { roomId: room.roomId, text, replyTo }, (frame) => {
+      if (frame.error) setStatus(`send: ${describeError(frame.error)}`, "err");
+      else if (frame.ok && frame.ok.workers === 0) setStatus("post: no worker connected", "warn");
+    });
+  }
+  renderRoom(true);
+}
+
+function sendTemp(room, temp) {
+  temp.status = "Preparing";
+  const post = { roomId: room.roomId, text: temp.text, replyTo: temp.replyTo, messageId: temp.messageId, timestamp: temp.at };
+  temp.reqId = ask("post", post, (frame) => {
+    const temps = state.temps.get(room.roomId) || [];
+    if (frame.ok) {
+      state.temps.set(room.roomId, temps.filter((t) => t !== temp));
+      if (frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
+    } else if (frame.error && frame.error.tag === "Rejected") {
+      state.temps.set(room.roomId, temps.filter((t) => t !== temp));
+      setStatus(`not sent: ${frame.error.reason}`, "err");
+    } else {
+      temp.status = "Failed";
+      setStatus(`not sent: ${describeError(frame.error)}`, "err");
+    }
+    if (room.roomId === state.selected) renderRoom(false);
+  });
+}
+
+function submit() {
+  const input = $("input");
+  const text = input.value;
+  const room = roomOf(state.selected);
+  if (!room || !text.trim()) return;
+  if (state.editing) {
+    const messageId = state.editing;
+    state.editing = null;
+    ask("edit", { roomId: room.roomId, messageId, text }, (frame) => {
+      if (frame.error) setStatus(`edit: ${describeError(frame.error)}`, "err");
+    });
+    input.value = "";
+    renderFooter(room);
+    return;
+  }
+  postText(room, text, state.replyTo);
+  state.replyTo = null;
+  input.value = "";
+  renderFooter(room);
+}
+
+function react(roomId, msg, emoji, placed) {
+  ask("react", { roomId, messageId: msg.messageId, emoji, placed }, (frame) => {
+    if (frame.error || frame.kind === "error") setStatus(`reaction: ${describeError(frame.error) || frame.message}`, "err");
+  });
+}
+
+// ----------------------------------------------------------------- menus
+
+function closeMenu() { $("menu").hidden = true; $("menu").textContent = ""; }
+
+function showMenu(event, items) {
+  const menu = $("menu");
+  menu.textContent = "";
+  for (const item of items) menu.appendChild(item);
+  menu.hidden = false;
+  const x = Math.min(event.clientX, window.innerWidth - 240);
+  const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 10);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+  event.stopPropagation();
+}
+
+function menuItem(label, onClick, options) {
+  const b = el("button", options && options.destructive ? "destructive" : null);
+  b.type = "button";
+  if (options && options.id) b.dataset.item = options.id;
+  b.appendChild(document.createTextNode(label));
+  b.onclick = () => { closeMenu(); onClick(); };
+  return b;
+}
+
+// Copy, reply, edit of an own text, react and who reacted. A send the
+// product did not take offers Retry and Discard.
+function menuItems(room, msg, temp) {
+  const items = [];
+  const mine = msg.origin === USER;
+  const text = msg.body && (msg.body.text != null ? msg.body.text : null);
+  if (temp) {
+    if (msg.status === "Failed") items.push(menuItem("Retry", () => sendTemp(room, temp), { id: "Retry" }));
+    items.push(menuItem("Discard", () => { state.temps.set(room.roomId, (state.temps.get(room.roomId) || []).filter((t) => t !== temp)); renderRoom(false); }, { id: "Discard", destructive: true }));
+    return items;
+  }
+  if (text) items.push(menuItem("Copy", () => navigator.clipboard.writeText(text).then(() => setStatus("copied", "ok"), () => setStatus("copy refused by the browser", "warn")), { id: "Copy" }));
+  items.push(menuItem("Reply", () => { state.replyTo = msg.messageId; state.editing = null; renderFooter(room); $("input").focus(); }, { id: "Reply" }));
+  if (mine && msg.body && (msg.body.type === "Text" || (msg.body.type === "RichText" && msg.body.text != null))) {
+    items.push(menuItem("Edit", () => { state.editing = msg.messageId; state.replyTo = null; $("input").value = msg.body.text; renderFooter(room); $("input").focus(); }, { id: "Edit" }));
+  }
+  const picker = el("div", "picker");
+  picker.dataset.item = "React";
+  for (const emoji of REACTIONS) {
+    const b = el("button", null, emoji);
+    b.type = "button";
+    b.dataset.emoji = emoji;
+    b.onclick = () => { closeMenu(); const held = (msg.reactions || []).find((r) => r.emoji === emoji && r.reactedByUser); react(room.roomId, msg, emoji, !held); };
+    picker.appendChild(b);
+  }
+  items.push(picker);
+  if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
+  return items;
+}
+
+function openMessageMenu(room, msg, temp, event) {
+  const position = { clientX: event.clientX, clientY: event.clientY, stopPropagation() {} };
+  event.stopPropagation();
+  showMenu(position, menuItems(room, msg, temp));
+}
+
+function whoReacted(roomId, messageId) {
+  openSheet("Who reacted", [el("span", "note", "asking the product…")]);
+  ask("reactions", { roomId, messageId }, (frame) => {
+    if (frame.error) {
+      if (frame.error.tag === "NotAvailable") { closeSheet(); setStatus("who reacted is not available", "warn"); return; }
+      openSheet("Who reacted", [el("span", "note", describeError(frame.error))]);
+      return;
+    }
+    const rows = frame.ok.reactions.map((r) => {
+      const row = el("div", "person-row");
+      row.dataset.participant = r.participantId;
+      row.appendChild(el("span", null, r.emoji));
+      row.appendChild(el("span", null, participantName(roomId, r.participantId)));
+      return row;
+    });
+    openSheet("Who reacted", rows.length ? rows : [el("span", "note", "nobody")]);
+  });
+}
+
+function closeSheet() { $("sheet").hidden = true; $("sheetbody").textContent = ""; }
+
+function openSheet(title, nodes) {
+  const body = $("sheetbody");
+  body.textContent = "";
+  body.appendChild(el("h3", null, title));
+  for (const node of nodes) body.appendChild(node);
+  $("sheet").hidden = false;
+}
+
+// -------------------------------------------------------------- protocol
+
+function upsertMessage(roomId, message) {
+  const list = messagesOf(roomId);
+  const index = list.findIndex((m) => m.messageId === message.messageId);
+  if (index >= 0) list[index] = message; else list.push(message);
+}
+
+function renderHeader() {
+  $("product").textContent = state.productId || "unknown product";
+  const w = $("worker");
+  if (!state.worker.configured) { w.textContent = "worker: not configured"; w.className = "pill"; }
+  else if (!state.worker.connected) { w.textContent = "worker: 0 connected"; w.className = "pill warn"; }
+  else { w.textContent = `worker: ${state.worker.connected} connected`; w.className = "pill ok"; }
+}
+
+function strip(frame) {
+  const copy = Object.assign({}, frame);
+  delete copy.kind;
+  return copy;
+}
+
+// `?room=<id>` opens that room as soon as the product declares it, until the
+// person picks a room; otherwise the first room of the list opens.
+function ensureSelection() {
+  const wanted = params.get("room");
+  if (!state.picked && wanted && state.rooms.has(wanted)) state.selected = wanted;
+  else if (!state.rooms.has(state.selected)) state.selected = (sortedRooms()[0] || {}).roomId || null;
+  openSelected();
+}
+
+function handle(frame) {
+  switch (frame.kind) {
+    case "snapshot":
+      state.productId = frame.productId || "";
+      state.worker = frame.worker || { configured: false, connected: 0 };
+      if (frame.timeouts) state.timeouts = frame.timeouts;
+      state.rooms = new Map((frame.rooms || []).map((room) => [room.roomId, room]));
+      state.messages = new Map();
+      for (const entry of frame.messages || []) upsertMessage(entry.roomId, entry.message);
+      // A reconnected socket is a new screen: open the room again.
+      state.opened = null;
+      ensureSelection();
+      renderHeader(); renderRooms(); renderRoom(true);
+      break;
+    case "room": {
+      const room = strip(frame);
+      const before = state.rooms.get(room.roomId);
+      state.rooms.set(room.roomId, room);
+      // A change of mode discards what the screen held, as the host does.
+      if (before && isSource(before) !== isSource(room)) {
+        state.messages.set(room.roomId, []);
+        if (state.opened === room.roomId) { state.opened = null; }
+      }
+      ensureSelection();
+      renderRooms();
+      if (room.roomId === state.selected) renderRoom(false);
+      break;
+    }
+    case "roomDeleted":
+      state.rooms.delete(frame.roomId);
+      state.messages.delete(frame.roomId);
+      if (state.opened === frame.roomId) state.opened = null;
+      ensureSelection();
+      renderRooms(); renderRoom(true);
+      break;
+    case "message": {
+      const room = state.rooms.get(frame.roomId);
+      if (room && frame.list) room.list = frame.list;
+      const list = messagesOf(frame.roomId);
+      const known = list.some((m) => m.messageId === frame.message.messageId);
+      // A room the product keeps shows what its window holds plus what is new.
+      if (known || frame.persisted || state.opened === frame.roomId) upsertMessage(frame.roomId, frame.message);
+      renderRooms();
+      if (frame.roomId === state.selected) renderRoom(frame.message.origin === USER);
+      break;
+    }
+    case "workers": {
+      state.worker.connected = frame.connected;
+      renderHeader();
+      break;
+    }
+    case "answer": {
+      const callback = pending.get(frame.reqId);
+      pending.delete(frame.reqId);
+      if (callback) callback(frame);
+      break;
+    }
+    case "error":
+      if (frame.reqId != null && pending.has(frame.reqId)) { const cb = pending.get(frame.reqId); pending.delete(frame.reqId); cb({ kind: "answer", error: { tag: "Refused", reason: frame.message } }); }
+      setStatus(`error: ${frame.message}`, "err");
+      break;
+  }
+}
+
+$("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
+$("input").onkeydown = (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
+  if (event.key === "Escape") { state.editing = null; state.replyTo = null; renderFooter(roomOf(state.selected)); }
+};
+$("thread").onscroll = () => {
+  const room = roomOf(state.selected);
+  const paging = room && state.paging.get(room.roomId);
+  if (paging && paging.next && !paging.loading && $("thread").scrollTop < 20) loadPage(room.roomId, paging.next);
+};
+document.addEventListener("click", (event) => { if (!$("menu").contains(event.target)) closeMenu(); });
+$("sheet").onclick = (event) => { if (event.target === $("sheet")) closeSheet(); };
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeMenu(); closeSheet(); } });
+document.addEventListener("visibilitychange", () => { const room = roomOf(state.selected); if (room) reportSeen(room); });
+$("restart").onclick = () => location.reload();
+
+// Three panes, each shown or hidden and the two side ones sized by drag,
+// remembered across reloads. The chat pane takes the slack; with it hidden
+// the log does. The last visible pane cannot be hidden: a page with nothing
+// on it has no button left to bring anything back.
+const LAYOUT_KEY = "chat.layout";
+const LAYOUT_DEFAULT = { rooms: true, chat: true, log: false, roomsWidth: 260, logWidth: 420 };
+const layout = (() => {
+  try { return { ...LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") }; }
+  catch (_) { return { ...LAYOUT_DEFAULT }; }
+})();
+const PANE_MIN = { rooms: 160, log: 280 };
+
+function saveLayout() { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); }
+
+// Five grid children in order: rooms, gutter, chat, gutter, log. A gutter
+// takes a 0px track and overhangs it with negative margins, so it costs no
+// width; a hidden child leaves its track empty at 0px.
+function renderLayout() {
+  const roomsGutter = layout.rooms && (layout.chat || layout.log);
+  const logGutter = layout.log && (layout.chat || layout.rooms);
+  $("rooms-pane").hidden = !layout.rooms;
+  $("chat-pane").hidden = !layout.chat;
+  $("logpane").hidden = !layout.log;
+  $("gutter-rooms").hidden = !roomsGutter;
+  $("gutter-log").hidden = !logGutter;
+  const columns = [
+    !layout.rooms ? "0px" : layout.chat || layout.log ? `${layout.roomsWidth}px` : "1fr",
+    "0px",
+    layout.chat ? "minmax(320px, 1fr)" : "0px",
+    "0px",
+    !layout.log ? "0px" : layout.chat ? `${layout.logWidth}px` : "1fr",
+  ];
+  $("main").style.gridTemplateColumns = columns.join(" ");
+  for (const pane of ["rooms", "chat", "log"]) $(`toggle-${pane}`).classList.toggle("on", layout[pane]);
+}
+
+function togglePane(pane) {
+  const visible = ["rooms", "chat", "log"].filter((p) => layout[p]);
+  if (layout[pane] && visible.length === 1) return;
+  layout[pane] = !layout[pane];
+  saveLayout();
+  renderLayout();
+  if (pane === "log" && layout.log) renderLog();
+}
+
+function dragGutter(gutter, pane, sign) {
+  gutter.onpointerdown = (event) => {
+    const startX = event.clientX;
+    const startWidth = layout[`${pane}Width`];
+    const main = $("main");
+    const max = main.clientWidth - 320 - (pane === "rooms" && layout.log ? layout.logWidth : 0) - (pane === "log" && layout.rooms ? layout.roomsWidth : 0);
+    gutter.setPointerCapture(event.pointerId);
+    gutter.classList.add("active");
+    main.classList.add("dragging");
+    gutter.onpointermove = (move) => {
+      const width = startWidth + sign * (move.clientX - startX);
+      layout[`${pane}Width`] = Math.round(Math.min(Math.max(width, PANE_MIN[pane]), Math.max(max, PANE_MIN[pane])));
+      renderLayout();
+    };
+    gutter.onpointerup = gutter.onpointercancel = () => {
+      gutter.onpointermove = null;
+      gutter.classList.remove("active");
+      main.classList.remove("dragging");
+      saveLayout();
+    };
+  };
+}
+
+for (const pane of ["rooms", "chat", "log"]) $(`toggle-${pane}`).onclick = () => togglePane(pane);
+dragGutter($("gutter-rooms"), "rooms", 1);
+dragGutter($("gutter-log"), "log", -1);
+
+// The log pane: every captured line, filtered by substring, following the
+// tail unless paused. Redrawn wholesale on filter and clear, appended to
+// otherwise, so a busy worker does not rebuild the list on every line.
+const logView = { paused: false, filter: "", shown: 0 };
+const LOG_TIME = { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" };
+
+function logMatches(entry) {
+  return !logView.filter || entry.text.toLowerCase().includes(logView.filter);
+}
+
+function logNode(entry) {
+  const line = el("div", `logline ${entry.level}`);
+  line.appendChild(el("time", null, entry.at.toLocaleTimeString([], LOG_TIME)));
+  line.appendChild(el("span", null, entry.text));
+  return line;
+}
+
+function renderLogCount() {
+  const total = workerLog.entries.length;
+  const dropped = workerLog.dropped ? `, ${workerLog.dropped} dropped` : "";
+  $("logcount").textContent = logView.filter
+    ? `${logView.shown} of ${total} lines${dropped}`
+    : `${total} lines${dropped}`;
+}
+
+function renderLog() {
+  const box = $("loglines");
+  box.replaceChildren();
+  logView.shown = 0;
+  for (const entry of workerLog.entries) {
+    if (!logMatches(entry)) continue;
+    box.appendChild(logNode(entry));
+    logView.shown += 1;
+  }
+  renderLogCount();
+  if (!logView.paused) box.scrollTop = box.scrollHeight;
+}
+
+workerLog.onEntry = (entry) => {
+  if (!layout.log) return;
+  renderLogCount();
+  if (!logMatches(entry)) return;
+  const box = $("loglines");
+  const following = !logView.paused && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.appendChild(logNode(entry));
+  logView.shown += 1;
+  while (box.childElementCount > workerLog.limit) { box.firstElementChild.remove(); logView.shown -= 1; }
+  if (following) box.scrollTop = box.scrollHeight;
+};
+$("logfilter").oninput = (event) => { logView.filter = event.target.value.trim().toLowerCase(); renderLog(); };
+$("logpause").onclick = () => {
+  logView.paused = !logView.paused;
+  $("logpause").textContent = logView.paused ? "Follow" : "Pause";
+  $("logpause").classList.toggle("on", logView.paused);
+  if (!logView.paused) $("loglines").scrollTop = $("loglines").scrollHeight;
+};
+$("logclear").onclick = () => { workerLog.entries.length = 0; workerLog.dropped = 0; renderLog(); };
+renderLayout();
+if (layout.log) renderLog();
+
+
+surface.onState = (open) => {
+  const link = $("link");
+  link.textContent = open ? "socket open" : "reconnecting";
+  link.className = open ? "pill ok" : "pill off";
+  // A new socket is a new screen; the snapshot opens the room again.
+  if (!open) state.opened = null;
+};
+if (surface.socket && surface.socket.readyState === 1) surface.onState(true);
+surface.onFrame = handle;
+renderHeader(); renderRooms(); renderRoom(true);
+for (const frame of surface.queue.splice(0)) handle(frame);
+</script>
+<!--WORKER_BOOT-->
+</body>
+</html>

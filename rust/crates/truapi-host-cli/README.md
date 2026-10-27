@@ -223,6 +223,87 @@ when the current account exhausts Statement Store slots and no saved pairing
 depends on its identity. A full period replaces the oldest slot past the runtime's
 replacement cooldown, so rotation only happens when no slot is replaceable.
 
+#### Chat workers
+
+A chat product ships a headless worker beside its app, and on a phone the
+worker talks to people through Chat. `dev` plays that phone too. It installs
+the CLI's in-memory chat host whatever kind the app runs as; an `App`
+connection is still refused Chat by the core, so the app is unaffected. Point
+`--worker-bundle` at the worker's built ESM file and open the chat page the CLI
+prints:
+
+```bash
+truapi-host dev --worker-bundle apps/worker/dist-dev/index.js -- yarn dev
+# Chat surface: http://127.0.0.1:9955/chat
+```
+
+The frame port then also serves:
+
+| Route                      | What                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `GET /chat`                | The chat page. It boots the worker from the two routes below when a bundle is configured.                                 |
+| `GET /worker/bootstrap.js` | The bridge script, pointed at `/worker`.                                                                                  |
+| `GET /worker/index.js`     | The bundle, read from disk on every request so a `vite build --watch` output is always current. A 404 when it is missing. |
+| `WS /worker`               | A product frame socket for the same product and session, opened as a `Worker`.                                            |
+| `WS /chat/ws`              | The page's view of the chat, as JSON text frames.                                                                         |
+
+The worker boots with the page, so reloading the page restarts the worker. The
+page is the phone's chat screen for Chat Extension v2, drawn from what the
+in-memory host keeps.
+
+- **Chat list.** Each room with its name, icon and description, newest first
+  by the time of the product's preview, with the preview line and the unread
+  badge. The line comes from the newest message the preview names, else from
+  the newest message the host holds ("You: " for your own), or "X reacted
+  with ..." (or "X removed a reaction") when the preview names a newer
+  reaction; a heart marks unseen reactions. A room the product keeps shows no
+  badge it did not set; a room the host keeps counts its unread messages.
+- **Room.** `Text` and `RichText` (plain text with its links, and media as
+  their HOP file, which the page does not claim), an `Event` as a centred line,
+  and a `Call` and a `Payment` as one line each. Messages show "edited",
+  status ticks, reactions (yours highlighted, click to toggle) and a reply
+  quote that jumps to its message. A `Replaced` feed update draws a message
+  again in place, with no edit mark.
+- **Menus.** The message menu has Copy, Reply, Edit for your own text, React,
+  and "Who reacted" (`reactions_query`) when the room sets `reaction_details`.
+  A send the product did not take offers Retry and Discard.
+- **Footer.** `TextInput`, or `Empty`. Text you send is a message, which a
+  room the product keeps receives with the id and the time the page chose.
+
+A room the host keeps takes only what you send: it stores the message and
+tells the product with a first-version `MessagePosted` on
+`chat.actionSubscribe()`. It refuses edits and reactions, and `seen` there only
+marks the room seen. A room the product keeps (`product_source`) is paged from
+the product with `messages_query`, newest page first and older pages as you
+scroll up; what you send carries a message id the page chose and shows as
+`Preparing` until `user_action` answers `MessageCreated`, and your edits,
+reactions and seen reports go there too. The host waits 10 s for a page, 30 s
+for a send, 10 s for another action and 5 s for who reacted, asks an
+`unavailable` query once more after 1 s, and draws the host default when the
+product answers `NotAvailable`. `?room=<id>` opens a room as soon as the
+product declares it.
+
+The worker runs as a module script in the page, so its console is the page's.
+The **Logs** pane shows it: every line levelled from its `[INF]`/`[WRN]`/`[ERR]`
+tag, filtered by substring, following the tail unless paused. Rooms, chat and
+log are each a pane to show, hide or resize from the header, and the layout is
+remembered across reloads.
+
+On `/chat/ws` the host sends a `snapshot` (rooms with their declarations and
+list row, the messages of rooms the host keeps, and the time-outs) first, then
+a `room`, `roomDeleted` or `message` event as each lands, and `workers`
+whenever a worker connects or disconnects. The page sends one operation per
+thing a person does: `post` (with an optional `messageId` and `timestamp`),
+`edit`, `react` and `seen`, and the queries `messages` and `reactions`. Each
+operation carries the page's `reqId`. A post in a room the host keeps is
+answered with the stored message and the number of workers that took it,
+where 0 means none is connected; a query or a user action with `answer`,
+which carries the product's answer or the reason there is none (`Timeout`,
+`NoWorker`, `NotAvailable`, `Rejected`, ...); a refusal with `error`. Every
+message and declaration the host takes is also a line of the
+`TRUAPI_CHAT_LOG` transcript. Without `--worker-bundle` the page still shows
+the chat, but no worker serves it. Other host modes serve none of these routes.
+
 ### Interactive terminal UI
 
 In a TTY, both hosts open the same scrollable transcript above a single command
