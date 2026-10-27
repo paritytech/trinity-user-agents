@@ -14,6 +14,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     }
 
     private let statusTitleView = NetworkStatusTitleView()
+    private let purseTitleView = PurseTitleView()
 
     init(
         presenter: WalletMainPresenterProtocol,
@@ -57,6 +58,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
             self?.collapseExpandedSection()
         }
 
+        rootView.viewModel.onPurseCollapse = { [weak self] progress in
+            self?.purseTitleView.apply(progress: progress)
+        }
+
         rootView.viewModel.onCollectibles = { [weak self] in
             self?.showCollectiblesOverlay()
         }
@@ -81,6 +86,17 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
             target: self,
             action: #selector(didTapShare)
         )
+        navigationItem.setRightBarButton(item, animated: true)
+    }
+
+    private func setFundingHistoryButton() {
+        let item = UIBarButtonItem(
+            image: UIImage(systemName: "clock.arrow.circlepath"),
+            style: .plain,
+            target: self,
+            action: #selector(didTapFundingHistory)
+        )
+        item.accessibilityLabel = String(localized: .Funding.historyOpen)
         navigationItem.setRightBarButton(item, animated: true)
     }
 
@@ -157,6 +173,11 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     @objc
+    func didTapFundingHistory() {
+        presenter.showFundingHistory()
+    }
+
+    @objc
     func collapseExpandedSection() {
         rootView.viewModel.expandedSection = .none
         resetOverlayCloseButton()
@@ -167,8 +188,10 @@ extension WalletMainViewController: WalletMainViewProtocol {
     private func showAssetDetailsOverlay() {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
-        resetRightButton()
-        setTitleCenter(PaymentAssetBranding.shared.current.symbol)
+        setFundingHistoryButton()
+        navigationItem.style = .navigator
+        purseTitleView.apply(progress: 0)
+        navigationItem.titleView = purseTitleView
     }
 
     private func showIdentityDetailsOverlay() {

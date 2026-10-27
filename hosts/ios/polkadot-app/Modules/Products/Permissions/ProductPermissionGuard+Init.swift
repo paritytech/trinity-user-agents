@@ -6,11 +6,10 @@ extension ProductPermissionGuard {
     /// requester/repository pair.
     static func create(
         router: ProductPermissionRouting,
-        fundingProvider: FundingDomainProviding,
         repository: ProductPermissionRepositoryProtocol = ProductPermissionRepository(),
         osAsker: OSPermissionAsking = OSPermissionAsker()
     ) -> ProductPermissionGuard {
-        let requester = ProductPermissionRequesterFactory.create(router: router, fundingProvider: fundingProvider)
+        let requester = ProductPermissionRequesterFactory.create(router: router)
 
         let networkHandler = NetworkAccessPermissionHandler(
             repository: repository,

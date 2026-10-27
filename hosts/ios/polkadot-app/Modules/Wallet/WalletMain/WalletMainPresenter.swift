@@ -44,6 +44,10 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
             self?.interactor.removePocketCard(card)
         }
     }
+
+    func showFundingHistory() {
+        wireframe.showFundingHistory()
+    }
 }
 
 extension WalletMainPresenter: WalletMainInteractorOutputProtocol {
