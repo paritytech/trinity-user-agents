@@ -12,6 +12,7 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
         case leftChat
         case blockedUser
         case declinedChatRequest
+        case removedChat
     }
 
     /// The last list model that the interactor gave.
@@ -47,5 +48,9 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
 
     func didDeclineChatRequest() {
         continuation.yield(.declinedChatRequest)
+    }
+
+    func didRemoveChat() {
+        continuation.yield(.removedChat)
     }
 }

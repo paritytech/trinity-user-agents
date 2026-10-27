@@ -380,6 +380,14 @@ class ChatFeedViewModel @Inject constructor(
         }
     }
 
+    override fun onScreenStarted() {
+        interactor.openRoom(chatId)
+    }
+
+    override fun onScreenStopped() {
+        interactor.closeRoom(chatId)
+    }
+
     override fun setChatActive() {
         interactor.setChatActive(chatId)
     }

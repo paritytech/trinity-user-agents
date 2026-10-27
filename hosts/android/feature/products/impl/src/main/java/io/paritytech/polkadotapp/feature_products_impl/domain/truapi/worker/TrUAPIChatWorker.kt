@@ -46,13 +46,19 @@ class TrUAPIChatWorker(
     private val chatMessaging: ProductChatMessaging,
     private val scope: CoroutineScope,
 ) : ProductWorker {
+    // Each open room screen holds the worker as well, so a room keeps its product while the user reads it.
+    private val holds = WorkerHolds(
+        acquire = { runtime.acquireWorker(productId.value) },
+        release = ::releaseWorker,
+    )
+
     init {
         val workerJob = scope.coroutineContext.job
+        // A product keeps its worker for the life of its chat: a bot posts with no room open.
         runtime.acquireWorker(productId.value)
-        workerJob.invokeOnCompletion {
-            runCatching { runtime.releaseWorker(productId.value) }
-                .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
-        }
+        workerJob.invokeOnCompletion { releaseWorker() }
+        // When the scope ends, the holds release each room hold and refuse each new hold.
+        workerJob.invokeOnCompletion { holds.close() }
         scope.launch {
             workers.executionState(productId)
                 .map { (it as? WorkerExecutionState.Running)?.execution }
@@ -62,6 +68,23 @@ class TrUAPIChatWorker(
                     coroutineScope { TrUAPIChatRoomForwarding(productId, execution, chatMessaging).start(this) }
                 }
         }
+    }
+
+    private fun releaseWorker() {
+        runCatching { runtime.releaseWorker(productId.value) }
+            .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+    }
+
+    override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
+        runCatching { holds.openRoom(roomId.value) }
+            .onFailure { return Result.failure<Unit>(it).logFailure("truapi.chat.open for ${productId.value}") }
+        workers.restartIfFailed(productId)
+        return Result.success(Unit)
+    }
+
+    override suspend fun closeRoom(roomId: ProductChatIdParameter) {
+        if (!holds.isOpen(roomId.value)) return
+        holds.closeRoom(roomId.value)
     }
 
     override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> {

@@ -13,6 +13,8 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
         case loadNewer
         case jump(Chat.MessageId)
         case perform(ChatSourceAction)
+        case openRoom
+        case closeRoom
     }
 
     /// What `chatMetadataStream` yields before it finishes.
@@ -94,5 +96,13 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
         continuation.yield(.perform(action))
         return actionOutcome
+    }
+
+    func openRoom() async {
+        continuation.yield(.openRoom)
+    }
+
+    func closeRoom() async {
+        continuation.yield(.closeRoom)
     }
 }

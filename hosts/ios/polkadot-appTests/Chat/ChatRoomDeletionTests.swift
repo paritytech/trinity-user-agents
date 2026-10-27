@@ -63,6 +63,35 @@ struct ChatRoomDeletionTests {
     }
 }
 
+/// An open room screen goes away when its room goes away.
+@MainActor
+struct ChatInteractorRoomRemovalTests {
+    @Test func theScreenOfARemovedProductRoomCloses() async {
+        let chatId = Chat.Id.chatExtension("game.dot", roomId: "lobby")
+        let output = RecordingChatInteractorOutput()
+        let engine = RecordingChatEngine()
+        engine.metadataUpdates = [metadata(chatId), nil]
+
+        let interactor = makeInteractor(chatId: chatId, engine: engine, output: output)
+        interactor.setup()
+
+        #expect(await firstEvents(2, of: output) == [.metadata(chatId), .removedChat])
+    }
+
+    /// Only a room of a product closes when its chat goes; a chat without a room is not closed here.
+    @Test func aPersonChatDoesNotCloseWhenItsChatIsMissing() async {
+        let chatId = Chat.Id.person(Data(repeating: 1, count: 32))
+        let output = RecordingChatInteractorOutput()
+        let engine = RecordingChatEngine()
+        engine.metadataUpdates = [metadata(chatId), nil, metadata(chatId)]
+
+        let interactor = makeInteractor(chatId: chatId, engine: engine, output: output)
+        interactor.setup()
+
+        #expect(await firstEvents(2, of: output) == [.metadata(chatId), .metadata(chatId)])
+    }
+}
+
 private let config = Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
 
 private extension ChatRoomDeletionTests {
@@ -146,5 +175,46 @@ private extension ChatRoomDeletionTests {
         try await facade.databaseService.performRead { context in
             try context.count(for: NSFetchRequest<Entity>(entityName: String(describing: Entity.self)))
         }
+    }
+}
+
+private extension ChatInteractorRoomRemovalTests {
+    func metadata(_ chatId: Chat.Id) -> ChatMetadata {
+        ChatMetadata(
+            chatId: chatId,
+            peerMetadata: Chat.PeerMetadata(name: "Room", icon: .bot, input: .empty, moreActions: []),
+            state: .created
+        )
+    }
+
+    func makeInteractor(
+        chatId: Chat.Id,
+        engine: RecordingChatEngine,
+        output: RecordingChatInteractorOutput
+    ) -> ChatInteractor {
+        let interactor = ChatInteractor(
+            chatId: chatId,
+            engine: engine,
+            reactionRepository: ChatReactionRepository(
+                repository: AnyDataProviderRepository(InMemoryDataProviderRepository<Chat.MessageReaction>())
+            ),
+            usernameStorage: StubUsernameStorage(),
+            foregroundVisibilityReporter: nil,
+            notificationsCleaner: StubPushNotificationsCleaner()
+        )
+        interactor.presenter = output
+        return interactor
+    }
+
+    func firstEvents(
+        _ count: Int,
+        of output: RecordingChatInteractorOutput
+    ) async -> [RecordingChatInteractorOutput.Event] {
+        var events: [RecordingChatInteractorOutput.Event] = []
+        for await event in output.events where event != .listModel {
+            events.append(event)
+            if events.count == count { break }
+        }
+        return events
     }
 }

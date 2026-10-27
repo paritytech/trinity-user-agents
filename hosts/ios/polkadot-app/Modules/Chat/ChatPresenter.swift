@@ -17,6 +17,10 @@ final class ChatPresenter {
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
+    /// The parts of a product room that the room screen keeps. Nil for a person chat.
+    var productRoom: ChatProductRoomPresenter?
+    /// The screen closed once already, so a second close does nothing.
+    private var isClosed = false
 
     init(
         interactor: ChatInteractorInputProtocol,
@@ -51,10 +55,14 @@ extension ChatPresenter: ChatPresenterProtocol {
 
     func viewWillAppear() {
         interactor.notifyViewAppeared()
+        interactor.openRoom()
+        MainActor.assumeIsolated { productRoom?.screenWillAppear() }
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
+        interactor.closeRoom()
+        MainActor.assumeIsolated { productRoom?.screenWillDisappear() }
     }
 
     func send(text: String, replyToMessageId: String? = nil) {
@@ -142,19 +150,31 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     }
 
     func didLeftChat() {
-        wireframe.dismissChat(from: view)
+        closeChat()
     }
 
     func didBlockUser() {
-        wireframe.dismissChat(from: view)
+        closeChat()
     }
 
     func didDeclineChatRequest() {
-        wireframe.dismissChat(from: view)
+        closeChat()
+    }
+
+    func didRemoveChat() {
+        closeChat()
     }
 }
 
 private extension ChatPresenter {
+    @MainActor
+    func closeChat() {
+        guard !isClosed else { return }
+
+        isClosed = true
+        wireframe.dismissChat(from: view)
+    }
+
     var viewModelProvidedOnce: Bool {
         listModel != nil && metadata != nil
     }

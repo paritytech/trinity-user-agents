@@ -19,8 +19,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -167,6 +169,20 @@ class ProductChatExtension(
         botScope = null
         chatMessaging = null
         Timber.d("Disposed product bot: ${product.name}")
+    }
+
+    override fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? {
+        if (chatId.productRoomId(id) == null) return null
+        return object : ChatRoomLifecycle {
+            override suspend fun open(chatId: ChatId): Result<Unit> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(UnknownChatRoomException())
+                return runningWorker.openRoom(room)
+            }
+
+            override suspend fun close(chatId: ChatId) {
+                chatId.productRoomId(id)?.let { runningWorker.closeRoom(it) }
+            }
+        }
     }
 
     private suspend fun routeMessage(message: ChatMessage) {

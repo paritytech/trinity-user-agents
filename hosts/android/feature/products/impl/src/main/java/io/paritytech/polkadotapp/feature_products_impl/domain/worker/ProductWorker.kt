@@ -15,6 +15,11 @@ import kotlinx.coroutines.flow.Flow
 interface ProductWorker : JsEventDispatcher {
     suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit>
 
+    /** Holds the worker while a room screen shows [roomId]. Each success gets one [closeRoom]. */
+    suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> = Result.success(Unit)
+
+    suspend fun closeRoom(roomId: ProductChatIdParameter) = Unit
+
     fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,

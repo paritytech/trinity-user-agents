@@ -109,4 +109,30 @@ class TrUAPIWorkerSupervisorFailureTest {
 
         assertNull(supervisor.executionState(productId).first())
     }
+
+    @Test
+    fun `a restart after a failed boot boots the worker again while the rooms keep their references`() = runTest {
+        val boom = IllegalStateException("boom")
+        val gate = CompletableDeferred<Unit>()
+        val supervisor = supervisorWith(FailOnceThenGateScriptResolver(boom, gate))
+
+        supervisor.onDemandChanged(productId, WorkerDemand.START)
+        advanceUntilIdle()
+        assertTrue(supervisor.executionState(productId).first() is WorkerExecutionState.Failed)
+
+        supervisor.restartIfFailed(productId)
+        advanceUntilIdle()
+
+        assertNull(supervisor.executionState(productId).first())
+    }
+
+    @Test
+    fun `a restart does nothing for a worker that did not fail`() = runTest {
+        val supervisor = supervisorWith(FailingScriptResolver(IllegalStateException("never asked")))
+
+        supervisor.restartIfFailed(productId)
+        advanceUntilIdle()
+
+        assertNull(supervisor.executionState(productId).first())
+    }
 }

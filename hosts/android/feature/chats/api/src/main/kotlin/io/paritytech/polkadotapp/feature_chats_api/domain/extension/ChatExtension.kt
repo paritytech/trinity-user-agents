@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -57,4 +58,7 @@ interface ChatExtension {
 
     fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
+
+    /** Holds the worker of the product while a room screen shows [chatId]. Null when the room needs no worker. */
+    fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? = null
 }

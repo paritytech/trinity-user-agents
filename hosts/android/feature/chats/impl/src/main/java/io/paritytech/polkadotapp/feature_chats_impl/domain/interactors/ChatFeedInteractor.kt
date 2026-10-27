@@ -182,10 +182,18 @@ class ChatFeedInteractor @Inject internal constructor(
     fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> =
         roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() }
 
-    /** Stops the source of the room. Call it when the room screen goes away. */
+    /** Stops the source of the room and closes the room when it is open. Call it when the room screen goes away. */
     fun releaseRoom(chatId: ChatId) {
         roomSources.remove(chatId)?.release()
     }
+
+    /**
+     * Holds the worker of a product room while the room screen shows it. A room that cannot open shows "unavailable". A
+     * person chat holds nothing. The open and close calls keep their order.
+     */
+    fun openRoom(chatId: ChatId) = roomSource(chatId).open()
+
+    fun closeRoom(chatId: ChatId) = roomSource(chatId).close()
 
     suspend fun sendTextMessage(
         chatId: ChatId,

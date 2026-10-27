@@ -27,10 +27,45 @@ struct ChatRoomSourceContextTests {
         #expect(await source.loadNewer() == .end)
         #expect(await !source.jump(to: "m1"))
     }
+
+    @Test func openAndCloseReachTheLifecycleOnce() async {
+        let lifecycle = RecordingChatRoomLifecycle()
+        let context = makeContext(chatId: .chatExtension("product.dot", roomId: "lobby"), lifecycle: lifecycle)
+
+        await context.open()
+        await context.open()
+        await context.close()
+        await context.close()
+
+        #expect(lifecycle.calls == [.open("lobby"), .close("lobby")])
+    }
+
+    @Test func aRoomThatCannotOpenHasNothingToClose() async {
+        let lifecycle = RecordingChatRoomLifecycle(failsToOpen: true)
+        let context = makeContext(chatId: .chatExtension("product.dot", roomId: "lobby"), lifecycle: lifecycle)
+
+        await context.open()
+        await context.close()
+
+        #expect(lifecycle.calls == [.open("lobby")])
+    }
+
+    @Test func aPersonChatHasNoLifecycle() async {
+        let lifecycle = RecordingChatRoomLifecycle()
+        let context = makeContext(chatId: .person(Data(repeating: 1, count: 32)), lifecycle: lifecycle)
+
+        await context.open()
+        await context.close()
+
+        #expect(lifecycle.calls.isEmpty)
+    }
 }
 
 private extension ChatRoomSourceContextTests {
-    func makeContext(chatId: Chat.Id) -> ChatRoomSourceContext {
+    func makeContext(
+        chatId: Chat.Id,
+        lifecycle: ChatRoomLifecycle = NoChatRoomLifecycle()
+    ) -> ChatRoomSourceContext {
         let messageRepository: AnyDataProviderRepository<Chat.LocalMessage> = AnyDataProviderRepository(
             facade.createRepository(
                 filter: nil,
@@ -61,6 +96,11 @@ private extension ChatRoomSourceContextTests {
             logger: StubLogger()
         )
 
-        return ChatRoomSourceContext(coreDataSource: coreData)
+        return ChatRoomSourceContext(
+            chatId: chatId,
+            coreDataSource: coreData,
+            services: ProductRoomServices(querying: nil, lifecycle: lifecycle),
+            logger: StubLogger()
+        )
     }
 }

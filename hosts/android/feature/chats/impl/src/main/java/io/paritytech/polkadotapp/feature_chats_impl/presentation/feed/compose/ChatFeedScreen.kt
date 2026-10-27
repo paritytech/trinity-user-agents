@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
@@ -76,6 +77,14 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
 
         if (popupState is MessagePopUpUiState.ActionMenu) {
             keyboardController?.hide()
+        }
+    }
+
+    LifecycleStartEffect(Unit) {
+        contract.onScreenStarted()
+
+        onStopOrDispose {
+            contract.onScreenStopped()
         }
     }
 

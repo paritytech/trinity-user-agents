@@ -47,6 +47,12 @@ interface ChatFeedContract {
     fun onSendMessageClick()
     fun onPayClick()
     fun setChatActive()
+
+    /** The room screen became visible. A product room holds its product until [onScreenStopped]. */
+    fun onScreenStarted()
+
+    fun onScreenStopped()
+
     fun setChatInactive()
 
     fun onClearReply()

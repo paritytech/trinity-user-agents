@@ -27,6 +27,9 @@ protocol ChatEngineProtocol {
     func jump(to messageId: Chat.MessageId) async -> Bool
     /// Writes an action of the user to the message source of the room.
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome
+    /// The room screen shows the room. A product room holds its product until `closeRoom`.
+    func openRoom() async
+    func closeRoom() async
 }
 
 enum ChatEngineError: Error {
@@ -56,6 +59,7 @@ final class ChatEngine {
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         leaveChatService: LeaveChatServicing,
         blockUserService: BlockUserServicing,
+        productRoomServices: ProductRoomServices? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -118,7 +122,12 @@ final class ChatEngine {
             logger: logger
         )
 
-        sourceContext = ChatRoomSourceContext(coreDataSource: coreDataSource)
+        sourceContext = ChatRoomSourceContext(
+            chatId: chatId,
+            coreDataSource: coreDataSource,
+            services: productRoomServices,
+            logger: logger
+        )
     }
 }
 
@@ -141,6 +150,14 @@ extension ChatEngine: ChatEngineProtocol {
 
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
         try await sourceContext.source().perform(action)
+    }
+
+    func openRoom() async {
+        await sourceContext.open()
+    }
+
+    func closeRoom() async {
+        await sourceContext.close()
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
