@@ -112,6 +112,10 @@
             "else": { "not": { "required": ["chainId"] } }
           },
           {
+            "if": { "properties": { "kind": { "const": "web-gateway" } } },
+            "then": { "properties": { "urls": { "items": { "pattern": "^https://" } } } }
+          },
+          {
             "if": { "properties": { "kind": { "const": "stun" } } },
             "then": { "properties": { "urls": { "items": { "pattern": "^stun:" } } } },
             "else": { "properties": { "urls": { "items": { "$ref": "#/$defs/webUrl" } } } }

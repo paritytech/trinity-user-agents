@@ -219,9 +219,10 @@ impl Descriptor {
 		self.chains.iter().find(|chain| chain.role == role)
 	}
 
-	/// The URL a dotNS name opens at on the stack's `web-gateway`, or `None` when the stack names
-	/// none. The name may end in the stack's `tld`. A one-label name goes in front of the gateway's
-	/// host, the only level its wildcard certificate covers, and a longer one after its path.
+	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
+	/// the stack names none. A name ending in the stack's `tld` loses it; any other is used as
+	/// given. A one-label name goes in front of the gateway's host, the only level its wildcard
+	/// certificate covers, and a longer one after its path.
 	pub fn web_url(&self, name: &str) -> Result<Option<String>, Error> {
 		let suffix = format!(".{}", self.tld);
 		let bare = name.strip_suffix(&suffix).unwrap_or(name);
@@ -315,9 +316,13 @@ impl Descriptor {
 				let is_http = matches!(parsed.scheme(), "http" | "https");
 				let is_base = match service.kind.as_str() {
 					"eth-rpc" => true,
-					// Readers prepend a name's label to the host, or resolve the name against the
-					// path, and keep the query, which can pick the network a shared gateway serves.
-					"web-gateway" => parsed.path().ends_with('/') && parsed.fragment().is_none(),
+					// Readers prepend a name's label to the host, or append the name to the path,
+					// and keep the query, which can pick the network a shared gateway serves.
+					// The slash is checked as written: the parser adds one to an empty path.
+					"web-gateway" => {
+						let before_query = url.split(['?', '#']).next().unwrap_or_default();
+						before_query.ends_with('/') && parsed.fragment().is_none()
+					},
 					_ => {
 						url.ends_with('/') &&
 							parsed.query().is_none() &&
@@ -438,28 +443,10 @@ mod tests {
 		.unwrap()
 	}
 
-	/// A wildcard certificate covers one label, and a shared gateway picks the stack by its query,
-	/// so a longer name moves to the path and the query survives either way.
+	/// Names that would put a path, an empty label or another case into the URL. The vectors pin
+	/// the URLs a valid name gives.
 	#[test]
-	fn a_name_opens_on_the_gateway_by_subdomain_or_by_path() {
-		let descriptor = with_gateway(
-			r#"[{"kind":"web-gateway","urls":["https://testnet.li/?network=previewnet"]}]"#,
-		);
-		let urls = ["my-app", "my-app.testnet", "sub.my-app.testnet"]
-			.map(|name| descriptor.web_url(name).unwrap());
-		assert_eq!(
-			urls,
-			[
-				Some("https://my-app.testnet.li/?network=previewnet".to_owned()),
-				Some("https://my-app.testnet.li/?network=previewnet".to_owned()),
-				Some("https://testnet.li/sub.my-app?network=previewnet".to_owned()),
-			]
-		);
-	}
-
-	#[test]
-	fn a_stack_without_a_gateway_has_no_web_url_and_a_malformed_name_is_refused() {
-		assert_eq!(with_gateway("[]").web_url("my-app"), Ok(None));
+	fn a_malformed_name_is_refused() {
 		let descriptor = with_gateway(r#"[{"kind":"web-gateway","urls":["https://testnet.li/"]}]"#);
 		for name in ["", "My-App", "my-app/../x", "a..b", ".testnet"] {
 			assert_eq!(

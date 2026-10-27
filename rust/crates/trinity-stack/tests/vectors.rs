@@ -12,7 +12,7 @@ use curve25519_dalek::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use trinity_stack::{Fetched, Pointer, accept, open, public_key, sign};
+use trinity_stack::{Descriptor, Fetched, Pointer, accept, open, public_key, sign};
 
 const SECRET: [u8; 32] = [7; 32];
 const OTHER_SECRET: [u8; 32] = [9; 32];
@@ -507,6 +507,25 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-url",
 		),
 		plain(
+			"web-gateway-without-slash",
+			with(|value| {
+				value["services"].as_array_mut().unwrap().push(
+					json!({ "kind": "web-gateway", "urls": ["https://testnet.li?network=previewnet"] }),
+				)
+			}),
+			"service-url-not-base",
+		),
+		plain(
+			"web-gateway-on-wss",
+			with(|value| {
+				value["services"]
+					.as_array_mut()
+					.unwrap()
+					.push(json!({ "kind": "web-gateway", "urls": ["wss://testnet.li/"] }))
+			}),
+			"invalid-url",
+		),
+		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
 				value["services"][2].as_object_mut().unwrap().remove("chainId");
@@ -768,6 +787,63 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
+/// The smallest descriptor with this `tld` and, when given, this `web-gateway` URL.
+fn with_web_gateway(tld: &str, gateway: Option<&str>) -> Value {
+	let services =
+		gateway.map_or(json!([]), |url| json!([{ "kind": "web-gateway", "urls": [url] }]));
+	json!({
+		"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local", "network": "local",
+		"tld": tld, "services": services,
+		"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
+	})
+}
+
+/// `(name, tld, gateway, dotNS name, expected)` for `web_url`.
+fn web_url_cases() -> Vec<(&'static str, &'static str, Option<&'static str>, &'static str, Value)> {
+	let previewnet = Some("https://testnet.li/?network=previewnet");
+	let nested = Some("https://gateway.example/gw/?n=x");
+	vec![
+		(
+			"host-form-keeps-query",
+			"testnet",
+			previewnet,
+			"my-app",
+			json!({ "url": "https://my-app.testnet.li/?network=previewnet" }),
+		),
+		(
+			"tld-is-dropped",
+			"testnet",
+			previewnet,
+			"my-app.testnet",
+			json!({ "url": "https://my-app.testnet.li/?network=previewnet" }),
+		),
+		(
+			"path-form-keeps-query",
+			"testnet",
+			previewnet,
+			"sub.my-app.testnet",
+			json!({ "url": "https://testnet.li/sub.my-app?network=previewnet" }),
+		),
+		(
+			"host-form-under-gateway-path",
+			"local",
+			nested,
+			"my-app",
+			json!({ "url": "https://my-app.gateway.example/gw/?n=x" }),
+		),
+		(
+			"path-form-under-gateway-path",
+			"local",
+			nested,
+			"sub.my-app",
+			json!({ "url": "https://gateway.example/gw/sub.my-app?n=x" }),
+		),
+		("no-gateway", "testnet", None, "my-app", json!({ "url": null })),
+		("name-uppercase", "testnet", previewnet, "My-App", json!({ "error": "invalid-name" })),
+		("name-empty-label", "testnet", previewnet, "a..b", json!({ "error": "invalid-name" })),
+	]
+}
+
 fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let mut files = BTreeMap::new();
 	let mut file = |path: String, contents: Vec<u8>| {
@@ -794,7 +870,14 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.into_iter()
 		.map(|(name, link, expect)| json!({ "name": name, "link": link, "expect": expect }))
 		.collect();
-	let cases = json!({ "documents": documents, "reader": reader, "links": links });
+	let web_urls: Vec<Value> = web_url_cases()
+		.into_iter()
+		.map(|(name, tld, gateway, dotns_name, expect)| {
+			json!({ "name": name, "descriptor": with_web_gateway(tld, gateway), "dotnsName": dotns_name, "expect": expect })
+		})
+		.collect();
+	let cases =
+		json!({ "documents": documents, "reader": reader, "links": links, "webUrls": web_urls });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
@@ -927,6 +1010,15 @@ fn every_vector_gets_its_verdict() {
 				}
 				outcome
 			},
+		};
+		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+
+	for case in cases["webUrls"].as_array().unwrap() {
+		let descriptor = Descriptor::from_json(case["descriptor"].clone()).unwrap();
+		let outcome = match descriptor.web_url(case["dotnsName"].as_str().unwrap()) {
+			Err(error) => json!({ "error": error.code() }),
+			Ok(url) => json!({ "url": url }),
 		};
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
 	}
