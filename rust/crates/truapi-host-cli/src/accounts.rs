@@ -690,7 +690,7 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 	const MAX_ATTEMPTS: usize = 30;
 	const SLEEP: Duration = Duration::from_secs(4);
 
-	let people_ws = network.people_ws;
+	let chains = crate::chain::CliChainProvider::new(&network);
 	let candidates = collection_candidates(entropy, network.network_suffix);
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 	let mut metadata = None;
@@ -703,8 +703,8 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 			)),
 			crate::terminal_ui::ActivityState::Running,
 		);
-		let rpc = match alloc::rpc::RpcClient::connect(people_ws).await {
-			Ok(rpc) => rpc,
+		let rpc = match chains.rpc_client(network.people_genesis).await {
+			Ok(rpc) => alloc::rpc::RpcClient::new(rpc),
 			Err(err) => {
 				warn!(
 					attempt,

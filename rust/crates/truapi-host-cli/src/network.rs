@@ -246,9 +246,14 @@ async fn verify_rerouted_endpoints(
 		if preset.live_chain_endpoints.iter().any(|chain| chain.ws == endpoint.ws) {
 			continue;
 		}
-		let rpc = alloc::rpc::RpcClient::connect(endpoint.ws).await.map_err(|err| {
-			anyhow::anyhow!("cannot reach {} to check its genesis: {err}", endpoint.ws)
-		})?;
+		let rpc = alloc::rpc::RpcClient::new(
+			crate::chain::CliChainProvider::for_endpoint(config, endpoint)
+				.rpc_client(endpoint.genesis)
+				.await
+				.map_err(|err| {
+					anyhow::anyhow!("cannot reach {} to check its genesis: {err}", endpoint.ws)
+				})?,
+		);
 		let reported = alloc::fetch_genesis_hash(&rpc)
 			.await
 			.map_err(|err| anyhow::anyhow!("cannot read the genesis of {}: {err}", endpoint.ws))?;

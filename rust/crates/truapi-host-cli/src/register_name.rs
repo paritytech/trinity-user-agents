@@ -32,7 +32,8 @@ use truapi::{
 };
 
 use crate::{
-	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::NetworkConfig,
 };
 
 /// Inputs for one full-person registration run.
@@ -105,9 +106,13 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
-	let people_rpc = RpcClient::connect(config.network.people_ws)
-		.await
-		.context("connect People RPC")?;
+	let chains = CliChainProvider::new(&config.network);
+	let people_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.people_genesis)
+			.await
+			.context("connect to People")?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
 	let full_entropy =
@@ -151,9 +156,12 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading Asset Hub metadata and the exponent the subscriber verifies
 	// proofs against.
-	let ah_rpc = RpcClient::connect(config.network.asset_hub_ws)
-		.await
-		.context("connect Asset Hub RPC")?;
+	let ah_rpc = RpcClient::new(
+		chains
+			.rpc_client(config.network.asset_hub_genesis)
+			.await
+			.context("connect to Asset Hub")?,
+	);
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
 	let exponent =
 		ring::read_subscriber_ring_exponent(&ah_rpc, &ah_metadata, PersonhoodCollection::People)

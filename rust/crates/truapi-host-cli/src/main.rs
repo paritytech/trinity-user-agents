@@ -766,13 +766,17 @@ async fn run_pgas_check(
 		None => [0u8; 32],
 	};
 
-	let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let chains = chain::CliChainProvider::new(&network);
+	let people_rpc = alloc::rpc::RpcClient::new(
+		chains.rpc_client(network.people_genesis).await.context("connect to People")?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let asset_hub_rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.asset_hub_genesis)
+			.await
+			.context("connect to Asset Hub")?,
+	);
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
 	let (spec_version, transaction_version) =
@@ -929,9 +933,12 @@ async fn run_alloc_check(
 		None => [0u8; 32],
 	};
 
-	let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let rpc = alloc::rpc::RpcClient::new(
+		chain::CliChainProvider::new(&network)
+			.rpc_client(network.people_genesis)
+			.await
+			.context("connect to People")?,
+	);
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
 	let (spec_version, transaction_version) =
 		alloc::fetch_runtime_version(&rpc).await.map_err(anyhow::Error::msg)?;

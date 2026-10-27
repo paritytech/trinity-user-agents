@@ -1801,12 +1801,14 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 ### 14.3 Chain JSON-RPC
 
-The host runtime's chain connections, dotNS username reads and Bulletin preimage
-lookups connect through one `ChainProvider` (`src/chain.rs`) over
-`truapi-provider`, on the backend `--chain-backend` selects (§4.3). Routing
-(§14.1) is the same on both. Only a routed genesis reaches the provider, which
-would otherwise look the hash up in its bundled catalog and start the light
-client.
+Every chain connection the CLI makes goes through `CliChainProvider`
+(`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
+(§4.3). Routing (§14.1) is the same on both. Only a routed genesis reaches the
+provider, which would otherwise look the hash up in its bundled catalog and
+start the light client. The genesis check of a rerouted endpoint (§14.1) uses a
+provider for that endpoint alone, over RPC. A request from one of the CLI's own
+commands, or the setup of a subscription, fails after 60 seconds without an
+answer.
 
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
@@ -1824,16 +1826,9 @@ cannot be combined with the `HOST_CLI_*_WS` overrides or
 and keeps one idle connection per chain, since smoldot stops a chain when its
 last connection closes. A chain's first request waits for it to sync.
 
-Connections through the provider verify `wss://` certificates with the root
-certificates built into the binary, on both backends, not with certificate
-authorities added to the operating system. The direct connections below use the
-operating system's store.
-
-These still dial the preset's RPC nodes on either backend: the ring-membership
-poll during account setup, the genesis check of a rerouted endpoint (§14.1), and
-the chain reads and submissions of `register-name`, `alloc-check` and
-`pgas-check`. Those three build their extrinsics on the selected backend, and
-`register-name` reads dotNS on it too.
+`wss://` certificates are verified with the root certificates built into the
+binary, on both backends, not with certificate authorities added to the
+operating system.
 
 ## 15. TrUAPI capability surface
 
