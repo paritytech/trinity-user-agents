@@ -2,9 +2,13 @@ import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../chat-provider.js";
-import { hostKeys, peerKeysOf, type HostKeys } from "../invitations/binding.js";
 import type { Person } from "../invitations/ports.js";
-import { digest, x25519Pair } from "../invitations/sealing.js";
+import { digest } from "../invitations/sealing.js";
+import {
+  fixtureCredential,
+  publicIdentity,
+  type FixtureCredential,
+} from "./fixture-identity.js";
 
 /**
  * DEV ONLY. Made-up users a tab can act as instead of a wallet, to try
@@ -64,16 +68,17 @@ export function testUserEntropy(user: TestUser): Uint8Array {
 }
 
 /**
- * FIXTURE TRUST BOUNDARY. The host keys of `user`: an sr25519 signing key
- * that stands for the person's identity credential and an X25519 inbox key.
- * Both are derived from the public user id, so anyone can derive them; they
- * let the invitation prototype sign, seal and check for real, and prove
- * nothing about a person. No real identity, key directory or lookup exists.
+ * FIXTURE TRUST BOUNDARY. The identity credential of `user`: an sr25519
+ * signing key and an X25519 key, both derived from the public user id, so
+ * anyone can derive them. They let the request prototype authenticate and
+ * seal for real, and prove nothing about a person. They are not the test
+ * user's core session account. No real identity, key directory or lookup
+ * exists.
  */
-export function fixtureHostKeys(user: TestUser): HostKeys {
-  return hostKeys(
-    digest("truapi-web-host/dev-fixture/host-identity/0", user.id),
-    x25519Pair(digest("truapi-web-host/dev-fixture/host-inbox/0", user.id)),
+export function fixtureIdentity(user: TestUser): FixtureCredential {
+  return fixtureCredential(
+    digest("truapi-web-host/dev-fixture/identity-signing/1", user.id),
+    digest("truapi-web-host/dev-fixture/identity-agreement/1", user.id),
   );
 }
 
@@ -83,7 +88,7 @@ export function personOf(user: TestUser): Person {
     id: user.id,
     name: user.name,
     handle: user.handle,
-    keys: peerKeysOf(fixtureHostKeys(user)),
+    identity: publicIdentity(fixtureIdentity(user)),
   };
 }
 
@@ -110,13 +115,21 @@ export function setTabTestUser(storage: Storage, id: string | null): void {
   else storage.setItem(TAB_KEY, id);
 }
 
+/**
+ * The version of each list a test user keeps. The sent and received lists
+ * moved to v2 with the host-owned request flow; v1 lists are left as they
+ * are and no longer read.
+ */
+const PART_VERSION = { notifications: 1, outbox: 2, received: 2 } as const;
+
 /** Where a test user's data is kept, per network. */
 export const testUserKey = (
   network: string,
   user: string,
-  part: "notifications" | "outbox" | "received",
+  part: keyof typeof PART_VERSION,
+  version: number = PART_VERSION[part],
 ): string =>
-  `truapi-web-signing-host:network:${network}:test-user:${user}:${part}:v1`;
+  `truapi-web-signing-host:network:${network}:test-user:${user}:${part}:v${version}`;
 
 /** The host storage scope a test user's core session uses, apart from every wallet's. */
 export const testUserScope = (user: TestUser): string => `test-user:${user.id}`;

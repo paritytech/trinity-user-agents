@@ -1,27 +1,32 @@
-import type { PeerKeys } from "../invitations/binding.js";
 import { hexBytes } from "../invitations/contract.js";
-import type { InvitationDelivery } from "../invitations/ports.js";
+import type {
+  DeliveryReceiver,
+  HostDelivery,
+  IdentityKeys,
+} from "../invitations/ports.js";
 import { digest, toHex } from "../invitations/sealing.js";
 import type { SharedStore } from "./shared-store.js";
 
 /**
- * DEV ONLY. LOCAL SIMULATED DELIVERY: an `InvitationDelivery` between tabs of
- * this browser, in place of a Contacts delivery that does not exist yet.
+ * DEV ONLY. LOCAL SIMULATED DELIVERY: a `HostDelivery` between tabs of this
+ * browser, in place of a notification transport and the Statement Store,
+ * which test users cannot reach.
  *
- * A post is a sealed invitation kept in a store the tabs share, under a route
- * derived from the recipient's inbox key, with a time it lapses at, as a
- * statement would. The sender's host posts it again on a cadence until it is
- * withdrawn or its `until` passes. A recipient's host reads what is posted to
- * its route when it starts and as posts arrive. It writes nothing: no hello,
- * receipt, answer or decline, so the sender learns nothing of the recipient.
+ * A post is sealed bytes kept in a store the tabs share, with a time it
+ * lapses at, as a statement would be. A request is kept under a route
+ * derived from the recipient's agreement key; a reply under its return
+ * topic. A host posts each of its posts again on a cadence until it is
+ * withdrawn or its `until` passes. A host reads what is posted to its route,
+ * and to the topics it watches, when it starts and as posts arrive.
  *
  * Simulated: the route is a stable label anyone can link, the store is
- * readable by any script of this origin, and nothing limits who posts. What
- * is posted is sealed and signed for real (`src/invitations/binding.ts`).
- * The cadence and lifetime below are dev choices, not the design's.
+ * readable by any script of this origin, no notification account signs a
+ * post and nothing limits who posts. What is posted is sealed and
+ * authenticated for real (`src/invitations/binding.ts`). The cadence and
+ * lifetime below are dev choices, not the design's.
  */
 
-/** How often a waiting invitation is posted again. A dev choice. */
+/** How often a post is posted again. A dev choice. */
 export const REPOST_INTERVAL_MS = 60_000;
 /** How long one post stays readable. A dev choice. */
 export const POST_LIFETIME_MS = 5 * 60_000;
@@ -31,14 +36,14 @@ interface Post {
   storedUntil: number;
 }
 
-/** The label posts for the holder of `inboxPublic` are kept under. */
-export const routeOf = (inboxPublic: string): string =>
+/** The label requests for the holder of `agreementPublic` are kept under. */
+export const routeOf = (agreementPublic: string): string =>
   toHex(
-    digest("truapi-web-host/dev-fixture/mailbox-route/0", inboxPublic),
+    digest("truapi-web-host/dev-fixture/mailbox-route/1", agreementPublic),
   ).slice(2, 34);
 
-export const mailboxPrefix = (network: string): string =>
-  `truapi-web-signing-host:network:${network}:dev:mailbox:`;
+export const deliveryPrefix = (network: string): string =>
+  `truapi-web-signing-host:network:${network}:dev:delivery:v2:`;
 
 function readPost(value: string | null): Post | null {
   if (value === null) return null;
@@ -54,7 +59,7 @@ function readPost(value: string | null): Post | null {
 }
 
 export interface LocalDeliveryOptions {
-  /** This host's inbox public key, as `0x` hex. */
+  /** This host's agreement public key, as `0x` hex. */
   self: string;
   network: string;
   store: SharedStore;
@@ -66,13 +71,14 @@ export interface LocalDeliveryOptions {
   postLifetimeMs?: number;
 }
 
-export class LocalDelivery implements InvitationDelivery {
-  /** What this host posts and posts again, by id. */
+export class LocalDelivery implements HostDelivery {
+  /** What this host posts and posts again, by id: the store key's stem and the bytes. */
   private readonly posts = new Map<
     string,
-    { route: string; sealed: string; until: number }
+    { stem: string; sealed: string; until: number }
   >();
-  private receive: ((sealed: string) => void) | null = null;
+  private readonly topics = new Set<string>();
+  private receiver: DeliveryReceiver | null = null;
   private unlisten = () => {};
   private cancelRepost = () => {};
   private closed = false;
@@ -80,25 +86,38 @@ export class LocalDelivery implements InvitationDelivery {
   private readonly inbox: string;
 
   constructor(private readonly options: LocalDeliveryOptions) {
-    this.prefix = mailboxPrefix(options.network);
-    this.inbox = `${this.prefix}${routeOf(options.self)}:`;
+    this.prefix = deliveryPrefix(options.network);
+    this.inbox = `${this.prefix}request:${routeOf(options.self)}:`;
   }
 
-  listen(receive: (sealed: string) => void): void {
+  listen(receiver: DeliveryReceiver): void {
     if (this.closed) return;
-    this.receive = receive;
+    this.receiver = receiver;
     this.unlisten = this.options.store.onChange((key) => {
-      if (key === null) this.readInbox();
-      else if (key.startsWith(this.inbox)) this.deliver(key);
+      if (key === null) this.readAll();
+      else this.read(key);
     });
-    this.readInbox();
+    this.readAll();
     this.scheduleRepost();
   }
 
-  post(to: PeerKeys, id: string, sealed: string, until: number): void {
-    if (this.closed) return;
-    this.posts.set(id, { route: routeOf(to.inboxPublic), sealed, until });
-    this.write(id);
+  postRequest(to: IdentityKeys, id: string, sealed: string, until: number) {
+    this.add(id, `request:${routeOf(to.agreementPublic)}`, sealed, until);
+  }
+
+  postReply(topic: string, id: string, sealed: string, until: number) {
+    this.add(id, `reply:${topic}`, sealed, until);
+  }
+
+  watch(topic: string): void {
+    if (this.closed || this.topics.has(topic)) return;
+    this.topics.add(topic);
+    for (const key of this.options.store.keys(`${this.prefix}reply:${topic}:`))
+      this.read(key);
+  }
+
+  unwatch(topic: string): void {
+    this.topics.delete(topic);
   }
 
   withdraw(id: string): void {
@@ -109,9 +128,16 @@ export class LocalDelivery implements InvitationDelivery {
     if (this.closed) return;
     this.closed = true;
     this.posts.clear();
+    this.topics.clear();
     this.unlisten();
     this.cancelRepost();
-    this.receive = null;
+    this.receiver = null;
+  }
+
+  private add(id: string, stem: string, sealed: string, until: number): void {
+    if (this.closed) return;
+    this.posts.set(id, { stem, sealed, until });
+    this.write(id);
   }
 
   private write(id: string): void {
@@ -123,9 +149,9 @@ export class LocalDelivery implements InvitationDelivery {
       return;
     }
     const lifetime = this.options.postLifetimeMs ?? POST_LIFETIME_MS;
-    const key = `${this.prefix}${entry.route}:${toHex(digest("post", entry.sealed)).slice(2, 34)}`;
+    const name = toHex(digest("post", entry.sealed)).slice(2, 34);
     this.options.store.set(
-      key,
+      `${this.prefix}${entry.stem}:${name}`,
       JSON.stringify({
         sealed: entry.sealed,
         storedUntil: Math.min(now + lifetime, entry.until),
@@ -152,13 +178,24 @@ export class LocalDelivery implements InvitationDelivery {
     }
   }
 
-  private readInbox(): void {
-    for (const key of this.options.store.keys(this.inbox)) this.deliver(key);
+  private readAll(): void {
+    for (const key of this.options.store.keys(this.inbox)) this.read(key);
+    for (const topic of this.topics)
+      for (const key of this.options.store.keys(
+        `${this.prefix}reply:${topic}:`,
+      ))
+        this.read(key);
   }
 
-  private deliver(key: string): void {
+  private read(key: string): void {
+    const receiver = this.receiver;
+    if (receiver === null || !key.startsWith(this.prefix)) return;
+    const [kind, label] = key.slice(this.prefix.length).split(":");
+    const isRequest = key.startsWith(this.inbox);
+    if (!isRequest && !(kind === "reply" && this.topics.has(label!))) return;
     const post = readPost(this.options.store.get(key));
     if (post === null || post.storedUntil <= this.options.now()) return;
-    this.receive?.(post.sealed);
+    if (isRequest) receiver.request(post.sealed);
+    else receiver.reply(label!, post.sealed);
   }
 }

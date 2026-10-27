@@ -1,57 +1,65 @@
 import type { HostNotification, NotificationStore } from "../notifications.js";
 import {
-  checkProof,
-  envelopeDigest,
-  issueProof,
-  openEnvelope,
-  responseDigest,
-  sealEnvelope,
-  type Envelope,
-  type HostKeys,
+  openReply,
+  openRequest,
+  requestDigest,
+  sealReply,
+  sealRequest,
 } from "./binding.js";
 import {
   readPayload,
   readProductCall,
   readSendRequest,
   TTL_MAX_MS,
-  type AcceptedView,
   type CallResult,
   type FailureReason,
   type HostMessage,
   type OutgoingView,
   type ProductCall,
+  type RequestHandle,
 } from "./contract.js";
-import { Outbox, type OutgoingInvitation } from "./outbox.js";
+import { Outbox, type OutgoingRequest } from "./outbox.js";
 import type {
   ContactService,
-  InvitationDelivery,
+  HostDelivery,
+  IdentityAuth,
   Person,
   Product,
 } from "./ports.js";
-import { ReceivedInvitations, type ReceivedInvitation } from "./received.js";
-import { digest, toHex, type RandomBytes } from "./sealing.js";
+import { ReceivedRequests, type ReceivedRequest } from "./received.js";
+import {
+  digest,
+  fromHex,
+  toHex,
+  x25519Pair,
+  type RandomBytes,
+} from "./sealing.js";
 
 /**
- * One user's host side of JIT invitations (`contract.ts`). It serves its
- * product, asks its user, keeps what was sent and received, and reaches other
- * hosts only through an {@link InvitationDelivery}.
+ * One user's host side of the proposed request service (`contract.ts`) for
+ * one product. It serves the product, asks its user, keeps what was sent and
+ * received, and reaches other hosts only through a {@link HostDelivery}.
  *
- * Sending: the product picks a contact and gets an opaque reference; it sends
- * its invitation to that reference. The host resolves it, asks its user,
- * signs and seals the invitation for that person, and posts it again until
- * the product completes or cancels it, or it expires. A response reaches the
- * product, not the host; the product brings it with its proof to `verify`,
- * checks its own protocol, then calls `complete`.
+ * Sending: the product names a contact by handle and gives its payload. The
+ * host resolves the contact, asks its user, makes the request id, the return
+ * topic `T_SETUP` and a reply key pair, watches `T_SETUP`, then authenticates,
+ * seals and posts the request until its deadline. A reply on `T_SETUP` reaches
+ * the product only once the host opened and authenticated it. The product's
+ * `complete` closes the request and stops the reposts; nothing is sent.
  *
- * Receiving: an invitation from a contact, for this product, not expired and
- * not seen before, goes to Notifications. Nothing goes back: not on arrival,
- * not when seen, not on Dismiss. Accept is the user's intent, handed with the
- * invitation to the product. Only the product's `accept`, with its exact
- * response, accepts it; the host then answers the proof, which only the
- * sender's host can read.
+ * Receiving: an authenticated request from a contact, for this product, before
+ * its deadline and not seen before, goes to Notifications. Nothing goes back:
+ * not on arrival, not when seen, not on Dismiss. Accept is the user's intent,
+ * handed with the payload to the product. Only the product's `reply` accepts
+ * it; the host then authenticates, seals and posts the reply on the request's
+ * return topic.
+ *
+ * Demo choice, not the design's: the recipient's host posts its sealed reply
+ * again on the delivery's cadence until the request's deadline, and again
+ * when it starts. The design leaves when the recipient resends and stops open.
  */
 
-/** What the host asks its user before an invitation leaves. */
+/** What the host asks its user before a request leaves. */
 export interface SendPrompt {
   product: Product;
   to: { name: string; handle: string };
@@ -67,16 +75,16 @@ export interface ProductPort {
 }
 
 export interface InvitationServiceDeps {
+  /** The product this service serves, from the caller's context. */
   product: Product;
-  /** This host's own keys. */
-  self: HostKeys;
+  auth: IdentityAuth;
   contacts: ContactService;
   /** This user's Notifications list. */
   notifications: NotificationStore;
   storage: Storage;
-  /** Where this user's sent and received invitations are kept. */
+  /** Where this user's sent and received requests are kept. */
   keys: { sent: string; received: string };
-  delivery: InvitationDelivery;
+  delivery: HostDelivery;
   now(): number;
   /** Run `task` after `delayMs`. Returns a function that cancels it. */
   schedule(task: () => void, delayMs: number): () => void;
@@ -92,13 +100,6 @@ const short = (id: string): string => id.replace(/^0x/, "").slice(0, 8);
 
 /** How long the product has to answer an intent before the user is told it did not. */
 export const INTENT_TIMEOUT_MS = 30_000;
-
-/** The host's id for an invitation from `from` with `requestId`. */
-export const receivedId = (from: string, requestId: string): string =>
-  toHex(digest("truapi-web-host/received-invitation/0", from, requestId)).slice(
-    2,
-    34,
-  );
 
 /** An Accept the user chose, waiting for the product. */
 interface PendingAccept {
@@ -129,26 +130,33 @@ const failure = (reason: FailureReason, detail: string): CallResult => ({
 
 export class InvitationService {
   readonly outbox: Outbox;
-  readonly received: ReceivedInvitations;
+  readonly received: ReceivedRequests;
   private product: ProductPort | null = null;
   private cancelExpiry: (() => void) | null = null;
-  /** Expiries up to this time were handled. */
-  private expiryHandledTo: number;
+  /** Deadlines up to this time were handled. */
+  private deadlinesHandledTo: number;
   private stopped = false;
-  /** Accepts the user chose that the product has not answered yet, by invitation id. */
+  /** Accepts the user chose that the product has not answered yet, by handle. */
   private readonly accepting = new Map<string, PendingAccept>();
-  /** Accepted invitations the user opened, which the product may answer by coming to the front. */
+  /** Replied requests the user opened, which the product may answer by coming to the front. */
   private readonly opening = new Set<string>();
 
   constructor(private readonly deps: InvitationServiceDeps) {
     this.outbox = new Outbox(deps.storage, deps.keys.sent, deps.now);
-    this.received = new ReceivedInvitations(deps.storage, deps.keys.received);
-    this.expiryHandledTo = deps.now();
+    this.received = new ReceivedRequests(deps.storage, deps.keys.received);
+    this.deadlinesHandledTo = deps.now();
   }
 
   start(): void {
-    this.deps.delivery.listen((sealed) => this.receive(sealed));
+    this.deps.delivery.listen({
+      request: (sealed) => this.receiveRequest(sealed),
+      reply: (topic, sealed) => this.receiveReply(topic, sealed),
+    });
     for (const item of this.outbox.waiting()) this.post(item);
+    const now = this.deps.now();
+    for (const item of this.received.list())
+      if (item.replied !== null && now < item.context.deadline)
+        this.postReply(item, item.replied.sealed);
     this.scheduleExpiry();
   }
 
@@ -175,11 +183,27 @@ export class InvitationService {
 
   /** Tell `port`'s product everything it is owed, as the lists say now. */
   private replay(port: ProductPort): void {
-    for (const item of this.outbox.list())
-      port.post({ kind: "outgoing", invitation: this.outgoingView(item) });
+    for (const item of this.outbox.list()) {
+      port.post({ kind: "outgoing", request: this.outgoingView(item) });
+      if (this.outbox.status(item) === "waiting")
+        for (const reply of item.replies)
+          port.post({
+            kind: "response",
+            handle: item.handle,
+            payload: reply.payload,
+          });
+    }
     for (const item of this.received.list()) {
-      const view = this.acceptedView(item);
-      if (view !== null) port.post({ kind: "accepted", invitation: view });
+      const sender = this.deps.contacts.byIdentity(item.context.from);
+      if (item.replied !== null && sender !== undefined)
+        port.post({
+          kind: "replied",
+          request: {
+            handle: item.handle,
+            sender: this.deps.contacts.handleFor(sender),
+            repliedAt: item.replied.at,
+          },
+        });
     }
   }
 
@@ -191,38 +215,38 @@ export class InvitationService {
   }
 
   private failAccepts(reason: string): void {
-    for (const [id, pending] of [...this.accepting]) {
-      this.accepting.delete(id);
+    for (const [handle, pending] of [...this.accepting]) {
+      this.accepting.delete(handle);
       pending.cancelTimeout();
       pending.reject(new Error(reason));
     }
   }
 
-  /** Whether `id` is an invitation this host received, so this service answers it. */
-  owns(id: string): boolean {
-    return this.received.get(id) !== undefined;
+  /** Whether `handle` is a request this host received, so this service answers it. */
+  owns(handle: string): boolean {
+    return this.received.get(handle) !== undefined;
   }
 
   /**
-   * The user chose Accept for a received invitation. The product gets the
-   * intent with the invitation, and this resolves once it accepted. Rejects,
-   * with a message for the user, when the product refuses, does not answer in
-   * time, or is not open; then nothing is accepted and nothing is sent.
+   * The user chose Accept for a received request. The product gets the intent
+   * with the payload, and this resolves once it replied. Rejects, with a
+   * message for the user, when the product refuses, does not answer in time,
+   * or is not open; then nothing is accepted and nothing is sent.
    */
-  requestAccept(id: string): Promise<void> {
-    const waiting = this.accepting.get(id);
+  requestAccept(handle: string): Promise<void> {
+    const waiting = this.accepting.get(handle);
     if (waiting !== undefined) return waiting.done;
-    const received = this.received.get(id);
-    const item = this.deps.notifications.get(id);
+    const received = this.received.get(handle);
+    const item = this.deps.notifications.get(handle);
     const refuse = (reason: string) => Promise.reject(new Error(reason));
     if (this.stopped) return refuse("This user's host stopped.");
     if (received === undefined || item === undefined)
-      return refuse("This is not an invitation to you.");
+      return refuse("This is not a request to you.");
     if (this.deps.now() >= item.expiresAt && item.state.tag === "pending")
       return refuse("This request expired.");
     if (item.state.tag !== "pending")
       return refuse(`This request was already ${item.state.tag}.`);
-    const sender = this.deps.contacts.bySigningKey(received.from.signingPublic);
+    const sender = this.deps.contacts.byIdentity(received.context.from);
     if (sender === undefined)
       return refuse("The sender is no longer one of your contacts.");
     const product = this.product;
@@ -242,89 +266,94 @@ export class InvitationService {
       cancelTimeout: () => {},
     };
     pending.cancelTimeout = this.deps.schedule(() => {
-      if (this.accepting.get(id) !== pending) return;
-      this.accepting.delete(id);
+      if (this.accepting.get(handle) !== pending) return;
+      this.accepting.delete(handle);
       pending.reject(
         new Error(`${this.deps.product.name} did not answer. Try again.`),
       );
     }, INTENT_TIMEOUT_MS);
-    this.accepting.set(id, pending);
+    this.accepting.set(handle, pending);
     this.deps.log(
-      `Invitation ${short(id)}: the user chose Accept; ${this.deps.product.name} decides.`,
+      `Request ${short(handle)}: the user chose Accept; ${this.deps.product.name} decides.`,
     );
     product.post({
       kind: "acceptIntent",
-      invitation: {
-        invitationId: id,
-        sender: this.deps.contacts.refFor(this.deps.product, sender),
-        purpose: item.purpose,
-        invitation: received.envelope.invitation,
+      request: {
+        handle,
+        sender: this.deps.contacts.handleFor(sender),
+        payload: received.payload,
       },
     });
     return done;
   }
 
-  /** The user opened an accepted invitation: the product may come to the front for it. */
-  requestOpen(id: string): void {
-    const item = this.deps.notifications.get(id);
+  /** The user opened a replied request: the product may come to the front for it. */
+  requestOpen(handle: string): void {
+    const item = this.deps.notifications.get(handle);
     if (
       this.product === null ||
       item?.state.tag !== "accepted" ||
-      !this.owns(id)
+      !this.owns(handle)
     )
       return;
-    this.opening.add(id);
-    this.product.post({ kind: "openIntent", invitationId: id });
+    this.opening.add(handle);
+    this.product.post({ kind: "openIntent", handle });
   }
 
-  /** Read every list again after another tab wrote them. */
+  /**
+   * Read every list again after another tab wrote them, and stop posting what
+   * another tab closed.
+   */
   reload(): void {
     this.deps.notifications.reload();
     this.outbox.reload();
     this.received.reload();
+    for (const item of this.outbox.list())
+      if (item.state.tag !== "waiting") this.stopPosting(item);
     if (this.product !== null) this.replay(this.product);
     this.scheduleExpiry();
   }
 
-  private post(item: OutgoingInvitation): void {
-    this.deps.delivery.post(
-      item.to.keys,
-      item.requestId,
+  private post(item: OutgoingRequest): void {
+    this.deps.delivery.watch(item.context.setupTopic);
+    const person = this.deps.contacts.byIdentity(item.context.to);
+    if (person === undefined) return;
+    this.deps.delivery.postRequest(
+      person.identity,
+      item.handle,
       item.sealed,
-      item.envelope.invitation.expiresAt,
+      item.context.deadline,
     );
   }
 
-  private outgoingView(item: OutgoingInvitation): OutgoingView {
+  private postReply(item: ReceivedRequest, sealed: string): void {
+    this.deps.delivery.postReply(
+      item.context.setupTopic,
+      item.handle,
+      sealed,
+      item.context.deadline,
+    );
+  }
+
+  private stopPosting(item: OutgoingRequest): void {
+    this.deps.delivery.withdraw(item.handle);
+    this.deps.delivery.unwatch(item.context.setupTopic);
+  }
+
+  private outgoingView(item: OutgoingRequest): OutgoingView {
     return {
-      requestId: item.requestId,
+      handle: item.handle,
       contact: item.contact,
-      purpose: item.envelope.purpose,
-      createdAt: item.envelope.createdAt,
-      expiresAt: item.envelope.invitation.expiresAt,
+      purpose: item.context.purpose,
+      createdAt: item.context.createdAt,
+      deadline: item.context.deadline,
       status: this.outbox.status(item),
       ...(item.state.tag === "waiting" ? {} : { closedAt: item.state.at }),
     };
   }
 
-  /** What the product is told again of an invitation it accepted, or null. */
-  private acceptedView(item: ReceivedInvitation): AcceptedView | null {
-    const sender = this.deps.contacts.bySigningKey(item.from.signingPublic);
-    if (item.accepted === null || sender === undefined) return null;
-    return {
-      invitationId: item.invitationId,
-      sender: this.deps.contacts.refFor(this.deps.product, sender),
-      purpose: item.envelope.purpose,
-      invitation: item.envelope.invitation,
-      acceptedAt: item.accepted.at,
-    };
-  }
-
-  private pushOutgoing(item: OutgoingInvitation): void {
-    this.product?.post({
-      kind: "outgoing",
-      invitation: this.outgoingView(item),
-    });
+  private pushOutgoing(item: OutgoingRequest): void {
+    this.product?.post({ kind: "outgoing", request: this.outgoingView(item) });
   }
 
   private async call(port: ProductPort, value: unknown): Promise<void> {
@@ -340,43 +369,34 @@ export class InvitationService {
 
   private async answer(call: ProductCall): Promise<CallResult> {
     switch (call.call) {
-      case "pickContact": {
-        const contact = await this.deps.contacts.pick(this.deps.product);
-        return contact === null
-          ? failure("Dismissed", "No contact was chosen.")
-          : { ok: true, contact };
-      }
-      case "send":
+      case "pickContact":
+        return {
+          ok: true,
+          outcome: await this.deps.contacts.pick(this.deps.product),
+        };
+      case "request":
         return this.send(call.request);
-      case "verify":
-        return this.verify(call.requestId, call.response, call.proof);
       case "complete":
-        return this.complete(call.requestId, call.response);
+        return this.complete(call.handle);
       case "cancel":
-        return this.cancel(call.requestId);
-      case "accept":
-        return this.productAccepted(
-          call.invitationId,
-          call.response,
-          call.open,
-        );
+        return this.cancel(call.handle);
+      case "reply":
+        return this.reply(call.handle, call.payload, call.open);
       case "refuse":
-        return this.productRefused(call.invitationId, call.reason);
+        return this.refuse(call.handle, call.reason);
       case "open":
-        return this.productOpens(call.invitationId);
+        return this.open(call.handle);
     }
   }
 
   private async send(value: unknown): Promise<CallResult> {
     const request = readSendRequest(value);
     if (!request.ok) return failure("Invalid", request.reason);
-    const { contact, purpose, ttlMs, invitation } = request.value;
+    const { contact, purpose, ttlMs, payload } = request.value;
     const product = this.deps.product;
-    const person = this.deps.contacts.resolve(product, contact);
+    const person = this.deps.contacts.resolve(contact);
     if (person === null)
       return failure("Unknown", "This contact names nobody here.");
-    const inUse = () => this.outbox.get(invitation.requestId) !== undefined;
-    if (inUse()) return failure("Invalid", "The request id is already in use.");
     const confirmed = await this.deps.confirmSend({
       product,
       to: { name: person.name, handle: person.handle },
@@ -385,171 +405,155 @@ export class InvitationService {
     });
     if (!confirmed) return failure("Dismissed", "The user did not send it.");
     if (this.stopped) return failure("Refused", "This user's host stopped.");
-    if (inUse()) return failure("Invalid", "The request id is already in use.");
+    const { random } = this.deps;
+    const replyKey = x25519Pair(random(32));
     const now = this.deps.now();
-    const envelope: Envelope = {
-      product,
-      purpose,
-      createdAt: now,
-      invitation: { ...invitation, expiresAt: now + ttlMs },
-    };
-    const item: OutgoingInvitation = {
-      requestId: invitation.requestId,
-      to: { id: person.id, keys: person.keys },
+    const { context, sealed } = sealRequest(
+      this.deps.auth,
+      person,
+      {
+        product,
+        purpose,
+        requestId: toHex(random(16)),
+        createdAt: now,
+        deadline: now + ttlMs,
+        setupTopic: toHex(random(32)),
+        replyKey: toHex(replyKey.public),
+      },
+      payload,
+      random,
+    );
+    const item: OutgoingRequest = {
+      handle: toHex(random(16)),
+      to: person.id,
       contact,
-      envelope,
-      sealed: sealEnvelope(
-        this.deps.self,
-        person.keys,
-        envelope,
-        this.deps.random,
-      ),
-      verified: [],
+      context,
+      payload,
+      digest: requestDigest(context, payload),
+      sealed,
+      replySecret: toHex(replyKey.secret),
+      replies: [],
       state: { tag: "waiting" },
     };
     this.outbox.add(item);
     this.deps.log(
-      `Invitation ${short(item.requestId)} sealed for ${person.name} and posted.`,
+      `Request ${short(item.handle)}: watching its return topic, then posting it, sealed for ${person.name}.`,
     );
     this.post(item);
     this.scheduleExpiry();
-    return { ok: true, invitation: this.outgoingView(item) };
+    return { ok: true, request: this.outgoingView(item) };
   }
 
-  /** A waiting invitation of the product's, or why the call is refused. */
+  /** A waiting request of the product's, or why the call is refused. */
   private waitingItem(
-    requestId: string,
-  ): OutgoingInvitation | { failure: CallResult } {
-    const item = this.outbox.get(requestId);
+    handle: RequestHandle,
+  ): OutgoingRequest | { failure: CallResult } {
+    const item = this.outbox.get(handle);
     if (item === undefined)
-      return { failure: failure("Unknown", "No invitation has this id.") };
+      return {
+        failure: failure("Unknown", "No sent request has this handle."),
+      };
     const status = this.outbox.status(item);
     return status === "waiting"
       ? item
-      : { failure: failure("Refused", `This invitation is ${status}.`) };
+      : { failure: failure("Refused", `This request is ${status}.`) };
   }
 
-  private verify(
-    requestId: string,
-    response: string,
-    proof: string,
-  ): CallResult {
-    const item = this.waitingItem(requestId);
+  private complete(handle: RequestHandle): CallResult {
+    const item = this.waitingItem(handle);
     if ("failure" in item) return item.failure;
-    const read = readPayload(response, "response");
-    if (!read.ok) return failure("Invalid", read.reason);
-    const problem = checkProof(
-      this.deps.self,
-      item.to.keys,
-      item.envelope,
-      response,
-      proof,
-    );
-    if (problem !== null) {
-      this.deps.log(
-        `A response to invitation ${short(requestId)} did not verify: ${problem}.`,
-      );
-      return failure("Rejected", problem);
-    }
-    this.outbox.verified(requestId, responseDigest(response));
+    if (item.replies.length === 0)
+      return failure("Refused", "No authenticated reply has arrived.");
+    this.outbox.close(handle, { tag: "completed", at: this.deps.now() });
+    this.stopPosting(item);
     this.deps.log(
-      `Verified a response to invitation ${short(requestId)} from the contact invited.`,
-    );
-    return { ok: true };
-  }
-
-  private complete(requestId: string, response: string): CallResult {
-    const item = this.waitingItem(requestId);
-    if ("failure" in item) return item.failure;
-    const digested = responseDigest(response);
-    if (!item.verified.includes(digested))
-      return failure("Refused", "This response was not verified.");
-    this.outbox.close(requestId, {
-      tag: "completed",
-      at: this.deps.now(),
-      response: digested,
-    });
-    this.deps.delivery.withdraw(requestId);
-    this.deps.log(
-      `Invitation ${short(requestId)} completed by ${this.deps.product.name}; reposting stopped.`,
+      `Request ${short(handle)} completed by ${this.deps.product.name}; reposting stopped. Nothing is sent.`,
     );
     this.scheduleExpiry();
-    return { ok: true, invitation: this.outgoingView(item) };
+    return { ok: true, request: this.outgoingView(item) };
   }
 
-  private cancel(requestId: string): CallResult {
-    const item = this.waitingItem(requestId);
+  private cancel(handle: RequestHandle): CallResult {
+    const item = this.waitingItem(handle);
     if ("failure" in item) return item.failure;
-    this.outbox.close(requestId, { tag: "cancelled", at: this.deps.now() });
-    this.deps.delivery.withdraw(requestId);
+    this.outbox.close(handle, { tag: "cancelled", at: this.deps.now() });
+    this.stopPosting(item);
     this.deps.log(
-      `Invitation ${short(requestId)} cancelled; reposting stopped. Nothing is sent to the recipient.`,
+      `Request ${short(handle)} cancelled; reposting stopped. Nothing is sent.`,
     );
     this.scheduleExpiry();
-    return { ok: true, invitation: this.outgoingView(item) };
+    return { ok: true, request: this.outgoingView(item) };
   }
 
-  /** The product accepted, with its response, an invitation the user chose to accept. */
-  private productAccepted(
-    id: string,
-    response: string,
+  /** The product replied to a request the user chose to accept. */
+  private reply(
+    handle: RequestHandle,
+    payload: string,
     open: boolean,
   ): CallResult {
-    const pending = this.accepting.get(id);
+    const pending = this.accepting.get(handle);
     if (pending === undefined) {
       this.deps.log(
-        `Ignored ${this.deps.product.name}'s accept of ${short(id)}: the user did not choose it.`,
+        `Ignored ${this.deps.product.name}'s reply to ${short(handle)}: the user did not choose Accept for it.`,
       );
       return failure("Refused", "The user did not choose Accept for it.");
     }
     const settle = (result: CallResult): CallResult => {
-      this.accepting.delete(id);
+      this.accepting.delete(handle);
       pending.cancelTimeout();
       if (result.ok) pending.resolve();
       else pending.reject(new Error(result.detail));
       return result;
     };
-    const read = readPayload(response, "response");
+    const read = readPayload(payload);
     if (!read.ok) return settle(failure("Invalid", read.reason));
-    const received = this.received.get(id);
+    // Another tab of this user may have replied: read the lists as they are now.
+    this.received.reload();
+    this.deps.notifications.reload();
+    const received = this.received.get(handle);
     const sender =
       received === undefined
         ? undefined
-        : this.deps.contacts.bySigningKey(received.from.signingPublic);
+        : this.deps.contacts.byIdentity(received.context.from);
     if (received === undefined || sender === undefined)
       return settle(failure("Unknown", "The sender is no longer a contact."));
-    const answered = this.deps.notifications.accept(id);
+    if (received.replied !== null)
+      return settle(failure("Refused", "This request was already answered."));
+    const answered = this.deps.notifications.accept(handle);
     if (!answered.ok) return settle(failure("Refused", answered.reason));
-    const proof = issueProof(
-      this.deps.self,
-      sender.keys,
-      received.envelope,
-      response,
+    if (!answered.changed)
+      return settle(failure("Refused", "This request was already answered."));
+    const sealed = sealReply(
+      this.deps.auth,
+      sender,
+      { context: received.context, digest: received.digest },
+      payload,
       this.deps.random,
     );
-    this.received.markAccepted(id, responseDigest(response), this.deps.now());
+    this.received.markReplied(handle, sealed, this.deps.now());
+    this.postReply(received, sealed);
     this.deps.log(
-      `${this.deps.product.name} accepted invitation ${short(id)}; the host bound its proof to that response.`,
+      `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return topic.`,
     );
     if (open) this.deps.showProduct();
-    return settle({ ok: true, proof });
+    return settle({ ok: true });
   }
 
-  private productRefused(id: string, reason: string): CallResult {
-    const pending = this.accepting.get(id);
+  private refuse(handle: RequestHandle, reason: string): CallResult {
+    const pending = this.accepting.get(handle);
     if (pending === undefined)
       return failure("Refused", "The user did not choose Accept for it.");
-    this.accepting.delete(id);
+    this.accepting.delete(handle);
     pending.cancelTimeout();
     this.deps.log(
-      `${this.deps.product.name} refused invitation ${short(id)}: ${reason} Nothing is sent.`,
+      `${this.deps.product.name} refused request ${short(handle)}: ${reason} Nothing is sent.`,
     );
     pending.reject(new Error(reason));
     return { ok: true };
   }
 
-  private productOpens(id: string): CallResult {
-    if (!this.opening.delete(id)) {
+  private open(handle: RequestHandle): CallResult {
+    if (!this.opening.delete(handle)) {
       this.deps.log(
         `Ignored ${this.deps.product.name}'s request to open: the user did not ask for it.`,
       );
@@ -559,96 +563,158 @@ export class InvitationService {
     return { ok: true };
   }
 
-  /** Something arrived for this host. Kept only when it is a new, valid invitation. */
-  private receive(sealed: string): void {
+  /** A sealed request arrived. Kept only when it is new, authentic and in time. */
+  private receiveRequest(sealed: string): void {
     if (this.stopped) return;
-    const opened = openEnvelope(
-      this.deps.self,
-      sealed,
-      (key) => this.deps.contacts.bySigningKey(key)?.keys,
+    const opened = openRequest(this.deps.auth, sealed, (key) =>
+      this.deps.contacts.byIdentity(key),
     );
     if (!opened.ok) {
-      this.deps.log(`Ignored an invitation: ${opened.reason}.`);
+      this.deps.log(`Ignored a request: ${opened.reason}.`);
       return;
     }
-    const sender = this.deps.contacts.bySigningKey(opened.from) as Person;
-    const { envelope } = opened;
-    const id = receivedId(opened.from, envelope.invitation.requestId);
-    const label = short(id);
-    const known = this.received.get(id);
+    const { peer, context, payload } = opened;
+    const exact = requestDigest(context, payload);
+    // Another tab of this user may have kept it already.
+    this.received.reload();
+    const known = this.received.find(peer.id, context.requestId);
     if (known !== undefined) {
-      if (envelopeDigest(known.envelope) !== envelopeDigest(envelope))
+      if (known.digest !== exact)
         this.deps.log(
-          `Ignored invitation ${label}: another invitation from ${sender.name} has its request id.`,
+          `Ignored a request from ${peer.name}: another request of theirs has its id.`,
         );
       return;
     }
-    if (envelope.product.id !== this.deps.product.id) {
+    const label = short(context.requestId);
+    if (context.product.id !== this.deps.product.id) {
       this.deps.log(
-        `Ignored invitation ${label}: ${envelope.product.id} is not installed.`,
+        `Ignored request ${label}: ${context.product.id} is not installed.`,
       );
       return;
     }
     const now = this.deps.now();
-    const { expiresAt } = envelope.invitation;
-    if (now >= expiresAt || expiresAt - envelope.createdAt > TTL_MAX_MS) {
-      this.deps.log(`Ignored invitation ${label}: it expired.`);
+    if (
+      now >= context.deadline ||
+      context.deadline <= context.createdAt ||
+      context.deadline - context.createdAt > TTL_MAX_MS ||
+      context.deadline - now > TTL_MAX_MS
+    ) {
+      this.deps.log(`Ignored request ${label}: its deadline passed.`);
       return;
     }
     if (!this.deps.notifications.scoped()) return;
-    if (this.deps.notifications.get(id) !== undefined) return;
+    // The same for every tab of this user, so their lists agree; a product
+    // cannot work it out, as it never sees the identities or the request id.
+    const handle = toHex(
+      digest(
+        "truapi-web-host/received-handle/1",
+        this.deps.auth.identityFor(peer).signingPublic,
+        context.from,
+        context.requestId,
+      ).subarray(0, 16),
+    );
+    this.deps.notifications.reload();
+    if (this.deps.notifications.get(handle) !== undefined) return;
     this.received.add({
-      invitationId: id,
-      from: { id: sender.id, signingPublic: opened.from },
-      envelope,
-      accepted: null,
+      handle,
+      from: peer.id,
+      context,
+      payload,
+      digest: exact,
+      replied: null,
     });
     this.deps.notifications.add({
-      id,
+      id: handle,
       kind: "invitation",
-      sender: { name: sender.name, handle: sender.handle },
-      product: envelope.product,
-      purpose: envelope.purpose,
+      sender: { name: peer.name, handle: peer.handle },
+      product: context.product,
+      purpose: context.purpose,
       receivedAt: now,
-      expiresAt,
+      expiresAt: context.deadline,
       seenAt: null,
       state: { tag: "pending" },
     } satisfies HostNotification);
     this.deps.log(
-      `Invitation ${label} from ${sender.name}: signature checked, kept. Nothing is sent back.`,
+      `Request ${label} from ${peer.name}: authenticated, kept. Nothing is sent back.`,
     );
+  }
+
+  /** A sealed reply arrived on a return topic. Handed to the product only once authenticated. */
+  private receiveReply(topic: string, sealed: string): void {
+    if (this.stopped) return;
+    const item = this.outbox.byTopic(topic);
+    if (item === undefined) return;
+    const label = short(item.handle);
+    const status = this.outbox.status(item);
+    if (status !== "waiting") {
+      this.deps.log(`Ignored a reply to request ${label}: it is ${status}.`);
+      return;
+    }
+    const peer: Person | undefined = this.deps.contacts.byIdentity(
+      item.context.to,
+    );
+    if (peer === undefined) {
+      this.deps.log(
+        `Ignored a reply to request ${label}: the contact is gone.`,
+      );
+      return;
+    }
+    const opened = openReply(
+      this.deps.auth,
+      {
+        peer,
+        productId: this.deps.product.id,
+        requestId: item.context.requestId,
+        requestDigest: item.digest,
+        replyKey: x25519Pair(fromHex(item.replySecret)),
+      },
+      sealed,
+    );
+    if (!opened.ok) {
+      this.deps.log(`Ignored a reply to request ${label}: ${opened.reason}.`);
+      return;
+    }
+    if (!this.outbox.addReply(item.handle, opened.payload)) return;
+    this.deps.log(
+      `Request ${label}: authenticated a reply from ${peer.name}; ${this.deps.product.name} checks it.`,
+    );
+    this.product?.post({
+      kind: "response",
+      handle: item.handle,
+      payload: opened.payload,
+    });
   }
 
   private scheduleExpiry(): void {
     this.cancelExpiry?.();
     this.cancelExpiry = null;
     if (this.stopped) return;
-    const next = this.outbox.nextExpiry();
+    const next = this.outbox.nextDeadline();
     if (next === null) return;
     this.cancelExpiry = this.deps.schedule(
-      () => this.handleExpiries(),
+      () => this.handleDeadlines(),
       Math.max(0, next - this.deps.now()),
     );
   }
 
-  /** Stop reposting what expired since the last check, and tell the product. */
-  private handleExpiries(): void {
+  /** Stop posting what passed its deadline since the last check, and tell the product. */
+  private handleDeadlines(): void {
     const now = this.deps.now();
     for (const item of this.outbox.list()) {
-      const { expiresAt } = item.envelope.invitation;
+      const { deadline } = item.context;
       if (
         item.state.tag === "waiting" &&
-        expiresAt > this.expiryHandledTo &&
-        expiresAt <= now
+        deadline > this.deadlinesHandledTo &&
+        deadline <= now
       ) {
-        this.deps.delivery.withdraw(item.requestId);
+        this.stopPosting(item);
         this.deps.log(
-          `Invitation ${short(item.requestId)} expired; reposting stopped.`,
+          `Request ${short(item.handle)} expired; reposting stopped.`,
         );
         this.pushOutgoing(item);
       }
     }
-    this.expiryHandledTo = now;
+    this.deadlinesHandledTo = now;
     this.scheduleExpiry();
   }
 }

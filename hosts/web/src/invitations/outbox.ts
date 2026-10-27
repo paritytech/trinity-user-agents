@@ -1,54 +1,69 @@
-import type { Envelope, PeerKeys } from "./binding.js";
-import type { ContactRef, OutgoingStatus } from "./contract.js";
+import type { RequestContext } from "./binding.js";
+import type {
+  ContactHandle,
+  OutgoingStatus,
+  RequestHandle,
+} from "./contract.js";
 
 /**
- * The invitations a user's product sent, as the sender's host keeps them.
+ * The requests a user's product sent, as the sender's host keeps them. Host
+ * only: the reply key's secret and the person never reach the product.
  *
- * An invitation waits until the product completes it with a response the
- * host verified, the product cancels it, or it expires (read from the clock).
- * The first of these is final. Nothing from the recipient's host changes it:
- * there is no delivery receipt and no decline.
+ * A request waits until the product completes it, the product cancels it, or
+ * its deadline passes (read from the clock). The first of these is final.
+ * Nothing from the recipient's host closes it: there is no receipt and no
+ * decline. Authenticated replies are kept, so a product that restarts gets
+ * them again, and `complete` is taken only once one arrived.
  */
 
 export type OutgoingState =
   | { tag: "waiting" }
-  | { tag: "completed"; at: number; response: string }
+  | { tag: "completed"; at: number }
   | { tag: "cancelled"; at: number };
 
-export interface OutgoingInvitation {
-  /** The product's request id. */
-  requestId: string;
-  /** The person the user chose, as the host knew them at sending. Host only. */
-  to: { id: string; keys: PeerKeys };
-  contact: ContactRef;
-  envelope: Envelope;
-  /** The sealed envelope, posted again unchanged. */
+/** At most this many distinct replies are kept per request. */
+export const REPLIES_MAX = 4;
+
+export interface OutgoingRequest {
+  handle: RequestHandle;
+  /** The person the user chose, by id. Their identity is in `context.to`. */
+  to: string;
+  contact: ContactHandle;
+  context: RequestContext;
+  payload: string;
+  /** The digest of the exact request. */
+  digest: string;
+  /** The sealed request, posted again unchanged. */
   sealed: string;
-  /** Digests of the responses whose proof the host verified. */
-  verified: string[];
+  /** The reply key's secret, `0x` hex. Never leaves the host. */
+  replySecret: string;
+  /** Authenticated reply payloads, in the order they arrived. */
+  replies: { payload: string; at: number }[];
   state: OutgoingState;
 }
 
 export function outgoingStatus(
-  item: OutgoingInvitation,
+  item: OutgoingRequest,
   now: number,
 ): OutgoingStatus {
   if (item.state.tag !== "waiting") return item.state.tag;
-  return now >= item.envelope.invitation.expiresAt ? "expired" : "waiting";
+  return now >= item.context.deadline ? "expired" : "waiting";
 }
 
-function isOutgoing(value: unknown): value is OutgoingInvitation {
+function isOutgoing(value: unknown): value is OutgoingRequest {
   if (typeof value !== "object" || value === null) return false;
-  const item = value as Partial<OutgoingInvitation>;
+  const item = value as Partial<OutgoingRequest>;
   const state = item.state as Partial<OutgoingState> | undefined;
   return (
-    typeof item.requestId === "string" &&
-    typeof item.to?.id === "string" &&
-    typeof item.to.keys?.signingPublic === "string" &&
-    typeof item.contact === "string" &&
-    typeof item.envelope?.invitation?.expiresAt === "number" &&
+    typeof item.handle === "string" &&
+    typeof item.to === "string" &&
+    typeof item.contact?.bytes === "string" &&
+    typeof item.context?.deadline === "number" &&
+    typeof item.payload === "string" &&
+    typeof item.digest === "string" &&
     typeof item.sealed === "string" &&
-    Array.isArray(item.verified) &&
+    typeof item.replySecret === "string" &&
+    Array.isArray(item.replies) &&
     (state?.tag === "waiting" ||
       state?.tag === "completed" ||
       state?.tag === "cancelled")
@@ -56,7 +71,7 @@ function isOutgoing(value: unknown): value is OutgoingInvitation {
 }
 
 export class Outbox {
-  private items: OutgoingInvitation[];
+  private items: OutgoingRequest[];
 
   constructor(
     private readonly storage: Storage,
@@ -66,7 +81,7 @@ export class Outbox {
     this.items = this.load();
   }
 
-  private load(): OutgoingInvitation[] {
+  private load(): OutgoingRequest[] {
     try {
       const saved: unknown = JSON.parse(this.storage.getItem(this.key) ?? "[]");
       return Array.isArray(saved) ? saved.filter(isOutgoing) : [];
@@ -86,50 +101,61 @@ export class Outbox {
   }
 
   /** Oldest first. */
-  list(): readonly OutgoingInvitation[] {
+  list(): readonly OutgoingRequest[] {
     return this.items;
   }
 
-  get(requestId: string): OutgoingInvitation | undefined {
-    return this.items.find((item) => item.requestId === requestId);
+  get(handle: RequestHandle): OutgoingRequest | undefined {
+    return this.items.find((item) => item.handle === handle);
   }
 
-  status(item: OutgoingInvitation): OutgoingStatus {
+  byTopic(topic: string): OutgoingRequest | undefined {
+    return this.items.find((item) => item.context.setupTopic === topic);
+  }
+
+  status(item: OutgoingRequest): OutgoingStatus {
     return outgoingStatus(item, this.now());
   }
 
-  add(item: OutgoingInvitation): void {
+  add(item: OutgoingRequest): void {
     this.items.push(structuredClone(item));
     this.save();
   }
 
-  /** Invitations still waiting. */
-  waiting(): OutgoingInvitation[] {
+  /** Requests still waiting. */
+  waiting(): OutgoingRequest[] {
     return this.items.filter((item) => this.status(item) === "waiting");
   }
 
-  /** Note a verified response of a waiting invitation. */
-  verified(requestId: string, response: string): void {
-    const item = this.get(requestId);
-    if (item === undefined || item.verified.includes(response)) return;
-    item.verified.push(response);
+  /** Keep an authenticated reply. False when it is a repeat or there is no room. */
+  addReply(handle: RequestHandle, payload: string): boolean {
+    const item = this.get(handle);
+    if (
+      item === undefined ||
+      item.replies.length >= REPLIES_MAX ||
+      item.replies.some((reply) => reply.payload === payload)
+    )
+      return false;
+    item.replies.push({ payload, at: this.now() });
     this.save();
+    return true;
   }
 
-  /** Close a waiting invitation. False when it no longer waits. */
-  close(requestId: string, state: Exclude<OutgoingState, { tag: "waiting" }>) {
-    const item = this.get(requestId);
+  /** Close a waiting request. False when it no longer waits. */
+  close(
+    handle: RequestHandle,
+    state: Exclude<OutgoingState, { tag: "waiting" }>,
+  ) {
+    const item = this.get(handle);
     if (item === undefined || this.status(item) !== "waiting") return false;
     item.state = state;
     this.save();
     return true;
   }
 
-  /** When the next waiting invitation expires, or null. */
-  nextExpiry(): number | null {
-    const times = this.waiting().map(
-      (item) => item.envelope.invitation.expiresAt,
-    );
+  /** When the next waiting request's deadline passes, or null. */
+  nextDeadline(): number | null {
+    const times = this.waiting().map((item) => item.context.deadline);
     return times.length === 0 ? null : Math.min(...times);
   }
 }

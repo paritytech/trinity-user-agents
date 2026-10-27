@@ -1,36 +1,41 @@
-import type { Envelope } from "./binding.js";
+import type { RequestContext } from "./binding.js";
+import type { RequestHandle } from "./contract.js";
 
 /**
- * The invitations a user's host received, by the host's own id for each:
- * who sent it, the envelope, and the response the product accepted it with.
- * The Notifications list shows the request; this keeps what only the
- * invitation feature needs. It is kept so a repeat of an invitation is
- * recognised after a reload, and dismissing one keeps it here.
+ * The requests a user's host received, by the host's own handle for each:
+ * who sent it, the authenticated request, and the reply the product gave.
+ * The Notifications list shows the request; this keeps what only the request
+ * service needs. It is kept so a repeat is recognised after a reload, and a
+ * dismissed request stays here.
  */
 
-export interface ReceivedInvitation {
-  invitationId: string;
-  /** The sender's person id and signing key. Host only. */
-  from: { id: string; signingPublic: string };
-  envelope: Envelope;
-  /** The response digest the host issued its proof for, once accepted. */
-  accepted: { response: string; at: number } | null;
+export interface ReceivedRequest {
+  handle: RequestHandle;
+  /** The sender's person id. Their identity is in `context.from`. */
+  from: string;
+  context: RequestContext;
+  payload: string;
+  /** The digest of the exact request. */
+  digest: string;
+  /** The sealed reply this host posts, once the product replied. */
+  replied: { sealed: string; at: number } | null;
 }
 
-function isReceived(value: unknown): value is ReceivedInvitation {
+function isReceived(value: unknown): value is ReceivedRequest {
   if (typeof value !== "object" || value === null) return false;
-  const item = value as Partial<ReceivedInvitation>;
+  const item = value as Partial<ReceivedRequest>;
   return (
-    typeof item.invitationId === "string" &&
-    typeof item.from?.id === "string" &&
-    typeof item.from.signingPublic === "string" &&
-    typeof item.envelope?.invitation?.requestId === "string" &&
-    (item.accepted === null || typeof item.accepted?.response === "string")
+    typeof item.handle === "string" &&
+    typeof item.from === "string" &&
+    typeof item.context?.requestId === "string" &&
+    typeof item.payload === "string" &&
+    typeof item.digest === "string" &&
+    (item.replied === null || typeof item.replied?.sealed === "string")
   );
 }
 
-export class ReceivedInvitations {
-  private items: ReceivedInvitation[];
+export class ReceivedRequests {
+  private items: ReceivedRequest[];
 
   constructor(
     private readonly storage: Storage,
@@ -39,7 +44,7 @@ export class ReceivedInvitations {
     this.items = this.load();
   }
 
-  private load(): ReceivedInvitation[] {
+  private load(): ReceivedRequest[] {
     try {
       const saved: unknown = JSON.parse(this.storage.getItem(this.key) ?? "[]");
       return Array.isArray(saved) ? saved.filter(isReceived) : [];
@@ -57,23 +62,30 @@ export class ReceivedInvitations {
     this.items = this.load();
   }
 
-  list(): readonly ReceivedInvitation[] {
+  list(): readonly ReceivedRequest[] {
     return this.items;
   }
 
-  get(invitationId: string): ReceivedInvitation | undefined {
-    return this.items.find((item) => item.invitationId === invitationId);
+  get(handle: RequestHandle): ReceivedRequest | undefined {
+    return this.items.find((item) => item.handle === handle);
   }
 
-  add(item: ReceivedInvitation): void {
+  /** The request `from` sent with `requestId`, whatever its contents. */
+  find(from: string, requestId: string): ReceivedRequest | undefined {
+    return this.items.find(
+      (item) => item.from === from && item.context.requestId === requestId,
+    );
+  }
+
+  add(item: ReceivedRequest): void {
     this.items.push(structuredClone(item));
     this.save();
   }
 
-  markAccepted(invitationId: string, response: string, at: number): void {
-    const item = this.get(invitationId);
-    if (item === undefined || item.accepted !== null) return;
-    item.accepted = { response, at };
+  markReplied(handle: RequestHandle, sealed: string, at: number): void {
+    const item = this.get(handle);
+    if (item === undefined || item.replied !== null) return;
+    item.replied = { sealed, at };
     this.save();
   }
 }
