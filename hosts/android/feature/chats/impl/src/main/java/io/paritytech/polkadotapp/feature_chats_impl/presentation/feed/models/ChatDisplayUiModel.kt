@@ -19,7 +19,9 @@ fun ChatDisplay.toUi(): ChatDisplayUiModel {
 
 fun ChatAvatar.toUi(): AvatarUiModel {
     return when (this) {
-        is ChatAvatar.Account -> AvatarUiModel.Name(name, AvatarColorScheme.from(themeSeed))
-        is ChatAvatar.Url -> AvatarUiModel.Image(url)
+        is ChatAvatar.Account -> toNameUi()
+        is ChatAvatar.Url -> AvatarUiModel.Image(url, placeholder = placeholder?.toNameUi())
     }
 }
+
+private fun ChatAvatar.Account.toNameUi() = AvatarUiModel.Name(name, AvatarColorScheme.from(themeSeed))

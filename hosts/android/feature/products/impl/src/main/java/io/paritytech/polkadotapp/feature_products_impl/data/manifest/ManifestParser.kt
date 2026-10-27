@@ -24,11 +24,10 @@ internal class ManifestParser @Inject constructor(
 
         require(remote.version == SCHEMA_VERSION) { "unsupported \$v=${remote.version}" }
         val displayName = requireNotNull(remote.displayName) { "missing displayName" }
-        // Unused here, but required by RFC-0001: a stricter Host must not see a different manifest.
-        requireNotNull(remote.description) { "missing description" }
+        val description = requireNotNull(remote.description) { "missing description" }
         val icon = requireNotNull(remote.icon) { "missing icon" }
 
-        RootManifest(displayName = displayName, icon = icon.toDomain())
+        RootManifest(displayName = displayName, description = description.ifBlank { null }, icon = icon.toDomain())
     }
 
     /** [host] is the subname read from, and the executable's serving host. */

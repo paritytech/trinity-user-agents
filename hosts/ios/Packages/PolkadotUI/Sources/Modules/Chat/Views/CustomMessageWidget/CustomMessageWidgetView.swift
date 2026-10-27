@@ -131,19 +131,42 @@ private struct NodeImageView: View {
     private var content: some View {
         switch picture {
         case .loading:
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            placeholder(ProgressView())
         case let .loaded(image):
-            props.fit.apply(to: Image(uiImage: image))
+            switch (modifiers.hasOwnWidth, modifiers.hasOwnHeight) {
+            case (true, true):
+                props.fit.apply(to: Image(uiImage: image))
+            case (false, false):
+                CustomMessageWidgetNode.ImageFit.scaleDown.apply(to: Image(uiImage: image))
+            case let (width, height) where props.fit == .none:
+                Image(uiImage: image)
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: width ? .infinity : nil,
+                        minHeight: 0,
+                        maxHeight: height ? .infinity : nil
+                    )
+                    .clipped()
+            default:
+                Image(uiImage: image).resizable().aspectRatio(contentMode: .fit)
+            }
         case .unavailable:
-            Image(.fileNotFound)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: 44, maxHeight: 44)
-                .foregroundStyle(Color.fgTertiary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
+            placeholder(
+                Image(.fileNotFound)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 44, maxHeight: 44)
+                    .foregroundStyle(Color.fgTertiary)
+            )
+            .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
         }
+    }
+
+    private func placeholder(_ view: some View) -> some View {
+        view.frame(
+            maxWidth: modifiers.hasOwnWidth ? .infinity : nil,
+            maxHeight: modifiers.hasOwnHeight ? .infinity : nil
+        )
     }
 }
 
@@ -152,15 +175,18 @@ private extension CustomMessageWidgetNode.ImageFit {
     func apply(to image: Image) -> some View {
         switch self {
         case .none:
-            image
+            Color.clear.overlay(image).clipped()
         case .fill:
             image.resizable()
         case .cover:
-            image.resizable().aspectRatio(contentMode: .fill)
+            Color.clear.overlay(image.resizable().scaledToFill()).clipped()
         case .contain:
             image.resizable().aspectRatio(contentMode: .fit)
         case .scaleDown:
-            image.resizable().aspectRatio(contentMode: .fit).scaledToFit()
+            ViewThatFits {
+                image
+                image.resizable().scaledToFit()
+            }
         }
     }
 }
@@ -173,7 +199,7 @@ private struct NodeEffectView: View {
     let modifiers: CustomMessageWidgetNode.Modifiers
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topLeading) {
             ForEach(children.indices, id: \.self) { index in
                 WidgetNodeContent(node: children[index])
             }
@@ -189,7 +215,13 @@ private struct NodeEffectModifier: ViewModifier {
     func body(content: Content) -> some View {
         switch effect {
         case .rainbow:
-            content.motionFillingShader(shader: HolographicShaders.iridescentShine)
+            // As strong as Android's tint, and over the children so they keep their taps.
+            content.overlay {
+                Rectangle()
+                    .motionFillingShader(shader: HolographicShaders.iridescentShine)
+                    .opacity(0.3)
+                    .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -238,44 +270,11 @@ private struct NodeColumnView: View {
     }
 
     private var columnContent: some View {
-        VStack(alignment: props.alignment, spacing: props.arrangement.isSpaced ? 0 : nil) {
-            arrangementContent(arrangement: props.arrangement)
-        }
-    }
-
-    @ViewBuilder
-    private func arrangementContent(arrangement: CustomMessageWidgetNode.Arrangement) -> some View {
-        switch arrangement {
-        case .start:
-            childrenContent
-        case .end:
-            Spacer(minLength: 0)
-            childrenContent
-        case .center:
-            Spacer(minLength: 0)
-            childrenContent
-            Spacer(minLength: 0)
-        case .spaceBetween:
-            ForEach(children.indices, id: \.self) { index in
-                WidgetNodeContent(node: children[index])
-                if index < children.count - 1 {
-                    Spacer(minLength: 0)
-                }
-            }
-        case .spaceAround,
-             .spaceEvenly:
-            ForEach(children.indices, id: \.self) { index in
-                if index == 0 { Spacer(minLength: 0) }
-                WidgetNodeContent(node: children[index])
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var childrenContent: some View {
-        ForEach(children.indices, id: \.self) { index in
-            WidgetNodeContent(node: children[index])
+        VStack(alignment: props.alignment, spacing: 0) {
+            ArrangedChildren(
+                children: children,
+                arrangement: modifiers.hasOwnHeight ? props.arrangement : .start
+            )
         }
     }
 }
@@ -288,8 +287,11 @@ private struct NodeRowView: View {
     let modifiers: CustomMessageWidgetNode.Modifiers
 
     var body: some View {
-        HStack(alignment: props.alignment, spacing: props.arrangement.isSpaced ? 0 : nil) {
-            arrangementContent(arrangement: props.arrangement)
+        HStack(alignment: props.alignment, spacing: 0) {
+            ArrangedChildren(
+                children: children,
+                arrangement: modifiers.hasOwnWidth ? props.arrangement : .start
+            )
         }
         .fixedSize(
             horizontal: false,
@@ -297,9 +299,15 @@ private struct NodeRowView: View {
         )
         .applyWidgetNodeModifiers(modifiers, alignment: Alignment(horizontal: .leading, vertical: props.alignment))
     }
+}
 
-    @ViewBuilder
-    private func arrangementContent(arrangement: CustomMessageWidgetNode.Arrangement) -> some View {
+// MARK: - Arrangement
+
+private struct ArrangedChildren: View {
+    let children: [CustomMessageWidgetNode]
+    let arrangement: CustomMessageWidgetNode.Arrangement
+
+    var body: some View {
         switch arrangement {
         case .start:
             childrenContent
@@ -317,8 +325,14 @@ private struct NodeRowView: View {
                     Spacer(minLength: 0)
                 }
             }
-        case .spaceAround,
-             .spaceEvenly:
+        case .spaceAround:
+            // Two spacers between neighbours and one at each end: half a gap at the ends.
+            ForEach(children.indices, id: \.self) { index in
+                Spacer(minLength: 0)
+                WidgetNodeContent(node: children[index])
+                Spacer(minLength: 0)
+            }
+        case .spaceEvenly:
             ForEach(children.indices, id: \.self) { index in
                 if index == 0 { Spacer(minLength: 0) }
                 WidgetNodeContent(node: children[index])
@@ -327,7 +341,6 @@ private struct NodeRowView: View {
         }
     }
 
-    @ViewBuilder
     private var childrenContent: some View {
         ForEach(children.indices, id: \.self) { index in
             WidgetNodeContent(node: children[index])
@@ -365,7 +378,9 @@ private struct NodeButtonView: View {
                 actionHandler?(actionId, nil)
             }
         } label: {
+            // Material's content padding, as on Android.
             Text(props.text)
+                .padding(.horizontal, 24)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(buttonStyle(for: props.variant))

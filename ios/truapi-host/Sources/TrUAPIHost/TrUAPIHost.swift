@@ -160,8 +160,8 @@ public protocol HostBridge: AnyObject, Sendable {
     /// core builds its own extrinsics the same way. Defaults to none.
     func transactionExtensionVersions() async throws -> ExtensionVersionMap
 
-    /// Observe demand on a product's worker crossing zero. `.start` means run
-    /// the worker now, `.stop` that nothing wants it any more. Every
+    /// Request a product worker transition. `.start` means run the worker now;
+    /// `.stop` means it is no longer needed and may stop. Every
     /// transition arrives here in ledger order, the ones the app asks for by
     /// taking a reference of its own included.
     ///
@@ -174,7 +174,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
-    func workerDemandChanged(productId: String, transition: WorkerTransition)
+    func requestWorkerTransition(productId: String, transition: WorkerTransition)
 
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
@@ -200,7 +200,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// While `pending` is true, keep a background task running that awaits
     /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
     /// it. Reported on change, starting with the state the runtime finds at
-    /// launch. Runtime-wide, like `workerDemandChanged`, and arrives on a
+    /// launch. Runtime-wide, like `requestWorkerTransition`, and arrives on a
     /// core thread: hand it off rather than blocking. Defaults to a no-op
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
@@ -428,7 +428,7 @@ public extension HostBridge {
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
     func currentInstallation() async throws -> Data {
@@ -684,8 +684,8 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {
-        bridge.workerDemandChanged(productId: productId, transition: transition)
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+        bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
 
     func devicePaired(device: PairedSsoPeer) {
@@ -1069,7 +1069,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Take one reference on the product's worker for a modality holder that
     /// is on screen or in flight. The first one reports `.start` to
-    /// ``HostBridge/workerDemandChanged(productId:transition:)``, which is
+    /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
     /// where the host starts the worker. Pair every call with one
     /// ``releaseWorker(productId:)``.
     public func acquireWorker(productId: String) {

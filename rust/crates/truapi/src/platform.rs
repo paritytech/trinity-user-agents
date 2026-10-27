@@ -2793,10 +2793,11 @@ pub trait LocaleHost: Send + Sync {
 /// content retrieval (P2P/IPFS lookup).
 #[async_trait]
 pub trait PreimageHost: Send + Sync {
-	/// Emits current value/miss immediately, then future updates.
+	/// Emits current value/miss immediately, then future updates. `key` is
+	/// the blake2b-256 digest of the preimage.
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, GenericError>>;
 }
 

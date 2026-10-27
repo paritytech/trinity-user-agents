@@ -158,7 +158,8 @@ impl<'a> ExtrinsicBuilder<'a> {
 	}
 
 	/// Supplies an extension's values. A supplied extension takes precedence
-	/// over any value the builder would fill in.
+	/// over any value the builder would fill in, except `CheckMortality`,
+	/// which the build refuses.
 	pub fn with_extension<E: TransactionExtension + 'a>(mut self, extension: E) -> Self {
 		self.extensions.push(Box::new(extension));
 		self

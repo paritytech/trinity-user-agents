@@ -31,8 +31,8 @@ use crate::chain::{
 		signature::SubstrateSigner,
 		version::{choose_extrinsic_version, pipeline_names},
 		well_known::{
-			ChainValues, EncodedExtensionValues, VERIFY_MULTI_SIGNATURE, default_value_for_type,
-			well_known_extension,
+			CHECK_MORTALITY, ChainValues, EncodedExtensionValues, VERIFY_MULTI_SIGNATURE,
+			default_value_for_type, well_known_extension,
 		},
 	},
 };
@@ -157,8 +157,8 @@ fn check_format_supported(
 	Err(ExtrinsicBuildError::UnsupportedVersion { version, supported: supported.to_vec() })
 }
 
-/// Rejects a supplied extension the pipeline does not list, or one supplied
-/// twice, since an extension has only one value.
+/// Rejects a supplied `CheckMortality`, an extension the pipeline does not
+/// list, or one supplied twice, since an extension has only one value.
 fn check_supplied_extensions(
 	supplied: &[SuppliedExtension<'_>],
 	extension_version: u8,
@@ -168,6 +168,9 @@ fn check_supplied_extensions(
 	let mut seen = BTreeSet::new();
 	for extension in supplied {
 		let name = extension.name();
+		if name == CHECK_MORTALITY {
+			return Err(ExtrinsicBuildError::SuppliedMortality);
+		}
 		if !seen.insert(name) {
 			return Err(ExtrinsicBuildError::DuplicateExtension { extension: name.to_string() });
 		}

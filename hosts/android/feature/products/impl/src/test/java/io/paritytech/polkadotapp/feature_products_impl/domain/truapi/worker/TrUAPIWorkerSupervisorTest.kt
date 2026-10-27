@@ -6,12 +6,14 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
@@ -35,6 +37,7 @@ class TrUAPIWorkerSupervisorTest {
     private val providers = mutableListOf<ChatWebViewProvider>()
     private val executions = mutableListOf<TrUAPIProductExecution>()
     private val chatBridges = mutableListOf<ChatHostBridge?>()
+    private val bootstrapInstaller = mockk<TrUAPIBootstrapInstaller>(relaxed = true)
     private var includesChat = true
 
     @Before
@@ -88,6 +91,16 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(1, chatBridges.filterNotNull().size)
     }
 
+    @Test
+    fun `a worker bootstrap does not install host WebView telemetry`() = runTest {
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), null) }
+    }
+
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
@@ -107,7 +120,7 @@ class TrUAPIWorkerSupervisorTest {
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
             override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
         },
-        bootstrapInstaller = mockk(relaxed = true),
+        bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

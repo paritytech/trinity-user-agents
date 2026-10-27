@@ -1052,7 +1052,7 @@ impl LocaleHost for CliPlatform {
 impl PreimageHost for CliPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		self.bulletin.subscribe(key)
 	}
