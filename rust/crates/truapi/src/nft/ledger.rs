@@ -159,10 +159,9 @@ impl NftLedger {
 		installation: InstallationId,
 	) -> DurableRequest<StartOperationError> {
 		let group = request.operation.group().clone();
-		let plan = move |tx: &rusqlite::Transaction<'_>, keys: DestinationKeys<'_>| {
+		self.planned_in_write(group, installation, move |tx, keys| {
 			plan_transfers(tx, &request, keys)
-		};
-		self.planned_in_write(group, installation, plan)
+		})
 	}
 
 	/// A durable request of the operation `group` whose transfers `plan` works
@@ -183,11 +182,10 @@ impl NftLedger {
 			+ 'static,
 	{
 		let deriver = self.keys.clone();
-		let plan_with_keys = move |tx: &rusqlite::Transaction<'_>| {
-			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
-		};
 		let policy = PolicyId::new(TRANSFER_POLICY);
-		DurableRequest::scheduled_in(nft_domain(), Some(group), policy, plan_with_keys)
+		DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
+		})
 	}
 
 	/// Stores the secret of every key of `request`, then registers one move per
@@ -212,10 +210,7 @@ impl NftLedger {
 		installation: InstallationId,
 	) -> DurableRequest<StartOperationError> {
 		let group = plan.operation.group().clone();
-		let plan_in_write = move |tx: &rusqlite::Transaction<'_>, keys: DestinationKeys<'_>| {
-			plan_imports(tx, &plan, keys)
-		};
-		self.planned_in_write(group, installation, plan_in_write)
+		self.planned_in_write(group, installation, move |tx, keys| plan_imports(tx, &plan, keys))
 	}
 
 	/// Every transfer of `operation`, in registration order, now and after every

@@ -270,10 +270,12 @@ impl ScarcityTransferPolicy {
 		&self,
 		params: &TransferParams,
 	) -> Result<Option<Sr25519Signer>, PolicyError> {
-		let TransferSigner::Derived(slot) = params.signer else {
-			return self.imported_signer(&params.source).await;
-		};
-		self.deps.signer.item_signer(slot).map(Some).map_err(policy_error)
+		match params.signer {
+			TransferSigner::Derived(slot) => {
+				self.deps.signer.item_signer(slot).map(Some).map_err(policy_error)
+			},
+			TransferSigner::Imported => self.imported_signer(&params.source).await,
+		}
 	}
 
 	/// The signer of the imported key `source`, or `None` when its secret is

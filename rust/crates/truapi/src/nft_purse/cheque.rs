@@ -133,8 +133,11 @@ pub enum CorruptedCheque {
 		items: usize,
 	},
 	/// A secret is not an sr25519 secret key.
-	#[error("the secret of item {} is not a secret key", hex::encode(.0.0))]
-	InvalidSecret(NftPurseItemKey),
+	#[error("the secret at position {position} is not a secret key")]
+	InvalidSecret {
+		/// Its position among the cheque's secrets.
+		position: usize,
+	},
 	/// A secret signs for a key other than the item listed at its position.
 	#[error("the secret listed for item {} signs for {}", hex::encode(.listed.0), hex::encode(.signs_for.0))]
 	KeyMismatch {
@@ -157,13 +160,13 @@ pub fn open_cheque(
 	}
 	reject_duplicate_items(&cheque.items)?;
 	let secrets = decrypt_secrets(secret, &cheque.encrypted_secrets)?;
-	if secrets.len() != cheque.items.len() {
-		return Err(CorruptedCheque::SecretCount {
-			secrets: secrets.len(),
-			items: cheque.items.len(),
-		});
-	}
-	cheque.items.iter().zip(secrets.iter()).map(imported_key_listed_as).collect()
+	let keys = secrets
+		.iter()
+		.enumerate()
+		.map(|(position, secret)| imported_key_at(position, secret))
+		.collect::<Result<Vec<_>, _>>()?;
+	validate_metadata_matches_secrets(&cheque.items, &keys)?;
+	Ok(keys)
 }
 
 /// Fails on the first item of `items` listed twice.
@@ -188,17 +191,26 @@ fn decrypt_secrets(
 	Ok(Zeroizing::new(Vec::<[u8; 64]>::decode(&mut plaintext.as_slice())?))
 }
 
-/// The key `secret` signs for, with that secret, when it is the listed `item`.
-fn imported_key_listed_as(
-	(item, secret): (&NftPurseItemKey, &[u8; 64]),
-) -> Result<ImportedItemKey, CorruptedCheque> {
+/// The key the secret at `position` of a cheque signs for, with that secret.
+fn imported_key_at(position: usize, secret: &[u8; 64]) -> Result<ImportedItemKey, CorruptedCheque> {
 	let secret = ItemSecret::from_bytes(Zeroizing::new(*secret));
-	let imported =
-		ImportedItemKey::from_secret(secret).map_err(|_| CorruptedCheque::InvalidSecret(*item))?;
-	if imported.key().0 != item.0 {
-		return Err(CorruptedCheque::KeyMismatch { listed: *item, signs_for: imported.key() });
+	ImportedItemKey::from_secret(secret).map_err(|_| CorruptedCheque::InvalidSecret { position })
+}
+
+/// Checks that the cleartext `items` of a cheque are the `keys` its secrets
+/// sign for, in the same order. The items are not bound to the ciphertext,
+/// so this is what ties them together.
+fn validate_metadata_matches_secrets(
+	items: &[NftPurseItemKey],
+	keys: &[ImportedItemKey],
+) -> Result<(), CorruptedCheque> {
+	if keys.len() != items.len() {
+		return Err(CorruptedCheque::SecretCount { secrets: keys.len(), items: items.len() });
 	}
-	Ok(imported)
+	let mismatch = items.iter().zip(keys).find(|(item, imported)| item.0 != imported.key().0);
+	mismatch.map_or(Ok(()), |(item, imported)| {
+		Err(CorruptedCheque::KeyMismatch { listed: *item, signs_for: imported.key() })
+	})
 }
 
 #[cfg(test)]
@@ -491,7 +503,7 @@ mod tests {
 
 		let opened = open_cheque(recipient.private_key(), &not_a_key);
 
-		assert!(matches!(opened, Err(CorruptedCheque::InvalidSecret(_))));
+		assert!(matches!(opened, Err(CorruptedCheque::InvalidSecret { position: 0 })));
 	}
 
 	/// The items are in the clear and not bound to the ciphertext, so a
