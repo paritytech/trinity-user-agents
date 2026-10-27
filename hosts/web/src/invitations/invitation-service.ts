@@ -170,6 +170,11 @@ export class InvitationService {
     port.listen((value) => {
       if (this.product === port) void this.call(port, value);
     });
+    this.replay(port);
+  }
+
+  /** Tell `port`'s product everything it is owed, as the lists say now. */
+  private replay(port: ProductPort): void {
     for (const item of this.outbox.list())
       port.post({ kind: "outgoing", invitation: this.outgoingView(item) });
     for (const item of this.received.list()) {
@@ -277,8 +282,7 @@ export class InvitationService {
     this.deps.notifications.reload();
     this.outbox.reload();
     this.received.reload();
-    const port = this.product;
-    if (port !== null) this.attachProduct(port);
+    if (this.product !== null) this.replay(this.product);
     this.scheduleExpiry();
   }
 

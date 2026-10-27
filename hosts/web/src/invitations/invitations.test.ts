@@ -298,6 +298,25 @@ describe("the invitation service, receiving", () => {
     expect(lin.notifications.get(ids[0]!)!.state.tag).toBe("accepted");
   });
 
+  test("reading the lists again after another tab wrote them keeps the product's port and an Accept under way", async () => {
+    const lin = host(LIN, LIN_KEYS);
+    const { sealed, id } = fromAda("ab");
+    lin.delivery.receive!(sealed);
+    const accepting = lin.service.requestAccept(id);
+
+    lin.service.reload();
+    expect(lin.product.closed).toBe(false);
+    const result = await lin.product.call({
+      call: "accept",
+      invitationId: id,
+      response: RESPONSE,
+      open: true,
+    });
+    await accepting;
+    expect(result).toEqual({ ok: true, proof: expect.stringMatching(/^0x/) });
+    expect(lin.notifications.get(id)!.state.tag).toBe("accepted");
+  });
+
   test("the product's accept after the expiry is refused, to it and to the user", async () => {
     const lin = host(LIN, LIN_KEYS);
     const { sealed, id } = fromAda("aa");
