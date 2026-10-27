@@ -170,7 +170,7 @@ pub fn check_spec(spec: Ts<SpecFile>, bytes: &[u8]) -> Result<(), JsValue> {
 pub fn web_url(descriptor: Ts<Descriptor>, name: &str) -> Result<Option<String>, JsValue> {
 	let descriptor = descriptor
 		.to_rust()
-		.map_err(|_| type_error("a descriptor must be one parse, open or read returned"))?;
+		.map_err(|_| type_error("a descriptor must be one this package returned"))?;
 	descriptor.web_url(name).map_err(to_js_error)
 }
 

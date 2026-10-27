@@ -105,7 +105,8 @@ export function checkSpec(spec: SpecFile, bytes: Uint8Array): void {
 
 /**
  * The URL a dotNS name opens at on the stack's `web-gateway`, or `undefined` when the stack names
- * none. The name may end in the stack's `tld`.
+ * none. The name may end in the stack's `tld`. Throws `invalid-name` when it is not lowercase labels
+ * joined by dots.
  */
 export function webUrl(
   descriptor: Descriptor,

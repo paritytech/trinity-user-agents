@@ -478,6 +478,15 @@
       }
     },
     {
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-with-fragment.json",
+      "name": "web-gateway-with-fragment",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "invalid-url",
       "file": "documents/web-gateway-on-address.json",
       "name": "web-gateway-on-address",

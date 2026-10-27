@@ -503,6 +503,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			web_gateway("https://testnet.li?network=previewnet"),
 			"service-url-not-base",
 		),
+		plain(
+			"web-gateway-with-fragment",
+			web_gateway("https://testnet.li/?network=previewnet#apps"),
+			"service-url-not-base",
+		),
 		plain("web-gateway-on-address", web_gateway("https://10.0.0.5/"), "invalid-url"),
 		plain("web-gateway-on-wss", web_gateway("wss://testnet.li/"), "invalid-url"),
 		plain(

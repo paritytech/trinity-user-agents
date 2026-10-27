@@ -219,7 +219,8 @@ impl Descriptor {
 	}
 
 	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
-	/// the stack names none. A name ending in the stack's `tld` loses it; any other is used as
+	/// the stack names none. Fails with [`Error::InvalidName`] when the name is not lowercase
+	/// labels joined by dots. A name ending in the stack's `tld` loses it; any other is used as
 	/// given. A one-label name goes in front of the gateway's host, the only level its wildcard
 	/// certificate covers, and a longer one after its path.
 	pub fn web_url(&self, name: &str) -> Result<Option<String>, Error> {
@@ -240,10 +241,13 @@ impl Descriptor {
 		};
 		let mut url = format::url(gateway, Schemes::Gateway)?;
 		if bare.contains('.') {
-			url.set_path(&format!("{}{bare}", url.path()));
+			url.path_segments_mut()
+				.map_err(|()| Error::InvalidUrl(gateway.clone()))?
+				.pop_if_empty()
+				.push(bare);
 		} else {
 			let host = format!("{bare}.{}", url.host_str().unwrap_or_default());
-			url.set_host(Some(&host)).map_err(|_| Error::InvalidUrl(gateway.clone()))?;
+			url.set_host(Some(&host)).map_err(|_| Error::InvalidName(name.to_owned()))?;
 		}
 		Ok(Some(url.into()))
 	}
