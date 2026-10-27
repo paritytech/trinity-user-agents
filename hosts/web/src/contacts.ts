@@ -38,6 +38,7 @@ export interface HostContactsDeps {
   ): Promise<HexString | null>;
   /** Tell the core a contact left, so a handle it cached stops resolving. */
   removed(): void;
+  log?(line: string): void;
 }
 
 /**
@@ -101,6 +102,9 @@ export class HostContacts {
     pickContact: async (product: ProductContext): Promise<HostContactPick> => {
       const contacts = this.deps.list();
       if (contacts.length === 0) return { tag: "NoContacts" };
+      this.deps.log?.(
+        `${product.productId} opened the contact picker; it gets a handle for the person chosen, not their name, account or the list.`,
+      );
       const chosen = await this.deps.choose(product.productId, contacts);
       // The list can change while the picker is open; only a current contact is an answer.
       const current = this.deps
@@ -115,12 +119,9 @@ export class HostContacts {
   };
 }
 
-const abbreviate = (account: string): string =>
-  `${account.slice(0, 8)}…${account.slice(-6)}`;
-
 /**
- * The picker: one button per contact, named as the host names them, and
- * Cancel. The product learns only the outcome, never what was shown.
+ * The picker: one row per contact, named as the host names them, and Cancel.
+ * The product learns only the outcome, never what was shown.
  */
 export function chooseContact(
   productId: string,
@@ -128,15 +129,16 @@ export function chooseContact(
 ): Promise<HexString | null> {
   return ask<HexString | null>({
     title: "Choose a contact",
-    subtitle: `${productId} gets a handle for the person you choose: not their name, not their account, and no one else on your list.`,
-    fields: [{ label: "Requested by", value: productId }],
+    from: productId,
+    fields: [],
     layout: "list",
     choices: [
       ...contacts.map((contact) => ({
-        label: `${contact.name} · ${abbreviate(contact.account)}`,
+        label: contact.name,
         value: contact.account,
+        avatarSeed: contact.account,
       })),
-      { label: "Cancel", value: null },
+      { label: "Cancel", value: null, tone: "cancel" },
     ],
     dismissed: null,
   });

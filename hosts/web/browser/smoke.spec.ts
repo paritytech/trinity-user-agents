@@ -1094,11 +1094,7 @@ describe("contacts", () => {
         const offered = await picker
           .locator(".prompt-list button")
           .allInnerTexts();
-        expect(offered.map((label) => label.split(" · ")[0])).toEqual([
-          "kim.01",
-          "sam.01",
-          "Cancel",
-        ]);
+        expect(offered).toEqual(["kim.01", "sam.01"]);
         if (process.env.CHAT_SCREENSHOTS)
           await page.screenshot({
             path: `${process.env.CHAT_SCREENSHOTS}/contact-picker.png`,

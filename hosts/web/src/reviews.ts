@@ -14,6 +14,8 @@ export interface PromptField {
 /** What the prompt for a review shows. */
 export interface ReviewDescription {
   title: string;
+  /** The product that asked, as the core names it. */
+  product: string;
   fields: PromptField[];
 }
 
@@ -38,12 +40,7 @@ const TITLES: Record<UserConfirmationReview["tag"], string> = {
 export function describeReview(
   review: UserConfirmationReview,
 ): ReviewDescription {
-  const fields: PromptField[] = [
-    {
-      label: "Requested by",
-      value: requestingProduct(review) ?? "not named by the core",
-    },
-  ];
+  const fields: PromptField[] = [];
   if (review.tag === "SignRaw" && !review.value.value.watermarked) {
     fields.push({
       label: "Warning",
@@ -57,7 +54,11 @@ export function describeReview(
     value: formatValue(review.value),
     mono: true,
   });
-  return { title: TITLES[review.tag], fields };
+  return {
+    title: TITLES[review.tag],
+    product: requestingProduct(review) ?? "a product the core does not name",
+    fields,
+  };
 }
 
 function requestingProduct(review: UserConfirmationReview): string | undefined {

@@ -44,9 +44,9 @@ export interface HostCallbackOptions {
 }
 
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
-  { label: "Deny", value: "Deny" },
+  { label: "Deny", value: "Deny", tone: "cancel" },
   { label: "Allow once", value: "AllowOnce" },
-  { label: "Always allow", value: "AllowAlways", primary: true },
+  { label: "Always allow", value: "AllowAlways", tone: "primary" },
 ];
 
 /**
@@ -83,10 +83,8 @@ export function createHostCallbacks(
   const decide = (title: string, product: ProductContext, detail: string) =>
     ask({
       title,
-      fields: [
-        { label: "Requested by", value: product.productId },
-        { label: "Permission", value: detail, mono: true },
-      ],
+      from: product.productId,
+      fields: [{ label: "Permission", value: detail, mono: true }],
       choices: DECISIONS,
       dismissed: "Deny" as PermissionDecision,
     });
@@ -147,23 +145,24 @@ export function createHostCallbacks(
 
     userConfirmation: {
       confirmPermission(review) {
-        const { title, fields } = describeReview(review);
+        const { title, product, fields } = describeReview(review);
         return ask({
           title,
+          from: product,
           fields,
           choices: DECISIONS,
           dismissed: "Deny" as PermissionDecision,
         });
       },
       confirmUserAction(review) {
-        const { title, fields } = describeReview(review);
+        const { title, product, fields } = describeReview(review);
         return ask({
           title,
-          subtitle: "The product waits until you decide.",
+          from: product,
           fields,
           choices: [
-            { label: "Reject", value: false },
-            { label: "Approve", value: true, primary: true },
+            { label: "Reject", value: false, tone: "cancel" },
+            { label: "Approve", value: true, tone: "primary" },
           ],
           dismissed: false,
         });
