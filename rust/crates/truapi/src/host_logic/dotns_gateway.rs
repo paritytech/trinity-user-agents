@@ -656,8 +656,13 @@ pub enum DotnsError {
 	#[error("DotnsRegistry.resolver()")]
 	Resolver(#[source] DotnsCallError),
 	/// A product's manifest record could not be read.
-	#[error("ContentResolver.text()")]
-	ManifestText(#[source] DotnsCallError),
+	#[error("ContentResolver.text({key})")]
+	TextRecord {
+		/// The text-record key being read.
+		key: String,
+		/// Failure reading the record.
+		source: DotnsCallError,
+	},
 	/// The stored dispatcher address has the wrong width.
 	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
 	DispatcherAddressLength {

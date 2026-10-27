@@ -29,6 +29,7 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
+pub mod public_profile;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.

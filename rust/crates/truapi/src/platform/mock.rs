@@ -737,6 +737,7 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::ProductManifest { product_id } => {
 			format!("core:product-manifest:{product_id}")
 		},
+		CoreStorageKey::PublicProfile { label } => format!("core:public-profile:{label}"),
 		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
 		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
 		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),

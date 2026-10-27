@@ -58,41 +58,56 @@ pub async fn fetch_root_manifest(
 		&format!("manifest:{product_id}"),
 	)
 	.await?;
+	text_record(&mut lookup, MANIFEST_RECORD_KEY, |tld| {
+		namehash_under(&tld_node(tld), product_id.bare_label())
+	})
+	.await
+}
 
-	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
+/// The text record `key` holds under a name, or `None` where there is nothing to read:
+/// no gateway, no resolver for the node, a resolver without `text` (a gateway-minted name
+/// still sits on the reverse resolver, which reverts), or an empty record. A caller cannot act
+/// on the difference, so the answers are one.
+///
+/// `node_for` derives the name's node once the network's TLD is known: a product label is
+/// one level under the TLD, a person's lite name is two.
+pub async fn text_record<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	key: &str,
+	node_for: impl FnOnce(&str) -> [u8; 32],
+) -> Result<Option<String>, DotnsError> {
+	let Some(protocol_registry) = protocol_registry(transport).await? else {
 		return Ok(None);
 	};
 
-	let tld = network_tld(&mut lookup, &protocol_registry).await?;
-	let node = namehash_under(&tld_node(&tld), product_id.bare_label());
+	let tld = network_tld(transport, &protocol_registry).await?;
+	let node = node_for(&tld);
 
-	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
+	let registry = protocol_component(transport, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
+		read_view(transport, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
 			.await
 			.map_err(DotnsError::Resolver)?;
 	if resolver == [0u8; 20] {
 		return Ok(None);
 	}
 
-	let manifest = match read_view(
-		&mut lookup,
+	let value = match read_view(
+		transport,
 		&resolver,
-		call_bytes32_string("text(bytes32,string)", &node, MANIFEST_RECORD_KEY),
+		call_bytes32_string("text(bytes32,string)", &node, key),
 		decode_string,
 	)
 	.await
 	{
-		Ok(manifest) => manifest,
-		// The dotNS-issued default resolver does not implement `text`, which is
-		// the same outcome as an unpublished manifest.
+		Ok(value) => value,
 		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => return Ok(None),
-		Err(error) => return Err(DotnsError::ManifestText(error)),
+		Err(source) => return Err(DotnsError::TextRecord { key: key.to_string(), source }),
 	};
-	if manifest.is_empty() {
+	if value.is_empty() {
 		return Ok(None);
 	}
-	Ok(Some(manifest))
+	Ok(Some(value))
 }
 
 /// The deployment's `DotnsProtocolRegistry`, read from the controller.
@@ -356,7 +371,10 @@ const MANIFEST_RESOLUTION_CEILING: Duration = Duration::from_secs(30);
 ///
 /// `None` on expiry, which every caller here treats as "no manifest": the same
 /// answer an unreachable chain gives, and the same uniform refusal.
-async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> Option<T> {
+pub(crate) async fn with_ceiling<T>(
+	ceiling: Duration,
+	future: impl Future<Output = T>,
+) -> Option<T> {
 	use futures::FutureExt;
 	let future = future.fuse();
 	let timeout = futures_timer::Delay::new(ceiling).fuse();
@@ -364,7 +382,7 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 	futures::select! {
 		value = future => Some(value),
 		() = timeout => {
-			warn!(ceiling_secs = ceiling.as_secs(), "manifest resolution gave up");
+			warn!(ceiling_secs = ceiling.as_secs(), "dotNS resolution gave up");
 			None
 		}
 	}
