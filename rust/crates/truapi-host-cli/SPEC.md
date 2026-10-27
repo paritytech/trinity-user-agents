@@ -1829,8 +1829,9 @@ binary, on both backends. Certificate authorities added to the operating system
 are not used.
 
 These still dial the preset's RPC nodes on either backend: the ring-membership
-poll during account setup, `register-name`'s People and Asset Hub transactions,
-the genesis check of a rerouted endpoint (§14.1), `alloc-check` and `pgas-check`.
+poll during account setup, the genesis check of a rerouted endpoint (§14.1), and
+`register-name`, `alloc-check` and `pgas-check`, which build their extrinsics on
+the selected backend but read the chains and submit over RPC.
 
 ## 15. TrUAPI capability surface
 

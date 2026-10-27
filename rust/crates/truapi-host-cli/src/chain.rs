@@ -21,6 +21,18 @@ use truapi_provider::{ChainSource, EmbeddedChainProvider};
 
 use crate::network::{ChainEndpoint, NetworkConfig};
 
+/// The CLI's answer to which chains build as V5, for its own extrinsics.
+pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
+
+#[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
 /// How the CLI reaches the chains.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum ChainBackend {
