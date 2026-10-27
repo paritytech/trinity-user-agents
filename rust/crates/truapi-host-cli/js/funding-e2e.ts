@@ -256,6 +256,7 @@ export async function runFundingE2e(
         value: { derivationIndex: { tag: "Index", value: 0 } },
       },
       id: topUpId,
+      funding: session.intent,
     });
     if (toppedUp.isErr()) throw new Error(stringify(toppedUp.error));
     await report(client, session.intent, {
@@ -270,6 +271,7 @@ export async function runFundingE2e(
       amount: 500n,
       destination: `0x${"22".repeat(32)}`,
       id: paymentId,
+      funding: session.intent,
     });
     if (paid.isErr()) throw new Error(stringify(paid.error));
     await report(client, session.intent, {
