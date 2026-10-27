@@ -8,13 +8,17 @@
 //! Every change goes through [`FundingRegistry::commit`], which serialises
 //! writes so persisted snapshots land in order, persists before anyone hears of
 //! the change, and then notifies subscribers and, once the write lock is
-//! released, the host.
+//! released, the host. Background work is never started from a commit
+//! directly: a commit wakes the reconciler, one task that derives from the
+//! sessions which worker holds, settlement followers, engine lookups, worker
+//! hand-overs and timers must exist, and brings them in line one pass at a
+//! time.
 
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
 	sync::{
 		Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
-		atomic::{AtomicBool, Ordering},
+		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 };
 
@@ -22,7 +26,7 @@ use core::time::Duration;
 
 use futures::{
 	channel::{mpsc, oneshot},
-	future::BoxFuture,
+	future::{BoxFuture, Either},
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
@@ -38,12 +42,12 @@ use super::services::RuntimeServices;
 use crate::{
 	host_logic::funding::{
 		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
-		FundingSessionError, FundingSessionSummary, Settlement, StartedFunds, load_pack,
-		load_sessions, named_funds, pack_blob, retained, store_pack, store_sessions,
+		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
+		load_pack, load_sessions, pack_blob, retained, store_pack, store_sessions,
 	},
 	platform::{
-		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
-		ProductContext, ProductExecutionKind, ProductId,
+		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext,
+		ProductExecutionKind, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
 	unix_time::current_unix_millis,
@@ -57,9 +61,21 @@ const FOLLOW_RETRY_FIRST: Duration = Duration::from_secs(1);
 /// Longest wait between those reads.
 const FOLLOW_RETRY_LONGEST: Duration = Duration::from_secs(5 * 60);
 /// How long a top-up or payment the host does not know is waited for after a
-/// report named it, before it counts as having moved nothing. A payment the
-/// provider requested can wait this long on the user's approval.
+/// report named it, or after the core recorded it with no host call in
+/// flight, before it counts as having moved nothing. A payment the provider
+/// requested can wait this long on the user's approval.
 const UNKNOWN_FUNDS_GRACE_MS: u64 = 60 * 60 * 1_000;
+/// How long the host's engine may take to say whether it holds funds.
+const ENGINE_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Wait before asking the engine again about recorded funds it could not
+/// place.
+const RESOLVE_RETRY: Duration = Duration::from_secs(30);
+/// How long a provider's worker may take to answer one call before it counts
+/// as unanswered.
+const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Wait before handing a worker its sessions again after a call went
+/// unanswered.
+const CATCH_UP_RETRY: Duration = Duration::from_secs(5);
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
 
@@ -82,11 +98,26 @@ pub trait FundingProviderLink: Send + Sync {
 	) -> BoxFuture<'static, bool>;
 }
 
-/// A provider's worker connection, and whether the worker has been handed
-/// what it serves since it connected.
+/// A provider's worker connection, and how far handing it what it serves
+/// has got.
 struct Link {
 	link: Arc<dyn FundingProviderLink>,
-	caught_up: bool,
+	/// Tells this connection from a later one of the same provider.
+	generation: u64,
+	catch_up: CatchUp,
+}
+
+/// Whether a worker connection has been handed every session it serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CatchUp {
+	/// The worker has not said it is ready.
+	Connecting,
+	/// Due once the clock passes `not_before_ms`, in Unix milliseconds.
+	Due { not_before_ms: u64 },
+	/// Being handed over.
+	Running,
+	/// Every call was answered on this connection.
+	Done,
 }
 
 /// A call the core puts to a provider's worker about one session.
@@ -120,22 +151,32 @@ pub struct FundingRegistry {
 	/// Held across every load and write; the flag records whether persisted
 	/// sessions have been loaded.
 	writes: AsyncMutex<bool>,
-	/// Whether a task is waiting on the next deadline.
-	sweeping: AtomicBool,
-	/// The deadline that task sleeps toward, and how to wake it when an
-	/// earlier one appears: an idle assigned session can leave it asleep for
-	/// days while a new session expires in hours.
-	sweep_alarm: Mutex<Option<(u64, mpsc::UnboundedSender<()>)>>,
+	/// Whether persisted sessions have been loaded, readable without the
+	/// write lock.
+	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
 	/// Each provider's worker connection, by product id.
 	links: Mutex<HashMap<String, Link>>,
 	/// Callers waiting for a provider's worker to connect, by product id.
 	link_waiters: Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>,
+	/// The generation the next link takes.
+	next_generation: AtomicU64,
 	/// Sessions holding a reference on their provider's worker, with that
-	/// provider.
+	/// provider. Only the reconciler changes it.
 	holding: Mutex<HashMap<String, String>>,
 	/// Sessions whose top-ups or payment are being followed to an outcome.
 	following: Mutex<HashSet<String>>,
+	/// Ids of funds whose host call is in flight, so no second call under
+	/// one id runs meanwhile and the reconciler leaves their record alone.
+	starting: Mutex<HashSet<[u8; 32]>>,
+	/// Recorded funds the host has not taken, by id, with when the reconciler
+	/// may next ask the engine about them: `u64::MAX` while it is asking.
+	resolving: Mutex<HashMap<[u8; 32], u64>>,
+	/// Wakes the reconciler task, once one runs.
+	reconciler: Mutex<Option<mpsc::UnboundedSender<()>>>,
+	/// The earliest time a background step asked to be tried again, in Unix
+	/// milliseconds.
+	retry_at: Mutex<Option<u64>>,
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
@@ -196,8 +237,11 @@ impl FundingRegistry {
 	/// earlier one. Nothing is sent until [`Self::connected`], apart from
 	/// calls made in the meantime.
 	pub fn link(&self, provider_id: &str, link: Arc<dyn FundingProviderLink>) {
-		self.lock_links()
-			.insert(provider_id.to_string(), Link { link, caught_up: false });
+		let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+		self.lock_links().insert(
+			provider_id.to_string(),
+			Link { link, generation, catch_up: CatchUp::Connecting },
+		);
 	}
 
 	/// Drop `link`, unless a newer one replaced it.
@@ -208,38 +252,29 @@ impl FundingRegistry {
 		}
 	}
 
-	/// The worker on `provider_id`'s link is ready: once persisted sessions
-	/// are loaded, assign it every session it still serves, oldest first, each
-	/// followed by the cancel call it has not answered. Once per link, so a
-	/// worker that checks its connection again is not handed everything
-	/// again. A worker treats every call as idempotent, as one sent before it
-	/// was ready is repeated here.
+	/// The worker on `provider_id`'s link is ready: the reconciler assigns it
+	/// every session it still serves, oldest first, each followed by the
+	/// cancel call it has not answered, one call at a time, and repeats the
+	/// lot while a call goes unanswered. Once per link, so a worker that
+	/// checks its connection again is not handed everything again. A worker
+	/// treats every call as idempotent, as one sent before it was ready is
+	/// repeated then.
 	pub fn connected(&self, provider_id: &str) {
-		let caught_up = {
+		let readied = {
 			let mut links = self.lock_links();
-			let caught_up = links
+			let readied = links
 				.get_mut(provider_id)
-				.map(|link| core::mem::replace(&mut link.caught_up, true));
+				.filter(|held| held.catch_up == CatchUp::Connecting)
+				.map(|held| held.catch_up = CatchUp::Due { not_before_ms: 0 })
+				.is_some();
 			for waiter in lock(&self.link_waiters).remove(provider_id).unwrap_or_default() {
 				let _ = waiter.send(());
 			}
-			caught_up
+			readied
 		};
-		let Some(services) = self.services.upgrade().filter(|_| caught_up == Some(false)) else {
-			return;
-		};
-		let provider_id = provider_id.to_string();
-		let spawner = services.spawner.clone();
-		spawner(Box::pin(async move {
-			let registry = services.funding().clone();
-			if let Err(error) = registry.load(&services).await {
-				tracing::warn!(%error, "loading funding sessions for a provider failed");
-				return;
-			}
-			for calls in registry.pending_calls(&provider_id) {
-				registry.call(&provider_id, calls);
-			}
-		}));
+		if readied {
+			self.wake();
+		}
 	}
 
 	/// The link to `provider_id`'s worker once that worker has connected,
@@ -249,7 +284,9 @@ impl FundingRegistry {
 		loop {
 			let connected = {
 				let links = self.lock_links();
-				if let Some(held) = links.get(provider_id).filter(|held| held.caught_up) {
+				if let Some(held) =
+					links.get(provider_id).filter(|held| held.catch_up != CatchUp::Connecting)
+				{
 					return held.link.clone();
 				}
 				let (sender, connected) = oneshot::channel();
@@ -288,9 +325,9 @@ impl FundingRegistry {
 			.collect()
 	}
 
-	/// Store `update` from `provider` on session `intent`. Funds a
-	/// `Crediting`, `Collecting` or `Refunding` update names are used up: no
-	/// other session of the provider can name them after.
+	/// Store `update` from `provider` on session `intent`. A `Crediting`,
+	/// `Collecting` or `Refunding` update names funds recorded for that
+	/// session alone, and uses them up.
 	pub async fn report(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -302,109 +339,105 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		let provider_id = provider.product_id.as_str();
 		let host_id = |id: &[u8; 32]| host_payment_id(provider, *id);
-		let named = named_funds(&update).map(|(id, _)| host_id(id));
 		self.commit(storage, now_ms, move |sessions| {
 			let reported = match sessions.get_mut(&intent) {
 				Some(session) => session.report(provider_id, update, host_id, now_ms),
 				None => Err(HostFundingReportError::NotFound),
 			};
-			if reported.is_err() {
-				return (reported, Vec::new());
-			}
-			if let Some(named) = named {
-				for other in sessions.values_mut().filter(|other| {
-					other.intent != intent && other.provider_id.as_deref() == Some(provider_id)
-				}) {
-					other.forget_start(&named);
-				}
-			}
-			(reported, vec![intent])
+			let changed = Vec::from_iter(reported.is_ok().then_some(intent));
+			(reported, changed)
 		})
 		.await
 	}
 
-	/// Record funds `provider_id` started under `host_id`, so a report can
-	/// name them: on the one session it serves in `direction` whose amount
-	/// is `amount`, when exactly one is, and otherwise on every such
-	/// session, since a top-up does not say which session it is for. A
-	/// withdrawal whose payout failed takes top-ups too, as its refund, and
-	/// asks for what it debited. With no such session, a top-up the user
-	/// cancelled before paying takes them, as a payment that arrived anyway,
-	/// and opens again. Funds under an id any session of the provider started
-	/// before, ended ones included, are not recorded again. Returns whether
-	/// any session recorded them.
+	/// Take `host_id` for one host call at a time: `None` while another call
+	/// under it is in flight. The id is free again once the guard drops.
+	pub fn begin_start(self: &Arc<Self>, host_id: [u8; 32]) -> Option<StartGuard> {
+		self.lock_starting()
+			.insert(host_id)
+			.then(|| StartGuard { registry: self.clone(), host_id })
+	}
+
+	/// Whether session `intent` recorded funds under `host_id`.
+	pub fn recorded_start(&self, intent: &str, host_id: &[u8; 32]) -> bool {
+		self.lock_sessions()
+			.get(intent)
+			.is_some_and(|session| session.started.iter().any(|record| record.host_id == *host_id))
+	}
+
+	/// Whether a session of `provider_id` recorded funds under `host_id`.
+	pub fn holds_start(&self, provider_id: &str, host_id: &[u8; 32]) -> bool {
+		self.lock_sessions().values().any(|session| {
+			session.provider_id.as_deref() == Some(provider_id) &&
+				session.started.iter().any(|record| record.host_id == *host_id)
+		})
+	}
+
+	/// Record funds `provider_id` starts for session `intent`, before the
+	/// host is asked. The session must be served by `provider_id` and open in
+	/// their direction; a withdrawal whose payout failed takes top-ups too,
+	/// as its refund, and a top-up the user cancelled before paying takes one
+	/// as a payment that arrived anyway, and opens again. `None` when the
+	/// session takes no such funds; a `Conflict` when another of its sessions
+	/// holds their id.
 	pub async fn record_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		provider_id: &str,
-		direction: FundingDirection,
-		host_id: [u8; 32],
-		amount: u128,
-	) -> Result<bool, FundingSessionError> {
+		intent: &str,
+		asked: FundsAsked,
+	) -> Result<Option<StartRecord>, FundingSessionError> {
+		let FundsAsked { direction, host_id, amount, terms } = asked;
 		self.commit(storage, now_ms, |sessions| {
-			let used = sessions.values().any(|session| {
-				session.provider_id.as_deref() == Some(provider_id) &&
+			let elsewhere = sessions.values().any(|session| {
+				session.intent != intent &&
+					session.provider_id.as_deref() == Some(provider_id) &&
 					session.started.iter().any(|record| record.host_id == host_id)
 			});
-			if used {
-				return (false, Vec::new());
-			}
-			let in_flight = |session: &FundingSession| {
+			let Some(session) = sessions.get_mut(intent).filter(|session| {
 				session.provider_id.as_deref() == Some(provider_id) &&
 					((!session.is_terminal() && session.direction == direction) ||
-						(direction == FundingDirection::In && session.awaits_refund()))
+						(direction == FundingDirection::In &&
+							(session.awaits_refund() ||
+								session.takes_late_arrival(now_ms))))
+			}) else {
+				return (None, Vec::new());
 			};
-			// A top-up the user cancelled takes funds only when no session in
-			// flight could, as a payment that arrives anyway.
-			let late = direction == FundingDirection::In && !sessions.values().any(in_flight);
-			let served = |session: &FundingSession| {
-				in_flight(session) ||
-					(late &&
-						session.provider_id.as_deref() == Some(provider_id) &&
-						session.takes_late_arrival(now_ms))
-			};
-			let asks = |session: &FundingSession| {
-				session.refund_due().or(session.amount).unwrap_or_default()
-			};
-			let matching: Vec<String> = sessions
-				.values()
-				.filter(|session| served(session) && asks(session) == amount)
-				.map(|session| session.intent.clone())
-				.collect();
-			let mut recorded = false;
-			let mut reopened = Vec::new();
-			for session in sessions.values_mut().filter(|session| {
-				served(session) && (matching.len() != 1 || matching.contains(&session.intent))
-			}) {
-				// A payment for a top-up the user cancelled arrived anyway.
-				if session.takes_late_arrival(now_ms) {
-					session.reopen_for_late_arrival();
-					reopened.push(session.intent.clone());
-				}
-				recorded |= session.record_start(host_id, amount);
+			if elsewhere {
+				return (Some(StartRecord::Conflict), Vec::new());
 			}
-			(recorded, reopened)
+			// A payment for a top-up the user cancelled arrived anyway.
+			let reopened = session.takes_late_arrival(now_ms);
+			if reopened {
+				session.reopen_for_late_arrival();
+			}
+			let recorded = session.record_start(direction, host_id, amount, terms, now_ms);
+			// Recorded funds stop the session expiring, which its watchers see.
+			let changed = Vec::from_iter(
+				(reopened || recorded == StartRecord::New).then(|| intent.to_string()),
+			);
+			(Some(recorded), changed)
 		})
 		.await
 	}
 
-	/// Drop what [`Self::record_start`] recorded for funds the host refused.
-	pub async fn forget_start(
+	/// Settle the record of funds under `host_id` on session `intent` once
+	/// the host answered: kept as taken when `taken`, dropped otherwise
+	/// unless the host took them before.
+	pub async fn finish_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
-		provider_id: &str,
+		intent: &str,
 		host_id: [u8; 32],
+		taken: bool,
 	) -> Result<(), FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
-			for session in sessions
-				.values_mut()
-				.filter(|session| session.provider_id.as_deref() == Some(provider_id))
-			{
-				session.forget_start(&host_id);
-			}
-			((), Vec::new())
+			let changed = sessions.get_mut(intent).is_some_and(|session| {
+				if taken { session.accept_start(&host_id) } else { session.forget_start(&host_id) }
+			});
+			((), Vec::from_iter(changed.then(|| intent.to_string())))
 		})
 		.await
 	}
@@ -793,6 +826,7 @@ impl FundingRegistry {
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 		}
 		*loaded = true;
+		self.loaded.store(true, Ordering::Release);
 		// Each session once, even when an edit and its expiry both name it.
 		let mut announced = HashSet::new();
 		changed.retain(|intent| announced.insert(intent.clone()));
@@ -806,40 +840,92 @@ impl FundingRegistry {
 			self.call(&provider, vec![call]);
 		}
 		self.announce();
-		self.follow_sessions();
+		self.wake();
 		Ok(result)
 	}
 
-	/// Bring worker references and followers in line with the sessions:
-	/// every assigned open session holds its provider's worker, and every
-	/// session whose outcome is due has its top-ups or payment followed.
-	fn follow_sessions(&self) {
+	/// Wake the reconciler, which brings background work in line with the
+	/// sessions, and start it on first use. A registry built on its own has
+	/// none.
+	pub fn wake(&self) {
 		let Some(services) = self.services.upgrade() else {
 			return;
 		};
-		// Only what the loops below need, so no copy of the whole session map
-		// is taken and it stays unlocked while the ledger and followers run.
-		let (assigned, quoting, due) = {
-			let sessions = self.lock_sessions();
-			let quoting: HashSet<String> = sessions
-				.values()
-				.filter(|session| !session.is_terminal() && session.provider_id.is_none())
-				.map(|session| session.intent.clone())
-				.collect();
-			let assigned: HashMap<String, String> = sessions
-				.values()
-				.filter(|session| session.serves_provider())
-				.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
-				.collect();
-			let due: Vec<(String, String, Settlement)> = sessions
-				.values()
-				.filter_map(|session| {
-					let settlement = session.settlement_due()?;
-					Some((session.intent.clone(), session.provider_id.clone()?, settlement))
-				})
-				.collect();
-			(assigned, quoting, due)
-		};
+		let mut reconciler = self.lock_reconciler();
+		if reconciler.as_ref().is_some_and(|wake| wake.unbounded_send(()).is_ok()) {
+			return;
+		}
+		let (wake, woken) = mpsc::unbounded();
+		*reconciler = Some(wake);
+		drop(reconciler);
+		(services.spawner)(Box::pin(reconcile(Arc::downgrade(&services), woken)));
+	}
+
+	/// Ask the reconciler to run again by `at_ms`, in Unix milliseconds.
+	fn retry_by(&self, at_ms: u64) {
+		{
+			let mut retry_at = self.lock_retry_at();
+			*retry_at = Some(retry_at.map_or(at_ms, |held| held.min(at_ms)));
+		}
+		self.wake();
+	}
+
+	/// One reconciling pass: load the sessions if they are not loaded, expire
+	/// the overdue ones, then hold workers, follow settlements, place
+	/// recorded funds and hand workers their sessions, in that order. Returns
+	/// how long until the next pass is due on its own, `None` when only a
+	/// wake brings one.
+	async fn reconcile_once(&self, services: &Arc<RuntimeServices>) -> Option<u64> {
+		let now_ms = current_unix_millis();
+		let overdue = self.next_deadline().is_some_and(|deadline_ms| deadline_ms <= now_ms);
+		if !self.loaded.load(Ordering::Acquire) || overdue {
+			match self.sweep(services.platform.as_ref(), now_ms).await {
+				Ok(()) => {},
+				// Left for the newer app that wrote them; nothing runs on them.
+				Err(FundingSessionError::NewerFormat { .. }) => return None,
+				Err(error) => {
+					tracing::warn!(%error, "funding sweep failed");
+					if self.loaded.load(Ordering::Acquire) {
+						self.reconcile_work(services, now_ms);
+					}
+					return Some(SWEEP_RETRY.as_millis() as u64);
+				},
+			}
+		}
+		self.reconcile_work(services, now_ms);
+		self.next_wake(now_ms)
+	}
+
+	fn reconcile_work(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
+		self.retain_quotes(services);
+		self.hold_workers(services);
+		self.follow_settlements(services);
+		self.resolve_starts(services, now_ms);
+		self.catch_up_links(services, now_ms);
+	}
+
+	/// Keep quotes only for open sessions still waiting on a provider.
+	fn retain_quotes(&self, services: &RuntimeServices) {
+		let quoting: HashSet<String> = self
+			.lock_sessions()
+			.values()
+			.filter(|session| !session.is_terminal() && session.provider_id.is_none())
+			.map(|session| session.intent.clone())
+			.collect();
+		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
+	}
+
+	/// Every assigned open session holds its provider's worker. Only the
+	/// reconciler changes the holds, so they are taken and let go in the
+	/// order it derives them; a worker that starts and calls back changes the
+	/// sessions, which the next pass picks up.
+	fn hold_workers(&self, services: &RuntimeServices) {
+		let assigned: HashMap<String, String> = self
+			.lock_sessions()
+			.values()
+			.filter(|session| session.serves_provider())
+			.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
+			.collect();
 		let (acquire, release) = {
 			let mut holding = self.lock_holding();
 			let mut acquire = Vec::new();
@@ -849,27 +935,154 @@ impl FundingRegistry {
 					acquire.push(provider.clone());
 				}
 			}
-			let ended: Vec<String> = holding
-				.keys()
-				.filter(|intent| !assigned.contains_key(*intent))
-				.cloned()
-				.collect();
-			let release: Vec<String> =
-				ended.iter().filter_map(|intent| holding.remove(intent)).collect();
+			let mut release = Vec::new();
+			holding.retain(|intent, provider| {
+				let kept = assigned.contains_key(intent);
+				if !kept {
+					release.push(core::mem::take(provider));
+				}
+				kept
+			});
 			(acquire, release)
 		};
+		// Taken before let go, so a provider moving from an ended session to
+		// a new one keeps its worker running.
 		for provider in acquire.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
 			services.worker_ledger.acquire(&provider);
 		}
 		for provider in release.iter().filter_map(|provider| provider.parse::<ProductId>().ok()) {
 			services.worker_ledger.release(&provider);
 		}
-		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
+	}
+
+	/// Follow every session whose outcome is due, once the engine its funds
+	/// went through is installed.
+	fn follow_settlements(&self, services: &Arc<RuntimeServices>) {
+		let due: Vec<(String, String, Settlement)> = self
+			.lock_sessions()
+			.values()
+			.filter_map(|session| {
+				let settlement = session.settlement_due()?;
+				Some((session.intent.clone(), session.provider_id.clone()?, settlement))
+			})
+			.collect();
 		for (intent, provider, settlement) in due {
-			if self.lock_following().insert(intent.clone()) {
+			let engine = match settlement {
+				Settlement::TopUps(_) | Settlement::Refund(_) => {
+					services.top_up_platform().is_some()
+				},
+				Settlement::Payment(_) => services.payment_platform().is_some(),
+			};
+			if engine && self.lock_following().insert(intent.clone()) {
 				services.clone().follow_settlement(intent, provider, settlement);
 			}
 		}
+	}
+
+	/// Ask the engine about recorded funds the host has not taken and no
+	/// call is starting: taken once it holds them, dropped once it still does
+	/// not [`UNKNOWN_FUNDS_GRACE_MS`] after they were recorded.
+	fn resolve_starts(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
+		let pending: Vec<(String, String, StartedFunds)> = self
+			.lock_sessions()
+			.values()
+			.filter(|session| session.serves_provider())
+			.flat_map(|session| {
+				session.pending_starts().filter_map(|funds| {
+					Some((session.intent.clone(), session.provider_id.clone()?, funds.clone()))
+				})
+			})
+			.collect();
+		let mut resolving = self.lock_resolving();
+		resolving.retain(|host_id, _| pending.iter().any(|(.., funds)| funds.host_id == *host_id));
+		let starting = self.lock_starting();
+		for (intent, provider, funds) in pending {
+			let engine = match funds.direction {
+				FundingDirection::In => services.top_up_platform().is_some(),
+				FundingDirection::Out => services.payment_platform().is_some(),
+			};
+			if !engine ||
+				starting.contains(&funds.host_id) ||
+				resolving.get(&funds.host_id).is_some_and(|after_ms| *after_ms > now_ms)
+			{
+				continue;
+			}
+			resolving.insert(funds.host_id, u64::MAX);
+			(services.spawner)(Box::pin(services.clone().resolve_start(intent, provider, funds)));
+		}
+	}
+
+	/// Hand each ready worker every session it serves, one call at a time.
+	fn catch_up_links(&self, services: &Arc<RuntimeServices>, now_ms: u64) {
+		let due: Vec<(String, u64, Arc<dyn FundingProviderLink>)> = self
+			.lock_links()
+			.iter_mut()
+			.filter_map(|(provider, held)| match held.catch_up {
+				CatchUp::Due { not_before_ms } if not_before_ms <= now_ms => {
+					held.catch_up = CatchUp::Running;
+					Some((provider.clone(), held.generation, held.link.clone()))
+				},
+				_ => None,
+			})
+			.collect();
+		for (provider, generation, link) in due {
+			let services = services.clone();
+			(services.spawner.clone())(Box::pin(async move {
+				let registry = services.funding().clone();
+				let mut answered = true;
+				for calls in registry.pending_calls(&provider) {
+					for call in calls {
+						answered &= registry.put(&services, link.as_ref(), call).await;
+					}
+				}
+				registry.caught_up(&provider, generation, answered);
+			}));
+		}
+	}
+
+	/// Record how handing link `generation` of `provider_id` its sessions
+	/// went: done when every call was answered, due again shortly otherwise.
+	/// A link replaced meanwhile is left as it is.
+	fn caught_up(&self, provider_id: &str, generation: u64, answered: bool) {
+		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		if let Some(held) = self
+			.lock_links()
+			.get_mut(provider_id)
+			.filter(|held| held.generation == generation)
+		{
+			held.catch_up =
+				if answered { CatchUp::Done } else { CatchUp::Due { not_before_ms: retry_ms } };
+		}
+		if !answered {
+			self.retry_by(retry_ms);
+		}
+	}
+
+	/// Milliseconds until the next pass is due on its own: a session expires
+	/// or its offer lapses, a step asked to be retried, or a link is due to
+	/// be handed its sessions again.
+	fn next_wake(&self, now_ms: u64) -> Option<u64> {
+		let retry = {
+			let mut retry_at = self.lock_retry_at();
+			let held = *retry_at;
+			if held.is_some_and(|at_ms| at_ms <= now_ms) {
+				*retry_at = None;
+			}
+			held
+		};
+		let link = self
+			.lock_links()
+			.values()
+			.filter_map(|held| match held.catch_up {
+				CatchUp::Due { not_before_ms } => Some(not_before_ms),
+				_ => None,
+			})
+			.min();
+		[self.next_deadline(), retry, link]
+			.into_iter()
+			.flatten()
+			.min()
+			.map(|at_ms| at_ms.saturating_sub(now_ms))
 	}
 
 	/// Put `calls` to `provider_id`'s worker one after another, on a task of
@@ -890,25 +1103,30 @@ impl FundingRegistry {
 		}));
 	}
 
-	/// Put one call to a provider's worker and store its answer.
+	/// Put one call to a provider's worker and store its answer. Returns
+	/// whether the worker answered within [`CALL_TIMEOUT`] and the answer was
+	/// stored.
 	async fn put(
 		&self,
 		services: &RuntimeServices,
 		link: &dyn FundingProviderLink,
 		call: ProviderCall,
-	) {
+	) -> bool {
 		let (intent, answered) = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
-				if !link.assign(*session).await {
+				let taken = within(CALL_TIMEOUT, link.assign(*session)).await.unwrap_or(false);
+				if !taken {
 					tracing::debug!(%intent, "a provider's worker did not take its session");
 				}
-				return;
+				return taken;
 			},
 			ProviderCall::Cancel(intent, CancelCall::Cancel) => {
-				let Some(answer) = link.cancel(intent.clone()).await else {
+				let Some(answer) =
+					within(CALL_TIMEOUT, link.cancel(intent.clone())).await.flatten()
+				else {
 					tracing::debug!(%intent, "a provider's worker did not answer a cancel");
-					return;
+					return false;
 				};
 				let target = intent.clone();
 				let answered = self
@@ -923,9 +1141,13 @@ impl FundingRegistry {
 				(intent, answered)
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
-				if !link.settle_cancel(intent.clone(), decision.clone()).await {
+				let heard =
+					within(CALL_TIMEOUT, link.settle_cancel(intent.clone(), decision.clone()))
+						.await
+						.unwrap_or(false);
+				if !heard {
 					tracing::debug!(%intent, "a provider's worker did not hear a cancel decision");
-					return;
+					return false;
 				}
 				let target = intent.clone();
 				let answered = self
@@ -939,8 +1161,12 @@ impl FundingRegistry {
 				(intent, answered)
 			},
 		};
-		if let Err(error) = answered {
-			tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
+		match answered {
+			Ok(()) => true,
+			Err(error) => {
+				tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
+				false
+			},
 		}
 	}
 
@@ -968,14 +1194,12 @@ impl FundingRegistry {
 	}
 
 	/// Load persisted sessions if they are not loaded yet and expire the
-	/// overdue ones, then keep expiring the rest on time.
+	/// overdue ones; the reconciler then keeps expiring the rest on time.
 	pub async fn load(
-		self: &Arc<Self>,
-		services: &RuntimeServices,
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
 	) -> Result<(), FundingSessionError> {
-		self.sweep(services.platform.as_ref(), current_unix_millis()).await?;
-		self.keep_expiring(services);
-		Ok(())
+		self.sweep(storage, current_unix_millis()).await
 	}
 
 	/// Commit no edit, which loads persisted sessions on first use and
@@ -986,71 +1210,6 @@ impl FundingRegistry {
 		now_ms: u64,
 	) -> Result<(), FundingSessionError> {
 		self.commit(storage, now_ms, |_| ((), Vec::new())).await
-	}
-
-	/// Keep one task waiting on the earliest deadline while any session can
-	/// expire, so a session expires on time whether or not anyone asks. The
-	/// task ends once none can or the registry is dropped.
-	pub fn keep_expiring(self: &Arc<Self>, services: &RuntimeServices) {
-		if self.sweeping.swap(true, Ordering::AcqRel) {
-			self.wake_sweep_if_earlier();
-			return;
-		}
-		let registry = Arc::downgrade(self);
-		let storage: Arc<dyn Platform> = services.platform.clone();
-		let (alarm, mut woken) = mpsc::unbounded();
-		(services.spawner)(Box::pin(async move {
-			while let Some(wait_ms) = Self::next_wait(&registry) {
-				if let Some(live) = registry.upgrade() {
-					let until_ms = current_unix_millis().saturating_add(wait_ms);
-					*live.lock_sweep_alarm() = Some((until_ms, alarm.clone()));
-					// A session that arrived before the alarm was set found
-					// no alarm to ring.
-					if live.next_deadline().is_some_and(|next_ms| next_ms < until_ms) {
-						continue;
-					}
-				}
-				let delay = futures_timer::Delay::new(Duration::from_millis(wait_ms));
-				futures::future::select(delay, woken.next()).await;
-				let Some(live) = registry.upgrade() else {
-					return;
-				};
-				if let Err(error) = live.sweep(storage.as_ref(), current_unix_millis()).await {
-					tracing::warn!(%error, "funding expiry sweep failed");
-					futures_timer::Delay::new(SWEEP_RETRY).await;
-				}
-			}
-		}));
-	}
-
-	/// Wake the expiry task when a session now expires before the deadline
-	/// it sleeps toward.
-	fn wake_sweep_if_earlier(&self) {
-		let Some(next_ms) = self.next_deadline() else {
-			return;
-		};
-		if let Some((until_ms, alarm)) = self.lock_sweep_alarm().as_ref() &&
-			next_ms < *until_ms
-		{
-			let _ = alarm.unbounded_send(());
-		}
-	}
-
-	/// Milliseconds until the earliest open deadline, or `None` once nothing
-	/// is open, which also clears the sweeping flag.
-	fn next_wait(registry: &Weak<Self>) -> Option<u64> {
-		let live = registry.upgrade()?;
-		loop {
-			if let Some(deadline_ms) = live.next_deadline() {
-				return Some(deadline_ms.saturating_sub(current_unix_millis()));
-			}
-			live.sweeping.store(false, Ordering::Release);
-			// A session opened after the check would otherwise wait for the
-			// next caller to arm a sweep.
-			if live.next_deadline().is_none() || live.sweeping.swap(true, Ordering::AcqRel) {
-				return None;
-			}
-		}
 	}
 
 	fn next_deadline(&self) -> Option<u64> {
@@ -1105,8 +1264,20 @@ impl FundingRegistry {
 		lock(&self.announcements)
 	}
 
-	fn lock_sweep_alarm(&self) -> MutexGuard<'_, Option<(u64, mpsc::UnboundedSender<()>)>> {
-		self.sweep_alarm.lock().unwrap_or_else(PoisonError::into_inner)
+	fn lock_reconciler(&self) -> MutexGuard<'_, Option<mpsc::UnboundedSender<()>>> {
+		lock(&self.reconciler)
+	}
+
+	fn lock_retry_at(&self) -> MutexGuard<'_, Option<u64>> {
+		lock(&self.retry_at)
+	}
+
+	fn lock_starting(&self) -> MutexGuard<'_, HashSet<[u8; 32]>> {
+		lock(&self.starting)
+	}
+
+	fn lock_resolving(&self) -> MutexGuard<'_, HashMap<[u8; 32], u64>> {
+		lock(&self.resolving)
 	}
 
 	fn lock_pack(&self) -> MutexGuard<'_, HashMap<String, FundingSessionSummary>> {
@@ -1142,6 +1313,125 @@ impl FundingRegistry {
 /// funding modules guard stays valid between statements.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Funds a provider's worker asks the host to move for a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FundsAsked {
+	/// Which way they move.
+	pub direction: FundingDirection,
+	/// The id the host receives them under.
+	pub host_id: [u8; 32],
+	/// How much they move.
+	pub amount: u128,
+	/// Digest of the rest of the request.
+	pub terms: [u8; 32],
+}
+
+/// An id whose host call is in flight, from [`FundingRegistry::begin_start`].
+/// Dropping it lets the next call under the id start.
+pub struct StartGuard {
+	registry: Arc<FundingRegistry>,
+	host_id: [u8; 32],
+}
+
+impl Drop for StartGuard {
+	fn drop(&mut self) {
+		self.registry.lock_starting().remove(&self.host_id);
+		// The reconciler leaves a record alone while its call is in flight,
+		// so it looks again once the call is done.
+		self.registry.wake();
+	}
+}
+
+/// Run reconciling passes, each after a wake or once the last one's wait is
+/// up. Wakes that come during a pass bring one more. The task ends once a pass
+/// leaves nothing timed and no wake is queued, so an idle host keeps no task
+/// alive; the next wake starts another.
+async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedReceiver<()>) {
+	loop {
+		// Wakes queued so far are covered by the pass about to run.
+		while woken.try_recv().is_ok() {}
+		let wait_ms = {
+			let Some(services) = services.upgrade() else {
+				return;
+			};
+			let registry = services.funding().clone();
+			registry.reconcile_once(&services).await
+		};
+		let woke = match wait_ms {
+			Some(wait_ms) => {
+				let delay = futures_timer::Delay::new(Duration::from_millis(wait_ms));
+				match futures::future::select(delay, woken.next()).await {
+					Either::Left(_) => true,
+					Either::Right((woke, _)) => woke.is_some(),
+				}
+			},
+			None => {
+				let Some(services) = services.upgrade() else {
+					return;
+				};
+				// Under the lock a wake sends through, so none is lost between
+				// this check and the handle going.
+				let mut reconciler = services.funding().lock_reconciler();
+				let queued = woken.try_recv().is_ok();
+				if !queued {
+					*reconciler = None;
+				}
+				queued
+			},
+		};
+		if !woke {
+			return;
+		}
+	}
+}
+
+/// `future`'s output, or `None` once `limit` passed first.
+async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
+	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
+		Either::Left((output, _)) => Some(output),
+		Either::Right(_) => None,
+	}
+}
+
+/// Whether the host's engine holds funds under `host_id` that `provider`
+/// started in `direction`, from the first status it gives. `Err` when it
+/// could not say: no engine, a failed read or no answer in time.
+pub(crate) async fn engine_holds(
+	services: &RuntimeServices,
+	provider: &ProductContext,
+	direction: FundingDirection,
+	host_id: [u8; 32],
+) -> Result<bool, String> {
+	match direction {
+		FundingDirection::In => {
+			let platform = services.top_up_platform().ok_or("no top-up engine")?;
+			let mut statuses = platform.subscribe_top_up_status(provider, host_id);
+			match within(ENGINE_READ_TIMEOUT, statuses.next()).await {
+				None => Err("the top-up engine did not answer".to_string()),
+				Some(Some(Ok(_))) => Ok(true),
+				Some(None | Some(Err(HostPaymentTopUpStatusSubscribeError::TopUpNotFound))) => {
+					Ok(false)
+				},
+				Some(Some(Err(HostPaymentTopUpStatusSubscribeError::Unknown { reason }))) => {
+					Err(reason)
+				},
+			}
+		},
+		FundingDirection::Out => {
+			let platform = services.payment_platform().ok_or("no payment engine")?;
+			let mut statuses = platform.subscribe_payment_status(provider, host_id);
+			match within(ENGINE_READ_TIMEOUT, statuses.next()).await {
+				None => Err("the payment engine did not answer".to_string()),
+				Some(Some(Ok(_))) => Ok(true),
+				Some(None | Some(Err(HostPaymentStatusSubscribeError::PaymentNotFound))) => {
+					Ok(false)
+				},
+				Some(Some(Err(HostPaymentStatusSubscribeError::Unknown { reason }))) => Err(reason),
+			}
+		},
+	}
 }
 
 /// Why a session could not be opened.
@@ -1203,8 +1493,8 @@ impl RuntimeServices {
 		}
 	}
 
-	/// Load persisted sessions and arm expiry for them, so sessions from
-	/// before a restart end on time and the host hears of them.
+	/// Load persisted sessions, which starts the reconciler on them, so
+	/// sessions from before a restart end on time and the host hears of them.
 	pub fn resume_funding(self: &Arc<Self>) {
 		let services = self.clone();
 		(self.spawner)(Box::pin(async move {
@@ -1227,7 +1517,7 @@ impl RuntimeServices {
 					})
 					.await;
 				match loaded {
-					Ok(()) => break registry.keep_expiring(&services),
+					Ok(()) => break,
 					// Left for the newer app that wrote them; retrying cannot
 					// read them.
 					Err(error @ FundingSessionError::NewerFormat { .. }) => {
@@ -1358,7 +1648,10 @@ impl RuntimeServices {
 	}
 
 	/// Follow a session's top-ups, payment or refund to the end, then settle
-	/// it with what moved, from the amounts the provider started them with.
+	/// it with what moved, from the amounts the provider started them with. A
+	/// failed write of the outcome is retried until it is stored or the
+	/// session ended some other way; the reconciler follows the session again
+	/// if this stops with it still due.
 	fn follow_settlement(
 		self: Arc<Self>,
 		intent: String,
@@ -1367,14 +1660,15 @@ impl RuntimeServices {
 	) {
 		let spawner = self.spawner.clone();
 		spawner(Box::pin(async move {
-			let registry = self.funding();
+			let registry = self.funding().clone();
 			let provider = match provider_id.parse::<ProductId>() {
 				Ok(product_id) => {
 					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
 				},
 				Err(error) => {
+					// Kept as followed: nothing could settle it, and following it
+					// again would fail the same way.
 					tracing::warn!(%error, "a funding session names an invalid provider");
-					registry.lock_following().remove(&intent);
 					return;
 				},
 			};
@@ -1402,26 +1696,103 @@ impl RuntimeServices {
 				},
 			};
 			if let Some(moved) = moved {
-				let settling = intent.clone();
-				let settled = registry
-					.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
-						let now_ms = current_unix_millis();
-						let settled = sessions.get_mut(&settling).is_some_and(|session| {
-							if refund {
-								session.settle_refund(moved)
-							} else {
-								session.settle(moved, now_ms)
-							}
-						});
-						((), if settled { vec![settling] } else { Vec::new() })
-					})
-					.await;
-				if let Err(error) = settled {
-					tracing::warn!(%error, "settling a funding session failed");
+				let mut retry_in = FOLLOW_RETRY_FIRST;
+				loop {
+					let settling = intent.clone();
+					let settled = registry
+						.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+							let now_ms = current_unix_millis();
+							let settled = sessions.get_mut(&settling).is_some_and(|session| {
+								if refund {
+									session.settle_refund(moved)
+								} else {
+									session.settle(moved, now_ms)
+								}
+							});
+							((), if settled { vec![settling] } else { Vec::new() })
+						})
+						.await;
+					let Err(error) = settled else {
+						break;
+					};
+					tracing::warn!(%error, ?retry_in, "settling a funding session failed");
+					futures_timer::Delay::new(retry_in).await;
+					retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
 				}
 			}
 			registry.lock_following().remove(&intent);
+			registry.wake();
 		}));
+	}
+
+	/// Place funds recorded for session `intent` that the host has not
+	/// taken: kept as taken once the engine holds them, dropped once it still
+	/// does not [`UNKNOWN_FUNDS_GRACE_MS`] after they were recorded, and asked
+	/// about again later otherwise. A call under their id that started
+	/// meanwhile settles the record itself.
+	async fn resolve_start(
+		self: Arc<Self>,
+		intent: String,
+		provider_id: String,
+		funds: StartedFunds,
+	) {
+		let registry = self.funding().clone();
+		let held = match provider_id.parse::<ProductId>() {
+			Ok(product_id) => {
+				let provider =
+					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker);
+				engine_holds(&self, &provider, funds.direction, funds.host_id).await
+			},
+			Err(error) => Err(error.to_string()),
+		};
+		let now_ms = current_unix_millis();
+		let lapse_ms = funds.recorded_at_ms.saturating_add(UNKNOWN_FUNDS_GRACE_MS);
+		let retry_ms = now_ms.saturating_add(RESOLVE_RETRY.as_millis() as u64);
+		let (taken, next_ms) = match held {
+			Ok(true) => (Some(true), None),
+			Ok(false) if now_ms >= lapse_ms => (Some(false), None),
+			Ok(false) => (None, Some(lapse_ms)),
+			Err(reason) => {
+				tracing::warn!(%reason, "reading recorded funds from the host failed");
+				(None, Some(retry_ms))
+			},
+		};
+		let next_ms = match taken {
+			None => next_ms,
+			Some(taken) => {
+				let host_id = funds.host_id;
+				let target = intent.clone();
+				let written = registry
+					.commit(self.platform.as_ref(), now_ms, |sessions| {
+						let starting = registry.lock_starting().contains(&host_id);
+						let changed = !starting &&
+							sessions.get_mut(&target).is_some_and(|session| {
+								if taken {
+									session.accept_start(&host_id)
+								} else {
+									session.forget_start(&host_id)
+								}
+							});
+						((), Vec::from_iter(changed.then_some(target)))
+					})
+					.await;
+				written
+					.inspect_err(|error| {
+						tracing::warn!(%error, "storing where recorded funds stand failed");
+					})
+					.err()
+					.map(|_| retry_ms)
+			},
+		};
+		match next_ms {
+			Some(next_ms) => {
+				registry.lock_resolving().insert(funds.host_id, next_ms);
+				registry.retry_by(next_ms);
+			},
+			None => {
+				registry.lock_resolving().remove(&funds.host_id);
+			},
+		}
 	}
 
 	/// What `funds` moved, read again after a growing wait until the host
@@ -1543,7 +1914,6 @@ impl RuntimeServices {
 					.start(storage, current_unix_millis(), &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
-				registry.keep_expiring(&self);
 				Ok(registry.get(&session.intent).unwrap_or(session))
 			},
 			outcome => {
@@ -1567,7 +1937,6 @@ impl RuntimeServices {
 						.await
 						.map_err(OpenFundingError::Session)?;
 				}
-				registry.keep_expiring(&self);
 				Ok(registry.get(&session.intent).unwrap_or(session))
 			},
 		}
@@ -1824,14 +2193,47 @@ mod tests {
 		)
 	}
 
-	// A top-up does not say which session it is for, so its amount picks the
-	// session when exactly one asks for it; otherwise every session the
-	// provider serves may name it.
+	/// Funds a report named, as the core follows them.
+	fn named_funds_record(host_id: [u8; 32], amount: u128) -> StartedFunds {
+		StartedFunds {
+			direction: FundingDirection::In,
+			host_id,
+			amount,
+			terms: [0; 32],
+			recorded_at_ms: NOW,
+			accepted: true,
+			named_at_ms: Some(NOW),
+		}
+	}
+
+	/// Record funds `provider` starts under `host_id` for session `intent`.
+	fn record(
+		registry: &FundingRegistry,
+		storage: &dyn CoreStorage,
+		provider: &str,
+		intent: &str,
+		host_id: [u8; 32],
+		amount: u128,
+	) -> Option<StartRecord> {
+		block_on(registry.record_start(
+			storage,
+			NOW,
+			provider,
+			intent,
+			FundsAsked { direction: FundingDirection::In, host_id, amount, terms: [0; 32] },
+		))
+		.expect("stored")
+	}
+
+	// Funds belong to the session the provider names when it starts them,
+	// whatever their amount: a first top-up of 100 for session B, which asks
+	// 200, is B's even while session A asks 100, so A can still be
+	// cancelled and B can name it.
 	#[test]
-	fn started_funds_go_to_the_one_session_asking_for_that_amount() {
+	fn started_funds_belong_to_the_session_they_were_started_for() {
 		let storage = stub_platform();
 		let registry = FundingRegistry::default();
-		for (intent, amount) in [("fs_fifty", 50), ("fs_thirty", 30)] {
+		for (intent, amount) in [("fs_a", 100), ("fs_b", 200)] {
 			let mut session = FundingSession::new(
 				intent.to_string(),
 				Some(ProductId::for_test("wallet.dot")),
@@ -1842,86 +2244,103 @@ mod tests {
 			assert!(session.assign("ramp.dot", None, NOW));
 			insert(&registry, storage.as_ref(), session);
 		}
-		let record = |id: u8, amount: u128| {
-			block_on(registry.record_start(
+		let host_id = host_payment_id(&worker("ramp.dot"), [1; 32]);
+		let recorded = record(&registry, storage.as_ref(), "ramp.dot", "fs_b", host_id, 100);
+		block_on(registry.finish_start(storage.as_ref(), NOW, "fs_b", host_id, true))
+			.expect("stored");
+		let report = |intent: &str| {
+			block_on(registry.report(
 				storage.as_ref(),
 				NOW,
-				"ramp.dot",
-				FundingDirection::In,
-				[id; 32],
-				amount,
+				&worker("ramp.dot"),
+				intent,
+				FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 },
 			))
-			.expect("recorded")
-		};
-		record(1, 50);
-		record(2, 20);
-		let started = |intent: &str| {
-			registry
-				.get(intent)
-				.expect("kept")
-				.started
-				.iter()
-				.map(|record| record.host_id[0])
-				.collect::<Vec<_>>()
+			.expect("stored")
 		};
 
-		assert_eq!((started("fs_fifty"), started("fs_thirty")), (vec![1, 2], vec![2]));
+		assert_eq!(
+			(
+				recorded,
+				report("fs_a"),
+				report("fs_b"),
+				block_on(registry.cancel(storage.as_ref(), NOW, "fs_a")).expect("stored"),
+				registry.get("fs_a").expect("kept").started,
+			),
+			(
+				Some(StartRecord::New),
+				Err(HostFundingReportError::NotStarted),
+				Ok(()),
+				CancelOutcome::Requested,
+				Vec::new(),
+			)
+		);
 	}
 
 	// A withdrawal whose payout failed is refunded with a top-up, so it takes
-	// top-ups like an inbound session does, and its amount picks it.
+	// a top-up named for it, which moves in; a withdrawal still paying out
+	// takes none.
 	#[test]
 	fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
 		let storage = stub_platform();
 		let registry = FundingRegistry::default();
-		let mut inbound = session("fs_in", NOW);
-		assert!(inbound.assign("ramp.dot", None, NOW));
-		insert(&registry, storage.as_ref(), inbound);
-		let mut withdrawal =
-			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
-		assert!(withdrawal.assign("ramp.dot", None, NOW));
-		withdrawal.record_start([4; 32], 80);
-		withdrawal
-			.report(
-				"ramp.dot",
-				FundingUpdate::Collecting { payment_id: [4; 32], amount: 80 },
-				|id| *id,
-				NOW,
-			)
-			.expect("collecting");
-		assert!(withdrawal.settle(80, NOW));
+		let withdrawal = |intent: &str, payout: Option<truapi::latest::FundingPayout>| {
+			let mut withdrawal =
+				FundingSession { direction: FundingDirection::Out, ..session(intent, NOW) };
+			assert!(withdrawal.assign("ramp.dot", None, NOW));
+			withdrawal.record_start(FundingDirection::Out, [4; 32], 80, [0; 32], NOW);
+			withdrawal.accept_start(&[4; 32]);
+			withdrawal
+				.report(
+					"ramp.dot",
+					FundingUpdate::Collecting { payment_id: [4; 32], amount: 80 },
+					|id| *id,
+					NOW,
+				)
+				.expect("collecting");
+			assert!(withdrawal.settle(80, NOW));
+			if let Some(outcome) = payout {
+				withdrawal
+					.report("ramp.dot", FundingUpdate::Payout { outcome }, |id| *id, NOW)
+					.expect("payout");
+			}
+			withdrawal
+		};
 		let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
-		withdrawal
-			.report("ramp.dot", FundingUpdate::Payout { outcome: failed }, |id| *id, NOW)
-			.expect("payout");
-		insert(&registry, storage.as_ref(), withdrawal);
-
-		let recorded = block_on(registry.record_start(
-			storage.as_ref(),
-			NOW,
-			"ramp.dot",
-			FundingDirection::In,
-			[7; 32],
-			80,
-		))
-		.expect("recorded");
-		let started = |intent: &str| {
-			registry
-				.get(intent)
-				.expect("kept")
-				.started
-				.iter()
-				.any(|record| record.host_id == [7; 32])
+		insert(&registry, storage.as_ref(), withdrawal("fs_failed", Some(failed)));
+		insert(&registry, storage.as_ref(), withdrawal("fs_paying", None));
+		let refund = |intent: &str, host_id: [u8; 32]| {
+			block_on(registry.record_start(
+				storage.as_ref(),
+				NOW,
+				"ramp.dot",
+				intent,
+				FundsAsked { direction: FundingDirection::In, host_id, amount: 80, terms: [0; 32] },
+			))
+			.expect("stored")
 		};
 
-		assert_eq!((recorded, started("fs_out"), started("fs_in")), (true, true, false));
+		assert_eq!(
+			(
+				refund("fs_failed", [7; 32]),
+				refund("fs_paying", [8; 32]),
+				registry
+					.get("fs_failed")
+					.expect("kept")
+					.pending_starts()
+					.map(|funds| (funds.direction, funds.host_id))
+					.collect::<Vec<_>>(),
+			),
+			(Some(StartRecord::New), None, vec![(FundingDirection::In, [7; 32])])
+		);
 	}
 
-	// A top-up settles one session once, from the amount it was started with:
-	// a provider cannot name it in a second session, replay it in a session it
-	// was not started for, or name another provider's.
+	// A top-up settles one session once: its id cannot be recorded for a
+	// second session of the provider, a session it was not started for
+	// cannot name it, and nor can another provider, or a session the
+	// provider does not serve.
 	#[test]
-	fn started_funds_are_named_once_by_a_session_they_were_started_for() {
+	fn started_funds_are_named_once_by_the_session_they_were_started_for() {
 		let storage = stub_platform();
 		let registry = FundingRegistry::default();
 		let served = |intent: &str, provider: &str| {
@@ -1935,16 +2354,11 @@ mod tests {
 			insert(&registry, storage.as_ref(), session);
 		}
 		let host_id = host_payment_id(&worker("ramp.dot"), [9; 32]);
-		let recorded = block_on(registry.record_start(
-			storage.as_ref(),
-			NOW,
-			"ramp.dot",
-			FundingDirection::In,
-			host_id,
-			100,
-		))
-		.expect("recorded");
-		insert(&registry, storage.as_ref(), served("fs_late", "ramp.dot"));
+		let recorded = record(&registry, storage.as_ref(), "ramp.dot", "fs_a", host_id, 100);
+		let again = record(&registry, storage.as_ref(), "ramp.dot", "fs_b", host_id, 100);
+		let unserved = record(&registry, storage.as_ref(), "ramp.dot", "fs_c", host_id, 100);
+		block_on(registry.finish_start(storage.as_ref(), NOW, "fs_a", host_id, true))
+			.expect("stored");
 		let crediting = FundingUpdate::Crediting { top_up_id: [9; 32], amount: 100 };
 		let report = |provider: &str, intent: &str| {
 			block_on(registry.report(
@@ -1959,20 +2373,18 @@ mod tests {
 
 		assert_eq!(
 			(
-				recorded,
+				(recorded, again, unserved),
 				report("ramp.dot", "fs_a"),
 				report("ramp.dot", "fs_b"),
-				report("ramp.dot", "fs_late"),
 				report("other.dot", "fs_c"),
 				registry.get("fs_a").expect("kept").started,
 			),
 			(
-				true,
+				(Some(StartRecord::New), Some(StartRecord::Conflict), None),
 				Ok(()),
 				Err(HostFundingReportError::NotStarted),
 				Err(HostFundingReportError::NotStarted),
-				Err(HostFundingReportError::NotStarted),
-				vec![StartedFunds { host_id, amount: 100, named_at_ms: Some(NOW) }],
+				vec![named_funds_record(host_id, 100)],
 			)
 		);
 	}
@@ -1982,7 +2394,7 @@ mod tests {
 	// session until the host decides or the grace period runs out.
 	#[test]
 	fn only_a_final_claim_or_a_long_unknown_top_up_settles() {
-		let funds = StartedFunds { host_id: [1; 32], amount: 100, named_at_ms: Some(NOW) };
+		let funds = named_funds_record([1; 32], 100);
 		let read = |statuses: Vec<_>, now_ms| {
 			block_on(top_up_moved(stream::iter(statuses).boxed(), &funds, now_ms))
 		};
@@ -2022,7 +2434,7 @@ mod tests {
 
 	#[test]
 	fn a_payment_settles_from_its_completion_or_a_long_absence() {
-		let funds = StartedFunds { host_id: [1; 32], amount: 100, named_at_ms: Some(NOW) };
+		let funds = named_funds_record([1; 32], 100);
 		let read = |statuses: Vec<_>, now_ms| {
 			block_on(payment_moved(stream::iter(statuses).boxed(), &funds, now_ms))
 		};
@@ -2327,21 +2739,5 @@ mod tests {
 			Ok(CancelOutcome::Refused)
 		);
 		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
-	}
-
-	#[test]
-	fn an_earlier_deadline_wakes_the_expiry_task() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		let (alarm, mut woken) = mpsc::unbounded();
-		*registry.lock_sweep_alarm() = Some((NOW + 7 * DAY_MS, alarm));
-
-		registry.wake_sweep_if_earlier();
-		assert!(woken.try_recv().is_err(), "nothing open, nothing to wake for");
-
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
-		registry.wake_sweep_if_earlier();
-
-		assert_eq!(woken.try_recv(), Ok(()));
 	}
 }

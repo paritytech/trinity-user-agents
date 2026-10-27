@@ -293,7 +293,13 @@ async function lastStatus(
   return items.at(-1);
 }
 
-async function topUp(client: TrUApiClient, topUpId: HexString, amount: bigint) {
+/** Start a top-up of `amount` under `topUpId` for session `intent`. */
+async function topUp(
+  client: TrUApiClient,
+  intent: string,
+  topUpId: HexString,
+  amount: bigint,
+) {
   const toppedUp = await client.payment.topUp({
     amount,
     source: {
@@ -301,6 +307,7 @@ async function topUp(client: TrUApiClient, topUpId: HexString, amount: bigint) {
       value: { derivationIndex: { tag: "Index", value: 0 } },
     },
     id: topUpId,
+    funding: intent,
   });
   if (toppedUp.isErr()) {
     throw new Error(`payment.topUp failed: ${stringify(toppedUp.error)}`);
@@ -455,7 +462,7 @@ export async function runProviderStart(
         `keeping the worker's state failed: ${stringify(kept.error)}`,
       );
     }
-    await topUp(client, topUpId, IN_AMOUNT);
+    await topUp(client, inbound, topUpId, IN_AMOUNT);
     await report(client, inbound, {
       tag: "Crediting",
       value: { topUpId, amount: IN_AMOUNT },
@@ -477,6 +484,7 @@ export async function runProviderStart(
       amount: OUT_AMOUNT,
       destination: `0x${"11".repeat(32)}`,
       id: paymentId,
+      funding: outbound,
     });
     if (paid.isErr()) {
       throw new Error(`payment.request failed: ${stringify(paid.error)}`);
@@ -526,6 +534,7 @@ export async function runProviderStart(
       amount: RELEASED_CANCEL_AMOUNT,
       destination: `0x${"11".repeat(32)}`,
       id: paymentId,
+      funding: intent,
     });
     if (paid.isErr()) {
       throw new Error(`payment.request failed: ${stringify(paid.error)}`);
@@ -546,7 +555,7 @@ export async function runProviderStart(
     );
     provider.settleAccepted(intent, async () => {
       const topUpId = randomId();
-      await topUp(client, topUpId, refund);
+      await topUp(client, intent, topUpId, refund);
       await report(client, intent, {
         tag: "Refunding",
         value: { topUpId, amount: refund },
@@ -645,7 +654,7 @@ export async function runProviderStart(
     );
     await provider.assignment(intent);
     const topUpId = randomId();
-    await topUp(client, topUpId, LATE_AMOUNT);
+    await topUp(client, intent, topUpId, LATE_AMOUNT);
     await cancelAsUser(fundingLogPath, intent, "TooLate");
     await report(client, intent, {
       tag: "Crediting",
