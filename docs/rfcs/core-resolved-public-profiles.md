@@ -93,7 +93,7 @@ pub enum PublicProfileLookup {
 	/// The name has a record. Either field may be absent.
 	Found { avatar: Option<ResolvedAvatar>, name: Option<String> },
 	/// The name has no record, or none the core can read.
-	None,
+	Absent,
 	/// The core could not tell: the chain or the bytes were out of reach.
 	Failed { reason: String },
 }
@@ -114,13 +114,13 @@ impl NativeTrUApiHostRuntime {
 }
 ```
 
-`None` and `Failed` are different answers on purpose. A host clears its stored avatar on
-`None`, because the person took it down, and keeps it on `Failed`, because nothing is known.
+`Absent` and `Failed` are different answers on purpose. A host clears its stored avatar on
+`Absent`, because the person took it down, and keeps it on `Failed`, because nothing is known.
 A host never caches a `Failed`.
 
 **The lookup.** The core walks dotNS as it does for a manifest: the protocol registry, the
 network's TLD, `namehash(<label>.<tld>)`, the registry's resolver for that node, then
-`text(node, "profile")`. A name still on the reverse resolver reverts, which is `None`. The
+`text(node, "profile")`. A name still on the reverse resolver reverts, which is `Absent`. The
 record is decoded in the core from the same definition the writer encodes with.
 
 **The avatar bytes.** The core fetches them through the host's preimage backend
