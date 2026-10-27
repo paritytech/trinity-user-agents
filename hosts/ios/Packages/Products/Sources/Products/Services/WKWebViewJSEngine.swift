@@ -18,6 +18,7 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
     private var messageHandlers: [String: (Any) -> Void] = [:]
 
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
+    private var terminationHandler: (@Sendable () -> Void)?
 
     private let logger: SDKLoggerProtocol
     private let settings: WKWebViewJSEngineSettings
@@ -242,6 +243,12 @@ extension WKWebViewJSEngine: JSEngineProtocol {
             self.jsDeviceCapabilityHandler = handler
         }
     }
+
+    public func onTermination(_ handler: @escaping @Sendable () -> Void) async {
+        await MainActor.run {
+            self.terminationHandler = handler
+        }
+    }
 }
 
 // MARK: - WKNavigationDelegate
@@ -263,7 +270,16 @@ extension WKWebViewJSEngine: WKNavigationDelegate {
 
     public func webViewWebContentProcessDidTerminate(_: WKWebView) {
         logger.error("JSEngine WebView process terminated")
+
+        guard initContinuation == nil else {
+            completeInitialization(error: JSEngineError.processTerminated)
+            return
+        }
+
         state = .error("WebView process terminated")
+        let handler = terminationHandler
+        terminationHandler = nil
+        handler?()
     }
 }
 
@@ -327,6 +343,33 @@ extension WKWebViewJSEngine: WKUIDelegate {
             return .deny
         }
     }
+
+    /// Answers WebKit's `DeviceMotionEvent`/`DeviceOrientationEvent`
+    /// `requestPermission()` with the product's Motion decision, so WebKit
+    /// never shows its own prompt. WebKit caches the answer per origin in the
+    /// data store for the rest of the app launch.
+    public func webView(
+        _: WKWebView,
+        requestDeviceOrientationAndMotionPermissionFor _: WKSecurityOrigin,
+        initiatedByFrame _: WKFrameInfo,
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        guard let handler = jsDeviceCapabilityHandler else {
+            logger.warning("JSEngine: no device capability handler, denying motion")
+            decisionHandler(.deny)
+            return
+        }
+        Task { @MainActor in
+            do {
+                let decision = try await handler(.motion)
+                self.logger.debug("Motion decision: \(decision)")
+                decisionHandler(decision.toWKPermission)
+            } catch {
+                self.logger.error("JSEngine: motion capability handler failed: \(error)")
+                decisionHandler(.deny)
+            }
+        }
+    }
 }
 
 // MARK: - HTML Template
@@ -356,6 +399,7 @@ private extension WKWebViewJSEngine {
 public enum JSEngineError: Error, LocalizedError {
     case notReady
     case moduleLoadFailed
+    case processTerminated
 
     public var errorDescription: String? {
         switch self {
@@ -363,6 +407,8 @@ public enum JSEngineError: Error, LocalizedError {
             "JS engine is not in ready state"
         case .moduleLoadFailed:
             "Failed to load ES module script"
+        case .processTerminated:
+            "WebView process terminated"
         }
     }
 }

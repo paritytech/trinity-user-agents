@@ -31,10 +31,9 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
 
     private var recoveryStateTask: Task<Void, Error>?
     private var recoveredBalanceTask: Task<Void, Error>?
-    private var accountBackupStatusTask: Task<Void, Error>?
 
     private let fundingDomainProvider: FundingDomainProviding
-    private var rampProductTasks: [RampAction: Task<Void, Never>] = [:]
+    private var topUpProductTask: Task<Void, Never>?
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -63,9 +62,8 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         balanceSubscriptionTask?.cancel()
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
-        accountBackupStatusTask?.cancel()
         priceSubscriptionTask?.cancel()
-        rampProductTasks.values.forEach { $0.cancel() }
+        topUpProductTask?.cancel()
     }
 }
 
@@ -76,7 +74,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToBalances()
         subscribeToRecoveryState()
         subscribeToRecoveredBalance()
-        subscribeToAccountBackupStatus()
     }
 
     func triggerSync() {
@@ -95,14 +92,14 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         fiatOnrampTrackingService.removeFailedTransactions()
     }
 
-    func openRampProduct(_ action: RampAction) {
-        rampProductTasks[action]?.cancel()
-        rampProductTasks[action] = Task { [weak presenter, fundingDomainProvider] in
+    func openTopUpProduct() {
+        topUpProductTask?.cancel()
+        topUpProductTask = Task { [weak presenter, fundingDomainProvider] in
             do {
-                let page = try await action.resolvePage(using: fundingDomainProvider)
-                await presenter?.didResolveRampProduct(action, result: .success(page))
+                let page = try await RampAction.topUp.resolvePage(using: fundingDomainProvider)
+                await presenter?.didResolveTopUpProduct(.success(page))
             } catch {
-                await presenter?.didResolveRampProduct(action, result: .failure(error))
+                await presenter?.didResolveTopUpProduct(.failure(error))
             }
         }
     }
@@ -161,7 +158,8 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
                             availableNow: context.decimal(fromPlanks: balance.ready),
                             gainingPrivacy: context.decimal(fromPlanks: balance.clearing)
                         ),
-                        holdings: summary.holdings
+                        holdings: summary.holdings,
+                        denominations: context
                     )
                 }
             } catch {
@@ -186,15 +184,6 @@ private extension AssetDetailsInteractor {
         recoveredBalanceTask = Task { [weak presenter, coinageBackupSyncService] in
             for try await shows in coinageBackupSyncService.showsRecoveredBalanceStream {
                 await presenter?.didReceive(showsRecoveredBalance: shows)
-            }
-        }
-    }
-
-    func subscribeToAccountBackupStatus() {
-        accountBackupStatusTask?.cancel()
-        accountBackupStatusTask = Task { [weak presenter, coinageService] in
-            for try await status in coinageService.subscribeAccountBackupStatus() {
-                await presenter?.didReceive(isAccountBackupPending: status.needsAttention)
             }
         }
     }

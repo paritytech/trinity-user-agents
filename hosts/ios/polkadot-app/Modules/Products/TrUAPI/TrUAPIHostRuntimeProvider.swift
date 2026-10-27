@@ -3,6 +3,8 @@ import UIKit
 import UIKitExt
 import TrUAPIHost
 import ChainRegistry
+import Foundation_iOS
+import FoundationExt
 import Products
 import SubstrateSdk
 import KeyDerivation
@@ -40,6 +42,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -50,6 +53,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
+
+    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
+    /// it is built, or right away if it already is.
+    private var paymentsBridge: RustPaymentsBridge?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -81,6 +88,34 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.workerManager = workerManager
     }
 
+    /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
+    /// privacy warnings are presented like the core's own host-level prompts.
+    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
+        let productsRouter = confirmationRouterFacade.productsRouter
+        let bridge = RustPaymentsBridge(
+            payments: ProductPayments(
+                support: paymentsSupport,
+                approvalRequester: PaymentApprovalRequesterFactory.create(
+                    router: productsRouter,
+                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
+                ),
+                privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
+                recyclingStrategy: CoinageRecyclingStrategyStore.shared
+            ),
+            logger: logger
+        )
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard paymentsBridge == nil else { return }
+        paymentsBridge = bridge
+        if let cachedRuntime {
+            bridge.install(on: cachedRuntime)
+        }
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -99,12 +134,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             databaseDirectory: Self.coreDatabaseDirectory()
         )
 
-        let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+        let chainConnections = TrUAPIV2SpecConnectionPool(
+            chainRegistry: chainRegistry,
+            applicationHandler: ApplicationHandler(),
+            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -114,6 +147,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
+            backedUpInstallation: backedUpInstallation,
             logger: logger
         )
 
@@ -127,6 +161,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -158,7 +193,7 @@ extension TrUAPIHostRuntimeProvider {
         networkSuffix: String,
         databaseDirectory: String
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
+        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
         let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
 
@@ -176,7 +211,10 @@ extension TrUAPIHostRuntimeProvider {
             throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
         }
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let bundle = Bundle.main
+        let version = bundle.appVersion.map { version in
+            bundle.appBuild.map { "\(version) (\($0))" } ?? version
+        }
 
         return try HostRuntimeConfig(
             hostName: "Polkadot App",

@@ -12,7 +12,9 @@ import PackageDescription
 let corePath = "../../../.."
 let coreIsInTree: Bool = {
     var root = URL(fileURLWithPath: #filePath)
-    for _ in 0 ..< 5 { root.deleteLastPathComponent() }
+    for _ in 0 ..< 5 {
+        root.deleteLastPathComponent()
+    }
     return FileManager.default.fileExists(
         atPath: root.appendingPathComponent("rust/crates/truapi").path
     )
@@ -55,7 +57,7 @@ let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "Kingfisher",
         url: "https://github.com/onevcat/Kingfisher",
-        version: .exact("8.2.0"),
+        version: .exact("8.14.0"),
         products: ["Kingfisher"]
     ),
     .init(

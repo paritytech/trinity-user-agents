@@ -58,6 +58,12 @@ For background operations, prefer wrapping the whole operation in `ConnectionRet
 **What to retain — and what not to.** Retain only long, non-idempotent work.
 **Plain RPC reads are not retained** — `JSONRPCOptions` defaults to `resendOnReconnect: true`, so an in-flight read is requeued on the forced disconnect and resent when the app foregrounds. The awaiting call just suspends across the fold and resumes. Only `resendOnReconnect: false` requests fail (with `clientCancelled`) on background.
 
+**Chain sockets** (`ChainSocket`, from `makeChainSocket(for:attempt:)`, used by the TrUAPI rust core) are
+raw, single-use sockets outside the `ChainConnection` machinery. The pool only creates them, picking the
+node at `attempt` (the caller advances it per chain so reconnects fail over); it does not track them,
+and retention and background sleep do not apply.
+Their owner decides what happens across app suspension (see `host-api-products.md`, rule 9).
+
 ## Storage Queries
 
 ### Canonical Pattern
@@ -92,9 +98,9 @@ For reactive subscriptions, prefer `CallbackBatchStorageSubscription.asyncStream
 
 ### Rules
 1. **Subscription > polling** — prefer storage subscriptions over periodic polling
-2. **Use SDK's built-in decoders** — `resultDecoder` parameter handles standard SCALE types. When the type conforms to `ScaleDecodable` (like `Bool`), use `resultDecoder` instead of manual decoding with `queryType: "bool"`. See `MobRuleOperationFactory.votedOnWrapper` as canonical example
+2. **Use SDK's built-in decoders** — `resultDecoder` parameter handles standard SCALE types. When the type conforms to `ScaleDecodable` (like `Bool`), use `resultDecoder` instead of manual decoding with `queryType: "bool"`
 3. **Use `AsyncPassthroughSubject` or `AsyncStream.makeStream`** — for custom async streams. Specifically, don't use `var continuation: AsyncStream.Continuation!` with a separate init — use `AsyncStream.makeStream()` which returns both together
-4. **Derive on-chain values, don't hardcode** — prices, scores, game parameters should come from chain state
+4. **Derive on-chain values, don't hardcode** — prices and limits should come from chain state
 5. **Use `StorageRequestFactory.asyncInit()`** — for proper async initialization, not the sync initializer
 6. **Use `requestFactory.queryByPrefix`** — instead of `keysFactory.createKeysFetchWrapper` when querying by prefix
 7. **Use `getChainAsset`** — from chain registry instead of manually constructing chain + asset combinations
@@ -120,8 +126,6 @@ Defined in `AppConfig/AppConfig.swift`:
 |-------------------------------------------|-----------------------------------------------------------|
 | Hardcoding on-chain values (prices, scores)| Derive from chain state via storage queries              |
 | Custom async stream initializers          | Use `AsyncPassthroughSubject` or `AsyncStream.makeStream` |
-| Manual SCALE decoding for standard types  | Use SDK's `resultDecoder` parameter                       |
-| Polling for state changes                 | Use storage subscriptions                                 |
 | Fetching remotely what's available locally | Check local data first; only fetch if stale              |
 | Using `keysFactory` for prefix queries    | Use `requestFactory.queryByPrefix` instead                |
 | Sync StorageRequestFactory init           | Use `StorageRequestFactory.asyncInit()`                   |

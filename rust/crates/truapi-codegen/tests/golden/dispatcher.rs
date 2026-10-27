@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use parity_scale_codec::{DecodeAll, Encode};
+use parity_scale_codec::Encode;
 
 use truapi::CallContext;
 use truapi::api::{
@@ -20,9 +20,11 @@ use truapi::api::{
     Contacts,
     Entropy,
     ExpandedCard,
+    Funding,
     Game,
     LocalStorage,
     Locale,
+    NftPurse,
     Notifications,
     Payment,
     Permissions,
@@ -60,9 +62,11 @@ where
     register_contacts(dispatcher, host.clone());
     register_entropy(dispatcher, host.clone());
     register_expanded_card(dispatcher, host.clone());
+    register_funding(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
+    register_nft_purse(dispatcher, host.clone());
     register_notifications(dispatcher, host.clone());
     register_payment(dispatcher, host.clone());
     register_permissions(dispatcher, host.clone());
@@ -97,17 +101,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::ACCOUNT_CONNECTION_STATUS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::ACCOUNT_CONNECTION_STATUS_SUBSCRIBE, move |request_id: String, request: versioned::account::HostAccountConnectionStatusSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountConnectionStatusSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountConnectionStatusSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.connection_status_subscribe(&cx, request).await;
@@ -129,18 +125,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_GET_ACCOUNT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_GET_ACCOUNT, move |request_id: String, request: versioned::account::HostAccountGetRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountGetRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountGetError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountGetResponse, truapi::CallError<versioned::account::HostAccountGetError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountGetResponse, truapi::CallError<versioned::account::HostAccountGetError>> =
@@ -157,18 +144,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_GET_ACCOUNT_ALIAS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_GET_ACCOUNT_ALIAS, move |request_id: String, request: versioned::account::HostAccountGetAliasRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountGetAliasRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountGetAliasError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountGetAliasResponse, truapi::CallError<versioned::account::HostAccountGetAliasError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountGetAliasResponse, truapi::CallError<versioned::account::HostAccountGetAliasError>> =
@@ -185,18 +163,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_CREATE_ACCOUNT_PROOF, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_CREATE_ACCOUNT_PROOF, move |request_id: String, request: versioned::account::HostAccountCreateProofRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountCreateProofRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountCreateProofError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountCreateProofResponse, truapi::CallError<versioned::account::HostAccountCreateProofError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountCreateProofResponse, truapi::CallError<versioned::account::HostAccountCreateProofError>> =
@@ -213,18 +182,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_SIGN_VRF, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_SIGN_VRF, move |request_id: String, request: versioned::account::HostAccountSignVrfRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountSignVrfRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountSignVrfError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountSignVrfResponse, truapi::CallError<versioned::account::HostAccountSignVrfError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountSignVrfResponse, truapi::CallError<versioned::account::HostAccountSignVrfError>> =
@@ -241,18 +201,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_REGISTER_RING_VRF_KEY, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_REGISTER_RING_VRF_KEY, move |request_id: String, request: versioned::account::HostAccountRegisterRingVrfKeyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountRegisterRingVrfKeyRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountRegisterRingVrfKeyError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountRegisterRingVrfKeyResponse, truapi::CallError<versioned::account::HostAccountRegisterRingVrfKeyError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountRegisterRingVrfKeyResponse, truapi::CallError<versioned::account::HostAccountRegisterRingVrfKeyError>> =
@@ -269,18 +220,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_LIST_RING_VRF_KEYS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_LIST_RING_VRF_KEYS, move |request_id: String, request: versioned::account::HostAccountListRingVrfKeysRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountListRingVrfKeysRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountListRingVrfKeysError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountListRingVrfKeysResponse, truapi::CallError<versioned::account::HostAccountListRingVrfKeysError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountListRingVrfKeysResponse, truapi::CallError<versioned::account::HostAccountListRingVrfKeysError>> =
@@ -297,18 +239,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_RING_VRF_SIGN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_RING_VRF_SIGN, move |request_id: String, request: versioned::account::HostAccountRingVrfSignRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostAccountRingVrfSignRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostAccountRingVrfSignError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostAccountRingVrfSignResponse, truapi::CallError<versioned::account::HostAccountRingVrfSignError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostAccountRingVrfSignResponse, truapi::CallError<versioned::account::HostAccountRingVrfSignError>> =
@@ -325,18 +258,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_GET_LEGACY_ACCOUNTS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_GET_LEGACY_ACCOUNTS, move |request_id: String, request: versioned::account::HostGetLegacyAccountsRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostGetLegacyAccountsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostGetLegacyAccountsError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostGetLegacyAccountsResponse, truapi::CallError<versioned::account::HostGetLegacyAccountsError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostGetLegacyAccountsResponse, truapi::CallError<versioned::account::HostGetLegacyAccountsError>> =
@@ -353,18 +277,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::ACCOUNT_GET_USER_ID, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_GET_USER_ID, move |request_id: String, request: versioned::account::HostGetUserIdRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostGetUserIdRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostGetUserIdError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostGetUserIdResponse, truapi::CallError<versioned::account::HostGetUserIdError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostGetUserIdResponse, truapi::CallError<versioned::account::HostGetUserIdError>> =
@@ -381,18 +296,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::ACCOUNT_REQUEST_LOGIN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ACCOUNT_REQUEST_LOGIN, move |request_id: String, request: versioned::account::HostRequestLoginRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::account::HostRequestLoginRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::account::HostRequestLoginError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::account::HostRequestLoginResponse, truapi::CallError<versioned::account::HostRequestLoginError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::account::HostRequestLoginResponse, truapi::CallError<versioned::account::HostRequestLoginError>> =
@@ -415,17 +321,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::CHAIN_FOLLOW_HEAD_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::CHAIN_FOLLOW_HEAD_SUBSCRIBE, move |request_id: String, request: versioned::chain::RemoteChainHeadFollowRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadFollowRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadFollowError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.follow_head_subscribe(&cx, request).await;
@@ -447,18 +345,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_HEADER, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_HEADER, move |request_id: String, request: versioned::chain::RemoteChainHeadHeaderRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadHeaderRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadHeaderError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadHeaderResponse, truapi::CallError<versioned::chain::RemoteChainHeadHeaderError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadHeaderResponse, truapi::CallError<versioned::chain::RemoteChainHeadHeaderError>> =
@@ -475,18 +364,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_BODY, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_BODY, move |request_id: String, request: versioned::chain::RemoteChainHeadBodyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadBodyRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadBodyError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadBodyResponse, truapi::CallError<versioned::chain::RemoteChainHeadBodyError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadBodyResponse, truapi::CallError<versioned::chain::RemoteChainHeadBodyError>> =
@@ -503,18 +383,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_STORAGE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_HEAD_STORAGE, move |request_id: String, request: versioned::chain::RemoteChainHeadStorageRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadStorageRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadStorageError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadStorageResponse, truapi::CallError<versioned::chain::RemoteChainHeadStorageError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadStorageResponse, truapi::CallError<versioned::chain::RemoteChainHeadStorageError>> =
@@ -531,18 +402,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_CALL_HEAD, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_CALL_HEAD, move |request_id: String, request: versioned::chain::RemoteChainHeadCallRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadCallRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadCallError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadCallResponse, truapi::CallError<versioned::chain::RemoteChainHeadCallError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadCallResponse, truapi::CallError<versioned::chain::RemoteChainHeadCallError>> =
@@ -559,18 +421,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_UNPIN_HEAD, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_UNPIN_HEAD, move |request_id: String, request: versioned::chain::RemoteChainHeadUnpinRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadUnpinRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadUnpinError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadUnpinResponse, truapi::CallError<versioned::chain::RemoteChainHeadUnpinError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadUnpinResponse, truapi::CallError<versioned::chain::RemoteChainHeadUnpinError>> =
@@ -587,18 +440,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_CONTINUE_HEAD, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_CONTINUE_HEAD, move |request_id: String, request: versioned::chain::RemoteChainHeadContinueRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadContinueRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadContinueError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadContinueResponse, truapi::CallError<versioned::chain::RemoteChainHeadContinueError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadContinueResponse, truapi::CallError<versioned::chain::RemoteChainHeadContinueError>> =
@@ -615,18 +459,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_STOP_HEAD_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_STOP_HEAD_OPERATION, move |request_id: String, request: versioned::chain::RemoteChainHeadStopOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainHeadStopOperationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainHeadStopOperationError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainHeadStopOperationResponse, truapi::CallError<versioned::chain::RemoteChainHeadStopOperationError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainHeadStopOperationResponse, truapi::CallError<versioned::chain::RemoteChainHeadStopOperationError>> =
@@ -643,18 +478,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_GENESIS_HASH, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_GENESIS_HASH, move |request_id: String, request: versioned::chain::RemoteChainSpecGenesisHashRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainSpecGenesisHashRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainSpecGenesisHashError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainSpecGenesisHashResponse, truapi::CallError<versioned::chain::RemoteChainSpecGenesisHashError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainSpecGenesisHashResponse, truapi::CallError<versioned::chain::RemoteChainSpecGenesisHashError>> =
@@ -671,18 +497,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_CHAIN_NAME, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_CHAIN_NAME, move |request_id: String, request: versioned::chain::RemoteChainSpecChainNameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainSpecChainNameRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainSpecChainNameError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainSpecChainNameResponse, truapi::CallError<versioned::chain::RemoteChainSpecChainNameError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainSpecChainNameResponse, truapi::CallError<versioned::chain::RemoteChainSpecChainNameError>> =
@@ -699,18 +516,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_PROPERTIES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_SPEC_PROPERTIES, move |request_id: String, request: versioned::chain::RemoteChainSpecPropertiesRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainSpecPropertiesRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainSpecPropertiesError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainSpecPropertiesResponse, truapi::CallError<versioned::chain::RemoteChainSpecPropertiesError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainSpecPropertiesResponse, truapi::CallError<versioned::chain::RemoteChainSpecPropertiesError>> =
@@ -727,18 +535,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_BROADCAST_TRANSACTION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_BROADCAST_TRANSACTION, move |request_id: String, request: versioned::chain::RemoteChainTransactionBroadcastRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainTransactionBroadcastRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainTransactionBroadcastError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainTransactionBroadcastResponse, truapi::CallError<versioned::chain::RemoteChainTransactionBroadcastError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainTransactionBroadcastResponse, truapi::CallError<versioned::chain::RemoteChainTransactionBroadcastError>> =
@@ -755,18 +554,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAIN_STOP_TRANSACTION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_STOP_TRANSACTION, move |request_id: String, request: versioned::chain::RemoteChainTransactionStopRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainTransactionStopRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainTransactionStopError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainTransactionStopResponse, truapi::CallError<versioned::chain::RemoteChainTransactionStopError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainTransactionStopResponse, truapi::CallError<versioned::chain::RemoteChainTransactionStopError>> =
@@ -783,18 +573,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::CHAIN_GET_CHAIN_INFO, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAIN_GET_CHAIN_INFO, move |request_id: String, request: versioned::chain::RemoteChainInfoRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chain::RemoteChainInfoRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chain::RemoteChainInfoError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chain::RemoteChainInfoResponse, truapi::CallError<versioned::chain::RemoteChainInfoError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::chain::RemoteChainInfoResponse, truapi::CallError<versioned::chain::RemoteChainInfoError>> =
@@ -818,18 +599,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAT_CREATE_ROOM, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAT_CREATE_ROOM, move |request_id: String, request: versioned::chat::HostChatCreateRoomRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chat::HostChatCreateRoomRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatCreateRoomError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chat::HostChatCreateRoomResponse, truapi::CallError<versioned::chat::HostChatCreateRoomError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -852,18 +624,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAT_REGISTER_BOT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAT_REGISTER_BOT, move |request_id: String, request: versioned::chat::HostChatRegisterBotRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chat::HostChatRegisterBotRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatRegisterBotError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chat::HostChatRegisterBotResponse, truapi::CallError<versioned::chat::HostChatRegisterBotError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -886,17 +649,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::CHAT_LIST_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::CHAT_LIST_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatListSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chat::HostChatListSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatListSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 if !execution_allowed {
@@ -923,18 +678,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAT_POST_MESSAGE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CHAT_POST_MESSAGE, move |request_id: String, request: versioned::chat::HostChatPostMessageRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chat::HostChatPostMessageRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatPostMessageError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chat::HostChatPostMessageResponse, truapi::CallError<versioned::chat::HostChatPostMessageError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -956,18 +702,10 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
-        dispatcher.on_subscription(wire_table::CHAT_ACTION_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::CHAT_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatActionSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::chat::HostChatActionSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatActionSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 if !execution_allowed {
@@ -991,6 +729,31 @@ where
             })
         });
     }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, request: versioned::chat::HostChatSetRoomFooterRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomFooterError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> =
+                    match host.set_room_footer(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomFooterResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
 }
 
 fn register_coin_payment<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
@@ -999,18 +762,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_PURSE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_PURSE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentCreatePurseRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentCreatePurseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentCreatePurseError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::coin_payment::HostCoinPaymentCreatePurseResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreatePurseError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::coin_payment::HostCoinPaymentCreatePurseResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreatePurseError>> =
@@ -1027,18 +781,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::COIN_PAYMENT_QUERY_PURSE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::COIN_PAYMENT_QUERY_PURSE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentQueryPurseRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentQueryPurseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentQueryPurseError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::coin_payment::HostCoinPaymentQueryPurseResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentQueryPurseError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::coin_payment::HostCoinPaymentQueryPurseResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentQueryPurseError>> =
@@ -1055,17 +800,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::COIN_PAYMENT_REBALANCE_PURSE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_REBALANCE_PURSE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentRebalancePurseRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentRebalancePurseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentRebalancePurseError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.rebalance_purse(&cx, request).await;
@@ -1087,17 +824,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::COIN_PAYMENT_DELETE_PURSE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_DELETE_PURSE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentDeletePurseRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentDeletePurseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentDeletePurseError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.delete_purse(&cx, request).await;
@@ -1119,18 +848,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_RECEIVABLE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_RECEIVABLE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentCreateReceivableRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentCreateReceivableRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateReceivableError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::coin_payment::HostCoinPaymentCreateReceivableResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateReceivableError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::coin_payment::HostCoinPaymentCreateReceivableResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateReceivableError>> =
@@ -1147,18 +867,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_CHEQUE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::COIN_PAYMENT_CREATE_CHEQUE, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentCreateChequeRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentCreateChequeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateChequeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::coin_payment::HostCoinPaymentCreateChequeResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateChequeError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::coin_payment::HostCoinPaymentCreateChequeResponse, truapi::CallError<versioned::coin_payment::HostCoinPaymentCreateChequeError>> =
@@ -1175,17 +886,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::COIN_PAYMENT_DEPOSIT, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_DEPOSIT, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentDepositRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentDepositRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentDepositError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.deposit(&cx, request).await;
@@ -1207,17 +910,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::COIN_PAYMENT_REFUND, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_REFUND, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentRefundRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentRefundRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentRefundError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.refund(&cx, request).await;
@@ -1239,17 +934,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_subscription(wire_table::COIN_PAYMENT_LISTEN_FOR_PAYMENT, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::COIN_PAYMENT_LISTEN_FOR_PAYMENT, move |request_id: String, request: versioned::coin_payment::HostCoinPaymentListenForRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::coin_payment::HostCoinPaymentListenForRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::coin_payment::HostCoinPaymentListenForError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.listen_for_payment(&cx, request).await;
@@ -1277,18 +964,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_request(wire_table::CONTACTS_PICK, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::CONTACTS_PICK, move |request_id: String, request: versioned::contacts::HostContactsPickRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::contacts::HostContactsPickRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::contacts::HostContactsPickError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::contacts::HostContactsPickResponse, truapi::CallError<versioned::contacts::HostContactsPickError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::contacts::HostContactsPickResponse, truapi::CallError<versioned::contacts::HostContactsPickError>> =
@@ -1311,18 +989,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_request(wire_table::ENTROPY_DERIVE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::ENTROPY_DERIVE, move |request_id: String, request: versioned::entropy::HostDeriveEntropyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::entropy::HostDeriveEntropyRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::entropy::HostDeriveEntropyError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::entropy::HostDeriveEntropyResponse, truapi::CallError<versioned::entropy::HostDeriveEntropyError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::entropy::HostDeriveEntropyResponse, truapi::CallError<versioned::entropy::HostDeriveEntropyError>> =
@@ -1346,18 +1015,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Widget);
         let host = host;
-        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -1379,24 +1039,64 @@ where
     }
 }
 
+fn register_funding<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Funding + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_REQUEST, move |request_id: String, request: versioned::funding::HostFundingRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::funding::HostFundingResponse, truapi::CallError<versioned::funding::HostFundingError>> =
+                    match host.request(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding::HostFundingResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::FUNDING_STATUS_SUBSCRIBE, move |request_id: String, request: versioned::funding::HostFundingStatusSubscribeRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.status_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::funding::HostFundingStatusSubscribeItem, truapi::CallError<versioned::funding::HostFundingStatusSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::funding::HostFundingStatusSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+}
+
 fn register_game<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
 where
     P: Game + Send + Sync + 'static,
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::GAME_REMIND_NEXT_GAME, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::GAME_REMIND_NEXT_GAME, move |request_id: String, request: versioned::game::HostRemindNextGameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::game::HostRemindNextGameRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::game::HostRemindNextGameError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::game::HostRemindNextGameResponse, truapi::CallError<versioned::game::HostRemindNextGameError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::game::HostRemindNextGameResponse, truapi::CallError<versioned::game::HostRemindNextGameError>> =
@@ -1413,18 +1113,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::GAME_CANCEL_NEXT_GAME, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::GAME_CANCEL_NEXT_GAME, move |request_id: String, request: versioned::game::HostCancelNextGameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::game::HostCancelNextGameRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::game::HostCancelNextGameError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::game::HostCancelNextGameResponse, truapi::CallError<versioned::game::HostCancelNextGameError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::game::HostCancelNextGameResponse, truapi::CallError<versioned::game::HostCancelNextGameError>> =
@@ -1447,18 +1138,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::LOCAL_STORAGE_READ, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::LOCAL_STORAGE_READ, move |request_id: String, request: versioned::local_storage::HostLocalStorageReadRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::local_storage::HostLocalStorageReadRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::local_storage::HostLocalStorageReadError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::local_storage::HostLocalStorageReadResponse, truapi::CallError<versioned::local_storage::HostLocalStorageReadError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::local_storage::HostLocalStorageReadResponse, truapi::CallError<versioned::local_storage::HostLocalStorageReadError>> =
@@ -1475,18 +1157,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::LOCAL_STORAGE_WRITE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::LOCAL_STORAGE_WRITE, move |request_id: String, request: versioned::local_storage::HostLocalStorageWriteRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::local_storage::HostLocalStorageWriteRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::local_storage::HostLocalStorageWriteError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::local_storage::HostLocalStorageWriteResponse, truapi::CallError<versioned::local_storage::HostLocalStorageWriteError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::local_storage::HostLocalStorageWriteResponse, truapi::CallError<versioned::local_storage::HostLocalStorageWriteError>> =
@@ -1503,18 +1176,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::LOCAL_STORAGE_CLEAR, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::LOCAL_STORAGE_CLEAR, move |request_id: String, request: versioned::local_storage::HostLocalStorageClearRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::local_storage::HostLocalStorageClearRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::local_storage::HostLocalStorageClearError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::local_storage::HostLocalStorageClearResponse, truapi::CallError<versioned::local_storage::HostLocalStorageClearError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::local_storage::HostLocalStorageClearResponse, truapi::CallError<versioned::local_storage::HostLocalStorageClearError>> =
@@ -1531,17 +1195,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_subscription(wire_table::LOCAL_STORAGE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::LOCAL_STORAGE_SUBSCRIBE, move |request_id: String, request: versioned::local_storage::HostLocalStorageSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::local_storage::HostLocalStorageSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::local_storage::HostLocalStorageSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.subscribe(&cx, request).await;
@@ -1569,17 +1225,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_subscription(wire_table::LOCALE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::LOCALE_SUBSCRIBE, move |request_id: String, request: versioned::locale::HostLocaleSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::locale::HostLocaleSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::locale::HostLocaleSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.subscribe(&cx, request).await;
@@ -1601,24 +1249,274 @@ where
     }
 }
 
+fn register_nft_purse<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: NftPurse + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_CREATE_PURSE, move |request_id: String, request: versioned::nft_purse::HostNftPurseCreatePurseRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseCreatePurseResponse, truapi::CallError<versioned::nft_purse::HostNftPurseCreatePurseError>> =
+                    match host.create_purse(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseCreatePurseResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_CREATE_ITEMS, move |request_id: String, request: versioned::nft_purse::HostNftPurseCreateItemsRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseCreateItemsResponse, truapi::CallError<versioned::nft_purse::HostNftPurseCreateItemsError>> =
+                    match host.create_items(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseCreateItemsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_QUERY_PURSE, move |request_id: String, request: versioned::nft_purse::HostNftPurseQueryPurseRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseQueryPurseResponse, truapi::CallError<versioned::nft_purse::HostNftPurseQueryPurseError>> =
+                    match host.query_purse(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseQueryPurseResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_LIST_PURSES, move |request_id: String, request: versioned::nft_purse::HostNftPurseListPursesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseListPursesResponse, truapi::CallError<versioned::nft_purse::HostNftPurseListPursesError>> =
+                    match host.list_purses(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseListPursesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::NFT_PURSE_REBALANCE_PURSE, move |request_id: String, request: versioned::nft_purse::HostNftPurseRebalancePurseRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.rebalance_purse(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseRebalancePurseItem, truapi::CallError<versioned::nft_purse::HostNftPurseRebalancePurseError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseRebalancePurseItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_CREATE_RECEIVE_KEY, move |request_id: String, request: versioned::nft_purse::HostNftPurseCreateReceiveKeyRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse, truapi::CallError<versioned::nft_purse::HostNftPurseCreateReceiveKeyError>> =
+                    match host.create_receive_key(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_FOR_PAYMENT, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenForPaymentRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.listen_for_payment(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseListenForPaymentItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenForPaymentError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseListenForPaymentItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_CREATE_CHEQUE, move |request_id: String, request: versioned::nft_purse::HostNftPurseCreateChequeRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseCreateChequeResponse, truapi::CallError<versioned::nft_purse::HostNftPurseCreateChequeError>> =
+                    match host.create_cheque(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseCreateChequeResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_REVOKE_CHEQUE, move |request_id: String, request: versioned::nft_purse::HostNftPurseRevokeChequeRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseRevokeChequeResponse, truapi::CallError<versioned::nft_purse::HostNftPurseRevokeChequeError>> =
+                    match host.revoke_cheque(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseRevokeChequeResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::NFT_PURSE_DEPOSIT, move |request_id: String, request: versioned::nft_purse::HostNftPurseDepositRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.deposit(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseDepositItem, truapi::CallError<versioned::nft_purse::HostNftPurseDepositError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseDepositItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::NFT_PURSE_REFUND, move |request_id: String, request: versioned::nft_purse::HostNftPurseRefundRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.refund(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseRefundItem, truapi::CallError<versioned::nft_purse::HostNftPurseRefundError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseRefundItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::NFT_PURSE_TRANSFER_ITEM, move |request_id: String, request: versioned::nft_purse::HostNftPurseTransferItemRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.transfer_item(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseTransferItemItem, truapi::CallError<versioned::nft_purse::HostNftPurseTransferItemError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseTransferItemItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+}
+
 fn register_notifications<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
 where
     P: Notifications + Send + Sync + 'static,
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::NOTIFICATIONS_SEND_PUSH_NOTIFICATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::NOTIFICATIONS_SEND_PUSH_NOTIFICATION, move |request_id: String, request: versioned::notifications::HostPushNotificationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::notifications::HostPushNotificationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::notifications::HostPushNotificationError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::notifications::HostPushNotificationResponse, truapi::CallError<versioned::notifications::HostPushNotificationError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::notifications::HostPushNotificationResponse, truapi::CallError<versioned::notifications::HostPushNotificationError>> =
@@ -1635,18 +1533,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION, move |request_id: String, request: versioned::notifications::HostPushNotificationCancelRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::notifications::HostPushNotificationCancelRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::notifications::HostPushNotificationCancelError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::notifications::HostPushNotificationCancelResponse, truapi::CallError<versioned::notifications::HostPushNotificationCancelError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::notifications::HostPushNotificationCancelResponse, truapi::CallError<versioned::notifications::HostPushNotificationCancelError>> =
@@ -1669,17 +1558,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::PAYMENT_BALANCE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::PAYMENT_BALANCE_SUBSCRIBE, move |request_id: String, request: versioned::payment::HostPaymentBalanceSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::payment::HostPaymentBalanceSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::payment::HostPaymentBalanceSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.balance_subscribe(&cx, request).await;
@@ -1701,18 +1582,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::PAYMENT_REQUEST, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PAYMENT_REQUEST, move |request_id: String, request: versioned::payment::HostPaymentRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::payment::HostPaymentRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::payment::HostPaymentError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::payment::HostPaymentResponse, truapi::CallError<versioned::payment::HostPaymentError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::payment::HostPaymentResponse, truapi::CallError<versioned::payment::HostPaymentError>> =
@@ -1729,17 +1601,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::PAYMENT_STATUS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::PAYMENT_STATUS_SUBSCRIBE, move |request_id: String, request: versioned::payment::HostPaymentStatusSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::payment::HostPaymentStatusSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::payment::HostPaymentStatusSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.status_subscribe(&cx, request).await;
@@ -1760,19 +1624,10 @@ where
         });
     }
     {
-        let host = host;
-        dispatcher.on_request(wire_table::PAYMENT_TOP_UP, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PAYMENT_TOP_UP, move |request_id: String, request: versioned::payment::HostPaymentTopUpRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::payment::HostPaymentTopUpRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::payment::HostPaymentTopUpError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::payment::HostPaymentTopUpResponse, truapi::CallError<versioned::payment::HostPaymentTopUpError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::payment::HostPaymentTopUpResponse, truapi::CallError<versioned::payment::HostPaymentTopUpError>> =
@@ -1787,6 +1642,30 @@ where
             })
         });
     }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::PAYMENT_TOP_UP_STATUS_SUBSCRIBE, move |request_id: String, request: versioned::payment::HostPaymentTopUpStatusSubscribeRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.top_up_status_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::payment::HostPaymentTopUpStatusSubscribeItem, truapi::CallError<versioned::payment::HostPaymentTopUpStatusSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::payment::HostPaymentTopUpStatusSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
 }
 
 fn register_permissions<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
@@ -1795,18 +1674,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::PERMISSIONS_REQUEST_DEVICE_PERMISSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PERMISSIONS_REQUEST_DEVICE_PERMISSION, move |request_id: String, request: versioned::permissions::HostDevicePermissionRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::permissions::HostDevicePermissionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::permissions::HostDevicePermissionError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::permissions::HostDevicePermissionResponse, truapi::CallError<versioned::permissions::HostDevicePermissionError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::permissions::HostDevicePermissionResponse, truapi::CallError<versioned::permissions::HostDevicePermissionError>> =
@@ -1823,18 +1693,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::PERMISSIONS_REQUEST_REMOTE_PERMISSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PERMISSIONS_REQUEST_REMOTE_PERMISSION, move |request_id: String, request: versioned::permissions::RemotePermissionRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::permissions::RemotePermissionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::permissions::RemotePermissionError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::permissions::RemotePermissionResponse, truapi::CallError<versioned::permissions::RemotePermissionError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::permissions::RemotePermissionResponse, truapi::CallError<versioned::permissions::RemotePermissionError>> =
@@ -1851,18 +1712,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::PERMISSIONS_AUTHORIZE_REMOTE_PERMISSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PERMISSIONS_AUTHORIZE_REMOTE_PERMISSION, move |request_id: String, request: versioned::permissions::RemotePermissionRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::permissions::RemotePermissionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::permissions::RemotePermissionError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::permissions::RemotePermissionResponse, truapi::CallError<versioned::permissions::RemotePermissionError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::permissions::RemotePermissionResponse, truapi::CallError<versioned::permissions::RemotePermissionError>> =
@@ -1879,18 +1731,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::PERMISSIONS_AUTHORIZE_DEVICE_PERMISSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PERMISSIONS_AUTHORIZE_DEVICE_PERMISSION, move |request_id: String, request: versioned::permissions::HostDevicePermissionRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::permissions::HostDevicePermissionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::permissions::HostDevicePermissionError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::permissions::HostDevicePermissionResponse, truapi::CallError<versioned::permissions::HostDevicePermissionError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::permissions::HostDevicePermissionResponse, truapi::CallError<versioned::permissions::HostDevicePermissionError>> =
@@ -1914,17 +1757,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::POCKET_LIST_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::POCKET_LIST_SUBSCRIBE, move |request_id: String, request: versioned::pocket::HostPocketListSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::pocket::HostPocketListSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::pocket::HostPocketListSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 if !execution_allowed {
@@ -1951,18 +1786,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host;
-        dispatcher.on_request(wire_table::POCKET_REMOVE_CARD, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::POCKET_REMOVE_CARD, move |request_id: String, request: versioned::pocket::HostPocketRemoveCardRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::pocket::HostPocketRemoveCardRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::pocket::HostPocketRemoveCardError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::pocket::HostPocketRemoveCardResponse, truapi::CallError<versioned::pocket::HostPocketRemoveCardError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -1990,17 +1816,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::PREIMAGE_LOOKUP_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::PREIMAGE_LOOKUP_SUBSCRIBE, move |request_id: String, request: versioned::preimage::RemotePreimageLookupSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::preimage::RemotePreimageLookupSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::preimage::RemotePreimageLookupSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.lookup_subscribe(&cx, request).await;
@@ -2022,18 +1840,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::PREIMAGE_SUBMIT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::PREIMAGE_SUBMIT, move |request_id: String, request: versioned::preimage::RemotePreimageSubmitRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::preimage::RemotePreimageSubmitRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::preimage::RemotePreimageSubmitError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> =
@@ -2057,17 +1866,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host;
-        dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererActionSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::renderer::HostRendererActionSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::renderer::HostRendererActionSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 if !execution_allowed {
@@ -2099,18 +1900,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_request(wire_table::RESOURCE_ALLOCATION_REQUEST, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::RESOURCE_ALLOCATION_REQUEST, move |request_id: String, request: versioned::resource_allocation::HostRequestResourceAllocationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::resource_allocation::HostRequestResourceAllocationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::resource_allocation::HostRequestResourceAllocationError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::resource_allocation::HostRequestResourceAllocationResponse, truapi::CallError<versioned::resource_allocation::HostRequestResourceAllocationError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::resource_allocation::HostRequestResourceAllocationResponse, truapi::CallError<versioned::resource_allocation::HostRequestResourceAllocationError>> =
@@ -2133,18 +1925,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_request(wire_table::SCANNER_SCAN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SCANNER_SCAN, move |request_id: String, request: versioned::scanner::HostScannerScanRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::scanner::HostScannerScanRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::scanner::HostScannerScanError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::scanner::HostScannerScanResponse, truapi::CallError<versioned::scanner::HostScannerScanError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::scanner::HostScannerScanResponse, truapi::CallError<versioned::scanner::HostScannerScanError>> =
@@ -2167,18 +1950,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION, move |request_id: String, request: versioned::signing::HostCreateTransactionRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostCreateTransactionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostCreateTransactionError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostCreateTransactionResponse, truapi::CallError<versioned::signing::HostCreateTransactionError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostCreateTransactionResponse, truapi::CallError<versioned::signing::HostCreateTransactionError>> =
@@ -2195,18 +1969,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_CREATE_TRANSACTION_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostCreateTransactionWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostCreateTransactionWithLegacyAccountRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostCreateTransactionWithLegacyAccountError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostCreateTransactionWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostCreateTransactionWithLegacyAccountError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostCreateTransactionWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostCreateTransactionWithLegacyAccountError>> =
@@ -2223,18 +1988,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_WITH_LEGACY_ACCOUNT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostSignRawWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignRawWithLegacyAccountRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignRawWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignRawWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError>> =
@@ -2251,18 +2007,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_SIGN_PAYLOAD_WITH_LEGACY_ACCOUNT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_PAYLOAD_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostSignPayloadWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignPayloadWithLegacyAccountRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignPayloadWithLegacyAccountError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignPayloadWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignPayloadWithLegacyAccountError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignPayloadWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignPayloadWithLegacyAccountError>> =
@@ -2279,18 +2026,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW, move |request_id: String, request: versioned::signing::HostSignRawRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignRawRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignRawError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignRawResponse, truapi::CallError<versioned::signing::HostSignRawError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignRawResponse, truapi::CallError<versioned::signing::HostSignRawError>> =
@@ -2307,18 +2045,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_SIGN_PAYLOAD, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_PAYLOAD, move |request_id: String, request: versioned::signing::HostSignPayloadRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignPayloadRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignPayloadError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignPayloadResponse, truapi::CallError<versioned::signing::HostSignPayloadError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignPayloadResponse, truapi::CallError<versioned::signing::HostSignPayloadError>> =
@@ -2335,18 +2064,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_UNWATERMARKED_DEPRECATED, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_UNWATERMARKED_DEPRECATED, move |request_id: String, request: versioned::signing::HostSignRawRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignRawRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignRawError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignRawResponse, truapi::CallError<versioned::signing::HostSignRawError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignRawResponse, truapi::CallError<versioned::signing::HostSignRawError>> =
@@ -2363,18 +2083,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_UNWATERMARKED_DEPRECATED_WITH_LEGACY_ACCOUNT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SIGNING_SIGN_RAW_UNWATERMARKED_DEPRECATED_WITH_LEGACY_ACCOUNT, move |request_id: String, request: versioned::signing::HostSignRawWithLegacyAccountRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::signing::HostSignRawWithLegacyAccountRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::signing::HostSignRawWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::signing::HostSignRawWithLegacyAccountResponse, truapi::CallError<versioned::signing::HostSignRawWithLegacyAccountError>> =
@@ -2397,17 +2108,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::STATEMENT_STORE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::STATEMENT_STORE_SUBSCRIBE, move |request_id: String, request: versioned::statement_store::RemoteStatementStoreSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::statement_store::RemoteStatementStoreSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::statement_store::RemoteStatementStoreSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.subscribe(&cx, request).await;
@@ -2429,18 +2132,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::STATEMENT_STORE_CREATE_PROOF, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::STATEMENT_STORE_CREATE_PROOF, move |request_id: String, request: versioned::statement_store::RemoteStatementStoreCreateProofRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::statement_store::RemoteStatementStoreCreateProofRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::statement_store::RemoteStatementStoreCreateProofResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::statement_store::RemoteStatementStoreCreateProofResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofError>> =
@@ -2457,18 +2151,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::STATEMENT_STORE_CREATE_PROOF_AUTHORIZED, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::STATEMENT_STORE_CREATE_PROOF_AUTHORIZED, move |request_id: String, request: versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedError>> =
@@ -2485,18 +2170,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::STATEMENT_STORE_SUBMIT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::STATEMENT_STORE_SUBMIT, move |request_id: String, request: versioned::statement_store::RemoteStatementStoreSubmitRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::statement_store::RemoteStatementStoreSubmitRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::statement_store::RemoteStatementStoreSubmitError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::statement_store::RemoteStatementStoreSubmitResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreSubmitError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::statement_store::RemoteStatementStoreSubmitResponse, truapi::CallError<versioned::statement_store::RemoteStatementStoreSubmitError>> =
@@ -2519,18 +2195,9 @@ where
 {
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SYSTEM_HANDSHAKE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SYSTEM_HANDSHAKE, move |request_id: String, request: versioned::system::HostHandshakeRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::system::HostHandshakeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::system::HostHandshakeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::system::HostHandshakeResponse, truapi::CallError<versioned::system::HostHandshakeError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::system::HostHandshakeResponse, truapi::CallError<versioned::system::HostHandshakeError>> =
@@ -2547,18 +2214,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SYSTEM_FEATURE_SUPPORTED, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SYSTEM_FEATURE_SUPPORTED, move |request_id: String, request: versioned::system::HostFeatureSupportedRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::system::HostFeatureSupportedRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::system::HostFeatureSupportedError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::system::HostFeatureSupportedResponse, truapi::CallError<versioned::system::HostFeatureSupportedError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::system::HostFeatureSupportedResponse, truapi::CallError<versioned::system::HostFeatureSupportedError>> =
@@ -2575,18 +2233,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SYSTEM_NAVIGATE_TO, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SYSTEM_NAVIGATE_TO, move |request_id: String, request: versioned::system::HostNavigateToRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::system::HostNavigateToRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::system::HostNavigateToError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::system::HostNavigateToResponse, truapi::CallError<versioned::system::HostNavigateToError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::system::HostNavigateToResponse, truapi::CallError<versioned::system::HostNavigateToError>> =
@@ -2603,18 +2252,9 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_request(wire_table::SYSTEM_HOST_INFO, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SYSTEM_HOST_INFO, move |request_id: String, request: versioned::system::HostInfoRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::system::HostInfoRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::system::HostInfoError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::system::HostInfoResponse, truapi::CallError<versioned::system::HostInfoError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::system::HostInfoResponse, truapi::CallError<versioned::system::HostInfoError>> =
@@ -2631,18 +2271,9 @@ where
     }
     {
         let host = host;
-        dispatcher.on_request(wire_table::SYSTEM_GET_PRODUCT_CONTEXT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::SYSTEM_GET_PRODUCT_CONTEXT, move |request_id: String, request: versioned::system::HostGetProductContextRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::system::HostGetProductContextRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::system::HostGetProductContextError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::system::HostGetProductContextResponse, truapi::CallError<versioned::system::HostGetProductContextError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 let result: Result<versioned::system::HostGetProductContextResponse, truapi::CallError<versioned::system::HostGetProductContextError>> =
@@ -2665,17 +2296,9 @@ where
 {
     {
         let host = host;
-        dispatcher.on_subscription(wire_table::THEME_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+        dispatcher.on_subscription(wire_table::THEME_SUBSCRIBE, move |request_id: String, request: versioned::theme::HostThemeSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::theme::HostThemeSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::theme::HostThemeSubscribeError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        return Err(subscription_interrupt(error));
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
                 let stream = host.subscribe(&cx, request).await;
@@ -2704,18 +2327,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::worker::HostWorkerBeginOperationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::worker::HostWorkerBeginOperationError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::worker::HostWorkerBeginOperationResponse, truapi::CallError<versioned::worker::HostWorkerBeginOperationError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
@@ -2738,18 +2352,9 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host;
-        dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+        dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
-                let request: versioned::worker::HostWorkerEndOperationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::worker::HostWorkerEndOperationError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> = Err(error);
-                        return result.encode();
-                    }
-                };
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {

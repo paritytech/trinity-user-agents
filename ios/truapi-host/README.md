@@ -56,15 +56,16 @@ binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
 Swift.
 
 The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by
-the `iOS package (Swift + WebKit)` job instead, which builds a simulator-only
-debug XCFramework from the pull request source, compiles the package tests,
-and runs the network permission suite in WKWebView. It is path-filtered to pull requests touching `ios/`, `Package.swift`, the
-`Makefile`, `js/container/`, or any of the crates the bindings are generated
-from (`truapi`, `truapi-provider`); the
-filter has to name them explicitly, since a protocol change no longer shows up
-as an `ios/` diff.
+the `TrUAPIHost package (Swift + WebKit)` job instead, which compiles the
+package tests against the iOS core the app jobs share, built from the pull
+request source or reused from main when its inputs match, and runs the network
+permission suite in WKWebView. It runs on pull requests touching any input the
+`swift` package in `.github/hosts.json` names, among them `ios/`,
+`Package.swift`, `js/container/` and every crate the bindings are generated
+from, which the list has to name explicitly, since a protocol change no longer
+shows up as an `ios/` diff.
 The Android host job compiles `TrUAPIHost.kt` against generated bindings;
-the separate iOS CI workflow builds and tests the embedding app.
+CI's `iOS app` job, `ios-app.yml`, builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution` methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to refresh your local build outputs. Nothing to commit: CI regenerates them. To publish from a release PR, add `@parity/ios-host <version>` to its `release:` title. After the release commit passes CI, the release workflow rebuilds and simulator-tests the XCFramework on macOS, uploads it, cuts the `<version>` tag, and opens the `Package.swift` follow-up pull request only after the asset is live. `publish.sh` remains available for an ad hoc manual release.
 
@@ -139,14 +140,18 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         store.putBot(botId, name: name, icon: icon) ? .new : .exists
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) throws -> String {
         if case .file = content {
             // Declining a variant is how a host opts out of rendering one.
             // Throw `HostRejection.Rejected` (or a `LocalizedError`) so the
             // product receives your reason rather than a bare type name.
             throw HostRejection.Rejected(reason: "this host cannot render file cards")
         }
-        return store.append(roomId, content: content)
+        return store.append(roomId, content: content, alt: alt)
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) throws {
+        store.setFooter(roomId, footer: footer)
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
@@ -181,6 +186,10 @@ unverified. Contextual output escaping is the host's job.
 
 The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
+`alt` is the product's one-line description of the message, already trimmed
+and screened. Show it where the message is listed rather than drawn, such as a
+chat list preview of a custom card. Only a custom message carries one, since
+every other kind previews from its own content.
 Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
 untrusted: they may name a message in another room, or one that never existed.
 
@@ -233,7 +242,7 @@ back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. An open
 render stream is one worker reference the core holds on the product's behalf;
 the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core
+`requestWorkerTransition`, never on the execution's. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -286,6 +295,19 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+`currentInstallation()` on the runtime bridge returns the 32-byte id of the
+current app installation, the one the host registers for recovery. NFT purse
+item keys are derived under it. Defaults to a rejection, which fails
+`createItems`.
+
+`durableWorkChanged(pending:)` on the runtime bridge reports whether the core
+has durable transactions still awaiting a verdict, starting with the state it
+finds at launch. While it is `true`, schedule a background task (a
+`BGProcessingTask` requiring network connectivity) that awaits
+`runDurableRecovery()`, which returns once nothing is live and throws when
+recovery stopped early, so the task is retried. Defaults to a no-op for a host
+that runs no durable work.
+
 ## Game
 
 A host that can hold reminders implements `GameHostBridge`, passed as `game:`
@@ -323,6 +345,35 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Payments
+
+A host with a wallet serves top-ups, payments and the spendable balance by
+installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
+on the runtime, before any product opens. A runtime without one answers the
+matching calls `Unsupported`.
+
+```swift
+runtime.setTopUp(wallet)
+runtime.setPayments(wallet)
+runtime.setBalance(wallet)
+
+// Later, from the wallet's own status and balance streams:
+runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
+runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
+runtime.notifyBalance(purse: nil, available: "1500000000")
+```
+
+The core checks the session, the source keys, a positive amount and the
+product's balance access, so the host never prompts for balance access. A
+payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
+which the core turns into `Rejected` for a product without balance access. The
+balance is what a payment can spend now, as a decimal string of CASH units.
+
+`topUpStatus` and `paymentStatus` answer the current status of an id inline,
+or `nil` when the host holds none. Every later status goes through
+`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
+core relays each to the products following that id.
+
 ## Architecture
 
 ```text
@@ -358,6 +409,8 @@ Identity and account access reviews use `confirmPermission(review:)`, which also
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
 
+Motion has no container gate: WebKit consults its `requestDeviceOrientationAndMotionPermissionFor` delegate only during the product's user gesture, which a round trip through the container would lose. The embedder's delegate answers it with `TrUAPIProductExecution.authorizeDevicePermission(.motion)`, which resolves the saved decision, consumes a one-use grant, or prompts. WebKit caches the answer per origin in the web view's data store and offers no API to clear it, so within one app launch a product's first motion answer also applies to later requests.
+
 The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
 
 ## SSO session handling
@@ -372,8 +425,8 @@ func prepareDisconnectRequest() -> Data
 `handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
 
 - `.response(message:)` — SCALE-encoded reply; post it back over the same session.
-- `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
-- `.ignored` — the message was not a request; nothing to post.
+- `.disconnected`: the peer ended the session; tear down its transport and records.
+- `.ignored`: nothing to post.
 
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
 
@@ -644,5 +697,5 @@ Build the generated JavaScript SDK before the container: from the repository roo
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
 
 - **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy collides with other xcframeworks in Xcode's flat include dir).
-- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, and so does the `iOS package (Swift + WebKit)` job, which is what puts Swift sources into the package before `xcodebuild` runs.
+- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, which is what puts Swift sources into the package before `xcodebuild` runs.
 - **container** — `npm run build` in `js/container/` (repo root) bundles `src/index.ts` into `Sources/TrUAPIHost/Resources/truapi-container.js`.

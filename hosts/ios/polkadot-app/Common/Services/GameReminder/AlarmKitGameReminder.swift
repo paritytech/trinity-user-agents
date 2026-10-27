@@ -2,6 +2,7 @@ import AlarmKit
 import AppIntents
 import Foundation
 import Keystore_iOS
+import Products
 import SwiftUI
 import Individuality
 
@@ -17,7 +18,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     init(
         alarmManger: AlarmManager,
         settingsManager: SettingsManagerProtocol,
-        keys: GameReminderStorageKeys = .game,
+        keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.alarmManger = alarmManger
@@ -26,13 +27,9 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         self.logger = logger
     }
 
-    func scheduleReminder(gameDate: Date, target: GameReminderTarget, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, productId: ProductId) {
         enqueue { [weak self] in
-            await self?.performScheduleReminder(
-                gameDate: gameDate,
-                target: target,
-                timingSeconds: timingSeconds
-            )
+            await self?.performScheduleReminder(gameDate: gameDate, productId: productId)
         }
     }
 
@@ -58,17 +55,11 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         taskLock.unlock()
     }
 
-    private func performScheduleReminder(
-        gameDate: Date,
-        target: GameReminderTarget,
-        timingSeconds: Int
-    ) async {
+    private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
         guard alarmManger.authorizationState == .authorized else {
             logger.debug("Not authorized, skipping schedule")
             return
         }
-
-        let fireDate = gameDate.addingTimeInterval(-TimeInterval(timingSeconds))
 
         guard fireDate > Date() else {
             logger.debug("Fire date is in the past, skipping")
@@ -93,7 +84,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let newAlarmId = UUID()
 
         do {
-            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, target: target)
+            try await schedule(id: newAlarmId, at: fireDate, productId: productId)
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
@@ -134,13 +125,12 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private func schedule(
         id newAlarmId: UUID,
         at date: Date,
-        timingSeconds: Int,
-        target: GameReminderTarget
+        productId: ProductId
     ) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
                 alert: .init(
-                    title: .Notification.gameNotificationGameStartTitle(String(timingSeconds)),
+                    title: .Notification.gameNotificationGameStartTitle,
                     secondaryButton: .init(
                         text: .Notification.gameAlarmPlayGame,
                         textColor: .textAndIconsPrimaryDark,
@@ -149,18 +139,13 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
                     secondaryButtonBehavior: .custom
                 )
             ),
-            metadata: GameAlarmMetadata(timingSeconds: timingSeconds),
+            metadata: GameAlarmMetadata(),
             tintColor: Color.accentColor
         )
 
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
-        switch target {
-        case let .game(gameIndex):
-            playIntent.gameIndex = Int(gameIndex)
-        case let .product(productId):
-            playIntent.productId = productId
-        }
+        playIntent.productId = productId
 
         _ = try await alarmManger.schedule(
             id: newAlarmId,
@@ -177,6 +162,4 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 }
 
 @available(iOS 26.1, *)
-struct GameAlarmMetadata: AlarmMetadata {
-    let timingSeconds: Int
-}
+struct GameAlarmMetadata: AlarmMetadata {}

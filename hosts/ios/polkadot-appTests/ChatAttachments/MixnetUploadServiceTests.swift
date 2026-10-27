@@ -6,6 +6,7 @@ import Operation_iOS
 import StructuredConcurrency
 import Testing
 import SDKLogger
+import SubstrateSdk
 
 @testable import polkadot_app
 
@@ -178,6 +179,7 @@ struct MixnetUploadServiceTests {
     @Test("message with existing uploadingInfo is skipped")
     func alreadyUploadedSkipped() async throws {
         let mockLoader = MockHOPFileLoader()
+        mockLoader.uploadEvents = [.onProgress(.init(uploaded: 1, total: 500, uploadedHashes: [Data()]))]
         mockLoader.shouldSuspend = true
 
         let env = makeTestEnv(loaderFactory: MockHOPFileLoaderFactory(loader: mockLoader))
@@ -194,16 +196,19 @@ struct MixnetUploadServiceTests {
             ))
         ))
 
-        _ = try await env.chatManager.sendMessage(
+        let skipped = try await env.chatManager.sendMessage(
             .richText(.init(text: nil, attachments: [uploadedAttachment])),
             status: .outgoing(.new)
         )
         env.service.setup()
 
-        try await Task.sleep(for: .milliseconds(500))
+        // Messages are processed in order, so barrier progress means the skipped message was handled.
+        let barrier = try await env.chatManager.sendMessage(makeUploadContent(), status: .outgoing(.new))
+        let barrierId = makeAttachmentId(message: barrier)
+        try await env.service.waitForFirstEvent(of: barrierId)
 
-        let taskCount = await env.service.context.tasks.count
-        #expect(taskCount == 0)
+        #expect(await env.service.context.state[makeAttachmentId(message: skipped)] == nil)
+        #expect(await Set(env.service.context.tasks.keys) == [barrierId])
 
         env.service.throttle()
     }
@@ -211,16 +216,48 @@ struct MixnetUploadServiceTests {
 
 // MARK: - Helpers
 
+extension UploadRetryPolicy {
+    static let fastRetries = UploadRetryPolicy(maxAttempts: 3, initialDelay: .milliseconds(1))
+}
+
+actor TerminalEventObserver {
+    private var sawFailure: Bool?
+
+    func record(sawFailure value: Bool) {
+        guard sawFailure == nil else { return }
+
+        sawFailure = value
+    }
+
+    /// Polls for the terminal outcome rather than awaiting the collector task directly: racing
+    /// `Task.value` inside a task group has produced CI-only flakes in this suite.
+    /// Returns nil if no terminal event arrived before the deadline.
+    func awaitOutcome(timeout: Duration = .seconds(30)) async -> Bool? {
+        let deadline = ContinuousClock.now + timeout
+
+        while ContinuousClock.now < deadline {
+            if let sawFailure {
+                return sawFailure
+            }
+
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+
+        return nil
+    }
+}
+
 extension MixnetUploadServiceTests {
     struct TestEnv {
         let service: MixnetUploadService
         let chatManager: TestChatManager
     }
 
-    private func makeTestEnv(
+    func makeTestEnv(
         loaderFactory: HOPFileLoaderMaking = MockHOPFileLoaderFactory(),
         nodeProvider: HOPNodeProviding = MockHOPNodeProvider(),
-        allowanceManager: AllowanceManaging = MockAllowanceManager()
+        allowanceManager: AllowanceManaging = MockAllowanceManager(),
+        retryPolicy: UploadRetryPolicy = .fastRetries
     ) -> TestEnv {
         let facade = UserDataStorageTestFacade()
 
@@ -242,6 +279,7 @@ extension MixnetUploadServiceTests {
             uploadContextFactory: uploadContextFactory,
             senderProvider: MockAttachmentsSenderProvider(),
             allowanceManager: allowanceManager,
+            retryPolicy: retryPolicy,
             logger: Logger.shared
         )
 
@@ -253,7 +291,20 @@ extension MixnetUploadServiceTests {
         return TestEnv(service: service, chatManager: chatManager)
     }
 
-    private func makeUploadContent() -> Chat.LocalMessage.Content {
+    func makeDropThenSucceedLoader() -> MockHOPFileLoader {
+        let loader = MockHOPFileLoader()
+        loader.uploadEventsPerAttempt = [
+            [.onError(JSONRPCEngineError.remoteCancelled)],
+            [
+                .onProgress(.init(uploaded: 500, total: 500, uploadedHashes: [Data()])),
+                .onFinished(.chunked(metadata: Data(repeating: 0xFF, count: 32)))
+            ]
+        ]
+
+        return loader
+    }
+
+    func makeUploadContent() -> Chat.LocalMessage.Content {
         let attachment: Chat.LocalMessage.Content.Attachment = .localUploadable(.init(
             relativeLocalPath: localFilePath,
             meta: .general(.init(mimeType: "video/mp4", fileSize: 500)),
@@ -263,14 +314,14 @@ extension MixnetUploadServiceTests {
         return .richText(.init(text: nil, attachments: [attachment]))
     }
 
-    private func makeAttachmentId(message: Chat.LocalMessage) -> AttachmentId {
+    func makeAttachmentId(message: Chat.LocalMessage) -> AttachmentId {
         AttachmentId(
             messageId: message.messageId,
             fileId: localFilePath
         )
     }
 
-    private func awaitTerminalEvent(
+    func awaitTerminalEvent(
         for attachmentId: AttachmentId,
         in service: MixnetUploadService,
         timeout: Duration = .milliseconds(100_000)

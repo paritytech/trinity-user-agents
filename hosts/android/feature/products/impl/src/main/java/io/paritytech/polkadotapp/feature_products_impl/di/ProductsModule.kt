@@ -8,7 +8,9 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
+import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -21,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdPro
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
@@ -68,6 +71,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.r
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.external.ProductExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.ProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProductChatMenuInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -99,6 +104,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.Whitel
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.AccountAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.BalanceAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.NftPurseReadPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.RemotePermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.UserIdentityAccessPermissionHandler
@@ -109,16 +115,17 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.OkHttpRemot
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIconImageLoaderRegistrar
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
@@ -157,6 +164,9 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 internal interface ProductsModule {
+    @Multibinds
+    fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
     @Binds
     @Singleton
     fun bindWidgetSerializer(impl: ScaleWidgetSerializer): JsWidgetSerializer
@@ -168,6 +178,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
 
     @Binds
     @Singleton
@@ -214,7 +227,7 @@ internal interface ProductsModule {
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
 
     @Binds
-    fun bindPocketImageResolver(impl: RealPocketImageResolver): PocketImageResolver
+    fun bindProductImageResolver(impl: RealProductImageResolver): ProductImageResolver
 
     @Binds
     @Singleton
@@ -235,6 +248,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductExternalExtensionProvider(impl: ProductExternalExtensionProvider): ExternalExtensionProvider
+
+    @Binds
+    @IntoSet
+    fun bindProductIconImageLoaderRegistrar(impl: ProductIconImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
     @IntoSet
@@ -319,6 +336,11 @@ internal interface ProductsModule {
     fun bindUserIdentityAccessPermissionHandler(
         impl: UserIdentityAccessPermissionHandler,
     ): ProductPermissionHandler<ProductPermission.UserIdentityAccess>
+
+    @Binds
+    fun bindNftPurseReadPermissionHandler(
+        impl: NftPurseReadPermissionHandler,
+    ): ProductPermissionHandler<ProductPermission.NftPurseRead>
 
     @Binds
     @Singleton

@@ -13,13 +13,14 @@ struct CoinageBalanceBreakdownViewModel {
     let symbol: String
     /// Every holding, in display order, drawn as coins. Clearing leads.
     let strip: [CoinageScene.Coin]
+    /// What each coin says about itself when tapped, by the coin's id.
+    let traces: [String: CoinageCoinTrace]
 }
 
 protocol AssetDetailsViewModelProtocol: Observation.Observable {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel? { get set }
     var showsBackupNotification: Bool { get set }
     /// This installation's on-chain registration has not landed in the expected time (D4).
-    var showsAccountBackupPending: Bool { get set }
     var fundingStates: [AssetFundingStatusView.FundingState] { get set }
     var isFundingExpanded: Bool { get set }
     var isUpdating: Bool { get set }
@@ -34,8 +35,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 
     var isTopUpInProgress: Bool { get set }
     var onTopUp: (() -> Void)? { get set }
-    var isWithdrawInProgress: Bool { get set }
-    var onWithdraw: (() -> Void)? { get set }
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel? { get set }
     #if TESTNET_FEATURE
@@ -48,7 +47,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel?
     var showsBackupNotification: Bool = false
-    var showsAccountBackupPending: Bool = false
     var fundingStates: [AssetFundingStatusView.FundingState] = []
     var isFundingExpanded: Bool = false
     var isUpdating: Bool = false
@@ -63,8 +61,6 @@ class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
 
     var isTopUpInProgress: Bool = false
     var onTopUp: (() -> Void)?
-    var isWithdrawInProgress: Bool = false
-    var onWithdraw: (() -> Void)?
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel?
     #if TESTNET_FEATURE

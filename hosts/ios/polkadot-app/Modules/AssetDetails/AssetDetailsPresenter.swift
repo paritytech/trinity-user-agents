@@ -29,6 +29,8 @@ final class AssetDetailsPresenter {
     private var holdings: CoinageHoldings = .empty
     /// Ready and Clearing for the real holdings, totalled by the balance service.
     private var coinageAmounts: CoinageAmounts?
+    /// What each denomination is worth, which a tapped coin states in full.
+    private var denominations: DenominationBreakdownContext?
     /// Loaded from chain state; the balance is shown against it.
     private var price: PriceData?
     let logger: LoggerProtocol
@@ -126,11 +128,9 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        openRampProduct(.topUp)
-    }
+        view?.didReceive(topUpLoading: true)
 
-    func onWithdraw() {
-        openRampProduct(.withdraw)
+        interactor?.openTopUpProduct()
     }
 
     #if TESTNET_FEATURE
@@ -143,21 +143,26 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>) {
-        view?.didReceive(rampLoading: action, isLoading: false)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
+        view?.didReceive(topUpLoading: false)
 
         switch result {
         case let .success(page):
             wireframe.showProduct(page: page)
         case let .failure(error):
             guard !(error is CancellationError) else { return }
-            wireframe.present(error: action.errorContent(for: error), from: view)
+            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
         }
     }
 
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    ) {
         self.coinageAmounts = coinageAmounts
         self.holdings = holdings
+        self.denominations = denominations
         provideAssetBalance()
         provideCoinageBreakdown()
     }
@@ -193,10 +198,6 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
 
     func didReceive(isRecoveryInProgress: Bool) {
         view?.didReceive(isRecoveryInProgress: isRecoveryInProgress)
-    }
-
-    func didReceive(isAccountBackupPending: Bool) {
-        view?.didReceive(isAccountBackupPending: isAccountBackupPending)
     }
 
     func didReceive(showsRecoveredBalance: Bool) {
@@ -304,22 +305,18 @@ private extension AssetDetailsPresenter {
         // a label on one small line, where the headline above has already said what is counted.
         let figureInfo = chainAsset.asset.digitalDollarFigureDisplayInfo
         let strip = CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings))
+        let traces = CoinageBreakdownFactory.traces(from: holdings) { exponent in
+            formatted(from: denominations?.amount(forExponent: exponent) ?? 0, as: figureInfo)
+        }
 
         let breakdown = CoinageBalanceBreakdownViewModel(
             totalBalance: formatted(from: amounts.total, as: figureInfo),
             availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
             gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
-            strip: strip
+            strip: strip,
+            traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func openRampProduct(_ action: RampAction) {
-        view?.didReceive(rampLoading: action, isLoading: true)
-
-        interactor?.openRampProduct(action)
     }
 }

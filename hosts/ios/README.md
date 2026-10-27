@@ -23,7 +23,6 @@ If you experience problems with any product or service that was built on or depl
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
-- **Personhood** — Upgrade your username to a higher allowance via Proof-of-Personhood by playing the DIM2 videocall gesture game. Game rewards and collectibles can be surfaced through dApps (behind a feature flag).
 - **Chat** — End-to-end p2p encrypted text messaging with media (images/video) and encrypted video/audio calls.
 - **Payments** — Send and receive payments by username or QR code, and directly in chat.
 - **Auto-conversion** — Top up your wallet and auto-convert it into the tokens you want.
@@ -57,6 +56,9 @@ cd polkadot-ios-community
 
 # Scaffold gitignored secret files from templates and generate build-time config.
 ./Runscripts/setup-secrets.sh
+
+# Block commits that add a hardcoded UI string.
+git config core.hooksPath Runscripts/hooks
 
 open polkadot-app.xcodeproj
 ```
@@ -97,7 +99,7 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 ### What it does
 
 1. **Keeps your keys on your device.** Your account is generated locally and protected by the device's secure enclave and Keychain. You choose how to back it up: an encrypted backup in your own iCloud or Google Drive, or no backup at all — keys stored only on the device.
-2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start. Prove personhood by playing the DIM2 videocall gesture game to raise that allowance.
+2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start.
 3. **Lets you chat without a messaging server.** Messages are end-to-end encrypted and delivered through the People Chain statement store, so there is no company inbox holding your conversations. Voice and video calls are encrypted and go directly peer-to-peer over WebRTC.
 4. **Sends money to names, not addresses.** Pick a username (or scan a QR code, or pay right inside a chat) — the app resolves it to an account on-chain and sends the payment. Swaps and auto-conversion run on [Asset Hub](https://wiki.polkadot.com/learn/learn-assets/)'s liquidity pools.
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
@@ -112,6 +114,10 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
+
+Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
+the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
+platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

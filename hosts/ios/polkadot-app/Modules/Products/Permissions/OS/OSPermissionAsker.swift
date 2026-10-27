@@ -5,9 +5,14 @@ import Products
 
 final class OSPermissionAsker: @unchecked Sendable {
     private let notificationService: UserNotificationServicing
+    private let locationAuthorizer: LocationAuthorizing
 
-    init(notificationService: UserNotificationServicing = UserNotificationService.shared) {
+    init(
+        notificationService: UserNotificationServicing = UserNotificationService.shared,
+        locationAuthorizer: LocationAuthorizing = LocationAuthorizationRequester()
+    ) {
         self.notificationService = notificationService
+        self.locationAuthorizer = locationAuthorizer
     }
 }
 
@@ -20,9 +25,13 @@ extension OSPermissionAsker: OSPermissionAsking {
             checkCaptureDeviceStatus(.video)
         case .microphone:
             checkCaptureDeviceStatus(.audio)
+        case .motion:
+            // iOS has no OS gate for motion; WebKit's request is the only one.
+            .allowed
+        case .location:
+            await locationAuthorizer.status()
         case .bluetooth,
              .nfc,
-             .location,
              .clipboard,
              .openUrl,
              .biometrics:
@@ -41,9 +50,12 @@ extension OSPermissionAsker: OSPermissionAsking {
             await askCaptureDevice(.video)
         case .microphone:
             await askCaptureDevice(.audio)
+        case .motion:
+            true
+        case .location:
+            await locationAuthorizer.requestWhenInUse()
         case .bluetooth,
              .nfc,
-             .location,
              .clipboard,
              .openUrl,
              .biometrics:

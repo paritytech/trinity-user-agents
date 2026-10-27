@@ -22,7 +22,9 @@ public struct DSAmount: View {
     }
 
     public var body: some View {
-        text.typography(typography)
+        text
+            .typography(typography)
+            .accessibilityLabel(accessibilityText)
     }
 }
 
@@ -34,7 +36,20 @@ private extension DSAmount {
     var text: Text {
         guard let symbol, !symbol.isEmpty else { return Text(amount) }
 
-        return Text(amount) + Text(" \(symbol)").font(symbolFont)
+        guard CashLogo.draws(symbol) else {
+            return Text(amount) + Text(" \(symbol)").font(symbolFont)
+        }
+
+        return Text(amount) + Text(verbatim: " ") + Text(CashLogo.Wordmark.smallCaps.glyph).font(logoFont)
+    }
+
+    var accessibilityText: String {
+        guard let symbol, !symbol.isEmpty else { return amount }
+        return "\(amount) \(symbol)"
+    }
+
+    var logoFont: Font {
+        Font(CashLogo.font(size: typography.resolvedSpec.size))
     }
 
     var symbolFont: Font {

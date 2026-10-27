@@ -13,6 +13,7 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -32,6 +33,7 @@ import {
   AuthState,
   CoreStorageKey,
   DevicePermissionStatus,
+  ExtensionVersionMap,
   HostChainSet,
   HostContactLookup,
   HostContactMatches,
@@ -66,6 +68,7 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
   ): Promise<Uint8Array>;
+  setChatRoomFooter?(product: Uint8Array, request: Uint8Array): Promise<void>;
   subscribeChatRooms?(
     product: Uint8Array,
     sendItem: (item?: Uint8Array) => void,
@@ -76,6 +79,7 @@ export interface RawCallbacks {
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
   supportedChains(): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
@@ -163,6 +167,11 @@ export function createWasmRawCallbacks(
                 HostChatPostMessageRequest.dec(request),
               ),
             ),
+          setChatRoomFooter: async (product, request) =>
+            await chat.setChatRoomFooter(
+              ProductContext.dec(product),
+              HostChatSetRoomFooterRequest.dec(request),
+            ),
           subscribeChatRooms: (product, sendItem, sendError) =>
             driveResultStream(
               chat.subscribeChatRooms(ProductContext.dec(product)),
@@ -192,6 +201,10 @@ export function createWasmRawCallbacks(
       ),
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+    transactionExtensionVersions: async () =>
+      ExtensionVersionMap.enc(
+        await callbacks.extrinsicVersion.transactionExtensionVersions(),
+      ),
     featureSupported: async (request) =>
       HostFeatureSupportedResponse.enc(
         await callbacks.features.featureSupported(

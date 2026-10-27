@@ -44,7 +44,11 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             wallet: setupResult.wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: AppConfig.Chains.peopleChain,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            )
         )
 
         let facade = ExtrinsicSubmissionMonitorFacade(
@@ -64,10 +68,10 @@ final class BulletinSlotAllocatorTests: XCTestCase {
         )
 
         let allocator: AllowanceSlotAllocating = BulletinSlotAllocator(
-            submissionChainId: AppConfig.Chains.usernameChain,
+            submissionChainId: AppConfig.Chains.peopleChain,
             slotInfoProvider: BulletInSlotInfoProvider(
                 bulletInChainId: AppConfig.Chains.bulletInChain,
-                peopleChainId: AppConfig.Chains.usernameChain,
+                peopleChainId: AppConfig.Chains.peopleChain,
                 chainRegistry: chainRegistry,
                 keyResolver: keyResolver,
                 operationQueue: operationQueue,
@@ -78,6 +82,11 @@ final class BulletinSlotAllocatorTests: XCTestCase {
                         operationQueue: operationQueue
                     ),
                     ttl: 0
+                ),
+                networkSuffixProvider: ChainNetworkSuffixProvider(
+                    chainId: AppConfig.Chains.peopleChain,
+                    chainRegistry: chainRegistry,
+                    storageRequestFactory: storageRequestFactory
                 )
             ),
             originFactory: originFactory,

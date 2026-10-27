@@ -77,13 +77,6 @@ sub.unsubscribe();
 - **Sandbox bootstrap** (`@parity/truapi/sandbox`) that detects the host environment, builds the
   matching provider, and exposes a cached client - see below.
 
-## Development escape hatches
-
-- **`development_createAccountProof(client, request)`** — `account.createAccountProof`
-  with `context` given as the exact 32-byte hex the proof is bound to, instead of a
-  product-namespaced `ProductProofContext`. Yet to be removed before a production
-  release; it lives entirely in `src/development.ts`.
-
 ## Sandbox bootstrap
 
 `@parity/truapi/sandbox` wires up a client for browser-embedded hosts: it detects whether the app
@@ -198,6 +191,8 @@ Cancelling stops the waiting, not necessarily the work. The call still settles w
 A host that predates the `Cancel` leg drops the frame with no reply, and the call then settles on the client's own deadline instead. There is no way to detect that first: `system.featureSupported` answers only about chains, so an abort a host never understood looks the same as one it honoured.
 
 The pair `(255, 255)` is reserved for method-independent protocol errors. When a peer rejects an unknown API message with that frame, requests resolve as `CallError.Unsupported` and subscriptions terminate with an `UnsupportedMessageError` cause carrying the unsupported `(trait, method)` pair.
+
+The host also uses this frame to reject a request in a version it doesn't know. The product sees the same errors as for an unknown method.
 
 ## Generated files
 

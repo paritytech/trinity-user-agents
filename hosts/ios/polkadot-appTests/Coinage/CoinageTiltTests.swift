@@ -92,43 +92,36 @@ struct CoinageTiltTests {
                 let right = neutral.turn(to: pose(gesture(0.4, lean)))
 
                 #expect(abs(magnitude(left) - magnitude(right)) < 1e-9)
-                #expect(abs(left.z + right.z) < 1e-9)
+                #expect(abs(left.y + right.y) < 1e-9)
             }
         }
     }
 
-    @Test("A sideways movement rolls the studio about the axis the coin faces")
-    func sidewaysRollsAboutTheViewAxis() {
-        // A roll about the axis a coin faces cannot care which way it went, which is what makes
-        // the response symmetric.
+    @Test("A sideways movement yaws the studio about the vertical, as the room stays put")
+    func sidewaysYawsAboutTheVertical() {
         for lean in [0.0, 0.5, 0.9, 1.4] {
-            // A roll in the plane of the screen leaves the lean alone, so it is pure roll.
+            // A roll in the plane of the screen leaves the lean alone, so it is pure yaw.
             let turn = pose(rolled(0, lean)).turn(to: pose(rolled(0.4, lean)))
 
             #expect(magnitude(turn) > 1e-6)
             #expect(abs(turn.x) < 1e-9)
-            #expect(abs(turn.y) < 1e-9)
-
-            // Lifting an edge leans the phone as well, so that one carries a pitch besides. It
-            // does nothing at all on an upright phone, where it turns about gravity itself.
-            let lift = pose(lifted(0, lean)).turn(to: pose(lifted(0.4, lean)))
-
-            #expect(abs(lift.z) > 1e-3 || lean < 0.3)
+            #expect(abs(turn.z) < 1e-9)
         }
     }
 
-    @Test("Dipping an edge rolls the room the way the hand went")
-    func rollFollowsTheHand() {
+    @Test("Dipping the right edge turns the studio so a coin mirrors the right wall")
+    func dippingAnEdgeShowsThatWall() {
         let flat = pose(lifted(0, .pi / 2)).turn(to: pose(lifted(0.4, .pi / 2)))
 
-        #expect(flat.z > 0)
+        #expect(flat.y > 0)
     }
 
-    @Test("Leaning back pitches the studio without rolling it")
+    @Test("Leaning back pitches the studio without rolling it, and the other way from the phone")
     func leanIsPurePitch() {
         let back = pose(gravity(lean: 0)).turn(to: pose(gravity(lean: 0.4)))
 
-        #expect(back.x > 0)
+        // Negative: the room stays put, so a screen tilted to face upward mirrors the ceiling.
+        #expect(back.x < 0)
         #expect(abs(back.z) < 1e-9)
     }
 
@@ -139,7 +132,8 @@ struct CoinageTiltTests {
         sweep(tilt, from: 0, to: .pi / 6, over: 0.4) { gravity(lean: $0) }
         tilt.advance(by: 1)
 
-        #expect(magnitude(tilt.turn) > 0.4)
+        // Thirty degrees is two thirds of the range, so the studio is two thirds of the way out.
+        #expect(magnitude(tilt.turn) > CoinageTilt.travel * 0.6)
 
         hold(tilt, at: gravity(lean: .pi / 6), for: 3)
         tilt.advance(by: 1)
@@ -250,6 +244,6 @@ struct CoinageParamsTests {
         #expect(bytes % CoinageAssetStore.Params.alignment == 0)
         // CoinParams in CoinageCoin.metal. Recheck with a static_assert in a scratch .metal file if
         // a field is added and this starts failing.
-        #expect(bytes == 128)
+        #expect(bytes == 200)
     }
 }

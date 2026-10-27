@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 import java.text.Normalizer
 
 /**
@@ -85,7 +85,7 @@ internal fun productStorageKeyOwner(key: String): String? {
     return runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
 }
 
-/** Matches the core's `normalize_product_identifier`, the form written into keys. */
+/** Matches the normalization in the core's `ProductId::parse`, the form written into keys. */
 internal fun normalizeProductId(productId: String): String =
     Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 

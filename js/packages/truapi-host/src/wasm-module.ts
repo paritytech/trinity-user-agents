@@ -45,16 +45,32 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** The long-lived pairing-host runtime product cores are created from. */
-export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime {
+/** The long-lived runtime product cores are created from, in either role. */
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
+  notifyContactsChanged(): void;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
+  /**
+   * Take one reference on the product's worker. The first one reports
+   * `"Start"` through the runtime's `requestWorkerTransition` callback.
+   */
+  acquireWorker(productId: string): void;
+  /**
+   * Release one reference. The last one reports `"Stop"` the same way.
+   */
+  releaseWorker(productId: string): void;
+  free(): void;
+}
+
+/** The pairing-host runtime: the user's keys live in a paired wallet. */
+export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
-  notifyContactsChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
@@ -65,18 +81,6 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
-  /** Only on a core built with `test-host`. */
-  setSubmitPreimagesLocally?(local: boolean): void;
-  /**
-   * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `workerDemandChanged` callback.
-   */
-  acquireWorker(productId: string): void;
-  /**
-   * Release one reference. The last one reports `"Stop"` the same way.
-   */
-  releaseWorker(productId: string): void;
-  free(): void;
 }
 
 /**
@@ -86,17 +90,19 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
  * entropy rather than by pairing with a wallet. The production `web` bundle is
  * built without it on purpose, so this is optional on the module surface.
  */
-export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
+export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+  /** Derived from the active session root, so it never waits. */
+  productSubtreePublicKey(productId: string): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  /** Only on a core built with `wasm-signing-host`. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with. Optional: a core built before this
    * entry point existed exposes only {@link activateLocalSession}.
    */
-  /** Only on a core built with `wasm-signing-host`. */
-  setGrantAllowancesUnchecked?(granted: boolean): void;
-  /** Only on a core built with `wasm-signing-host`. */
-  setWithheldResources?(tags: string[]): void;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string | null,

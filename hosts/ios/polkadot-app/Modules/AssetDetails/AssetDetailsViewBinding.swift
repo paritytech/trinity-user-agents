@@ -70,10 +70,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
             presenter?.onTopUp()
         }
 
-        viewModel.onWithdraw = { [weak presenter] in
-            presenter?.onWithdraw()
-        }
-
         #if TESTNET_FEATURE
             viewModel.onTestnetTopUp = { [weak presenter] in
                 presenter?.onTestnetTopUp()
@@ -143,12 +139,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         viewModel.isUpdating = isRecoveryInProgress
     }
 
-    func didReceive(isAccountBackupPending: Bool) {
-        withAnimation(.easeInOut) {
-            viewModel.showsAccountBackupPending = isAccountBackupPending
-        }
-    }
-
     func didShowBackupNotification() {
         guard animatesBackupNotificationUpdates else {
             viewModel.showsBackupNotification = true
@@ -166,11 +156,8 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         }
     }
 
-    func didReceive(rampLoading action: RampAction, isLoading: Bool) {
-        switch action {
-        case .topUp: viewModel.isTopUpInProgress = isLoading
-        case .withdraw: viewModel.isWithdrawInProgress = isLoading
-        }
+    func didReceive(topUpLoading isLoading: Bool) {
+        viewModel.isTopUpInProgress = isLoading
     }
 
     private func emitCardUpdate() {

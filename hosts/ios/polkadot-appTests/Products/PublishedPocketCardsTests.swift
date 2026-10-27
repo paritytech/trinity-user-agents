@@ -1,5 +1,7 @@
 import Foundation
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 @testable import polkadot_app
 
@@ -142,6 +144,38 @@ struct PublishedPocketCardsTests {
             try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
         }
     }
+
+    // MARK: - The face a card opens with
+
+    @Test
+    func opensACardWithItsFaceAwayWhenItsProductPublishesItSo() async {
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+
+        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
+
+        #expect(!faceShown)
+    }
+
+    /// A chain read that hangs must not fold the face long after the card
+    /// opened, nor keep running once the open stops counting on its answer.
+    @Test
+    func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async throws {
+        let clock = ManualClock()
+
+        try await confirmation { lookupStopped in
+            let cards = LateCards(clock: clock) { lookupStopped() }
+            let opening = Task {
+                await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .seconds(5), clock: clock)
+            }
+
+            try await withTimeout(.hangGuard) { await clock.resumeSleep(for: .seconds(5)) }
+            let faceShown = try await withTimeout(.hangGuard) {
+                await withTaskCancellationHandler { await opening.value } onCancel: { opening.cancel() }
+            }
+
+            #expect(faceShown)
+        }
+    }
 }
 
 // MARK: - Fixtures
@@ -151,6 +185,15 @@ private let loyalty = PocketCardDefinition(
     title: "Loyalty",
     preview: .archive(path: "faces/loyalty.json")
 )
+
+private let faceAwayLoyalty = PocketCardDefinition(
+    id: PocketCardId(value: "loyalty"),
+    title: "Loyalty",
+    preview: .archive(path: "faces/loyalty.json"),
+    faceShown: false
+)
+
+private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
 
 private let debugLoyalty = PocketCardDefinition(
     id: PocketCardId(value: "loyalty"),
@@ -178,4 +221,25 @@ private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResol
         executables: ProductExecutables(app: nil, widget: nil, worker: worker),
         hasManifest: true
     ))
+}
+
+/// Publishes the card with its face away ten seconds after being asked on
+/// `clock`, unless cancelled first, which it reports.
+private struct LateCards: PublishedPocketCardsResolving {
+    let clock: ManualClock
+    let onCancel: @Sendable () -> Void
+
+    func find(productId: ProductId, cardId _: PocketCardId) async throws -> PublishedPocketCard {
+        try await withTaskCancellationHandler {
+            try await clock.sleep(for: .seconds(10))
+            return PublishedPocketCard(
+                productId: productId,
+                productName: "Game",
+                workerContentId: productId,
+                definition: faceAwayLoyalty
+            )
+        } onCancel: {
+            onCancel()
+        }
+    }
 }

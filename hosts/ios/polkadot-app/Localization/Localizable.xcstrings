@@ -12,6 +12,88 @@
         }
       }
     },
+    "%@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "payments.setup.notice.dismiss" : {
+      "comment" : "Accessibility label of the close button on the payments setup notice",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss"
+          }
+        }
+      }
+    },
+    "payments.setup.notice.message" : {
+      "comment" : "Notice at the top of the app while a payment waits for the installation's on-chain backup to complete",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We're still setting up payments. You can keep using them, but settlement will be delayed until setup is finished."
+          }
+        }
+      }
+    },
+    "settings.cell.payments.backup" : {
+      "comment" : "Settings row showing the installation's on-chain backup status",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payments backup"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.completed" : {
+      "comment" : "Payments backup status once the registration is final",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completed"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.delayed" : {
+      "comment" : "Payments backup status when the registration did not land in the expected time",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delayed"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.registering" : {
+      "comment" : "Payments backup status while the registration is being submitted",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In progress"
+          }
+        }
+      }
+    },
     "≈ %@" : {
       "comment" : "A label displaying the fee amount."
     },
@@ -136,6 +218,28 @@
         }
       }
     },
+    "action.get" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get"
+          }
+        }
+      }
+    },
+    "action.get.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add CASH via bank, crypto or credit card"
+          }
+        }
+      }
+    },
     "action.send.cash" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -147,13 +251,13 @@
         }
       }
     },
-    "action.withdraw" : {
+    "action.send.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Withdraw"
+            "value" : "Move CASH to your bank, crypto wallet or contacts"
           }
         }
       }
@@ -444,6 +548,28 @@
         }
       }
     },
+    "chat.call.camera.access.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow camera access in Settings to turn on video during calls."
+          }
+        }
+      }
+    },
+    "chat.call.camera.access.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Access Required"
+          }
+        }
+      }
+    },
     "chat.call.mic.access.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -462,6 +588,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Microphone Access Required"
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video could not be started. The call continues with audio only."
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Unavailable"
           }
         }
       }
@@ -781,6 +929,61 @@
         }
       }
     },
+    "chat.signing.consent.accept" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use username"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.decline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This chat can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message.with.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your chat with %1$(username)@ can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send from your username?"
+          }
+        }
+      }
+    },
     "chat.timestamp.hours" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -877,6 +1080,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You left the chat"
+          }
+        }
+      }
+    },
+    "chatCallRemoteMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@'s microphone is off"
+          }
+        }
+      }
+    },
+    "chatCallSelfMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your microphone is off"
+          }
+        }
+      }
+    },
+    "chatCallStatusConnecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting..."
           }
         }
       }
@@ -1288,17 +1524,6 @@
         }
       }
     },
-    "coinageHideDetails" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hide Details"
-          }
-        }
-      }
-    },
     "coinageLoading" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1306,17 +1531,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Clearing"
-          }
-        }
-      }
-    },
-    "coinageShowDetails" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show Details"
           }
         }
       }
@@ -1343,24 +1557,112 @@
         }
       }
     },
-    "contact.source.description.game" : {
+    "coinageTraceHops" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You both played %1$(ordinalDay)@ %2$(month)@ Game"
+            "value" : "Prior owners: %lld"
           }
         }
       }
     },
-    "contact.source.description.game.generic" : {
+    "coinageTraceQuality" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "You both played the same game"
+            "value" : "Coin Quality: %@"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityFair" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fair"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityGood" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Good"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityHigh" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The degree to which the coin is indistinguishable from other coins"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityInfoAside" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(also known as fungibility)"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityLow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Low"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityUnknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityVeryLow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Very low"
           }
         }
       }
@@ -1438,6 +1740,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Please wait a moment and try again."
+          }
+        }
+      }
+    },
+    "currencyPicker.searchPlaceholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
           }
         }
       }
@@ -2666,6 +2979,28 @@
         }
       }
     },
+    "searchAccount.selfTransfer.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank account or crypto wallet"
+          }
+        }
+      }
+    },
+    "searchAccount.selfTransfer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send to yourself"
+          }
+        }
+      }
+    },
     "searchContact.noRecentSearches" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3216,6 +3551,18 @@
         }
       }
     },
+    "tab.settings.backupNeeded" : {
+      "comment" : "VoiceOver value of the Settings tab while the recovery phrase has no iCloud backup.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup needed"
+          }
+        }
+      }
+    },
     "tab.wallet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3531,17 +3878,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet creation failed with error %@. Please, contact support"
-          }
-        }
-      }
-    },
-    "wallet.main.balanceCard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ Card"
           }
         }
       }

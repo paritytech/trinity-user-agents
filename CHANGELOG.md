@@ -5,6 +5,107 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.26.0] - 2026-10-21
+
+### Added
+
+- build scheduled durable transactions through submission policies (#1470)
+- fork endpoint overrides and an attest command for e2e suites (#1454)
+- let trusted products sign watermarked bytes with the user's account without a prompt (#1548)
+- serve top-ups, payments and balance to the core (#1337)
+- serve top-ups, payments and balance to the core (#1338)
+- resolve local-session usernames from dotNS (#1536)
+- funding sessions, host overlay, native bridge and test host (#1315)
+- add truapi-host stack commands (#1463)
+- add @parity/trinity-stack (#1461)
+- draw images in the Pocket face preview (#1445)
+- add the stack descriptor crate (#1455)
+- host-place Jollity in the chat list (#1417)
+- give each product runtime its own chain connection (#1418)
+- let a Pocket card's page hide or show the face above it (#1347)
+- Hot Reload, open a product from a dev server on the Mac (#1361)
+- username dotns lookup (#1289)
+- opt-in navigation transcript (TRUAPI_NAVIGATIONS_LOG) (#1162)
+
+### Changed
+
+- centralize runtime version conversion (#1421)
+- use a ProductId newtype for product identifiers (#1448)
+- SSO session and responder services (#1515)
+- give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
+- recheck balance access on each pushed balance and keep payment errors append-only (#1464)
+- account fixes  (#1488)
+- split ProductRuntimeHost into ProductConnection and HostSession (#1440)
+- sign personhood through PersonhoodSigner (#1435)
+- add a Motion device permission (#1002)
+- payments by id and balance through host platforms (#1314)
+- remove the raw proof context escape hatch (#554)
+- normalize runtime API versioned handlers (#1403)
+- remove dead-code suppressions (#1401)
+- let a granted PreimageSubmit cover each upload without a second prompt (#1093)
+- resolve usernames from DotNS on Asset Hub (#1390)
+
+### Fixed
+
+- keep a Pocket card under the cards below it while it opens and closes (#1554)
+- leave the same 16 pt card margin as Android in the Pocket (#1483)
+- let trusted products use device permissions without a prompt (#1556)
+- report why a chain-head call or follow failed (#1590)
+- draw renderer images in chat cards (#1496)
+- list a product's chat rooms before its bot is built (#1420)
+- open a Pocket card without the host spinner (#1443)
+- scope chain follow intents and transaction operations per product (#1482)
+- chat requests resolution (#1539)
+- let product chat cards and their buttons fill the available width, as on iOS (#1480)
+- reuse the pooled People-chain connection for statement submits (#1408)
+- stop dropping dotNS pending claims after reservationDuration (#1419)
+- run examples that use optional chaining or nullish coalescing (#1489)
+- retry failed Pocket and dotNS lookups, stop blocking on unknown card removals (#1047)
+- build Bulletin submissions at or after the finalized anchor (#1442)
+- bring back the Pocket collectibles card, opening stash (#1377)
+- clear the nonminimal_bool clippy lint in the wake signal test (#1412)
+- draw Pocket card faces in Berlin Night (#1376)
+- bring back the Pocket collectibles card (#1362)
+- move a Pocket card to the top of its screen instead of sliding up a copy (#1423)
+- unblock the iOS unit tests and prefer the full entry's chat key (#1457)
+- drop contact search results whose username does not match the chain (#1436)
+- stop an execution's chain close invalidating shared connects (#1422)
+- allow polkadotapp navigation (#1416)
+- confirm cross-product signatures once per kind and owning product (#1286)
+- check username search results against DotNS (#1405)
+- anchor Bulletin preimage mortality to finalized blocks (#1397)
+- admit a proof context its own product's manifest grants the caller (#1354)
+- report the build number in the host version products see (#1173)
+- send the host theme to products on the iOS truapi runtime (#1279)
+
+## [0.25.0] - 2026-10-13
+
+### Added
+
+- show the truapi-host version beside the TrUAPI Runtime switch (#1375)
+- chat modality on the shared TrUAPI core, with a local e2e launcher (#989)
+- enable deeplinking to pocket collection or specific card (#1325)
+- let products scan codes with the app's scanner (#1319)
+- let products scan codes with the host's viewfinder (#1307)
+- let a Pocket card's page hide or show the face above it (#1321)
+- route an expanded card's face request to its native host (#1293)
+
+### Changed
+
+- @parity/truapi 0.25.0, @parity/truapi-host 0.25.0, @parity/ios-host 0.25.0, @parity/android-host 0.25.0 (#1387)
+- backport 4 commits into hosts/android (#1367)
+- port generic durability service to rust (#1301)
+- describe chat messages with alt, and show product icons in iOS chats (#1340)
+- let a product set what a chat room shows below its messages (#1341)
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1326)
+
+### Fixed
+
+- serve the host surface from a signing worker host (#1358)
+- draw renderer images in chat cards (#1339)
+- skip an undecodable peer message instead of failing the wait (#1055)
+- draw Pocket card faces in the default theme (#1343)
+
 ## [0.24.0] - 2026-10-07
 
 ### Added
@@ -18,6 +119,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.24.0, @parity/truapi-host 0.24.0, @parity/truapi-debugger 0.1.11, @parity/ios-host 0.24.0, @parity/android-host 0.24.0 (#1323)
 - read, screen and store Pocket cards through the core (#1116)
 - disable the native DIM2 weekly game bot (#1211)
 - backport 6 commits into hosts/ios (#1188)
