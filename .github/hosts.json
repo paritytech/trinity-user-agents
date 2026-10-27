@@ -20,13 +20,14 @@
   ],
   "hosts": {
     "ios": {
+      "push_workflow": ".github/workflows/ios-main.yml",
       "tree": [
         "hosts/ios/",
         "ios/",
         "Package.swift"
       ],
       "full": [
-        "js/packages/",
+        "js/packages/truapi/",
         "js/container/",
         "Makefile",
         "nightly-toolchain",
@@ -36,7 +37,8 @@
         ".github/actions/rust-nightly/"
       ],
       "ci": [
-        ".github/workflows/ios-pr.yml",
+        ".github/workflows/ios-app.yml",
+        ".github/workflows/ios-main.yml",
         ".github/workflows/ios-firebase-debug-distribution.yml",
         ".github/actions/bootstrap-ios-core/",
         ".github/actions/find-main-artifact/",
@@ -54,9 +56,70 @@
       ],
       "full": [],
       "ci": [
+        ".github/workflows/android-app.yml",
         ".github/actions/setup-android-build/",
         ".github/actions/rust-cache/"
       ]
     }
+  },
+  "packages": {
+    "swift": [
+      "ios/",
+      "Package.swift",
+      "js/container/",
+      "js/packages/truapi/",
+      "rust/crates/truapi/",
+      "rust/crates/truapi-codegen/",
+      "rust/crates/truapi-macros/",
+      "rust/crates/truapi-provider/",
+      "rust/crates/truapi-verifiable/",
+      "rust/crates/uniffi-bindgen-cli/",
+      "scripts/codegen.sh",
+      "nightly-toolchain",
+      "Makefile",
+      "Cargo.toml",
+      "Cargo.lock",
+      ".github/workflows/ios-app.yml",
+      ".github/actions/bootstrap-ios-core/",
+      ".github/actions/mac-preflight/",
+      ".github/actions/rust-nightly/",
+      ".github/actions/find-main-artifact/",
+      "hosts/ios/.github/actions/install/",
+      "scripts/lib/ios-simulator.mjs",
+      "scripts/bundle-truapi-dts.mjs",
+      "scripts/regen-explorer-versions.mjs",
+      "package.json",
+      "package-lock.json"
+    ],
+    "kotlin": [
+      "android/",
+      "build.gradle.kts",
+      "settings.gradle.kts",
+      "gradle.properties",
+      "rust/crates/truapi/",
+      "rust/crates/truapi-codegen/",
+      "rust/crates/truapi-macros/",
+      "rust/crates/uniffi-bindgen-cli/",
+      "scripts/codegen.sh",
+      "nightly-toolchain",
+      "package.json",
+      "package-lock.json",
+      "Makefile",
+      "Cargo.toml",
+      "Cargo.lock",
+      ".github/workflows/ci.yml"
+    ],
+    "provider_kotlin": [
+      "android/truapi-provider/",
+      "rust/crates/truapi-provider/",
+      "rust/crates/uniffi-bindgen-cli/",
+      "build.gradle.kts",
+      "settings.gradle.kts",
+      "gradle.properties",
+      "Makefile",
+      "Cargo.toml",
+      "Cargo.lock",
+      ".github/workflows/ci.yml"
+    ]
   }
 }

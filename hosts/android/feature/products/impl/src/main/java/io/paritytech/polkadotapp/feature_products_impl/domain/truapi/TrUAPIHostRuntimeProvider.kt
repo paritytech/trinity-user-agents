@@ -41,6 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -78,6 +79,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
+    private val extensionVersions: TrUAPIExtensionVersions,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -224,7 +226,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
+        override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
             val demand = when (transition) {
                 WorkerTransition.START -> WorkerDemand.START
                 WorkerTransition.STOP -> WorkerDemand.STOP
@@ -266,6 +268,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             }
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
+
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
 
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
