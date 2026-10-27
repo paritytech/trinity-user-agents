@@ -13,8 +13,7 @@
   --warning: #b42318;
   --hairline: rgb(0 0 0 / 0.08);
   --fill: rgb(0 0 0 / 0.035);
-  --menu-width: 320px;
-  --appbar-height: 48px;
+  --devtools-width: 480px;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-family: var(--sans);
@@ -38,27 +37,34 @@
   box-sizing: border-box;
 }
 
+/*
+ * The window holds the app and, beside it or under it, the developer tools.
+ * Closed, the tools leave the app the whole window: Focus.
+ */
 body {
-  --menu-col: var(--menu-width);
   margin: 0;
   height: 100dvh;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--menu-col);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "appbar appbar"
-    "stage menu"
-    "inspector menu";
-  background: var(--bg);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "stage";
+  background: #050507;
   color: var(--text);
 }
 
-body[data-menu="closed"] {
-  --menu-col: 0px;
+body[data-devtools="open"][data-dev-side="right"] {
+  grid-template-columns: minmax(0, 1fr) var(--devtools-width);
+  grid-template-areas: "stage devtools";
 }
 
-body[data-menu="closed"] .menu,
-body[data-inspector="closed"] .inspector {
+body[data-devtools="open"][data-dev-side="bottom"] {
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "stage"
+    "devtools";
+}
+
+body[data-devtools="closed"] .devtools {
   display: none;
 }
 
@@ -136,55 +142,7 @@ textarea {
   font-size: 13px;
 }
 
-.top {
-  grid-area: appbar;
-  min-width: 0;
-}
-
-/* The bar is dark in both themes, like the address bar of a browser. */
-.appbar {
-  --bar-bg: #1b1b1f;
-  --bar-text: #f1f1f4;
-  --bar-muted: #9b9ba6;
-  --bar-border: #34343b;
-  --bar-field: #26262b;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--appbar-height);
-  padding: 6px 10px;
-  padding-top: max(6px, env(safe-area-inset-top));
-  background: var(--bar-bg);
-  color: var(--bar-text);
-  border-bottom: 1px solid var(--bar-border);
-}
-
-.appbar button,
-.appbar select {
-  background: transparent;
-  border-color: transparent;
-  color: var(--bar-text);
-}
-
-.appbar button:hover:not(:disabled) {
-  background: var(--bar-field);
-}
-
-.brand {
-  display: inline-flex;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-}
-
-.brand svg {
-  width: 22px;
-  height: 22px;
-  fill: var(--bar-text);
-}
-
+/* The address field, in the Pill's card. */
 .address {
   position: relative;
   flex: 1 1 auto;
@@ -261,14 +219,14 @@ textarea {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  max-height: min(50dvh, 320px);
+  max-height: min(40dvh, 280px);
   margin: 0;
   padding: 4px;
   overflow: auto;
   list-style: none;
   background: var(--bar-bg);
   border: 1px solid var(--bar-border);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
@@ -347,34 +305,11 @@ textarea {
   visibility: hidden;
 }
 
-.appbar :focus-visible {
-  outline-color: var(--accent);
-}
-
-.viewport-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.viewport-control select {
-  width: auto;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--bar-muted);
-  border-color: var(--bar-border);
-}
-
-.viewport-control select option {
-  color: var(--text);
-  background: var(--surface);
-}
-
 .viewport-custom {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--bar-muted);
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -385,8 +320,6 @@ textarea {
 .viewport-custom input {
   width: 6ch;
   padding: 3px 4px;
-  border-color: var(--bar-border);
-  color: var(--bar-text);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -402,7 +335,7 @@ textarea {
 
 .viewport-scale {
   min-width: 3ch;
-  color: var(--bar-muted);
+  color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -413,15 +346,6 @@ textarea {
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-.badge {
-  padding: 1px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--hairline);
-  color: var(--muted);
-  font-size: 10.5px;
   white-space: nowrap;
 }
 
@@ -451,51 +375,11 @@ textarea {
   color: var(--accent);
 }
 
-.panel-close {
-  display: none;
-}
-
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.menu {
-  grid-area: menu;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 14px 16px 24px;
-  overflow: auto;
-  background: var(--bg);
-  border-left: 1px solid var(--hairline);
-  font-size: 12.5px;
-}
-
-.menu > section,
-.menu > .fold {
-  margin: 0;
-  padding: 14px 0;
-  border-top: 1px solid var(--hairline);
-}
-
-.menu > .panel-head {
-  padding-bottom: 10px;
-}
-
-.menu > #core-status {
-  margin-bottom: 12px;
-}
-
-.menu > .fold > summary {
-  padding: 0;
-}
-
-.menu section > button,
-.menu form > button {
-  margin-top: 10px;
 }
 
 .check {
@@ -663,7 +547,7 @@ textarea {
   text-decoration-color: currentColor;
 }
 
-.menu [hidden] {
+.devtools [hidden] {
   display: none !important;
 }
 
@@ -780,7 +664,7 @@ textarea {
   grid-area: stage;
   position: relative;
   display: flex;
-  padding: 12px;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
@@ -837,9 +721,9 @@ textarea {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: #0b0c0f;
+  border: 1px solid #26262c;
+  border-radius: 12px;
   overflow: hidden;
   flex: none;
   transform-origin: center;
@@ -1113,7 +997,7 @@ body[data-surface="pocket"] .stage-empty {
  * tokens and bundled fonts.
  */
 body[data-surface="chat"] .stage-empty,
-body[data-surface="notifications"] .stage-empty {
+body[data-surface="inbox"] .stage-empty {
   display: none;
 }
 
@@ -2074,14 +1958,14 @@ button.chat-reaction {
 /* A count over a dock button: chat requests waiting, or notifications not seen. */
 .dock-badge {
   position: absolute;
-  top: 2px;
-  left: calc(50% + 6px);
+  top: 6px;
+  left: calc(50% + 4px);
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 8px;
-  background: var(--chat-accent, #e6007a);
+  background: #4d8dff;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -2093,97 +1977,25 @@ button.chat-reaction {
   display: none;
 }
 
-/*
- * The host's own navigation, drawn inside the product rectangle as a phone
- * host draws its tab bar, so a size chosen in the menu includes it.
- */
-.dock {
-  flex: none;
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 2px;
-  padding: 6px 8px max(6px, env(safe-area-inset-bottom));
-  background: #1b1b1f;
-  border-top: 1px solid #34343b;
-}
-
-.dock button {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: 3px;
-  padding: 7px 4px 5px;
-  background: transparent;
-  color: #9b9ba6;
-  border: none;
-  border-radius: 10px;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-}
-
-.dock button[hidden] {
-  display: none;
-}
-
-.dock button:hover:not(:disabled) {
-  color: #f1f1f4;
-}
-
-.dock button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.dock button[aria-current="true"] {
-  color: #f1f1f4;
-  background: rgb(255 255 255 / 0.07);
-}
-
-.dock button[aria-current="true"]::before {
-  content: "";
+/* On Apps: something in the Inbox is not seen yet. Apps' own count is open products. */
+.dock-dot {
   position: absolute;
-  top: -7px;
-  width: 22px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-}
-
-.dock svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-}
-
-/* A destination whose product is still running behind the one in front. */
-.dock button[data-live="true"]::after {
-  content: "";
-  position: absolute;
-  top: 6px;
-  right: calc(50% - 17px);
-  width: 6px;
-  height: 6px;
+  top: 10px;
+  right: calc(50% + 8px);
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #4ade80;
-  box-shadow: 0 0 0 2px #1b1b1f;
+  background: #4d8dff;
+  box-shadow: 0 0 0 2px #222329;
 }
 
-.product-frame.sized {
-  border: none;
-  border-radius: 0;
-  box-shadow: 0 0 0 1px var(--border);
+.dock-dot[hidden] {
+  display: none;
 }
 
 .stage-empty {
   position: absolute;
-  inset: 12px;
+  inset: 0 12px;
   display: grid;
   place-content: center;
   text-align: center;
@@ -2196,6 +2008,11 @@ button.chat-reaction {
 
 .stage-empty p:first-child {
   font-weight: 600;
+  color: #f1f1f4;
+}
+
+.stage-empty .note {
+  color: #9b9ba6;
 }
 
 body[data-product="open"] .stage-empty,
@@ -2245,45 +2062,6 @@ body[data-product="open"] .stage-loading {
   to {
     transform: rotate(360deg);
   }
-}
-
-.inspector {
-  grid-area: inspector;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  height: var(--inspector-h, min(42dvh, 440px));
-  min-height: 160px;
-  max-height: calc(100dvh - var(--appbar-height) - 120px);
-  border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.inspector-resize {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 10px;
-  z-index: 1;
-  cursor: row-resize;
-  touch-action: none;
-}
-
-.inspector-resize::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 50%;
-  width: 36px;
-  height: 3px;
-  margin-left: -18px;
-  border-radius: 2px;
-  background: var(--border);
-  transition: background 120ms;
-}
-
-.inspector-resize:hover::after,
-.inspector-resize:focus-visible::after {
-  background: var(--accent);
 }
 
 .inspector .panel-head {
@@ -2778,159 +2556,9 @@ body[data-product="open"] .stage-loading {
   flex-basis: 100%;
 }
 
-/* Narrow screens: the panels cover the product instead of sitting beside it. */
-@media (max-width: 900px) {
-  body,
-  body[data-menu="closed"] {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas:
-      "appbar"
-      "stage";
-  }
-
-  .stage {
-    padding: 0;
-  }
-
-  .product-frame {
-    border: none;
-    border-radius: 0;
-  }
-
-  .stage-empty {
-    inset: 0;
-    padding: 0 24px;
-  }
-
-  .panel,
-  body[data-menu="closed"] .menu,
-  body[data-inspector="closed"] .inspector {
-    display: flex;
-    position: fixed;
-    z-index: 20;
-    visibility: hidden;
-    transition:
-      transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
-      visibility 0s linear 220ms;
-  }
-
-  .menu {
-    top: 0;
-    bottom: 0;
-    right: 0;
-    width: min(88vw, 380px);
-    padding-top: max(16px, env(safe-area-inset-top));
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
-    border-left: 1px solid var(--border);
-    transform: translateX(100%);
-  }
-
-  .inspector {
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: var(--inspector-h, 72dvh);
-    padding-bottom: env(safe-area-inset-bottom);
-    border-radius: 14px 14px 0 0;
-    transform: translateY(100%);
-  }
-
-  body[data-menu="open"] .menu,
-  body[data-inspector="open"] .inspector {
-    visibility: visible;
-    transform: none;
-    transition-delay: 0s;
-  }
-
-  .panel-close {
-    display: inline-flex;
-  }
-
-  /* The inspector's list and detail sit side by side; stacked, both are usable. */
-  .inspector-mount .td-inapp .ins-body {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
-  }
-
-  .inspector-mount .td-inapp .ins-split {
-    display: none;
-  }
-
-  .inspector-mount .td-inapp .ins-list {
-    border-bottom: 1px solid rgb(255 255 255 / 0.12);
-  }
-
-  .inspector-mount .td-inapp .ins-stat {
-    white-space: nowrap;
-  }
-
-  .log {
-    max-height: 200px;
-  }
-}
-
-@media (max-width: 900px) {
-  .viewport-control {
-    display: none;
-  }
-}
-
 @media (max-width: 700px) {
   .address-id {
     display: none;
-  }
-}
-
-@media (max-width: 380px) {
-  .brand {
-    display: none;
-  }
-}
-
-/*
- * Quiet menu controls for a mouse. Touch is left to the block below, which keeps
- * full-size targets and 16px text, so these are gated on a fine pointer.
- */
-@media (pointer: fine) {
-  .menu button,
-  .menu input,
-  .menu select,
-  .menu textarea {
-    min-height: 28px;
-    padding: 4px 9px;
-    border-color: var(--hairline);
-    background: var(--fill);
-    font-size: 12.5px;
-  }
-
-  .menu textarea {
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .menu button:hover:not(:disabled) {
-    border-color: var(--border);
-  }
-
-  .menu button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-  }
-
-  .menu .check input {
-    min-height: 0;
-    padding: 0;
-  }
-
-  .menu .icon-button {
-    min-height: 0;
-    border-color: transparent;
-    background: transparent;
-  }
-
-  .menu #account-status-refresh {
-    margin-top: 10px;
   }
 }
 
@@ -2981,16 +2609,72 @@ body[data-product="open"] .stage-loading {
     animation: none;
   }
 
-  .panel,
+  .devtools,
   button {
     transition: none !important;
   }
 }
 
 /*
- * The Notifications screen (prototype). Rows follow the native Chat Requests
- * list; a request that waits carries its actions under its text, and names
- * its product.
+ * Chat's tabs: Chats and the Inbox, under the title of either screen. One
+ * segmented control, so switching keeps the title and the list in place.
+ */
+.chat-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin: 0 16px 12px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--chat-surface);
+}
+
+.chat-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--chat-secondary);
+  font: 600 14px/1 var(--chat-body-font);
+  cursor: pointer;
+}
+
+.chat-tabs button[aria-selected="true"] {
+  background: var(--chat-surface-raised);
+  color: var(--chat-primary);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
+}
+
+.chat-tabs button:focus-visible {
+  outline: 2px solid var(--chat-primary);
+  outline-offset: 1px;
+}
+
+.chat-tab-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #4d8dff;
+  color: #fff;
+  font: 700 11px/18px var(--chat-body-font);
+  text-align: center;
+}
+
+.chat-tab-badge[hidden] {
+  display: none;
+}
+
+/*
+ * The Inbox (prototype). Rows follow the native Chat Requests list; a request
+ * that waits carries its actions under its text, and names its product.
  */
 .notification-row {
   position: relative;
@@ -3151,4 +2835,1878 @@ body[data-surface="test-product"] .stage-empty {
 
 .test-user-marker[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------------------
+ * The host's chrome, after the selected direction (Focus + Docklet + Two
+ * Zones): a black window; the app's zone, with only the Focus capsule over
+ * it; and the developer tools' zone, a dark glass panel beside or under it.
+ * Colors follow Dotli's glass and the app's Berlin Night tokens.
+ * --------------------------------------------------------------------- */
+
+body {
+  background: #000;
+}
+
+/* The app's zone stacks as one, under the scrim and the tools. */
+.stage {
+  isolation: isolate;
+  background: #000;
+}
+
+/* The app fills its zone with no frame; a set size gets one below. */
+.product-frame {
+  border: none;
+  border-radius: 0;
+  background: #0b0c0f;
+}
+
+/*
+ * The Focus capsule: Dotli's collapsed status capsule, 120 × 8, coloured by
+ * the core and the session. It shows or hides the developer tools.
+ */
+.focus-capsule {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 25;
+  display: flex;
+  width: 120px;
+  height: 8px;
+  min-height: 0;
+  margin-left: -60px;
+  padding: 2px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(rgb(44 46 52 / 0.97), rgb(18 19 23 / 0.98));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.09),
+    0 6px 18px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+}
+
+/* A larger target than the capsule shows. */
+.focus-capsule::before {
+  content: "";
+  position: absolute;
+  inset: -14px -20px;
+}
+
+.focus-capsule i {
+  flex: 1;
+  border-radius: 999px;
+  background: #8c8f98;
+}
+
+.focus-capsule[data-state="ready"] i {
+  background: #6bc880;
+}
+
+.focus-capsule[data-state="signed-out"] i {
+  background: #e69f42;
+}
+
+.focus-capsule[data-state="failed"] i {
+  background: #fa8b85;
+}
+
+.focus-capsule[aria-expanded="true"] {
+  box-shadow:
+    0 0 0 2px rgb(255 255 255 / 0.75),
+    0 6px 18px rgb(0 0 0 / 0.18);
+}
+
+.focus-capsule:focus-visible {
+  outline: 2px solid #78a9ff;
+  outline-offset: 4px;
+}
+
+.test-user-marker {
+  position: absolute;
+  top: max(4px, env(safe-area-inset-top));
+  left: 8px;
+  z-index: 25;
+  background: rgb(11 12 15 / 0.85);
+}
+
+/* A set size: a bezel outside it, so the app keeps every pixel of it. */
+.product-frame.sized {
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 0 0 1px #2c2c33;
+}
+
+.product-frame.sized[data-frame="device"] {
+  border-radius: 24px;
+  box-shadow:
+    0 0 0 1.5px #3a3c42,
+    0 0 0 12px #1b1c20,
+    0 0 0 13.5px #3a3c42,
+    0 40px 90px -20px rgb(0 0 0 / 0.8);
+}
+
+.product-frame.sized[data-frame="device"][data-shape="phone"] {
+  border-radius: 46px;
+}
+
+.product-frame.sized[data-frame="round"] {
+  border-radius: 20px;
+}
+
+.product-frame.sized[data-frame="round"][data-shape="phone"] {
+  border-radius: 44px;
+}
+
+/* ---- The developer tools' zone ---- */
+.devtools {
+  /* One calm surface: the glass highlight is a line on its edge, not a gradient. */
+  --g: #18191d;
+  --tx: #f4f4f5;
+  --mu: #d4d5db;
+  --fa: #a9abb3;
+  --well: rgb(0 0 0 / 0.3);
+  --pri: linear-gradient(180deg, #f7f7f8, #dadbe0);
+  --onpri: #0b0c0f;
+  --ring: rgb(255 255 255 / 0.16);
+  /* The host's own tokens, dark here in every theme. */
+  --bg: transparent;
+  --surface: rgb(255 255 255 / 0.04);
+  --text: var(--tx);
+  --muted: var(--fa);
+  --border: rgb(255 255 255 / 0.08);
+  --hairline: rgb(255 255 255 / 0.08);
+  --fill: rgb(255 255 255 / 0.07);
+  --warning: #fa8b85;
+  --accent: #78a9ff;
+  grid-area: devtools;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    "start end"
+    "tabs tabs"
+    "body body";
+  min-width: 0;
+  min-height: 0;
+  background: var(--g);
+  color: var(--tx);
+  font:
+    400 13px/1.35 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color-scheme: dark;
+}
+
+body[data-dev-side="right"] .devtools {
+  box-shadow:
+    inset 1px 0 0 rgb(255 255 255 / 0.08),
+    -12px 0 40px rgb(0 0 0 / 0.25);
+}
+
+body[data-dev-side="bottom"] .devtools {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "start tabs end"
+    "body body body";
+  height: var(--devtools-h, min(42dvh, 440px));
+  min-height: 160px;
+  max-height: calc(100dvh - 120px);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    0 -12px 40px rgb(0 0 0 / 0.3);
+}
+
+.devtools-resize {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 10px;
+  z-index: 1;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.devtools-resize::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 3px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.18);
+  transition: background 120ms;
+}
+
+.devtools-resize:hover::after,
+.devtools-resize:focus-visible::after {
+  background: #78a9ff;
+}
+
+body[data-dev-side="right"] .devtools-resize,
+.devtools-grab {
+  display: none;
+}
+
+.devtools-start {
+  grid-area: start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 6px 8px 14px;
+}
+
+.devtools-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+}
+
+.devtools-logo svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.devtools-start h1 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dev-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(230 159 66 / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(230 159 66 / 0.34);
+  color: #ffd9ae;
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.devtools-end {
+  grid-area: end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 6px 0;
+}
+
+.devtools-side {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.devtools-side button,
+.devtools-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fa);
+}
+
+.devtools-side button[aria-pressed="true"] {
+  background: var(--fill);
+  color: var(--tx);
+}
+
+.devtools-side svg,
+.devtools-close svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.devtools-close:hover,
+.devtools-side button:hover {
+  color: var(--tx);
+}
+
+.dev-group h2 {
+  margin: 0;
+  color: var(--fa);
+  font:
+    600 11px system-ui,
+    sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* What the app gets, under the size controls in the Preview tab. */
+.preview-note {
+  margin: 10px 4px 0;
+  color: var(--fa);
+  line-height: 1.5;
+  font:
+    11.5px/1.5 ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    monospace;
+}
+
+.preview-note:empty {
+  display: none;
+}
+
+.viewport-scale {
+  color: var(--fa);
+  font-size: 12px;
+}
+
+.segmented,
+.devtools-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.segmented[hidden] {
+  display: none;
+}
+
+.segmented button,
+.devtools-tabs button {
+  height: 28px;
+  min-height: 0;
+  padding: 0 11px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mu);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.segmented button[aria-pressed="true"],
+.devtools-tabs button[aria-selected="true"] {
+  background: var(--pri);
+  color: var(--onpri);
+  font-weight: 600;
+}
+
+.devtools-tabs {
+  grid-area: tabs;
+  margin: 0 10px 8px;
+}
+
+.devtools-tabs button {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+}
+
+body[data-dev-side="bottom"] .devtools-tabs {
+  max-width: 520px;
+  margin: 10px 0 6px 6px;
+  align-self: center;
+}
+
+/* One view at a time. At the bottom, its groups sit side by side. */
+.dev-panel {
+  grid-area: body;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 12px;
+}
+
+body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  align-content: start;
+  gap: 0 10px;
+  padding: 0 10px 10px;
+}
+
+.dev-group {
+  min-width: 0;
+  margin: 0 0 6px;
+  padding: 10px 8px 6px;
+  border-radius: 14px;
+}
+
+.dev-group h2 {
+  margin: 2px 4px 8px;
+}
+
+.devtools label {
+  margin: 10px 4px 4px;
+  color: var(--fa);
+  font-size: 11.5px;
+}
+
+.devtools input,
+.devtools select,
+.devtools textarea {
+  min-height: 40px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow:
+    inset 0 1px 2px rgb(0 0 0 / 0.3),
+    inset 0 0 0 1px var(--border);
+  color: var(--tx);
+  font-size: 13px;
+}
+
+.devtools input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  box-shadow: none;
+  accent-color: #78a9ff;
+}
+
+.devtools textarea {
+  padding: 10px 14px;
+  border-radius: 16px;
+  font:
+    12px/1.4 ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    monospace;
+}
+
+.devtools select option {
+  background: #1a1b20;
+  color: var(--tx);
+}
+
+.devtools button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--fill);
+  box-shadow: inset 0 0 0 1px var(--ring);
+  color: var(--tx);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.devtools button.primary {
+  background: var(--pri);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.5),
+    0 1px 3px rgb(0 0 0 / 0.3);
+  color: var(--onpri);
+  font-weight: 600;
+}
+
+.devtools button.quiet {
+  min-height: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--fa);
+  font-weight: 400;
+}
+
+.devtools .devtools-tabs button,
+.devtools .segmented button,
+.devtools .devtools-side button,
+.devtools .devtools-close {
+  box-shadow: none;
+}
+
+.devtools .devtools-tabs button:not([aria-selected="true"]),
+.devtools .segmented button:not([aria-pressed="true"]),
+.devtools .devtools-side button:not([aria-pressed="true"]),
+.devtools .devtools-close {
+  background: transparent;
+}
+
+.devtools .row {
+  margin: 8px 4px 0;
+}
+
+.devtools .status,
+.devtools .note,
+.devtools .effective {
+  margin: 6px 4px 0;
+}
+
+.devtools .fold {
+  margin: 8px 0 0;
+  padding: 0;
+  border-top: none;
+}
+
+.devtools .fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  color: var(--tx);
+  font-size: 13px;
+}
+
+.devtools .fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The design's disclosure: a chevron that turns when the fold opens. */
+.devtools .fold > summary::before {
+  content: "›";
+  display: inline-block;
+  width: 10px;
+  color: var(--fa);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 150ms;
+}
+
+.devtools .fold[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.devtools .fold > summary:hover {
+  background: var(--fill);
+}
+
+.devtools .fold[open] > :not(summary) {
+  margin-left: 12px;
+  margin-right: 4px;
+}
+
+.devtools .session {
+  margin: 0 4px 6px;
+  color: var(--mu);
+}
+
+.devtools .note.warning,
+.devtools .versions-warning {
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: none;
+  background: rgb(230 159 66 / 0.12);
+  box-shadow: inset 0 0 0 1px rgb(230 159 66 / 0.3);
+  color: #ffd9ae;
+}
+
+.devtools .create-link {
+  color: #78a9ff;
+}
+
+.devtools .log {
+  height: auto;
+  max-height: 260px;
+  margin: 0 4px;
+  color: var(--fa);
+  font-size: 11.5px;
+}
+
+.devtools .worker-list li {
+  border-top-color: var(--border);
+}
+
+/* The inspector fills its view, under its own TrUAPI | Chat switch. */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px 10px;
+}
+
+.inspector .panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 8px;
+  border-bottom: none;
+}
+
+.inspector .panel-head .note {
+  flex: 1;
+  margin: 0;
+}
+
+.inspector-mount,
+.chat-diagnostics {
+  overflow: hidden;
+  border: 1px solid #1d1f24;
+  border-radius: 12px;
+  background: #0e0f12;
+}
+
+/* Docked on the right the inspector is tall and narrow: list over detail. */
+body[data-dev-side="right"] .inspector-mount .td-inapp .ins-body {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
+}
+
+body[data-dev-side="right"] .inspector-mount .td-inapp .ins-split {
+  display: none;
+}
+
+body[data-dev-side="right"] .inspector-mount .td-inapp .ins-list {
+  border-bottom: 1px solid rgb(255 255 255 / 0.12);
+}
+
+/* ---- The Docklet ---- */
+.dock {
+  --dock-glass: rgb(26 27 32 / 0.7);
+  --dock-stroke: rgb(255 255 255 / 0.12);
+  --dock-lens: rgb(255 255 255 / 0.12);
+  --dock-icon: #8c8f98;
+  position: absolute;
+  right: 0;
+  bottom: var(--dock-bottom);
+  left: 0;
+  z-index: 21;
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) minmax(0, 1fr) 82px minmax(0, 1fr)
+    minmax(0, 1fr);
+  align-items: center;
+  box-sizing: border-box;
+  width: min(100% - 20px, 440px);
+  height: 62px;
+  margin: 0 auto;
+  padding: 0 4px;
+  border-radius: 31px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* The glass, with the round cutout the Pill sits in. */
+.dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--dock-glass);
+  box-shadow: inset 0 0 0 1px var(--dock-stroke);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-mask: radial-gradient(
+    circle 35px at 50% 21px,
+    transparent 34px,
+    #000 35px
+  );
+  mask: radial-gradient(circle 35px at 50% 21px, transparent 34px, #000 35px);
+}
+
+/* The shelf's glass grows out of the bar: one surface, no cutout. */
+body[data-shelf="open"] .dock::before {
+  display: none;
+}
+
+.dock button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: 80px;
+  height: 54px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 27px;
+  background: transparent;
+  color: var(--dock-icon);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background 238ms,
+    color 238ms,
+    opacity 330ms,
+    filter 330ms;
+}
+
+.dock button[hidden] {
+  display: none;
+}
+
+.dock button:hover:not(:disabled) {
+  color: #f4f4f5;
+}
+
+.dock button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* One lens, on the current tab, also while the shelf is open, as in the app. */
+.dock button[aria-current="true"] {
+  color: #f4f4f5;
+  background: var(--dock-lens);
+}
+
+.dock button:focus-visible {
+  outline: 2px solid #f4f4f5;
+  outline-offset: -2px;
+}
+
+.dock svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+/* The labels stay for screen readers; the Docklet shows icons only. */
+.dock-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* While the card is open, the bar's icons step back. */
+body[data-search="open"] .dock button:not(.dock-pill) {
+  opacity: 0.55;
+  filter: blur(3px);
+}
+
+.dock .dock-pill {
+  align-self: start;
+  width: 64px;
+  height: 64px;
+  margin-top: -10px;
+  border-radius: 50%;
+  background: rgb(26 27 32 / 0.7);
+  box-shadow: inset 0 0 0 1px var(--dock-stroke);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  color: #8c8f98;
+  transition: transform 150ms;
+}
+
+.dock .dock-pill:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.dock button.dock-pill[aria-expanded="true"] {
+  background: rgb(26 27 32 / 0.88);
+  color: #f4f4f5;
+}
+
+.dock .dock-pill svg {
+  width: 30px;
+  height: 30px;
+  stroke-width: 2;
+}
+
+/* A destination whose product is still running behind the one in front. */
+.dock button[data-live="true"]::after {
+  content: "";
+  position: absolute;
+  bottom: 6px;
+  left: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6bc880;
+}
+
+.dock-badge {
+  top: 5px;
+  left: calc(50% + 5px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font:
+    600 11px/18px Inter,
+    system-ui,
+    sans-serif;
+  box-shadow: 0 0 0 2px #0b0c0f;
+}
+
+/* ---- Sheets over the app: the Apps shelf and the Pill's card ---- */
+body[data-shelf="open"] .product-slot::after,
+body[data-search="open"] .product-slot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  background: rgb(0 0 0 / 0.18);
+}
+
+body[data-search="open"] .product-slot::after {
+  background: rgb(0 0 0 / 0.3);
+}
+
+.apps-shelf {
+  position: absolute;
+  right: 0;
+  bottom: var(--dock-bottom);
+  left: 0;
+  z-index: 20;
+  width: min(100% - 20px, 440px);
+  max-height: calc(100% - var(--dock-bottom) - 24px);
+  margin: 0 auto;
+  /* The bar's 62 px, and the 20 px the app keeps above it. */
+  padding: 6px 0 92px;
+  overflow-y: auto;
+  border-radius: 32px 32px 31px 31px;
+  background: rgb(26 27 32 / 0.92);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  color: #f4f4f5;
+  font:
+    400 12px/1.25 Inter,
+    system-ui,
+    sans-serif;
+  animation: shelf-in 160ms ease-out;
+}
+
+.apps-shelf[hidden] {
+  display: none;
+}
+
+@keyframes shelf-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+
+.shelf-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 0 10px;
+}
+
+.shelf-tool {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #8c8f98;
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.shelf-tool.shelf-inbox {
+  color: #f4f4f5;
+  opacity: 1;
+}
+
+.shelf-tool:hover {
+  opacity: 1;
+}
+
+.shelf-tool svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+.shelf-status {
+  cursor: default;
+}
+
+.shelf-status svg .ring {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.35;
+}
+
+.shelf-status svg .core {
+  fill: currentColor;
+  stroke: none;
+}
+
+.shelf-status[data-state="ready"] {
+  color: #6bc880;
+}
+
+.shelf-status[data-state="failed"] {
+  color: #fa8b85;
+}
+
+.shelf-badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: #4d8dff;
+  color: #fff;
+  font:
+    600 11px/18px Inter,
+    system-ui,
+    sans-serif;
+  text-align: center;
+  box-shadow: 0 0 0 2px #1a1b20;
+}
+
+.shelf-badge[hidden] {
+  display: none;
+}
+
+.shelf-empty {
+  margin: 0;
+  padding: 8px 18px 0;
+  color: #8c8f98;
+  font-size: 13px;
+}
+
+.shelf-apps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+  gap: 4px 2px;
+  margin: 0;
+  padding: 2px 12px 4px;
+  list-style: none;
+}
+
+.shelf-app {
+  position: relative;
+  min-width: 0;
+}
+
+.shelf-app-open {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 5px;
+  width: 100%;
+  min-height: 0;
+  padding: 6px 2px 4px;
+  border: none;
+  border-radius: 18px;
+  background: transparent;
+  color: #f4f4f5;
+  font: inherit;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.shelf-app[data-front="true"] .shelf-app-open {
+  background: rgb(255 255 255 / 0.12);
+}
+
+.shelf-app-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #4d8dff, #7a3cff);
+  color: #fff;
+  font:
+    800 16px/1 Manrope,
+    Inter,
+    sans-serif;
+}
+
+.shelf-app-icon .shelf-badge {
+  top: -4px;
+  right: -8px;
+}
+
+.shelf-app-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Long press closes, as in the app; this is the same action for a pointer or a keyboard. */
+.shelf-app-close {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #2c2e34;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.16);
+  color: #d4d5db;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.shelf-app:hover .shelf-app-close,
+.shelf-app:focus-within .shelf-app-close {
+  opacity: 1;
+}
+
+.apps-shelf button:focus-visible {
+  outline: 2px solid #f4f4f5;
+  outline-offset: -2px;
+}
+
+/* The Pill's card: rises from the Docklet, over the app. */
+.search-card {
+  --bar-bg: transparent;
+  --bar-text: #f4f4f5;
+  --bar-muted: #8c8f98;
+  --bar-border: rgb(255 255 255 / 0.08);
+  --bar-field: rgb(255 255 255 / 0.06);
+  position: absolute;
+  right: 0;
+  bottom: calc(var(--dock-bottom) + 74px);
+  left: 0;
+  z-index: 20;
+  width: min(100% - 20px, 440px);
+  margin: 0 auto;
+  padding: 18px 16px 16px;
+  border-radius: 32px;
+  background: rgb(26 27 32 / 0.97);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.12),
+    0 24px 48px rgb(0 0 0 / 0.4);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  color: #f4f4f5;
+  font-family: Inter, system-ui, sans-serif;
+  animation: shelf-in 160ms ease-out;
+}
+
+/* The handle the app's sheets carry. */
+.search-card::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 5px;
+  margin-left: -18px;
+  border-radius: 3px;
+  background: rgb(255 255 255 / 0.32);
+}
+
+.search-card[hidden] {
+  display: none;
+}
+
+.search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px 2px;
+}
+
+.search-head h2 {
+  margin: 0;
+  color: #8c8f98;
+  font:
+    600 12px/16px Inter,
+    sans-serif;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.search-head .icon-button {
+  min-width: 32px;
+  min-height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #8c8f98;
+}
+
+.search-card .address {
+  max-width: none;
+  min-height: 48px;
+  margin: 0;
+  border: none;
+  border-radius: 24px;
+  background: rgb(255 255 255 / 0.06);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    inset 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+
+.search-card .address:focus-within {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.18),
+    inset 0 0 0 1px #78a9ff;
+}
+
+/* The card sits low in the app, so its recents open upward. */
+.search-card .address-recents {
+  top: auto;
+  bottom: calc(100% + 6px);
+  background: #1a1b20;
+}
+
+.search-status {
+  margin: 8px 6px 0;
+  color: #fa8b85;
+  font-size: 12.5px;
+}
+
+.search-status:empty {
+  display: none;
+}
+
+.search-note {
+  margin: 10px 4px 0;
+  color: #8c8f98;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.search-note code {
+  color: #f4f4f5;
+  font-family: var(--mono);
+}
+
+/* ---- An open product: the app's two glass circles ---- */
+.app-chrome {
+  position: absolute;
+  inset: 12px 16px auto;
+  z-index: 18;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.app-chrome[hidden] {
+  display: none;
+}
+
+.app-circle {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(28 29 33 / 0.66);
+  box-shadow: inset 0 0 0 0.8px rgb(255 255 255 / 0.16);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  color: #f4f4f5;
+  pointer-events: auto;
+}
+
+.app-circle[hidden] {
+  display: none;
+}
+
+/* Minimize or Close on the left, More on the right. */
+#app-more {
+  margin-left: auto;
+}
+
+.app-circle svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#app-more svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.app-circle:focus-visible {
+  outline: 2px solid #f4f4f5;
+  outline-offset: 2px;
+}
+
+.app-menu {
+  position: absolute;
+  top: 52px;
+  right: 0;
+  display: grid;
+  min-width: 180px;
+  padding: 6px;
+  border-radius: 20px;
+  background: rgb(26 27 32 / 0.94);
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.09),
+    0 24px 48px rgb(0 0 0 / 0.32);
+  -webkit-backdrop-filter: blur(32px) saturate(150%);
+  backdrop-filter: blur(32px) saturate(150%);
+  pointer-events: auto;
+}
+
+.app-menu[hidden] {
+  display: none;
+}
+
+.app-menu button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #f4f4f5;
+  font:
+    500 14px Inter,
+    system-ui,
+    sans-serif;
+  text-align: left;
+}
+
+.app-menu button:hover,
+.app-menu button:focus-visible {
+  background: rgb(255 255 255 / 0.08);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apps-shelf,
+  .search-card {
+    animation: none;
+  }
+}
+
+/*
+ * Narrow windows: the app fills the window. Up to 900 px the tools are a
+ * panel over the app on the right; on a phone, a sheet from the bottom.
+ */
+@media (max-width: 900px) {
+  body,
+  body[data-devtools="open"][data-dev-side="right"],
+  body[data-devtools="open"][data-dev-side="bottom"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "stage";
+  }
+
+  body[data-dev-side] .devtools {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: min(380px, 100vw);
+    height: auto;
+    max-height: none;
+    /* Over the app it is opaque: nothing of the app shows through. */
+    background: #18191d;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-areas:
+      "start end"
+      "tabs tabs"
+      "body body";
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.1),
+      inset 0 0 0 1px rgb(255 255 255 / 0.09),
+      0 24px 48px rgb(0 0 0 / 0.32);
+    visibility: hidden;
+    transform: translateX(100%);
+    transition:
+      transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      visibility 0s linear 220ms;
+  }
+
+  body[data-devtools="closed"] .devtools {
+    display: grid;
+  }
+
+  body[data-devtools="open"] .devtools {
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  /* The app fills a narrow window, so the Preview tab only says so. */
+  .devtools-side,
+  .devtools-resize,
+  #dev-preview > .dev-group:not(.preview-narrow) {
+    display: none !important;
+  }
+
+  #dev-preview > .preview-narrow {
+    display: block;
+  }
+
+  body[data-dev-side="bottom"] .devtools-tabs {
+    max-width: none;
+    margin: 0 10px 8px;
+  }
+
+  .devtools-tabs button {
+    padding: 0 3px;
+    font-size: 12px;
+  }
+
+  body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
+    display: block;
+    padding: 0 6px 12px;
+  }
+
+  .inspector-mount .td-inapp .ins-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
+  }
+
+  .inspector-mount .td-inapp .ins-split {
+    display: none;
+  }
+
+  .inspector-mount .td-inapp .ins-stat {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 600px) {
+  body[data-dev-side] .devtools {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: 82dvh;
+    padding-top: 10px;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-radius: 28px 28px 0 0;
+    transform: translateY(100%);
+  }
+
+  body[data-devtools="open"] .devtools {
+    transform: none;
+  }
+
+  .devtools-grab {
+    display: block;
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 36px;
+    height: 4px;
+    margin-left: -18px;
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.48);
+  }
+}
+
+.devtools .inspector-views {
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.devtools .inspector-views button {
+  height: 26px;
+  min-height: 0;
+  padding: 0 12px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--mu);
+}
+
+.devtools .inspector-views button[aria-selected="true"] {
+  background: var(--pri);
+  color: var(--onpri);
+  font-weight: 600;
+}
+
+.preview-note b {
+  color: var(--tx);
+  font-weight: 500;
+}
+
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.segmented svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.devtools-logo svg {
+  width: 16px;
+  height: 18px;
+}
+
+/* A status line led by a coloured dot. */
+.dev-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0;
+  padding: 6px 4px;
+  color: var(--tx);
+}
+
+.dev-row .status {
+  margin: 0;
+  color: var(--tx);
+  font-size: 13px;
+}
+
+.dev-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fa);
+}
+
+.dev-dot[data-state="ready"] {
+  background: #6bc880;
+}
+
+.dev-dot[data-state="signed-out"],
+.dev-dot[data-state="starting"] {
+  background: #e69f42;
+}
+
+.dev-dot[data-state="failed"] {
+  background: #fa8b85;
+}
+
+.dev-dot[data-state="none"] {
+  display: none;
+}
+
+/* A pill field with its action inside, as the design's fields. */
+.dev-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  margin: 2px 0 6px;
+  padding: 0 4px 0 0;
+  border-radius: 999px;
+  background: var(--well);
+  box-shadow:
+    inset 0 1px 2px rgb(0 0 0 / 0.3),
+    inset 0 0 0 1px var(--border);
+}
+
+.devtools .dev-field input {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.devtools .dev-field button {
+  flex: none;
+  height: 32px;
+  min-height: 0;
+}
+
+.dev-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.dev-chips[hidden] {
+  display: none;
+}
+
+.devtools .dev-chips button {
+  min-height: 0;
+  height: auto;
+  padding: 4px 10px;
+  background: var(--fill);
+  box-shadow: none;
+  color: var(--mu);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* Rows: the label on the left, the value on the right. */
+.devtools .versions div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  align-items: center;
+  padding: 2px 4px;
+}
+
+.devtools .versions dt {
+  color: var(--tx);
+}
+
+.devtools .versions dd {
+  color: var(--mu);
+  text-align: right;
+}
+
+/* A worker: a dot for its state, its name, and the state under it. */
+.devtools .worker-list li {
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 12px;
+  padding: 8px 4px;
+  border-top: none;
+}
+
+.devtools .worker-list li::before {
+  content: "";
+  grid-row: 1 / span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fa);
+}
+
+.devtools .worker-list li[data-state="running"]::before {
+  background: #6bc880;
+}
+
+.devtools .worker-list li[data-state="failed"]::before {
+  background: #fa8b85;
+}
+
+.devtools .worker-name {
+  grid-column: 2;
+  color: var(--tx);
+  font:
+    500 13px system-ui,
+    sans-serif;
+}
+
+.devtools .worker-state {
+  grid-column: 2;
+}
+
+.devtools .worker-list .quiet {
+  grid-column: 3;
+}
+
+/* The inspector: one box, its TrUAPI | Chat tabs on top, underlined. */
+.inspector .panel-head {
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid #1d1f24;
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  background: #0e0f12;
+}
+
+.inspector .panel-head .note {
+  color: var(--fa);
+  font-size: 11px;
+  text-align: right;
+}
+
+.inspector-mount,
+.chat-diagnostics {
+  border-radius: 0 0 12px 12px;
+}
+
+.devtools .inspector-views {
+  gap: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.devtools .inspector-views button {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--mu);
+  font-weight: 500;
+}
+
+.devtools .inspector-views button[aria-selected="true"] {
+  background: transparent;
+  color: var(--tx);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 #4d8dff;
+}
+
+/* The Apps glyph holds the open count, as in the app. */
+.dock .apps-glyph path,
+.dock .apps-glyph rect {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+}
+
+.dock .apps-glyph text {
+  fill: currentColor;
+  stroke: none;
+  font:
+    700 11px Inter,
+    system-ui,
+    sans-serif;
+}
+
+.dock svg:not(.apps-glyph) g,
+.dock svg:not(.apps-glyph) g path {
+  stroke: none;
+}
+
+.dock button:not(.dock-pill) svg:not(.apps-glyph) {
+  stroke: none;
+}
+
+/* Something waits in the Inbox: a dot on Apps, as the design's attention dot. */
+.dock-dot {
+  top: 10px;
+  right: auto;
+  left: calc(50% + 7px);
+  box-shadow: 0 0 0 2px #1a1b20;
+}
+
+/* ---- The device frame: the island and the home indicator ---- */
+.product-frame {
+  position: relative;
+}
+
+.product-frame.sized[data-frame="device"][data-shape="phone"] {
+  --safe-top: 54px;
+  --safe-bottom: 34px;
+}
+
+.product-frame.sized[data-frame="device"][data-shape="phone"]::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: 50%;
+  z-index: 40;
+  width: 126px;
+  height: 37px;
+  margin-left: -63px;
+  border-radius: 20px;
+  background: #000;
+  pointer-events: none;
+}
+
+.product-frame.sized[data-frame="device"][data-shape="phone"]::after {
+  content: "";
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  z-index: 40;
+  width: 134px;
+  height: 5px;
+  margin-left: -67px;
+  border-radius: 3px;
+  background: #f4f4f5;
+  pointer-events: none;
+}
+
+/* Host screens keep clear of them; a product runs full-bleed, as on iOS. */
+.chat-screen,
+.pocket-screen {
+  padding-top: var(--safe-top, 0px);
+}
+
+.app-chrome {
+  top: calc(12px + var(--safe-top, 0px));
+}
+
+/*
+ * The Docklet floats over the app, as in the app: a product runs under its
+ * glass, full-bleed. Host screens end above it.
+ */
+.product-frame {
+  --dock-bottom: max(
+    12px,
+    calc(var(--safe-bottom, 0px) - 7px),
+    calc(env(safe-area-inset-bottom) - 7px)
+  );
+  --dock-space: calc(var(--dock-bottom) + 70px);
+}
+
+.chat-screen,
+.pocket-screen {
+  padding-bottom: var(--dock-space);
+}
+
+.viewport-caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin: 0;
+  color: #80838a;
+  font:
+    500 12px ui-monospace,
+    "JetBrains Mono",
+    Menlo,
+    monospace;
+  text-align: center;
+  pointer-events: none;
+}
+
+.viewport-caption b {
+  margin-right: 6px;
+  color: #d4d5db;
+  font-weight: 500;
+}
+
+.viewport-caption[hidden] {
+  display: none;
+}
+
+/* Chat's New chat: a round button, as the app draws it. */
+.chat-bar .chat-icon-button[aria-label="New chat"] {
+  background: var(--chat-surface);
+  box-shadow: inset 0 0 0 1px var(--chat-line);
+  font-size: 26px;
+}
+
+/* The side switch: the outline is the window, the filled pane is where the tools go. */
+.devtools-side svg .dock-pane {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0.45;
+}
+
+/* The side in use reads as the selected segment, as in the Preview switch. */
+.devtools .devtools-side button[aria-pressed="true"] {
+  background: var(--pri);
+  color: var(--onpri);
+}
+
+.devtools-side button[aria-pressed="true"] svg .dock-pane {
+  opacity: 1;
+}
+
+.devtools-side button:focus-visible,
+.devtools-close:focus-visible {
+  outline: 2px solid #78a9ff;
+  outline-offset: 1px;
+}
+
+/* The Preview tab's size choice reads as one segmented row. */
+#dev-preview .segmented {
+  width: fit-content;
+  margin: 2px 0 4px;
+}
+
+.preview-narrow {
+  display: none;
+}
+
+/* The panel takes focus as a whole when it covers the app; its controls show focus. */
+.devtools:focus,
+.dev-panel:focus {
+  outline: none;
+}
+
+/*
+ * The Docklet's slots, as R1 places them: two each side of a 74 px centre for
+ * the Pill, each lens 80 × 54 on its slot's centre, whatever the bar's width.
+ */
+.dock {
+  grid-template-columns:
+    minmax(0, 1fr) minmax(0, 1fr) 74px minmax(0, 1fr)
+    minmax(0, 1fr);
+}
+
+.dock button.dock-pill {
+  width: 64px;
+}
+
+/* The shelf: the app's own filled icons, grey names under round icons. */
+.shelf-tool svg .fill,
+.shelf-tool svg g path {
+  fill: currentColor;
+  stroke: none;
+}
+
+.shelf-tool svg .line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+
+.shelf-tool.shelf-settings svg,
+.shelf-tool svg g {
+  stroke: none;
+}
+
+/* The core's state: a grey ring, its dot coloured by the state. */
+.shelf-status {
+  color: #8c8f98;
+}
+
+.shelf-status svg .core {
+  fill: #8c8f98;
+}
+
+.shelf-status[data-state="ready"],
+.shelf-status[data-state="failed"] {
+  color: #8c8f98;
+}
+
+.shelf-status[data-state="ready"] svg .core {
+  fill: #6bc880;
+}
+
+.shelf-status[data-state="failed"] svg .core {
+  fill: #fa8b85;
+}
+
+.shelf-app-name {
+  color: #8c8f98;
+  font:
+    600 11px/13px Inter,
+    system-ui,
+    sans-serif;
 }

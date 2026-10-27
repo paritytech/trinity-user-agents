@@ -4,9 +4,9 @@
  * the page reaches no chain or gateway. It needs a Chromium: playwright-core
  * finds the one it installs, or set CHROMIUM_PATH.
  *
- * Where the inspector sits follows the size of the browser window, never the
- * size simulated for the product: a phone-shaped product on a wide screen
- * still has the inspector docked under it.
+ * Where the developer tools sit follows the size of the browser window, never
+ * the size chosen for the app: a phone-sized app on a wide screen still has
+ * the tools docked beside or under it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type Browser, type Page } from "playwright-core";
@@ -38,9 +38,17 @@ async function openHost(viewport: { width: number; height: number }) {
   );
   const page = await context.newPage();
   await page.goto(host.origin);
-  await page.locator("#inspector-toggle").waitFor();
+  await scriptReady(page);
   return { context, page };
 }
+
+/** The page's script has drawn the chrome: the size menu has its choices. */
+const scriptReady = (page: Page) =>
+  page.waitForFunction(
+    () =>
+      (document.getElementById("viewport") as HTMLSelectElement).options
+        .length > 0,
+  );
 
 interface Box {
   left: number;
@@ -71,71 +79,141 @@ const productFitted = (page: Page) =>
     return box.top >= stage.top && box.bottom <= stage.bottom;
   });
 
-async function setOpen(
-  page: Page,
-  panel: "menu" | "inspector",
-  open: boolean,
-): Promise<void> {
-  const state = open ? "open" : "closed";
-  if ((await page.getAttribute("body", `data-${panel}`)) !== state)
-    await page.click(`#${panel}-toggle`);
-  expect(await page.getAttribute("body", `data-${panel}`)).toBe(state);
-}
+const devtools = (page: Page) =>
+  page.evaluate(() => ({
+    open: document.body.dataset.devtools,
+    view: document.body.dataset.devView,
+    side: document.body.dataset.devSide,
+  }));
 
-describe("the inspector dock", () => {
+/** The product's CSS size, which only the preview choice changes. */
+const productSize = (page: Page) =>
+  page.locator("#product-frame").evaluate((element) => ({
+    width: (element as HTMLElement).offsetWidth,
+    height: (element as HTMLElement).offsetHeight,
+  }));
+
+describe("the developer tools", () => {
   test(
-    "a wide window docks it under a phone-sized product, across the width the menu leaves",
+    "sit on the right or at the bottom, and Focus hides them, while the app keeps its preview size",
     async () => {
       const { context, page } = await openHost({ width: 1440, height: 900 });
       try {
+        expect(await devtools(page)).toEqual({
+          open: "open",
+          view: "account",
+          side: "right",
+        });
+        // The tools' tabs, in the order the design gives them.
+        expect(
+          await page.locator('[role="tablist"] [data-dev-tab]').allInnerTexts(),
+        ).toEqual(["Account", "Product", "Preview", "Inspector", "More"]);
+        // The size controls live in the Preview tab only, and keep their
+        // choice when the tab changes.
+        expect(await page.locator("#dev-preview [data-viewport]").count()).toBe(
+          3,
+        );
+        expect(await page.locator("[data-viewport]").count()).toBe(3);
+        expect(await page.locator("#viewport-note").isVisible()).toBe(false);
+        await page.click('[data-dev-tab="preview"]');
+        expect(await page.locator("#viewport-note").innerText()).toContain(
+          "App viewport",
+        );
+        // Auto fills a wide app area and gives a narrow one the Phone size.
+        await page.click('#dev-preview [data-viewport="auto"]');
+        await page.click('[data-dev-tab="account"]');
+        await page.click('[data-dev-tab="preview"]');
+        expect(
+          await page.getAttribute(
+            '#dev-preview [data-viewport="auto"]',
+            "aria-pressed",
+          ),
+        ).toBe("true");
+        expect(await page.getAttribute("#product-frame", "data-frame")).toBe(
+          null,
+        );
+        await page.setViewportSize({ width: 1100, height: 900 });
+        await page.waitForFunction(
+          () => document.getElementById("product-frame")!.offsetWidth === 393,
+        );
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.waitForFunction(
+          () =>
+            document.getElementById("product-frame")!.dataset.frame ===
+            undefined,
+        );
+
+        await page.click('[data-dev-tab="preview"]');
         await page.selectOption("#viewport", { label: PHONE });
-        await setOpen(page, "inspector", true);
+        await page.click('[data-dev-tab="inspector"]');
+        expect(await page.getAttribute("#product-frame", "data-frame")).toBe(
+          "device",
+        );
 
-        for (const menuOpen of [true, false]) {
-          await setOpen(page, "menu", menuOpen);
-          await productFitted(page);
-          const inspector = await box(page, "#inspector");
-          const stage = await box(page, "#stage");
-          const frame = await box(page, "#product-frame");
-          const right = menuOpen ? (await box(page, "#menu")).left : 1440;
-          expect(inspector.left).toBe(0);
-          expect(inspector.right).toBe(right);
-          expect(inspector.top).toBeGreaterThanOrEqual(stage.bottom);
-          expect(inspector.bottom).toBe(900);
-          // The product keeps its CSS size and is shrunk to fit above.
-          expect(
-            await page.locator("#product-frame").evaluate((element) => ({
-              width: (element as HTMLElement).offsetWidth,
-              height: (element as HTMLElement).offsetHeight,
-            })),
-          ).toEqual({ width: 393, height: 852 });
-          expect(frame.top).toBeGreaterThanOrEqual(stage.top);
-          expect(frame.bottom).toBeLessThanOrEqual(stage.bottom);
-        }
+        // Right: a 480 px column the whole height of the window.
+        await productFitted(page);
+        expect(await box(page, "#devtools")).toMatchObject({
+          left: 960,
+          right: 1440,
+          top: 0,
+          bottom: 900,
+        });
+        expect((await box(page, "#stage")).right).toBeLessThanOrEqual(960);
+        expect(await productSize(page)).toEqual({ width: 393, height: 852 });
 
-        // Both views fill the same dock.
+        // Bottom: across the window, under the app.
+        await page.click('.devtools-side [data-dev-side="bottom"]');
+        await productFitted(page);
+        const bottom = await box(page, "#devtools");
+        const stage = await box(page, "#stage");
+        expect([bottom.left, bottom.right, bottom.bottom]).toEqual([
+          0, 1440, 900,
+        ]);
+        expect(bottom.top).toBeGreaterThanOrEqual(stage.bottom);
+        expect(await productSize(page)).toEqual({ width: 393, height: 852 });
+        const frame = await box(page, "#product-frame");
+        expect(frame.top).toBeGreaterThanOrEqual(stage.top);
+        expect(frame.bottom).toBeLessThanOrEqual(stage.bottom);
+
+        // Both inspector views fill the same tools.
         await page.click('[data-inspector-view="chat"]');
-        const chat = await box(page, "#chat-diagnostics");
-        expect(chat.width).toBe(1440);
+        expect((await box(page, "#chat-diagnostics")).width).toBe(1420);
         await page.click('[data-inspector-view="wire"]');
-        expect((await box(page, "#inspector-mount")).width).toBe(1440);
+        expect((await box(page, "#inspector-mount")).width).toBe(1420);
 
-        // The top edge sets the height; the product shrinks to make room.
-        const before = await box(page, "#inspector");
+        // The top edge sets the height; the app shrinks to make room.
         const frameBefore = await box(page, "#product-frame");
-        await page.focus("#inspector-resize");
+        await page.focus("#devtools-resize");
         await page.keyboard.press("ArrowUp");
         await page.keyboard.press("ArrowUp");
-        const after = await box(page, "#inspector");
-        expect(after.height).toBe(before.height + 48);
-        // The stage's resize observer refits the product after layout.
+        expect((await box(page, "#devtools")).height).toBe(bottom.height + 48);
         await page.waitForFunction(
           (height) =>
             document.getElementById("product-frame")!.getBoundingClientRect()
               .height < height,
           frameBefore.height,
         );
-        expect(await page.locator("#inspector-resize").isVisible()).toBe(true);
+
+        // The side is kept for the next visit.
+        await page.reload();
+        await scriptReady(page);
+        expect((await devtools(page)).side).toBe("bottom");
+
+        // Focus: the app gets the whole window, and the tools come back as they were.
+        await page.click('[data-dev-tab="inspector"]');
+        await page.click("#dev-toggle");
+        expect((await devtools(page)).open).toBe("closed");
+        expect(await box(page, "#stage")).toMatchObject({
+          width: 1440,
+          height: 900,
+        });
+        expect(await productSize(page)).toEqual({ width: 393, height: 852 });
+        await page.click("#dev-toggle");
+        expect(await devtools(page)).toEqual({
+          open: "open",
+          view: "inspector",
+          side: "bottom",
+        });
       } finally {
         await context.close();
       }
@@ -144,38 +222,81 @@ describe("the inspector dock", () => {
   );
 
   test(
-    "a narrow window keeps the inspector a bottom sheet over the product",
+    "a narrow window keeps the tools a sheet over the app",
     async () => {
       const { context, page } = await openHost({ width: 600, height: 900 });
       try {
-        // The size menu is hidden here; the tab still holds a Phone choice.
+        // The preview bar is hidden here; the tab still holds a Phone choice.
         await page.evaluate(() =>
-          sessionStorage.setItem("truapi-web-signing-host:tab-viewport", "1"),
+          sessionStorage.setItem(
+            "truapi-web-signing-host:tab-viewport",
+            "phone",
+          ),
         );
         await page.reload();
-        await page.locator("#inspector-toggle").waitFor();
+        await scriptReady(page);
+        expect((await devtools(page)).open).toBe("closed");
         expect(
           await page.locator("#viewport").evaluate((select) => ({
             value: (select as HTMLSelectElement).value,
             hidden: (select as HTMLElement).offsetParent === null,
           })),
-        ).toEqual({ value: "1", hidden: true });
+        ).toEqual({ value: "phone", hidden: true });
         expect((await box(page, "#product-frame")).width).toBe(600);
-        await setOpen(page, "inspector", true);
+        await page.click("#dev-toggle");
+        await page.click('[data-dev-tab="inspector"]');
         expect(
           await page
-            .locator("#inspector")
+            .locator("#devtools")
             .evaluate((element) => getComputedStyle(element).position),
         ).toBe("fixed");
         expect(await page.locator("#scrim").isVisible()).toBe(true);
-        expect((await box(page, "#inspector")).width).toBe(600);
+        expect((await box(page, "#devtools")).width).toBe(600);
         await page.keyboard.press("Escape");
         expect(await page.getAttribute("body", "data-inspector")).toBe(
           "closed",
         );
         expect(await page.evaluate(() => document.activeElement?.id)).toBe(
-          "inspector-toggle",
+          "dev-toggle",
         );
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
+describe("the Pill", () => {
+  test(
+    "opens the address card with focus in the field, says scanning is not available, and Escape gives focus back",
+    async () => {
+      const { context, page } = await openHost({ width: 1280, height: 800 });
+      try {
+        await page
+          .locator("#core-status")
+          .filter({ hasText: "Core ready" })
+          .waitFor({ state: "attached" });
+        await page.focus("#pill");
+        await page.keyboard.press("Enter");
+        await page.locator("#search-card").waitFor();
+        expect(await page.getAttribute("#pill", "aria-expanded")).toBe("true");
+        expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+          "address",
+        );
+        expect(await page.locator("#search-card").innerText()).toContain(
+          "Scanning a code is not available in this host.",
+        );
+        // A typed address that cannot open says why, in the card.
+        await page.fill("#address", "javascript:alert(1)");
+        await page.press("#address", "Enter");
+        expect(await page.locator("#search-status").innerText()).not.toBe("");
+        await page.press("#address", "Escape");
+        await page.locator("#search-card").waitFor({ state: "hidden" });
+        expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+          "pill",
+        );
+        expect(await page.inputValue("#address")).toBe("");
       } finally {
         await context.close();
       }
@@ -199,10 +320,11 @@ describe("the first paint", () => {
       if (!list.getEntries().some((e) => e.name === "first-contentful-paint"))
         return;
       observer.disconnect();
-      const brand = document.querySelector(".brand");
+      const label = document.querySelector(".dock-label");
       (window as unknown as { __firstPaint: unknown }).__firstPaint = {
-        // Unstyled, the brand's span is `inline`; the stylesheet makes it a flex box.
-        styled: brand !== null && getComputedStyle(brand).display !== "inline",
+        // Unstyled, a dock label is in the flow; the stylesheet takes it out.
+        styled:
+          label !== null && getComputedStyle(label).position === "absolute",
         largestIcon: Math.max(
           ...[...document.querySelectorAll("svg")].map((icon) => {
             const { width, height } = icon.getBoundingClientRect();
@@ -262,21 +384,20 @@ describe("the first paint", () => {
           await page.goto(host.origin, { waitUntil: "commit" });
           expect(await firstPaint(page)).toEqual({
             styled: true,
-            largestIcon: 22,
+            largestIcon: 30,
           });
-          expect(await box(page, ".brand svg")).toMatchObject({
-            width: 22,
-            height: 22,
-          });
-          expect(await box(page, "#menu-toggle svg")).toMatchObject({
-            width: 18,
-            height: 18,
+          expect(
+            await box(page, '#dock [data-destination="chat"] svg'),
+          ).toMatchObject({ width: 28, height: 28 });
+          expect(await box(page, "#dev-toggle")).toMatchObject({
+            width: 120,
+            height: 8,
           });
           release();
           await page.locator("#core-status").waitFor({ state: "attached" });
           expect(
             await box(page, '#dock [data-destination="chat"] svg'),
-          ).toMatchObject({ width: 22, height: 22 });
+          ).toMatchObject({ width: 28, height: 28 });
         } finally {
           release();
           await context.close();
@@ -304,7 +425,7 @@ describe("the first paint", () => {
         release();
         expect(await firstPaint(page)).toEqual({
           styled: true,
-          largestIcon: 22,
+          largestIcon: 30,
         });
       } finally {
         release();

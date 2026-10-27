@@ -37,8 +37,14 @@ import {
   serveNames,
   startCountingTarget,
   startHost,
+  showAddress,
   startUrlProduct,
   testBrowser,
+  closeTools,
+  openTools,
+  reveal,
+  choosePreview,
+  type DevTab,
 } from "./fixtures.js";
 import { PASEO_DOTNS } from "../src/dotns.js";
 import type {
@@ -105,19 +111,12 @@ async function openHost(context: BrowserContext): Promise<Page> {
   return page;
 }
 
-async function openMenu(page: Page): Promise<void> {
-  if ((await page.getAttribute("body", "data-menu")) !== "open")
-    await page.click("#menu-toggle");
-}
-
-async function closeMenu(page: Page): Promise<void> {
-  if ((await page.getAttribute("body", "data-menu")) === "open")
-    await page.click("#menu-toggle");
-}
+const openMenu = (page: Page, tab: DevTab = "account") => openTools(page, tab);
+const closeMenu = closeTools;
 
 /** Menu → Workers: add `name` and wait until its worker runs. */
 async function addWorker(page: Page, name: string): Promise<void> {
-  await openMenu(page);
+  await openMenu(page, "product");
   await page.fill("#worker-name", name);
   await page.press("#worker-name", "Enter");
   await page
@@ -128,13 +127,13 @@ async function addWorker(page: Page, name: string): Promise<void> {
 
 /** Menu → Developer → Chat demo: press `action`, such as `demo-start`. */
 async function chatDemo(page: Page, action: string): Promise<void> {
-  await openMenu(page);
+  await openMenu(page, "more");
   await page.click(`#chat-demo [data-action="${action}"]`);
   await closeMenu(page);
 }
 
 async function openSection(page: Page, selector: string): Promise<void> {
-  await openMenu(page);
+  await reveal(page, selector);
   await page
     .locator(selector)
     .evaluate((details) => ((details as HTMLDetailsElement).open = true));
@@ -160,6 +159,7 @@ async function signInWith(page: Page, mnemonic: string): Promise<void> {
 }
 
 async function openAddress(page: Page, address: string): Promise<void> {
+  await showAddress(page);
   await page.fill("#address", address);
   // `fill` reports success on a field that cannot take focus, such as one
   // under a panel that covers it, and the text then goes nowhere.
@@ -167,7 +167,7 @@ async function openAddress(page: Page, address: string): Promise<void> {
   await page.press("#address", "Enter");
 }
 
-/** Whether the address bar is inert, as it is while a panel covers it. */
+/** Whether the address field is inert, as it is while the developer tools cover the app. */
 const addressInert = (page: Page): Promise<boolean> =>
   page.evaluate(
     () => document.getElementById("address")!.closest("[inert]") !== null,
@@ -286,8 +286,9 @@ describe("a product opened by URL", () => {
         const page = await openHost(context);
         await signIn(page);
         await openAddress(page, host.origin);
+        // The reason shows where the address was typed.
         await page
-          .locator("#product-status")
+          .locator("#search-status")
           .filter({ hasText: "own origin" })
           .waitFor();
         expect(await page.locator("#product-frame iframe").count()).toBe(0);
@@ -315,11 +316,10 @@ describe("a product opened by URL", () => {
           element.setAttribute("data-mark", "kept");
         });
 
-        await page.click("#inspector-toggle");
-        await page.click("#menu-toggle");
-        await page.click("#menu-toggle");
-        await page.click("#inspector-toggle");
-        await page.selectOption("#viewport", { label: "Phone 393 × 852" });
+        await openTools(page, "inspector");
+        await openTools(page, "account");
+        await closeTools(page);
+        await choosePreview(page, "Phone 393 × 852");
 
         expect(
           await frame.evaluate(() => ({
@@ -346,16 +346,23 @@ describe("the product id", () => {
       const context = await newContext();
       try {
         const page = await openHost(context);
+        await showAddress(page);
         await page.fill("#address", urlProduct.url);
         const effective = (source: string) =>
           page.locator(`#product-id-effective[data-source="${source}"]`);
         await effective("derived").waitFor({ state: "attached" });
 
-        await openMenu(page);
+        // Product → Product id, folded under the field.
+        await openMenu(page, "product");
+        expect(await page.inputValue("#product-address")).toBe(urlProduct.url);
+        await page.click("#product-id-summary");
         await page.fill("#product-id", "entered.paseo");
         await effective("entered").waitFor({ state: "attached" });
         expect(await effective("entered").innerText()).toContain(
           "entered.paseo",
+        );
+        expect(await page.locator("#product-id-summary").innerText()).toBe(
+          "Product id: entered.paseo (entered)",
         );
 
         await page.click("#product-id-reset");
@@ -431,10 +438,10 @@ describe("the loading indicator", () => {
           const page = await openHost(context);
           await signIn(page);
           if (label === "mobile") {
-            // On a narrow screen the menu covers the product, and the address
-            // bar takes no input until the menu is closed, as for a user.
+            // On a narrow screen the developer tools cover the app, and the
+            // address field takes no input until they are closed, as for a user.
             expect(await addressInert(page)).toBe(true);
-            await page.click('[data-close="menu"]');
+            await page.click("#devtools-close");
           }
           expect(await addressInert(page)).toBe(false);
           await recordLoading(page);
@@ -455,9 +462,6 @@ describe("the loading indicator", () => {
             true,
           );
 
-          // A click first: a fill goes to whichever frame holds focus, and the
-          // product's frame does after it loads.
-          await page.click("#address");
           await openAddress(page, "missing.paseo");
           await page
             .locator("#product-status")
@@ -484,12 +488,14 @@ describe("the dock", () => {
   const destinations = (page: Page) =>
     page.evaluate(() =>
       Object.fromEntries(
-        [...document.querySelectorAll<HTMLElement>("#dock button")].map(
-          (button) => [
-            button.dataset.destination,
-            `${button.getAttribute("aria-current") === "true" ? "front" : "behind"}/${button.dataset.live === "true" ? "running" : "idle"}`,
-          ],
-        ),
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            "#dock button[data-destination]",
+          ),
+        ].map((button) => [
+          button.dataset.destination,
+          `${button.getAttribute("aria-current") === "true" ? "front" : "behind"}/${button.dataset.live === "true" ? "running" : "idle"}`,
+        ]),
       ),
     );
 
@@ -514,7 +520,6 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
-          notifications: "behind/idle",
         });
 
         await page.click('#dock [data-destination="browse"]');
@@ -530,7 +535,6 @@ describe("the dock", () => {
           chat: "front/idle",
           browse: "behind/running",
           pocket: "behind/idle",
-          notifications: "behind/idle",
         });
         expect(
           await page
@@ -547,7 +551,6 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/running",
           pocket: "front/idle",
-          notifications: "behind/idle",
         });
 
         await page.click('#dock [data-destination="browse"]');
@@ -596,7 +599,6 @@ describe("the dock", () => {
           chat: "front/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
-          notifications: "behind/idle",
         });
         // The screen follows the session change, which lands after the frame closes.
         await page
@@ -683,7 +685,7 @@ describe("the dock", () => {
 
         // The inspector's Chat view lists the engine's events with no product
         // open, apart from the TrUAPI traces.
-        await page.click("#inspector-toggle");
+        await openTools(page, "inspector");
         await page.click('[data-inspector-view="chat"]');
         await page.locator("#chat-diagnostics").waitFor({ state: "visible" });
         expect(await page.locator("#inspector-mount").isHidden()).toBe(true);
@@ -760,7 +762,6 @@ describe("the dock", () => {
           chat: "behind/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
-          notifications: "behind/idle",
         });
       } finally {
         await context.close();
@@ -925,7 +926,7 @@ describe("product worker chat", () => {
         expect(outside).toEqual([]);
 
         // The worker's frames are TrUAPI frames, so the inspector decodes them.
-        await page.click("#inspector-toggle");
+        await openTools(page, "inspector");
         const traces = await page.locator("#inspector-mount").innerText();
         for (const operation of [
           "chat.createRoom",
@@ -1414,7 +1415,7 @@ describe("the local chat product demo", () => {
         expect(
           await page.locator("#chat-screen [data-action^='demo-']").count(),
         ).toBe(0);
-        await openMenu(page);
+        await openMenu(page, "more");
         const panel = page.locator("#chat-demo");
         expect(await panel.textContent()).toContain(
           "not the Verbosity chat product",
@@ -1423,7 +1424,7 @@ describe("the local chat product demo", () => {
         expect(await panel.textContent()).toContain(`Product id ${PRODUCT}`);
         const before = outside.length;
         await page.click('#chat-demo [data-action="demo-start"]');
-        await openMenu(page);
+        await openMenu(page, "product");
         await page
           .locator(
             `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
@@ -1860,7 +1861,7 @@ describe("Pocket's Humanity card", () => {
         await card.locator(".pr-text", { hasText: "taps 1" }).waitFor();
 
         // The worker's frames are TrUAPI frames, so the inspector decodes them.
-        await page.click("#inspector-toggle");
+        await openTools(page, "inspector");
         const traces = await page.locator("#inspector-mount").innerText();
         for (const operation of [
           "renderer.render",
@@ -1868,7 +1869,7 @@ describe("Pocket's Humanity card", () => {
           "pocket.listSubscribe",
         ])
           expect(traces).toContain(operation);
-        await page.click("#inspector-toggle");
+        await closeTools(page);
 
         // The face is kept for this wallet on this network only.
         expect(

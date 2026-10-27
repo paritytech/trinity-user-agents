@@ -24,10 +24,10 @@ and it makes no security promise against a hostile one. Its separations are for 
   kept under the active wallet and product id. See [Wallets and sessions](#wallets-and-sessions) for what the browser
   keeps apart and what it does not.
 - **The permission prompts are a development aid.** They show what a product asks for and let you answer. They are not
-  custody. Every host prompt (permissions, confirmations, the contact picker, chat controls) is drawn as the Polkadot
-  app's bottom sheet, over the app's rectangle only and at its scale, so the menu and the inspector stay visible beside
-  it. It names the product that asks once, under its title. Escape or a tap outside the sheet gives the safe answer
-  (deny, reject, cancel), and focus returns where it was.
+  custody. Every host prompt (permissions, confirmations, the contact picker, the invitation prompt, chat controls) is
+  drawn as the Polkadot app's bottom sheet, over the app's rectangle only and at its scale, so the developer tools stay
+  visible beside it. It names the product that asks once, under its title. Escape or a tap outside the sheet gives the
+  safe answer (deny, reject, cancel), and focus returns where it was.
 - **A product's own requests follow the browser.** The host does not intercept a product's `fetch`, XHR, WebSocket,
   WebRTC or media. They follow the browser's rules and the target's CORS headers, and camera and microphone also need
   the browser's and the operating system's permission. Calls a product makes through TrUAPI, such as signing or a
@@ -56,8 +56,8 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:5180>, import a wallet, type a product URL in the address bar and press Enter. To try it with the
-playground, run `yarn dev` in `playground/` and open `http://localhost:3000`.
+Open <http://localhost:5180>, import a wallet, open the address card with the Docklet's middle button, type a product
+URL and press Enter. To try it with the playground, run `yarn dev` in `playground/` and open `http://localhost:3000`.
 
 The dev server answers `localhost` only. To reach it by another host name, such as a tunnel, start it with
 `WEB_SIGNING_ALLOWED_HOSTS=name.example npm run dev` (a comma list). A static build needs no such setting.
@@ -74,7 +74,7 @@ when you press Enter or choose **Open**.
 
 ## Networks
 
-The menu's **Network** control picks the network this tab runs on. It is chosen before the core starts and applied by
+Account's **Network** control picks the network this tab runs on. It is chosen before the core starts and applied by
 reloading the tab, so the core, the session and any open product are always built for one network; there is no switch
 under a live page. The choice is kept per tab, so two tabs can run on different networks.
 
@@ -193,25 +193,47 @@ Integrity, in two steps that should not be confused:
 The unpacker is written from the CARv1, dag-pb and UnixFS specifications. It refuses names that climb out of the site,
 duplicate names, sharded directories, symlinks, files whose recorded sizes disagree, and content over these limits: 64
 MiB of archive, 128 MiB of files counted once per reference, 10 000 files, 50 000 blocks, 4 MiB per block, 32 directory
-levels and paths of 1 KiB. Loading also stops after a deadline. A failed lookup, or an address that cannot be opened, is
-shown in the menu and leaves the open product as it is. The product is closed once the lookup succeeds and it is being
-opened, so a failure while the archive is fetched, checked or unpacked is shown in the menu and leaves no product open.
+levels and paths of 1 KiB. Loading also stops after a deadline.
+
+A failed lookup, or an address that cannot be opened, is shown in the address card and the Product tab and leaves the
+open product as it is. The product is closed once the lookup succeeds and it is being opened, so a failure while the
+archive is fetched, checked or unpacked is shown in the address card and the Product tab and leaves no product open.
 
 The endpoints, TLD and content resolver address are the `paseo-next-v2` values in dotkit's `assets/envs.toml`, and they
 match dotli's `packages/config/src/network.ts`.
 
 A name needs a service worker, so it opens only from a secure page: `https`, or `http://localhost`. On another address,
-such as `http://<LAN address>:5180` on a phone, it is refused before any lookup, with the reason in the menu. A URL
-product opens on any address. The product frame is a secure context only when every page above it is.
+such as `http://<LAN address>:5180` on a phone, it is refused before any lookup, with the reason in the address card. A
+URL product opens on any address. The product frame is a secure context only when every page above it is.
 
 A browser that does not offer service workers in the frame, or Web Locks, cannot open a name. An embedded web view often
 lacks them: open the host in the system browser.
 
 ### The dock
 
-A dock inside the product rectangle opens **Chat**, **Browse** and **Pocket**, as a phone host's tab bar does, and on a
-local dev server the [Notifications](#notifications-prototype) prototype. Browse is an ordinary product opened the way
-the address bar opens it. Chat and Pocket are screens the host draws itself.
+A dock inside the product rectangle holds **Chat**, **Pocket**, **Browse** and **Apps**, as a phone host's tab bar does.
+Browse is an ordinary product opened the way the address bar opens it. Chat and Pocket are screens the host draws
+itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prototype.
+
+- **The Docklet.** As the Polkadot app's R1 Docklet: a glass dock at most 440 px wide with a round cutout, the app's 28
+  px tab icons only, Chat and Pocket left of the Pill, Browse and Apps right of it, and a lens under the current one.
+  The labels stay for screen readers. Apps shows the open count inside its glyph. It floats over the app, as in the app:
+  a product runs full-bleed under its glass, and host screens end above it. The Pill opens the address card (see
+  [Developer tools](#developer-tools)); while the card shows, the other icons step back.
+- **Apps.** Its count is the products open in this tab, in front or running behind. It opens the Apps shelf, as the
+  app's TabBarShelfView draws it: the bar's glass grows upward, with a row of icons on the right (the Inbox, when the
+  host offers it, the core's state for this network, and **Settings**, which opens the developer tools' Account tab),
+  and the open products under it as a grid of round icons. The one in front is marked. Choosing a product brings it in
+  front; a long press, or its **×** on hover or focus, closes it. Each product shows how many Inbox items it sent that
+  are not seen yet. The state icon is a grey ring whose dot is green when the core is ready and red when it failed, with
+  the status line from Account as its label; there is no per-chain status. While the shelf is open the bar keeps its
+  place, the Pill and the lens on the current tab; Apps gets no lens of its own. Escape or a tap outside closes the
+  shelf.
+- **An open product.** Two glass circles sit over its top corners, as on iOS, with the Docklet kept below. On the left,
+  **Minimize** for a product that belongs to Browse: it goes back to the last host screen and keeps running, and Browse
+  or the shelf brings it back. A product that cannot run behind, such as one opened from a link or a Pocket card, gets
+  **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer tools' Product
+  tab) and **Close**.
 
 - **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
   its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
@@ -430,13 +452,13 @@ A product can chat through its worker executable, as a game product's weekly bot
 workers keep in the same list as the person-to-person conversations above. These rooms are TrUAPI Chat: the worker's
 calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 
-- **Adding a worker.** The menu's **Workers** section takes a product name, such as `myapp.paseo`, and lists the
-  signed-in wallet's workers with their state and **Remove**. The host reads `worker.<name>`: its `executable` text
-  record must be a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint` module inside the directory) whose
-  `includes.chat` is true, and its `contenthash` locates the files. The archive is fetched and verified like a product
-  opened by name, and the entry module is loaded in a hidden frame under the product's mount, connected to the core as
-  the product's `Worker` execution. The product id is the name, the one its app opens under, so the two share the
-  product's storage and accounts.
+- **Adding a worker.** Product → **Workers** takes a product name, such as `myapp.paseo`, and lists the signed-in
+  wallet's workers with their state and **Remove**. The host reads `worker.<name>`: its `executable` text record must be
+  a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint` module inside the directory) whose `includes.chat` is
+  true, and its `contenthash` locates the files. The archive is fetched and verified like a product opened by name, and
+  the entry module is loaded in a hidden frame under the product's mount, connected to the core as the product's
+  `Worker` execution. The product id is the name, the one its app opens under, so the two share the product's storage
+  and accounts.
 - **Lifetime.** The list of workers is kept per network and wallet. A worker runs while its wallet is signed in and the
   tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
   and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
@@ -540,10 +562,9 @@ codegen gives them. Nothing in this repository's Rust crates, codegen or package
 #### Local demo
 
 The dev server can run the synthetic chat product as a product worker, so the bridge can be tried by hand. Run
-`npm run dev`, open `http://localhost:5180` and sign in with a wallet, then the menu's **Dev server only** section →
-**Chat demo** → **Start**. Its rooms (Ada, a group with Ada and Grace, and Lin) join the chat list, and it shows in
-**Workers** as added by this host. **Stop** and **Restart** sit beside it; what it is stays folded under **About the
-chat demo**.
+`npm run dev`, open `http://localhost:5180` and sign in with a wallet, then Developer tools → **More** → **Chat demo** →
+**Start**. Its rooms (Ada, a group with Ada and Grace, and Lin) join the chat list, and it shows in **Workers** as added
+by this host. **Stop** and **Restart** sit beside it; what it is stays folded under **About the chat demo**.
 
 - **How it runs.** `chat-product-demo-plugin.ts`, a dev-server plugin that a build leaves out, builds
   `browser/chat-v2-product-worker.ts` into one module, packs it as an app archive, describes it at
@@ -567,8 +588,8 @@ chat demo**.
 #### Nova chat worker
 
 **Draft, dev server only.** The host's own Nova-compatible chat engine (`src/chat/`) can run inside an ordinary product
-worker instead of the host page, as a chat product would run it. The menu's **Dev server only** section → **Chat
-engine** → **Nova chat worker**. **Host (default)** switches back. The choice is kept per network and wallet.
+worker instead of the host page, as a chat product would run it. Developer tools → **More** → **Chat engine** → **Nova
+chat worker**. **Host (default)** switches back. The choice is kept per network and wallet.
 
 - **One engine at a time.** The host's engine stops before the worker starts, and the worker and its identity link stop
   before the host's engine starts again. Both would otherwise acknowledge the same messages and replace each other's
@@ -620,22 +641,25 @@ engine** → **Nova chat worker**. **Host (default)** switches back. The choice 
   with no contacts, so it follows no existing conversation until someone sends a new request. While chat runs in the
   worker, the contact picker other products open has no Nova contacts: the host does not take contacts from a product.
 
-### Notifications (prototype)
+### Inbox (prototype)
 
-**Prototype.** A **Notifications** entry in the dock lists requests that products send and that wait for the user's
-answer: a persistent list, not a passing toast, and separate from the operating system's notification permission. It
-holds chat invitations and profile sharing requests, not every chat message. No sharing, invitation or contact API feeds
-it: its requests come from sample data or from [test users](#test-users-prototype).
+**Prototype.** The **Inbox** lists requests that products send and that wait for the user's answer: a persistent list,
+not a passing toast, and separate from the operating system's notification permission. Chat's **Chats | Inbox** tabs
+open it in place of the conversation list, and the Apps shelf's **Inbox** opens the same view: Chat, at its Inbox tab.
+Both read one list, so an item seen, dismissed or accepted in one shows so in the other. It holds chat invitations and
+profile sharing requests, not every chat message. No sharing, invitation or contact API feeds it: its requests come from
+sample data or from [test users](#test-users-prototype).
 
 - **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the
-  [local demo](#local-demo); a build leaves it out with its dock entry. The menu's **Dev server only** section → **Add
-  sample notifications** fills the list of the signed-in wallet or test user, and **Clear samples** removes them.
-- **The look.** The native apps have no such list, so this one is built from native parts: one list whose rows follow
-  the iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the
-  product it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
-- **Seen.** A row is seen once at least 60% of it shows on screen, while the screen and the page are visible. Opening
-  the screen does not mark rows below the fold, and a page in a background tab marks nothing. The dock badge counts
-  listed rows not seen yet, whatever their state.
+  [local demo](#local-demo); a build leaves it out with both entries. Developer tools → **More** → **Add sample
+  notifications** fills the list of the signed-in wallet or test user, and **Clear samples** removes them.
+- **The look.** The native apps have no Inbox, so this one is built from native parts: one list whose rows follow the
+  iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the product
+  it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
+- **Seen.** A row is seen once at least 60% of it shows on screen, while the Inbox and the page are visible. Opening the
+  tab does not mark rows below the fold, and a page in a background tab marks nothing. The Inbox tab and the shelf's
+  Inbox count listed rows not seen yet, whatever their state, and a dot on Apps shows while any are. A product in the
+  shelf counts its own. Every count reads the same items.
 - **Actions.** A request that waits has **Dismiss**, and **Accept** when the feature that owns it can accept it. Sample
   requests have no owner, so they have Dismiss only. Seen is not answered: a request with no action stays waiting until
   it expires, and then it has no actions.
@@ -665,17 +689,16 @@ product makes the invitation and keeps its secrets, the host resolves an opaque 
 reposts it, the recipient's product replies on the sender's reply topic with a host proof, and the sender's product
 completes only after its host verified the proof and its own setup check passed. Nothing in it is an agreed API.
 
-- **Try it.** In one tab: the menu's **Dev server only** section → **Test user** → **Alice**. The tab reloads with
-  **Test user · Alice** in the app bar, "Signed in as Alice" in the menu and **Example Chat** in Browse. In a second tab
-  choose **Bob**.
+- **Try it.** In one tab: Developer tools → **More** → **Test user** → **Alice**. The tab reloads with **Test user ·
+  Alice** over the app, "Signed in as Alice" in Settings and **Example Chat** in Browse. In a second tab choose **Bob**.
   - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
   - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact reference.
     **Invite** opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
-  - Bob's **Notifications** badge in the dock shows 1 until the row shows in his list. **Accept** hands the invitation
-    to Bob's Example Chat, which checks the setup data, accepts with its response, gets the host's sealed proof and
-    posts both on the reply topic. Alice's host verifies the proof, Alice's Example Chat checks the response, and only
-    then is it **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a waiting
-    invitation; otherwise it waits until it expires. The menu's Log shows each step.
+  - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
+    **Accept** hands the invitation to Bob's Example Chat, which checks the setup data, accepts with its response, gets
+    the host's sealed proof and posts both on the reply topic. Alice's host verifies the proof, Alice's Example Chat
+    checks the response, and only then is it **Connected**. **Dismiss** takes the row off Bob's list and sends nothing.
+    Alice can **Cancel** a waiting invitation; otherwise it waits until it expires. More → Log shows each step.
 - **Developer controls.** **Restart Example Chat** opens the product again, which gets its state back from the host and
   its own storage. **Reset Alice** removes that test user's lists on this network. **None** returns the tab to wallets.
 - **What a test user is.** A core session from a public test phrase, under its own storage scope, apart from every
@@ -773,18 +796,35 @@ These are accepted for a development host.
 - A product opened by name shares the host's origin, so the browser APIs that are global to an origin are shared with
   the host and its other products: see [Wallets and sessions](#wallets-and-sessions).
 
-## Menu and inspector
+## Developer tools
 
-The product fills the main area. The top bar holds the brand mark, an editable address bar, the size menu (wide screens
-only), and account, inspector and menu buttons. Wallets, the product id and the log live in the menu, which opens from
-the right, and the wire inspector sits under the product.
+The window has two zones: the app, on black, and the developer tools, a dark glass panel beside or under it. The only
+developer control over the app is the **Focus capsule**, Dotli's 120 × 8 status capsule at the top centre. Its colour is
+the core's state: grey while it starts, green signed in, amber signed out, red when it failed. It shows or hides the
+tools at the tab they last showed; hidden, they give the app the whole window: Focus. A test user's marker sits at the
+app's top left.
 
-**Address bar.** Typing only edits the text; the bar shows a dashed outline and a go button while it holds an address
-that is not open. The product loads on Enter, the go button, or **Open** in the menu, and `Escape` restores the address
-that is open. The chip inside the bar shows the product id the open page runs under.
+The tools' header holds the brand mark, **Developer**, a **Dev wallets** tag, the Right / Bottom switch and Hide. Under
+it are five tabs:
 
-**Product id.** The menu's **Product id** field sets the id the core takes the page for. Leave it empty to derive one
-from the address: `localhost:<port>` for a local server, the name itself for a product name, or the host name for a
+- **Account:** the core's state, the network, the wallet (sign in, sign out, forget), Import a wallet and Account
+  status.
+- **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
+  state, Close, Reset its data, What it may use, Details), and Workers.
+- **Preview:** the app's size and its frame, described below.
+- **Inspector:** the TrUAPI traces and the Chat diagnostics.
+- **More:** Versions, the dev server's own controls (test users, sample Inbox items, the chat engine and the chat demo),
+  and the Log.
+
+**Address field.** The Docklet's middle button, the Pill, opens a card with the address field and the recent products.
+Typing only edits the text; the field shows a dashed outline and a go button while it holds an address that is not open.
+The product loads on Enter, the go button, or **Open** in the Product tab, and `Escape` restores the address that is
+open, then closes the card. When an address typed there does not open, the card opens again with the reason. The chip
+inside the field shows the product id the open page runs under. Scanning a code is not available in this host, and the
+card says so.
+
+**Product id.** The Product tab's **Product id** field sets the id the core takes the page for. Leave it empty to derive
+one from the address: `localhost:<port>` for a local server, the name itself for a product name, or the host name for a
 named site. A bare IP address, such as a phone-reachable LAN URL, derives an id the core refuses, so enter one there. A
 line under the field says which id the next Open will use and whether it was entered or derived. The override stays when
 the address changes, until **Reset** clears it. Nothing reloads on edit or Reset; the id applies on Enter, the go button
@@ -794,26 +834,30 @@ The id picks which product's accounts, grants, storage and privileges the page g
 gives that product, such as signing without a prompt. It is your choice and not a check that the page owns that id.
 Enter only ids of products you are developing.
 
-**Menu.** Account, Product and Versions show labels and values. Import a wallet, product Details, Developer, Technical
-versions and Log are collapsed. Details holds what was read for a name: record, CID, origin, and what is and is not
-checked.
+**Folds.** Import a wallet, Account status, Host permissions, product Details and Technical versions are collapsed.
+Details holds what was read for a name: record, CID, origin, and what is and is not checked.
 
 **Layout.**
 
-- **Wide screens (over 900 px).** The menu is a right-hand sidebar and the inspector a bottom dock, open independently.
-  Both resize the product frame.
-- **Narrow screens.** The menu is a drawer and the inspector a bottom sheet, each over the product with a scrim. One is
-  open at a time, the product and top bar behind it are inert, `Escape` or the scrim closes it, and focus goes back to
-  the button that opened it. **Open** closes the drawer.
+- **Wide screens (over 900 px).** The tools open on the right (480 px wide) or at the bottom, where their top edge sets
+  their height; the choice is kept in this browser. At the bottom the tabs sit in the header and a tab's groups sit side
+  by side. Docked on the right, the inspector stacks its list over the detail.
+- **Narrow screens.** The tools cover the app with a scrim: a 380 px panel on the right up to 900 px, and a bottom sheet
+  with a handle on a phone. They start hidden. The app behind them is inert, `Escape` or the scrim closes them, and
+  focus goes back to the capsule. **Open** closes them. The app fills the window, and the Preview tab says so.
 
-Toggling a panel changes classes and sizes around the product frame. It does not move or re-create the frame, so the
-product is not reloaded and the session is untouched.
+Showing, hiding or moving the tools changes classes and sizes around the product frame. It does not move or re-create
+the frame, so the product is not reloaded and the session is untouched.
 
-**Simulating another screen.** The size menu (Fill, Phone, Tablet, Desktop) resizes only the product rectangle. It is a
-plain rectangle with no device frame, clock or status bar. The product lays out at exactly the chosen CSS size (393 ×
-852 for Phone) and the rectangle is shrunk to fit. The host's own menu and inspector stay at desktop size, and the
-inspector stays docked under the product whatever size is chosen: dragging its top edge trades its height for the
-product's. The size is kept for the tab. On a narrow screen the control is hidden and the product fills the screen.
+**Preview.** The Preview tab sizes only the app's rectangle: **Auto** (Desktop while the app has 760 px or more, else
+Phone), **Desktop**, which fills the app's zone, and **Phone**; **All sizes** adds Tablet, Desktop 1280 × 800 and
+Custom. The choice stays when another tab shows. Two lines under it say what the app gets, at what scale, and the size
+of the window and the tools; a set size also has a caption under it. The app lays out at exactly the chosen CSS size
+(393 × 852 for Phone) and the rectangle is shrunk to fit; the window and the tools keep their own size. A set size has a
+**Frame**: **Device** draws a bezel outside the size, **Round** rounds its corners and **No frame** leaves a plain
+rectangle. On a phone size the device also draws the island and the home indicator over the screen. Host screens and the
+Docklet keep clear of them; a product runs full-bleed under them, as on iOS. No frame draws a clock or status icons. The
+size and frame are kept for the tab. On a narrow screen the app fills the screen and the tab holds only a note.
 
 **Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
 the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
@@ -874,7 +918,7 @@ is left out of the picker and stays in storage untouched, and the log says how m
 `truapi-web-signing-host:wallets:v1` value is not a list, saving and forgetting are refused until you fix or delete it
 in DevTools.
 
-**Account status** in the menu has two groups. Everything in it is read-only and nothing polls.
+**Account status** in the Account tab has two groups. Everything in it is read-only and nothing polls.
 
 - **Account** shows the keys and reads the signed-in wallet's standing from the People chain when you open the fold or
   press Refresh. It reads `Resources.Consumers` and `PeopleLite.LitePeople` for the identity account and for the root
@@ -992,7 +1036,7 @@ opens, so the light client reaches no chain. It checks that:
   a root-relative script link in the product is answered from the archive;
 - a product's own requests reach the target, counted there, because the host does not gate them;
 - a URL product opens on its own origin, and the host refuses its own origin;
-- opening the menu or inspector, or resizing the product, does not reload it;
+- opening, moving or hiding the developer tools, or resizing the product, does not reload it;
 - an entered product id is shown as entered;
 - the dock keeps Browse's product running while a host screen is in front, resumes it with its page state, and ends the
   held product when the wallet changes;
@@ -1038,33 +1082,41 @@ opens, so the light client reaches no chain. It checks that:
   Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
   says why.
 
-`browser/notifications.spec.ts` checks the Notifications prototype with synthetic phrases, every socket closed and every
-request outside this host refused: nothing is stored until the demo is asked for; the badge counts the requests not
-opened and opening one clears only that one; seen is not answered; an accepted or declined request moves to Earlier and
-offers no answer again; a request expires on the clock, in the open detail, with no answer left; Clear removes the
-demo's requests and their stored list; a reload keeps waiting requests and history; another wallet sees none of it;
-signing out empties the screen and the badge; and on a phone the four dock entries fit, long names and purposes wrap,
-and nothing scrolls sideways.
+`browser/notifications.spec.ts` checks the Inbox prototype with synthetic phrases, every socket closed and every request
+outside this host refused: nothing is stored until sample data is asked for, from the developer tools; the badge counts
+unseen rows; a page in a background tab marks nothing seen; once visible, only the rows on screen are seen, a jump past
+rows leaves them unseen, and scrolled into view they are seen; seen is not answered; sample requests offer Dismiss only
+and no row opens; Dismiss takes a row off the list and keeps it stored, waiting, with its `dismissedAt`; a request
+expires on the clock and loses its actions; Clear removes the demo's requests and their stored list; a reload keeps what
+was seen and dismissed; another wallet sees none of it; signing out empties the screen and the badge; Chat's Inbox tab
+and the Apps shelf's Inbox open the same list, the tab, the shelf, the dot on Apps and a product's own count clear
+together once its rows are seen, while Apps keeps counting open products; the shelf takes focus when it opens and gives
+it back to Apps on Escape, brings a product running behind to the front and closes it; and on a phone the four dock
+entries fit, long rows wrap, Dismiss is a full tap target, and nothing scrolls sideways.
 
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
-outside loopback refused, and checks that on a wide window the inspector is docked under a Phone-sized product across
-the width the menu leaves, for both inspector views, that its top edge sets its height, and that a narrow window keeps
-it a bottom sheet. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs
-a chat exchange between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer,
-the copies, the capture levels, and that no key or secret shows. `browser/chat-screen.spec.ts` mounts the Chat screen
-alone over the Nova and product room providers with stand-ins behind them and the chat product provider with the
-synthetic chat product on the other side of the bridge in the page, synthetic data only and every request outside this
-host refused, and checks one list across providers, paging on scroll, sender names and the user's own messages, status
-changes, a retried message staying one message, a product room's custom card, buttons, reaction and non-`https` file,
-the chat product answering while another room is open, unread cleared only for messages on screen, a product restart and
-a new session. It checks New chat through the host's contact picker over a test username index: Cancel changes nothing,
-a username that names another account on chain is not chosen, a contact opens their chat, anyone else opens a request
-that the provider is asked to send only on Send, once, and a choice made after the session changed is dropped. It also
-checks the user's reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated
-image sent and fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call
-manager in the same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every
-track stopped when the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates
-carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
+the bottom across the window, the Phone-sized app keeping its size and its device frame; that both inspector views fill
+the tools, that their top edge sets their height at the bottom, and that the side is kept after a reload; that Focus
+gives the app the whole window and brings the tools back at the same view; that a narrow window keeps them a sheet over
+the app; and that the Pill opens the address card with focus in the field, says scanning is not available, shows why an
+address cannot open, and on `Escape` closes and gives focus back. `browser/chat-diagnostics.spec.ts` mounts the
+inspector's Chat view alone on made-up events, and runs a chat exchange between two synthetic wallets over an in-memory
+JSON-RPC statement store to check each payload layer, the copies, the capture levels, and that no key or secret shows.
+`browser/chat-screen.spec.ts` mounts the Chat screen alone over the Nova and product room providers with stand-ins
+behind them and the chat product provider with the synthetic chat product on the other side of the bridge in the page,
+synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
+sender names and the user's own messages, status changes, a retried message staying one message, a product room's custom
+card, buttons, reaction and non-`https` file, the chat product answering while another room is open, unread cleared only
+for messages on screen, a product restart and a new session. It checks New chat through the host's contact picker over a
+test username index: Cancel changes nothing, a username that names another account on chain is not chosen, a contact
+opens their chat, anyone else opens a request that the provider is asked to send only on Send, once, and a choice made
+after the session changed is dropped. It also checks the user's reactions in a Nova conversation and a product room,
+blocking, unblocking and leaving, a generated image sent and fetched through a HOP node held in the page, and audio and
+video calls over real WebRTC to a second call manager in the same page, with generated media (a WebAudio tone and a
+canvas), not a camera or microphone, and every track stopped when the call ends. The shared Chromium runs with
+`WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep
+screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -1097,9 +1149,12 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - `src/contacts.ts`: the contact picker and handle lookup.
 - `src/username-directory.ts`: finding people by username for the contact picker.
 - `src/username-search.ts`, `username-search-plugin.ts`: the dev server's username search route.
-- `src/notifications.ts`, `src/notifications-screen.ts`: the Notifications prototype.
-- `src/workers-menu.ts`: the menu's Workers section. `src/dev-tools/chat-demo.ts`: the chat demo's controls.
-- `src/invitations/`: invitations between users' hosts. `src/dev-tools/`: the menu's dev server controls, test users and
+- `src/chrome.ts`, `src/layout.ts`: the developer tools' zone, its tabs, side and Focus. `src/search-card.ts`: the
+  Pill's address card. `src/viewport.ts`: the app's preview size and frame.
+- `src/notifications.ts`, `src/notifications-screen.ts`: the Inbox prototype. `src/chat-tabs.ts`: Chat's Chats | Inbox
+  tabs. `src/apps-shelf.ts`: the dock's Apps entry and its shelf.
+- `src/workers-menu.ts`: Product → Workers. `src/dev-tools/chat-demo.ts`: More → Chat demo.
+- `src/invitations/`: invitations between users' hosts. `src/dev-tools/`: More's dev server controls, test users and
   Example Chat, loaded only by a dev server.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
@@ -1134,7 +1189,7 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs
-  from the menu's **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
+  from Product → **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing
   core's product runtime does not install the debug tap the dial reads. The in-page inspector does not depend on it.

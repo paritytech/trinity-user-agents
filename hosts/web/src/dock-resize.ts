@@ -1,26 +1,22 @@
-/** The least the inspector can shrink to. The stylesheet keeps 120px of product above it. */
+/** The least the developer tools can shrink to. The stylesheet keeps 120px of app above them. */
 const MIN_HEIGHT = 160;
 const KEY_STEP = 24;
 
 /**
- * Let the inspector's top edge be dragged to set its height.
+ * Let the top edge of the developer tools, docked at the bottom, be dragged to set their height.
  *
- * The height is one CSS variable on the inspector, so nothing is moved or
+ * The height is one CSS variable on the tools, so nothing is moved or
  * re-created and the product frame keeps running. The stylesheet clamps the
  * result to the space the window has.
  */
-export function bindDockResize(
-  handle: HTMLElement,
-  dock: HTMLElement,
-  appbar: HTMLElement,
-): void {
+export function bindDockResize(handle: HTMLElement, dock: HTMLElement): void {
   const maxHeight = (): number =>
-    Math.max(MIN_HEIGHT, window.innerHeight - appbar.offsetHeight - 120);
+    Math.max(MIN_HEIGHT, window.innerHeight - 120);
   const set = (height: number): void => {
     const clamped = Math.round(
       Math.min(maxHeight(), Math.max(MIN_HEIGHT, height)),
     );
-    dock.style.setProperty("--inspector-h", `${clamped}px`);
+    dock.style.setProperty("--devtools-h", `${clamped}px`);
     handle.setAttribute("aria-valuenow", String(clamped));
   };
   let dragging = false;

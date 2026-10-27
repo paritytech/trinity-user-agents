@@ -8,7 +8,12 @@ import {
 } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser, type BrowserContext } from "playwright-core";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { PASEO_DOTNS, bytesToHex, namehash } from "../src/dotns.js";
 import { Blocks, car } from "../src/archive/fixtures.js";
@@ -390,4 +395,58 @@ export async function startUrlProduct(
     response.end(html);
   });
   return { url: `http://localhost:${port}/`, close: () => void server.close() };
+}
+
+/** Open the Pill's card, which holds the address field, unless it shows. */
+export async function showAddress(page: Page): Promise<void> {
+  if (await page.locator("#search-card").isHidden()) await page.click("#pill");
+  await page.locator("#address").waitFor();
+}
+
+/** The developer tools' tabs. */
+export type DevTab = "account" | "product" | "preview" | "inspector" | "more";
+
+/**
+ * Open the developer tools at `tab`, from the Focus capsule. The clicks are
+ * dispatched: the panel slides in on a phone, and under an installed clock
+ * Playwright cannot wait for it to settle.
+ */
+export async function openTools(
+  page: Page,
+  tab: DevTab = "account",
+): Promise<void> {
+  if ((await page.getAttribute("body", "data-devtools")) !== "open")
+    await page.locator("#dev-toggle").dispatchEvent("click");
+  await page.locator(`[data-dev-tab="${tab}"]`).dispatchEvent("click");
+  await page
+    .locator(`body[data-devtools="open"][data-dev-view="${tab}"]`)
+    .waitFor({ state: "attached" });
+}
+
+/** Hide the developer tools: Focus. */
+export async function closeTools(page: Page): Promise<void> {
+  if ((await page.getAttribute("body", "data-devtools")) === "open")
+    await page.locator("#devtools-close").dispatchEvent("click");
+  await page
+    .locator('body[data-devtools="closed"]')
+    .waitFor({ state: "attached" });
+}
+
+/** Open the developer tools at the tab that holds `selector`. */
+export async function reveal(page: Page, selector: string): Promise<void> {
+  const tab = await page
+    .locator(selector)
+    .first()
+    .evaluate(
+      (element) =>
+        element.closest("[data-dev-panel]")?.getAttribute("data-dev-panel") ??
+        null,
+    );
+  if (tab !== null) await openTools(page, tab as DevTab);
+}
+
+/** Choose a preview size in the developer tools' Preview tab. */
+export async function choosePreview(page: Page, label: string): Promise<void> {
+  await openTools(page, "preview");
+  await page.selectOption("#viewport", { label });
 }

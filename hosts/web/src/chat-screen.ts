@@ -81,6 +81,8 @@ export class ChatScreen {
      * not offered.
      */
     private readonly choosePerson?: () => Promise<PickedPerson | null>,
+    /** Drawn under the title of the list, such as the tabs to the Inbox. */
+    private readonly listHeader?: HTMLElement,
   ) {
     root.dataset.chatEngine = "off";
     document.body.append(this.call.root);
@@ -255,9 +257,10 @@ export class ChatScreen {
     if (!this.inbox.signedIn())
       return [
         this.bar("Chats"),
+        ...this.header(),
         this.empty(
           "Sign in to chat",
-          "Choose a wallet in the menu. Chat uses that wallet's identity.",
+          "Choose a wallet in Settings. Chat uses that wallet's identity.",
         ),
       ];
     if (this.view.kind === "blocked") return this.drawBlocked();
@@ -334,7 +337,7 @@ export class ChatScreen {
         this.empty(
           "Add your first contact",
           starter === undefined
-            ? "Add a product's worker in the menu to chat with it."
+            ? "Add a product's worker in Settings to chat with it."
             : "Tap + to choose someone to chat with.",
         ),
       );
@@ -373,7 +376,11 @@ export class ChatScreen {
       add.setAttribute("aria-label", "New chat");
       add.title = "New chat";
     }
-    return [this.bar("Chats", add), body];
+    return [this.bar("Chats", add), ...this.header(), body];
+  }
+
+  private header(): HTMLElement[] {
+    return this.listHeader === undefined ? [] : [this.listHeader];
   }
 
   /** A provider's own account: who the user is to it, its state, and what to know. */

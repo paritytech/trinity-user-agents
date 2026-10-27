@@ -1,67 +1,133 @@
-import { Layout, type Panel } from "./layout.js";
+import { DEV_VIEWS, Layout, type DevSide, type DevView } from "./layout.js";
 
-/** Below this width the panels cover the product instead of sitting beside it. */
+/** Below this width the tools cover the app instead of sitting beside it. */
 const NARROW = "(max-width: 900px)";
+const SIDE_KEY = "truapi-web-signing-host:devtools-side";
 
 export interface ChromeElements {
-  appbar: HTMLElement;
   stage: HTMLElement;
   scrim: HTMLElement;
-  panels: Record<Panel, HTMLElement>;
-  toggles: Record<Panel, HTMLButtonElement>;
+  /** The developer tools panel. */
+  panel: HTMLElement;
+  /** The Focus capsule: shows or hides the tools at the view they last showed. */
+  focus: HTMLButtonElement;
+  close: HTMLButtonElement;
 }
 
 export interface Chrome {
-  /** Close the panel covering the product, if one does. */
+  /** Close the tools if they cover the app. */
   dismissCovering(): void;
+  /** Open the tools at `view`. */
+  show(view: DevView): void;
 }
 
+const loadSide = (): DevSide =>
+  localStorage.getItem(SIDE_KEY) === "bottom" ? "bottom" : "right";
+
 /**
- * Show and hide the menu and the inspector around the product.
+ * Show and hide the developer tools beside the app, at the right or the
+ * bottom, and switch their view. Closed, they leave the app the whole window:
+ * Focus. On a narrow screen they cover the app instead.
  *
- * Panels only change classes and attributes on the page around the product
- * frame. Nothing here moves or re-creates the frame's element, so opening or
- * closing a panel never reloads the product or touches the session.
+ * Only classes and attributes on the page around the product frame change.
+ * Nothing here moves or re-creates the frame's element, so opening, closing
+ * or moving the tools never reloads the product or touches the session.
  */
 export function bindChrome(elements: ChromeElements): Chrome {
-  const { appbar, stage, scrim, panels, toggles } = elements;
+  const { stage, scrim, panel, focus } = elements;
   const narrow = window.matchMedia(NARROW);
-  const layout = new Layout(narrow.matches ? [] : ["menu"]);
+  const layout = new Layout(!narrow.matches);
   layout.setModal(narrow.matches);
-  let covering: Panel | null = null;
+  let side = loadSide();
+  let covering = false;
+  let wasOpen = layout.open;
+  const tabs = new Map(
+    DEV_VIEWS.map((view) => [
+      view,
+      panel.querySelector<HTMLButtonElement>(`[data-dev-tab="${view}"]`)!,
+    ]),
+  );
+  const views = new Map(
+    DEV_VIEWS.map((view) => [
+      view,
+      panel.querySelector<HTMLElement>(`[data-dev-panel="${view}"]`)!,
+    ]),
+  );
+  const sides = [
+    ...panel.querySelectorAll<HTMLButtonElement>("button[data-dev-side]"),
+  ];
 
   const render = (): void => {
     const before = covering;
     covering = layout.covering;
-    for (const panel of ["menu", "inspector"] as const) {
-      const open = layout.isOpen(panel);
-      document.body.dataset[panel] = open ? "open" : "closed";
-      toggles[panel].setAttribute("aria-expanded", String(open));
+    const body = document.body.dataset;
+    body.devtools = layout.open ? "open" : "closed";
+    body.devView = layout.view;
+    body.devSide = side;
+    body.inspector = layout.isShown("inspector") ? "open" : "closed";
+    body.menu = layout.open && layout.view !== "inspector" ? "open" : "closed";
+    focus.setAttribute("aria-expanded", String(layout.open));
+    focus.title = layout.open
+      ? "Hide the developer tools (Focus)"
+      : "Show the developer tools";
+    for (const [view, tab] of tabs) {
+      tab.setAttribute("aria-selected", String(layout.view === view));
+      tab.tabIndex = layout.view === view ? 0 : -1;
+      views.get(view)!.hidden = layout.view !== view;
     }
-    // A covering panel is modal: what it covers cannot take focus or clicks.
-    scrim.hidden = covering === null;
-    stage.inert = appbar.inert = covering !== null;
+    for (const button of sides)
+      button.setAttribute(
+        "aria-pressed",
+        String(button.dataset.devSide === side),
+      );
+    // Open tools that cover the app are modal: what they cover takes no input.
+    scrim.hidden = !covering;
+    stage.inert = covering;
 
-    if (covering !== null && covering !== before) panels[covering].focus();
-    if (covering === null && before !== null) {
-      const focus = document.activeElement;
-      if (focus === document.body || panels[before].contains(focus))
-        toggles[before].focus();
-    }
+    if (covering && !before) panel.focus();
+    if (
+      wasOpen &&
+      !layout.open &&
+      (panel.contains(document.activeElement) ||
+        document.activeElement === document.body)
+    )
+      focus.focus();
+    wasOpen = layout.open;
   };
 
-  for (const panel of ["menu", "inspector"] as const) {
-    toggles[panel].addEventListener("click", () => {
-      layout.toggle(panel);
+  focus.addEventListener("click", () => {
+    layout.toggleOpen();
+    render();
+  });
+  for (const [view, tab] of tabs)
+    tab.addEventListener("click", () => {
+      layout.show(view);
       render();
     });
-    panels[panel]
-      .querySelector(`[data-close="${panel}"]`)
-      ?.addEventListener("click", () => {
-        layout.close(panel);
-        render();
-      });
-  }
+  panel
+    .querySelector('[role="tablist"]')
+    ?.addEventListener("keydown", (event) => {
+      const key = (event as KeyboardEvent).key;
+      const step = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : null;
+      if (step === null) return;
+      event.preventDefault();
+      const index = DEV_VIEWS.indexOf(layout.view);
+      const next =
+        DEV_VIEWS[(index + step + DEV_VIEWS.length) % DEV_VIEWS.length];
+      layout.show(next);
+      render();
+      tabs.get(next)!.focus();
+    });
+  for (const button of sides)
+    button.addEventListener("click", () => {
+      side = button.dataset.devSide === "bottom" ? "bottom" : "right";
+      localStorage.setItem(SIDE_KEY, side);
+      render();
+    });
+  elements.close.addEventListener("click", () => {
+    layout.close();
+    render();
+  });
 
   scrim.addEventListener("click", () => {
     layout.dismissCovering();
@@ -87,6 +153,10 @@ export function bindChrome(elements: ChromeElements): Chrome {
   return {
     dismissCovering() {
       layout.dismissCovering();
+      render();
+    },
+    show(view) {
+      layout.show(view);
       render();
     },
   };

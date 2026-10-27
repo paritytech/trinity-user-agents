@@ -1,7 +1,7 @@
 /**
- * Headless-browser test of the Notifications screen, a prototype the dev
- * server offers with made-up requests, which have no owner to accept them.
- * It signs in with synthetic phrases,
+ * Headless-browser test of the Inbox, a prototype the dev server offers with
+ * made-up requests, which have no owner to accept them. Chat's Inbox tab and
+ * the Apps shelf's Inbox open it. It signs in with synthetic phrases,
  * closes every socket and refuses every request outside this host, so no
  * chain, backend or peer is reached. It needs a Chromium: playwright-core
  * finds the one it installs, or set CHROMIUM_PATH.
@@ -9,7 +9,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
+import {
+  type RunningHost,
+  startHost,
+  startUrlProduct,
+  testBrowser,
+  closeTools,
+  openTools,
+  type DevTab,
+} from "./fixtures.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 180_000;
@@ -76,22 +84,13 @@ const ready = (page: Page) =>
     .filter({ hasText: "Core ready" })
     .waitFor({ state: "attached" });
 
-async function setMenu(page: Page, open: boolean): Promise<void> {
-  if (((await page.getAttribute("body", "data-menu")) === "open") === open)
-    return;
-  // On a phone the open menu covers its toggle, and Escape closes it.
-  const covered =
-    !open &&
-    (await page
-      .click("#menu-toggle", { trial: true, timeout: 1000 })
-      .then(() => false)
-      .catch(() => true));
-  if (covered) await page.keyboard.press("Escape");
-  else await page.click("#menu-toggle");
-  await page.waitForFunction(
-    (want) => document.body.dataset.menu === want,
-    open ? "open" : "closed",
-  );
+async function setMenu(
+  page: Page,
+  open: boolean,
+  tab: DevTab = "account",
+): Promise<void> {
+  if (open) await openTools(page, tab);
+  else await closeTools(page);
 }
 
 async function signIn(page: Page, phrase: string): Promise<void> {
@@ -107,23 +106,24 @@ async function signIn(page: Page, phrase: string): Promise<void> {
 
 /** Sample notifications come from the menu's Developer section. */
 async function seed(page: Page): Promise<void> {
-  await setMenu(page, true);
+  await setMenu(page, true, "more");
   await page.click('[data-action="notifications-demo-seed"]');
   await setMenu(page, false);
 }
 
-const tab = '#dock [data-destination="notifications"]';
+const inboxTab = '#chat-tabs [data-chat-tab="inbox"]';
 const row = (id: string) => `[data-notification="${id}"].notification-row`;
 
-/** The dock's Notifications entry. */
-async function openNotifications(page: Page): Promise<void> {
-  await page.click(tab);
+/** Chat, at its Inbox tab. */
+async function openInbox(page: Page): Promise<void> {
+  await page.click('#dock [data-destination="chat"]');
+  await page.click(inboxTab);
 }
 
-/** The count on the dock's Notifications entry, whichever screen shows. */
+/** The Inbox's count, kept on Chat's Inbox tab whichever screen shows. */
 const badgeCount = (page: Page): Promise<number> =>
   page
-    .locator(`${tab} [data-badge]`)
+    .locator(`${inboxTab} [data-badge]`)
     .evaluate((node) =>
       (node as HTMLElement).hidden ? 0 : Number(node.textContent),
     );
@@ -170,7 +170,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
     await page.screenshot({ path: join(directory, `${name}.png`) });
 }
 
-describe("the Notifications screen", () => {
+describe("the Inbox", () => {
   test(
     "marks a row seen only once it shows in a visible page, and Dismiss takes it off the list without an answer",
     async () => {
@@ -180,10 +180,10 @@ describe("the Notifications screen", () => {
       });
       try {
         // Signed out: the tab is there, with nothing in it and no badge.
-        await openNotifications(page);
+        await openInbox(page);
         await page
           .locator("#notifications-screen", {
-            hasText: "Sign in to see notifications",
+            hasText: "Sign in to see your Inbox",
           })
           .waitFor();
         expect(await badgeCount(page)).toBe(0);
@@ -199,12 +199,13 @@ describe("the Notifications screen", () => {
 
         // Added while Chats is in front: four unseen, the badge counts them.
         await page.click('#dock [data-destination="chat"]');
+        await page.click('#chat-tabs [data-chat-tab="chats"]');
         await seed(page);
         expect(await badgeCount(page)).toBe(4);
 
         // A page in a background tab marks nothing seen.
         await setPageVisible(page, false);
-        await openNotifications(page);
+        await openInbox(page);
         await page.locator(row("demo-invite-ada")).waitFor();
         await page.waitForTimeout(300);
         expect(await badgeCount(page)).toBe(4);
@@ -287,19 +288,19 @@ describe("the Notifications screen", () => {
           .locator("#session")
           .filter({ hasNotText: "Signed out" })
           .waitFor();
-        await openNotifications(page);
+        await openInbox(page);
         await page.locator(row("demo-share-grace")).waitFor();
         expect(await page.locator(row("demo-invite-ada")).count()).toBe(0);
         expect(await badgeCount(page)).toBe(0);
 
         // Another wallet sees none of it; switching back shows it again.
         await signIn(page, PHRASE_B);
-        await openNotifications(page);
+        await openInbox(page);
         await page
-          .locator("#notifications-screen", { hasText: "No notifications" })
+          .locator("#notifications-screen", { hasText: "Your Inbox is empty" })
           .waitFor();
         await signIn(page, PHRASE_A);
-        await openNotifications(page);
+        await openInbox(page);
         await page.locator(row("demo-share-grace")).waitFor();
 
         // Signing out takes the list off the screen and the badge off the tab.
@@ -307,7 +308,7 @@ describe("the Notifications screen", () => {
         await page.click("#sign-out");
         await page
           .locator("#notifications-screen", {
-            hasText: "Sign in to see notifications",
+            hasText: "Sign in to see your Inbox",
           })
           .waitFor();
         expect(await badgeCount(page)).toBe(0);
@@ -320,12 +321,212 @@ describe("the Notifications screen", () => {
   );
 
   test(
+    "Chat's Inbox tab and the Apps shelf open one Inbox, and every count reads the same items",
+    async () => {
+      const product = await startUrlProduct(host.origin);
+      const { context, page, outside } = await open(
+        { width: 1280, height: 800 },
+        product.url,
+      );
+      const apps = page.locator("#apps-toggle");
+      const shelf = page.locator("#apps-shelf");
+      const shelfCount = (selector: string) =>
+        shelf
+          .locator(`${selector} [data-badge]`)
+          .evaluate((node) =>
+            (node as HTMLElement).hidden ? 0 : Number(node.textContent),
+          );
+      const appsOpen = () =>
+        apps
+          .locator("[data-badge]")
+          .evaluate((node) =>
+            (node as HTMLElement).hidden ? 0 : Number(node.textContent),
+          );
+      const inboxDot = () =>
+        apps
+          .locator("[data-inbox-dot]")
+          .evaluate((node) => !(node as HTMLElement).hidden);
+      try {
+        await signIn(page, PHRASE_A);
+
+        // Two samples are made to come through the product Browse opens,
+        // whose id is its loopback address.
+        const productId = new URL(product.url).host;
+        await page.click('#dock [data-destination="chat"]');
+        await seed(page);
+        await page.evaluate((id) => {
+          const key = Object.keys(localStorage).find((name) =>
+            name.includes(":notifications:"),
+          )!;
+          const items = JSON.parse(localStorage.getItem(key)!) as {
+            id: string;
+            product: { id: string; name: string };
+          }[];
+          for (const item of items)
+            if (item.id === "demo-invite-ada" || item.id === "demo-invite-soon")
+              item.product = { id, name: "Loopback Product" };
+          localStorage.setItem(key, JSON.stringify(items));
+        }, productId);
+        await page.reload();
+        await ready(page);
+        await page
+          .locator("#session")
+          .filter({ hasNotText: "Signed out" })
+          .waitFor();
+
+        // Browse runs it, then keeps it running behind Chat.
+        await page.click('#dock [data-destination="browse"]');
+        await page.locator("body[data-product='open']").waitFor();
+        await page.click('#dock [data-destination="chat"]');
+        expect(await badgeCount(page)).toBe(4);
+        expect(await appsOpen()).toBe(1);
+        expect(await inboxDot()).toBe(true);
+        expect(await apps.getAttribute("aria-label")).toBe(
+          "Apps, 1 open. Inbox has 4 new",
+        );
+
+        // J: the shelf counts the same items, in all and per product.
+        await apps.click();
+        await shelf.waitFor();
+        expect(
+          await page.evaluate(
+            () =>
+              (document.activeElement as HTMLElement | null)?.dataset.action,
+          ),
+        ).toBe("shelf-inbox");
+        expect(await shelfCount('[data-action="shelf-inbox"]')).toBe(4);
+        const app = shelf.locator(`[data-product-id="${productId}"]`);
+        expect(await app.getAttribute("data-front")).toBe("false");
+        expect(await shelfCount(`[data-product-id="${productId}"]`)).toBe(2);
+        expect(
+          await shelf.locator(".shelf-status").getAttribute("data-state"),
+        ).toBe("ready");
+        await screenshot(page, "apps-shelf");
+
+        // Escape closes it and gives focus back to Apps.
+        await page.keyboard.press("Escape");
+        await shelf.waitFor({ state: "hidden" });
+        expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+          "apps-toggle",
+        );
+
+        // From the keyboard, the shelf's Inbox is Chat at its Inbox tab.
+        await page.keyboard.press("Enter");
+        await shelf.waitFor();
+        await page.keyboard.press("Enter");
+        await page.locator("body[data-surface='inbox']").waitFor();
+        expect(
+          await page.getAttribute(
+            '#dock [data-destination="chat"]',
+            "aria-current",
+          ),
+        ).toBe("true");
+        expect(await page.getAttribute(inboxTab, "aria-selected")).toBe("true");
+        expect(
+          await page.evaluate(
+            () =>
+              (document.activeElement as HTMLElement | null)?.dataset.chatTab,
+          ),
+        ).toBe("inbox");
+        await screenshot(page, "inbox-from-shelf");
+
+        // Seen in the Inbox: the tab, the dot, the shelf and the product
+        // badge clear together. Apps still counts the open product. Rows
+        // below the fold are seen once scrolled into view.
+        for (const id of await seenIds(page, false))
+          await page
+            .locator(row(id!))
+            .evaluate((node) => node.scrollIntoView({ block: "center" }));
+        await eventually(() => badgeCount(page), 0);
+        expect(await inboxDot()).toBe(false);
+        expect(await appsOpen()).toBe(1);
+        await apps.click();
+        expect(await shelfCount('[data-action="shelf-inbox"]')).toBe(0);
+        expect(await shelfCount(`[data-product-id="${productId}"]`)).toBe(0);
+        await page.keyboard.press("Escape");
+
+        // H: the arrow keys move between Chats and the Inbox in place.
+        await page.focus(inboxTab);
+        await page.keyboard.press("ArrowLeft");
+        await page.locator("body[data-surface='chat']").waitFor();
+        expect(await page.locator("#chat-screen #chat-tabs").count()).toBe(1);
+        await page.keyboard.press("ArrowRight");
+        await page.locator("body[data-surface='inbox']").waitFor();
+
+        // Dismissed in the Inbox, gone from the list the shelf opens.
+        await page
+          .locator(row("demo-invite-ada"))
+          .locator('[data-action="notification-dismiss"]')
+          .click();
+        await page
+          .locator(row("demo-invite-ada"))
+          .waitFor({ state: "detached" });
+        await apps.click();
+        await shelf.locator('[data-action="shelf-inbox"]').click();
+        await page.locator(row("demo-share-grace")).waitFor();
+        expect(await page.locator(row("demo-invite-ada")).count()).toBe(0);
+
+        // The shelf brings the product back in front, and closes it.
+        await apps.click();
+        await app.locator('[data-action="shelf-open"]').click();
+        await page.locator("body[data-product='open']").waitFor();
+        expect(
+          await page.getAttribute(
+            '#dock [data-destination="browse"]',
+            "aria-current",
+          ),
+        ).toBe("true");
+
+        // In front, Browse's product has Minimize and More, not Close.
+        expect(await page.locator("#app-minimize").isVisible()).toBe(true);
+        expect(await page.locator("#app-close").isVisible()).toBe(false);
+        await page.click("#app-more");
+        expect(
+          await page.locator("#app-more-menu [role=menuitem]").allInnerTexts(),
+        ).toEqual(["Product details", "Close"]);
+        await page.keyboard.press("Escape");
+        expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+          "app-more",
+        );
+        // Minimize goes back to the last host screen; the product keeps running.
+        await page.click("#app-minimize");
+        await page.locator("body[data-surface='inbox']").waitFor();
+        expect(await appsOpen()).toBe(1);
+        expect(await page.locator("#app-chrome").isHidden()).toBe(true);
+        await apps.click();
+        expect(await app.getAttribute("data-front")).toBe("false");
+        await app.locator('[data-action="shelf-open"]').click();
+        await page.locator("body[data-product='open']").waitFor();
+
+        await apps.click();
+        expect(await app.getAttribute("data-front")).toBe("true");
+        await app.locator('[data-action="shelf-close"]').click();
+        await shelf
+          .locator(".shelf-empty", { hasText: "No open apps" })
+          .waitFor();
+        expect(await appsOpen()).toBe(0);
+        await page.keyboard.press("Escape");
+
+        // Another wallet has its own Inbox: nothing counted, on any entry.
+        await signIn(page, PHRASE_B);
+        expect(await badgeCount(page)).toBe(0);
+        expect(await inboxDot()).toBe(false);
+        expect(outside).toEqual([]);
+      } finally {
+        await context.close();
+        product.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "expires a request on time and offers no action after, and Clear takes only the demo's requests",
     async () => {
       const { context, page, outside } = await open();
       try {
         await signIn(page, PHRASE_A);
-        await openNotifications(page);
+        await openInbox(page);
         await seed(page);
         const soon = page.locator(row("demo-invite-soon"));
         await soon.waitFor();
@@ -338,11 +539,11 @@ describe("the Notifications screen", () => {
         expect(await soon.locator("[data-action]").count()).toBe(0);
 
         // Clear removes the demo's requests and the stored list with them.
-        await setMenu(page, true);
+        await setMenu(page, true, "more");
         await page.click('[data-action="notifications-demo-clear"]');
         await setMenu(page, false);
         await page
-          .locator("#notifications-screen", { hasText: "No notifications" })
+          .locator("#notifications-screen", { hasText: "Your Inbox is empty" })
           .waitFor();
         expect(await badgeCount(page)).toBe(0);
         expect(
@@ -361,7 +562,7 @@ describe("the Notifications screen", () => {
   );
 
   test(
-    "fits a phone: four dock entries, long rows wrap, Dismiss is a full tap target, nothing scrolls sideways",
+    "fits a phone: the Docklet's entries, long rows wrap, Dismiss is a full tap target, nothing scrolls sideways",
     async () => {
       const { context, page } = await open({ width: 360, height: 740 });
       try {
@@ -373,8 +574,8 @@ describe("the Notifications screen", () => {
               (button) => button.querySelector("span:last-child")?.textContent,
             ),
           );
-        expect(dock).toEqual(["Chat", "Browse", "Pocket", "Notifications"]);
-        await openNotifications(page);
+        expect(dock).toEqual(["Chat", "Pocket", "Open", "Browse", "Apps"]);
+        await openInbox(page);
         await seed(page);
         const long = page.locator(row("demo-share-long"));
         await long.waitFor();

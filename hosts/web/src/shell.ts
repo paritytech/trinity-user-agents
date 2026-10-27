@@ -4,12 +4,7 @@ import { DEFAULT_NETWORK, normalizeNetwork } from "./network-scope.js";
 import { isRecordable } from "./recents.js";
 
 /** The places the host's dock opens, in the order the dock shows them. */
-export const DESTINATIONS = [
-  "chat",
-  "browse",
-  "pocket",
-  "notifications",
-] as const;
+export const DESTINATIONS = ["chat", "pocket", "browse"] as const;
 export type Destination = (typeof DESTINATIONS)[number];
 
 /** Destinations that open a product. The others are screens the host draws itself. */
@@ -29,7 +24,6 @@ export const DESTINATION_LABELS: Record<Destination, string> = {
   chat: "Chat",
   browse: "Browse",
   pocket: "Pocket",
-  notifications: "Notifications",
 };
 
 /** The product each product destination opens: a name or URL, or empty for none yet. */

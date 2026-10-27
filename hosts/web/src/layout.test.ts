@@ -1,56 +1,41 @@
 import { describe, expect, test } from "bun:test";
 import { Layout } from "./layout.js";
 
-describe("Layout beside the product", () => {
-  test("opens the menu and the inspector together", () => {
-    const layout = new Layout(["menu"]);
-    layout.show("inspector");
-    expect([layout.isOpen("menu"), layout.isOpen("inspector")]).toEqual([
-      true,
-      true,
-    ]);
+describe("Layout beside the app", () => {
+  test("a toggle shows its view, and closes the tools when its view already shows", () => {
+    const layout = new Layout(true);
+    layout.toggle("inspector");
+    expect([layout.open, layout.view]).toEqual([true, "inspector"]);
+    layout.toggle("inspector");
+    expect(layout.open).toBe(false);
   });
 
-  // The panels do not cover the product here, so Escape has nothing to
-  // dismiss and must not close a panel the user is working in.
-  test("has nothing covering the product", () => {
-    const layout = new Layout(["menu", "inspector"]);
-    expect(layout.covering).toBeNull();
+  // Focus hides the tools and keeps the view, so they come back as they were.
+  test("Focus closes the tools and opens them again at the same view", () => {
+    const layout = new Layout(true, "inspector");
+    layout.toggleOpen();
+    expect(layout.isShown("inspector")).toBe(false);
+    layout.toggleOpen();
+    expect(layout.isShown("inspector")).toBe(true);
+  });
+
+  // The tools do not cover the app here, so Escape has nothing to dismiss and
+  // must not close tools the user is working in.
+  test("has nothing covering the app", () => {
+    const layout = new Layout(true);
+    expect(layout.covering).toBe(false);
     expect(layout.dismissCovering()).toBe(false);
-    expect(layout.isOpen("menu")).toBe(true);
+    expect(layout.open).toBe(true);
   });
 });
 
-describe("Layout over the product", () => {
-  test("opens one panel at a time", () => {
-    const layout = new Layout();
+describe("Layout over the app", () => {
+  test("dismisses the open tools", () => {
+    const layout = new Layout(false);
     layout.setModal(true);
-    layout.show("menu");
-    layout.show("inspector");
-    expect(layout.isOpen("menu")).toBe(false);
-    expect(layout.covering).toBe("inspector");
-  });
-
-  test("dismisses the covering panel", () => {
-    const layout = new Layout();
-    layout.setModal(true);
-    layout.show("menu");
+    layout.show("account");
+    expect(layout.covering).toBe(true);
     expect(layout.dismissCovering()).toBe(true);
-    expect(layout.covering).toBeNull();
-  });
-
-  // Turning a phone sideways or resizing a window must not leave two
-  // covering panels stacked on the product.
-  test("keeps one panel when the screen narrows", () => {
-    const layout = new Layout(["menu", "inspector"]);
-    layout.setModal(true);
-    expect(layout.covering).toBe("menu");
-    expect(layout.isOpen("inspector")).toBe(false);
-  });
-
-  test("toggle closes an open panel", () => {
-    const layout = new Layout(["menu"]);
-    layout.toggle("menu");
-    expect(layout.isOpen("menu")).toBe(false);
+    expect(layout.covering).toBe(false);
   });
 });

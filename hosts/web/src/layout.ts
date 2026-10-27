@@ -1,56 +1,80 @@
-/** A panel that can be shown next to the product. */
-export type Panel = "menu" | "inspector";
+/** The developer tools' views, in the order their tabs show. */
+export const DEV_VIEWS = [
+  "account",
+  "product",
+  "preview",
+  "inspector",
+  "more",
+] as const;
+export type DevView = (typeof DEV_VIEWS)[number];
+
+/** Where the developer tools sit on a wide screen. */
+export type DevSide = "right" | "bottom";
 
 /**
- * Which panels are open.
+ * Whether the developer tools are open, and which view they show.
  *
- * On a wide screen the panels sit beside the product and open independently.
- * On a narrow screen they cover it, so one is open at a time and it takes
- * focus away from the product until it is closed.
+ * On a wide screen they sit beside the app, and closing them is Focus: the
+ * app gets the whole window. On a narrow screen they cover the app, so they
+ * take focus away from it until they are closed.
  */
 export class Layout {
-  private open: Set<Panel>;
-  private modalPanels = false;
+  private shown: boolean;
+  private current: DevView;
+  private modalPanel = false;
 
-  constructor(initial: Iterable<Panel> = []) {
-    this.open = new Set(initial);
+  constructor(open: boolean, view: DevView = "account") {
+    this.shown = open;
+    this.current = view;
   }
 
-  isOpen(panel: Panel): boolean {
-    return this.open.has(panel);
+  get open(): boolean {
+    return this.shown;
   }
 
-  /** The panel covering the product, if the screen is narrow and one is open. */
-  get covering(): Panel | null {
-    if (!this.modalPanels) return null;
-    return [...this.open][0] ?? null;
+  get view(): DevView {
+    return this.current;
   }
 
-  /** Switch between beside-the-product and over-the-product panels. */
+  /** Whether `view` shows now. */
+  isShown(view: DevView): boolean {
+    return this.shown && this.current === view;
+  }
+
+  /** Whether the open tools cover the app. */
+  get covering(): boolean {
+    return this.modalPanel && this.shown;
+  }
+
+  /** Switch between beside-the-app and over-the-app tools. */
   setModal(modal: boolean): void {
-    this.modalPanels = modal;
-    if (modal && this.open.size > 1) this.open = new Set([[...this.open][0]]);
+    this.modalPanel = modal;
   }
 
-  toggle(panel: Panel): void {
-    if (this.open.has(panel)) this.close(panel);
-    else this.show(panel);
+  show(view: DevView): void {
+    this.shown = true;
+    this.current = view;
   }
 
-  show(panel: Panel): void {
-    if (this.modalPanels) this.open.clear();
-    this.open.add(panel);
+  /** Show `view`, or close the tools when it already shows. */
+  toggle(view: DevView): void {
+    if (this.isShown(view)) this.shown = false;
+    else this.show(view);
   }
 
-  close(panel: Panel): void {
-    this.open.delete(panel);
+  /** Open the tools at the view they last showed, or close them. */
+  toggleOpen(): void {
+    this.shown = !this.shown;
   }
 
-  /** Close the covering panel; false when nothing covers the product. */
+  close(): void {
+    this.shown = false;
+  }
+
+  /** Close the tools when they cover the app; false when nothing does. */
   dismissCovering(): boolean {
-    const panel = this.covering;
-    if (panel === null) return false;
-    this.close(panel);
+    if (!this.covering) return false;
+    this.shown = false;
     return true;
   }
 }
