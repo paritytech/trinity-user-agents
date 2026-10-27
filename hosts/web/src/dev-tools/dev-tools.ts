@@ -8,11 +8,10 @@ import type { FrameTap } from "../frame-tap.js";
 import {
   InvitationService,
   productPort,
-  type ProductPort,
   type SendPrompt,
 } from "../invitations/invitation-service.js";
 import type { Product } from "../invitations/ports.js";
-import { cryptoRandom, toHex } from "../invitations/sealing.js";
+import { cryptoRandom } from "../invitations/sealing.js";
 import type { NotificationStore } from "../notifications.js";
 import type { NotificationActions } from "../notifications-screen.js";
 import { openProduct, type OpenProduct } from "../product.js";
@@ -23,18 +22,14 @@ import {
   type UsernameDirectory,
 } from "../username-directory.js";
 import { FixtureContacts, type PickContact } from "./fixture-contacts.js";
+import { FixtureIdentityAuth, publicIdentity } from "./fixture-identity.js";
 import { LocalDelivery } from "./local-delivery.js";
 import { pageStore } from "./shared-store.js";
-import {
-  StatementFixture,
-  isStatementCall,
-  type StatementMessage,
-} from "./statement-fixture.js";
 import * as samples from "./sample-notifications.js";
 import {
   TEST_USERS,
   chatContactsOf,
-  fixtureHostKeys,
+  fixtureIdentity,
   setTabTestUser,
   tabTestUser,
   testUserEntropy,
@@ -52,8 +47,8 @@ import {
  * real session, real handles from `contacts.pick` and real prompts. None of
  * the wallet session's services start: no chat, worker or registration. The
  * host's contact picker lists the test user's contacts, Browse shows Example
- * Chat, and invitations between tabs use fixture contacts and keys, the local
- * simulated delivery and a statement store stand-in.
+ * Chat, and requests between tabs use fixture contacts and identities and the
+ * local simulated delivery.
  */
 
 export interface DevToolsDeps {
@@ -148,28 +143,6 @@ function confirmSend(prompt: SendPrompt): Promise<boolean> {
   });
 }
 
-/**
- * One product port, split: statement store stand-in messages to the fixture,
- * everything else to the invitation service.
- */
-function splitPort(
-  port: MessagePort,
-  statements: (call: unknown) => void,
-): { invitations: ProductPort; send(message: StatementMessage): void } {
-  const invitations = productPort(port);
-  return {
-    invitations: {
-      post: invitations.post,
-      close: invitations.close,
-      listen: (handler) =>
-        invitations.listen((value) =>
-          isStatementCall(value) ? statements(value) : handler(value),
-        ),
-    },
-    send: (message) => port.postMessage(message),
-  };
-}
-
 export function startDevTools(deps: DevToolsDeps): DevSession {
   const testUser = tabTestUser(sessionStorage);
   const session = testUser === null ? null : startTestUser(deps, testUser);
@@ -223,20 +196,19 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
     return () => clearTimeout(timer);
   };
-  const hostKeys = fixtureHostKeys(self);
-  const store = pageStore();
+  const credential = fixtureIdentity(self);
   deps.notifications.setScope(keys.notifications);
   const service = new InvitationService({
     product,
-    self: hostKeys,
+    auth: new FixtureIdentityAuth(credential, cryptoRandom),
     contacts: new FixtureContacts(self, deps.pickContact, deps.log),
     notifications: deps.notifications,
     storage: localStorage,
     keys,
     delivery: new LocalDelivery({
-      self: toHex(hostKeys.inbox.public),
+      self: publicIdentity(credential).agreementPublic,
       network: deps.network.id,
-      store,
+      store: pageStore(),
       now,
       schedule,
       log: deps.log,
@@ -248,7 +220,6 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     showProduct: () => deps.showProduct(),
     log: deps.log,
   });
-  let statements: StatementFixture | null = null;
 
   const host = el("section", "test-product");
   host.setAttribute("aria-label", product.name);
@@ -261,8 +232,6 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   const openExampleChat = async (): Promise<void> => {
     if (runtime === null) return;
     service.detachProduct();
-    statements?.close();
-    statements = null;
     open?.dispose();
     open = null;
     const response = await fetch(`${deps.base}${EXAMPLE_CHAT_PATH}`, {
@@ -298,21 +267,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
           if (state === "error")
             deps.log(`Example Chat did not start: ${detail}`);
         },
-        onInvitationsPort: (port) => {
-          statements?.close();
-          let fixture: StatementFixture | null = null;
-          const split = splitPort(port, (call) => {
-            if (isStatementCall(call)) fixture?.call(call);
-          });
-          fixture = new StatementFixture({
-            network: deps.network.id,
-            store,
-            now,
-            send: split.send,
-          });
-          statements = fixture;
-          service.attachProduct(split.invitations);
-        },
+        onInvitationsPort: (port) => service.attachProduct(productPort(port)),
       },
     );
   };
@@ -323,7 +278,6 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   });
   window.addEventListener("pagehide", () => {
     service.stop();
-    statements?.close();
     open?.dispose();
   });
 
@@ -350,6 +304,8 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     reset: () => {
       service.stop();
       for (const key of Object.values(keys)) localStorage.removeItem(key);
+      for (const part of ["outbox", "received"] as const)
+        localStorage.removeItem(testUserKey(deps.network.id, self.id, part, 1));
     },
   };
 }

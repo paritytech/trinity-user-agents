@@ -686,8 +686,8 @@ sample data or from [test users](#test-users-prototype).
     product answers: it accepts, and the row shows Accepted, or it refuses, does not answer within 30 seconds, or is
     closed, and the reason shows under the row with the request still waiting. The host shows the product only when the
     product asks; tapping an accepted row asks the product again. For a test user's invitation the product is Example
-    Chat, which checks the setup data, accepts with its response and asks to be shown, at its **Accepted by you** list.
-    Accepted on the row means the recipient's product accepted; it is not the sender's connection. Example Chat has no
+    Chat, which checks the invitation, replies through the host and asks to be shown, at its **Accepted by you** list.
+    Accepted on the row means the recipient's product replied; it is not the sender's connection. Example Chat has no
     chat conversation, so no Chat request or conversation is opened.
 - **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, or per
   network and test user. Written only once used and removed when empty. Waiting requests and history survive a reload.
@@ -701,21 +701,21 @@ sample data or from [test users](#test-users-prototype).
 Carol, instead of a wallet, to try features that need more than one person. Open the host in one tab per user and choose
 a different test user in each. The core signs a test user in with a public BIP-39 test vector, so products get a real
 session: `contacts.pick` opens the host's own picker over that user's contacts and returns the core's handle. The first
-feature that uses two users is a just-in-time (JIT) chat invitation, after the "Establish Connection" design: the
-product makes the invitation and keeps its secrets, the host resolves an opaque contact reference, signs, seals and
-reposts it, the recipient's product replies on the sender's reply topic with a host proof, and the sender's product
-completes only after its host verified the proof and its own setup check passed. Nothing in it is an agreed API.
+feature that uses two users is a chat invitation over a proposed host request/reply service, after the v3 "Establish
+Connection" design: the product gives an opaque payload, the hosts own the request, its return route and keys, and
+authenticate both directions, and the products see only payloads and opaque handles. Nothing in it is an agreed API.
 
 - **Try it.** In one tab: Developer tools → **More** → **Test user** → **Alice**. The tab reloads with **Test user ·
   Alice** over the app, "Signed in as Alice" in Settings and **Example Chat** in Browse. In a second tab choose **Bob**.
   - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
-  - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact reference.
+  - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact handle.
     **Invite** opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
   - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
-    **Accept** hands the invitation to Bob's Example Chat, which checks the setup data, accepts with its response, gets
-    the host's sealed proof and posts both on the reply topic. Alice's host verifies the proof, Alice's Example Chat
-    checks the response, and only then is it **Connected**. **Dismiss** takes the row off Bob's list and sends nothing.
-    Alice can **Cancel** a waiting invitation; otherwise it waits until it expires. More → Log shows each step.
+    **Accept** hands the invitation payload to Bob's Example Chat, which checks it, makes both conversation topics and
+    its response, and replies through its host. Bob's host seals the reply for Alice and posts it on the request's
+    return topic. Alice's host authenticates it and hands the payload to Alice's Example Chat, which checks it and only
+    then completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a
+    waiting invitation; otherwise it waits until its deadline. More → Log shows each step.
 - **Developer controls.** **Restart Example Chat** opens the product again, which gets its state back from the host and
   its own storage. **Reset Alice** removes that test user's lists on this network. **None** returns the tab to wallets.
 - **What a test user is.** A core session from a public test phrase, under its own storage scope, apart from every
@@ -724,41 +724,58 @@ completes only after its host verified the proof and its own setup check passed.
   every sign-in. Sign-in and sign-out are off. The choice is kept for the tab, so a reload keeps it. Choosing a test
   user ends the tab's wallet session and leaves saved wallets and their data alone. Contacts are made up
   (`src/dev-tools/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network and
-  test user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v1` (sent) and
-  `...:received:v1` (who sent each received invitation, and whether the product accepted it). Example Chat keeps its
-  secrets and replies in its own TrUAPI local storage.
-- **The provisional API** (`src/invitations/contract.ts`), over a `MessagePort` the product hands over. Each call has an
-  `id` and one `result`. Sender: `pickContact`, `send` (contact reference, purpose, expiry, and the product's request
-  id, challenge and setup data), `verify` (response and proof; a pass does not stop the reposts), `complete` (only for a
-  verified response; stops the reposts) and `cancel`. Recipient, only after the user chose Accept: `accept` (with the
-  exact response; answers the sealed proof), `refuse` and `open`. Statuses are `waiting`, `completed`, `cancelled` and
-  `expired`: there is no delivered, declined or accepted status for the sender.
-- **What is real here.** sr25519 signatures and X25519 + ChaCha20-Poly1305 sealing (`src/invitations/binding.ts`,
-  `sealing.ts`). The recipient's host checks the sender's signature, bound to both people's keys and the whole
-  invitation. The proof binds both people's keys, the whole invitation, the challenge, the product, the request id and
-  the exact response; it is sealed to the sender's host, so neither product reads it. Example Chat's own check is a toy
-  protocol (`src/dev-tools/example-chat/setup.ts`): an X25519 confirmation over the invitation.
+  test user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent) and
+  `...:received:v2` (received, and the sealed reply). The `v1` sent and received lists of the earlier prototype are left
+  in place and no longer read; **Reset** removes them too. Example Chat keeps its protocol secrets and topics in its own
+  TrUAPI local storage.
+- **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
+  It reuses TrUAPI's `ContactHandle` and `ContactPickOutcome`. Each call has an `id` and one `result`.
+  - Sender: `pickContact` (answers a `ContactPickOutcome`, as `contacts.pick` does), `request` (contact handle, purpose,
+    expiry, payload; answers a request handle), `complete` (only after an authenticated reply reached the product; stops
+    the reposts; sends nothing) and `cancel`. The host pushes `outgoing` (status) and `response` (an authenticated
+    reply's payload).
+  - Recipient, only after the user chose Accept: the host pushes `acceptIntent` (request handle, sender handle,
+    payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
+  - Statuses are `waiting`, `completed`, `cancelled` and `expired`: there is no delivered, declined or accepted status
+    for the sender.
+- **Who owns what.** The sender's host makes the request id, the return topic `T_SETUP` and a per-request reply key
+  pair, watches `T_SETUP` before it posts, and keeps the reply key's secret. The recipient's host posts its reply only
+  on the `T_SETUP` the authenticated request names, never on a route from the payload. Products never see a request id,
+  route, reply key, evidence or anyone's identity; the recipient's product does not get the purpose or the deadline.
+- **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and authentication evidence shaped as v3's `AuthEvidence`
+  (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`). A request's evidence covers the version, both
+  identities, the product, the purpose, the request id, the times, `T_SETUP`, the public reply key and the exact
+  payload. A reply's covers the version, both identities, the product, the request id, the digest of the exact request
+  and the exact payload. Kind and identity order keep one direction's evidence from checking as the other's. The
+  sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
+  the request. Example Chat's own check is a toy protocol (`src/dev-tools/example-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
-  - The contact reference is `fixture-contact:` plus 16 bytes the dev tools mint per host, product and person. It stands
-    in for the `contacts.pick` handle: the core gives the host no way to resolve that handle outside a transaction, so
-    sending to it needs a host-only core operation (resolve or check a handle).
-  - People's keys are derived from their public test user ids (`fixtureHostKeys`), and the directory that says a key is
-    a person is the fixture. No identity credential, key lookup or authenticated inbox key exists here. The suite is
-    classical, with no PQ key, padding or size classes.
-  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage` under a route
-    derived from the recipient's inbox key, posts them again every minute while they wait, and lets each post lapse
-    after five minutes. These are dev choices. The recipient's host writes nothing back. The route is linkable and any
-    script of this origin can read or post.
-  - Topics (`src/dev-tools/statement-fixture.ts`) stand in for the Statement Store, which test users cannot reach: no
-    chat account signs a statement and no allowance is needed.
+  - The contact handle is 32 bytes the dev tools mint per test user and person. It stands in for the `contacts.pick`
+    handle: the core gives the host no way to resolve that handle outside a transaction, so sending to it needs a
+    host-only core operation (resolve or check a handle).
+  - The identity credential (`src/dev-tools/fixture-identity.ts`) is a reference profile over keys derived from public
+    test user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature is
+    sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account or
+    another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not decided.
+    The directory that says a key is a person is the fixture, and it holds every other test user, so a host takes a
+    request from any of them, not only from the contacts its picker lists.
+  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`: requests under a
+    route derived from the recipient's key, replies under their `T_SETUP`. Each side posts again every minute and each
+    post lapses after five minutes; these are dev choices, separate from the request's deadline, which reposts never
+    move. No notification account signs a post and no allowance is checked. The route is linkable and any script of this
+    origin can read or post.
+  - When the recipient resends its reply and when it stops is open in the design. Here the recipient's host posts the
+    same sealed reply again on the delivery's cadence, and when it starts, until the request's deadline.
+  - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a test user reaches no chain, so
+    it only keeps them.
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
-  `ports.ts` what the host needs from Contacts and delivery, `binding.ts` and `sealing.ts` what it signs, seals and
-  checks, `invitation-service.ts` one user's host side, and `outbox.ts` and `received.ts` what it keeps.
-  `src/dev-tools/` holds what only tests and the dev server use: fixture contacts and keys, the local delivery, the
-  statement store stand-in, the Developer section (`dev-tools.ts`), the test users, the sample notifications and Example
-  Chat. `src/dev-tools/invitation-flow.test.ts` runs two and three users end to end. Only a dev server on this machine
-  loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads the test user's contacts in place
-  of the chat contacts.
+  `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
+  transcripts their evidence covers, `sealing.ts` the sealing, `invitation-service.ts` one user's host side, and
+  `outbox.ts` and `received.ts` what it keeps. `src/dev-tools/` holds what only tests and the dev server use: fixture
+  contacts and identities, the local delivery, the Developer section (`dev-tools.ts`), the test users, the sample
+  notifications and Example Chat. `src/dev-tools/invitation-flow.test.ts` runs two and three users end to end. Only a
+  dev server on this machine loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads the test
+  user's contacts in place of the chat contacts.
 
 ### Contacts
 
@@ -797,8 +814,8 @@ someone is the consent.
   nobody after a reload, a session change, or once the user blocks them, and a transaction naming it then fails with
   `UnknownContact` until the product asks for a pick again. A blocked person is never picked.
 - **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username,
-  sending an invitation to a picked handle (test users use a fixture reference instead), and contacts from a worker's
-  own chat. Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
+  sending a request to a picked handle (test users use a fixture handle instead), and contacts from a worker's own chat.
+  Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
 
 ### Differences from the native hosts
 

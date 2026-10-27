@@ -2,14 +2,13 @@ import { getClientSync } from "@parity/truapi/sandbox";
 import {
   PRODUCT_HELLO,
   PRODUCT_PROTOCOL,
-  type AcceptedView,
   type CallResult,
-  type ContactRef,
+  type ContactHandle,
   type HostMessage,
-  type IncomingInvitation,
-  type Invitation,
+  type IncomingRequest,
   type OutgoingView,
   type ProductHello,
+  type RepliedView,
 } from "../../invitations/contract.js";
 import {
   cryptoRandom,
@@ -21,11 +20,9 @@ import {
 import {
   checkResponse,
   createInvitation,
-  openReply,
-  readSetup,
   respond,
-  sealReply,
   type SenderSecrets,
+  type Topics,
 } from "./setup.js";
 
 /**
@@ -36,23 +33,24 @@ import {
  *
  * - **Pick a contact** calls `contacts.pick`. The host draws its picker; the
  *   product gets the core's opaque handle, or why there is none.
- * - **New chat** follows the JIT invitation (`src/invitations/contract.ts`):
- *   choose a contact through the host and get a reference, make the
- *   invitation with `./setup.ts`, watch `T_BA`, then ask the host to send it.
- *   A reply on `T_BA` goes to the host to verify, then through this product's
- *   own check, and only then to `complete`. Waiting invitations can be
- *   cancelled.
+ * - **New chat** uses the proposed request service
+ *   (`src/invitations/contract.ts`): choose a contact through the host and get
+ *   a contact handle, make the invitation payload with `./setup.ts`, and ask
+ *   the host to send it. A reply reaches this product only after its host
+ *   authenticated it; the product checks it with `./setup.ts`, keeps the
+ *   conversation topics, and only then calls `complete`. Waiting invitations
+ *   can be cancelled.
  * - When the user chooses Accept in the host's Notifications, the host hands
- *   it the invitation. It checks the setup data before anything is sent,
- *   makes its response, accepts with it, and posts the response and the
- *   host's proof, sealed to the reply key, on `T_BA`.
+ *   it the invitation payload. It checks the payload before anything is sent,
+ *   makes both conversation topics and its response, and replies through the
+ *   host with the request's handle. It never sees a route, key or proof.
  *
- * Its secrets and replies are kept in its TrUAPI local storage, so a restart
- * reposts its replies and keeps watching its topics. Topics go through the
- * dev statement store stand-in on the same port.
+ * Its secrets and topics are kept in its TrUAPI local storage. It would watch
+ * its topics through TrUAPI's `statementStore`; a test user reaches no chain,
+ * so it only keeps them.
  */
 
-const STATE_KEY = "example-chat:invitations:v1";
+const STATE_KEY = "example-chat:invitations:v2";
 
 const STATUS: Record<string, string> = {
   waiting: "Waiting",
@@ -98,8 +96,8 @@ function make<K extends keyof HTMLElementTagNameMap>(
 }
 
 const shortHex = (hex: string): string => `${hex.slice(2, 6)}…${hex.slice(-4)}`;
-const shortRef = (contact: ContactRef): string =>
-  shortHex(contact.slice(contact.indexOf("0x")));
+const shortContact = (contact: ContactHandle): string =>
+  shortHex(contact.bytes);
 
 const clock = (at: number): string =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -140,26 +138,20 @@ function section(root: HTMLElement, title: string, rows: HTMLLIElement[]) {
   root.replaceChildren(make("h2", "", title), list);
 }
 
-/** An invitation this product sent: its secrets and what it asked the host to send. */
+/** An invitation this product sent: its secrets, and the topics once connected. */
 interface SentState {
   secrets: SenderSecrets;
-  request: Omit<Invitation, "expiresAt">;
-  /** The recipient's topic and protocol key, once connected. */
-  peer: { topic: string; key: string } | null;
+  topics: Topics | null;
 }
 
-/** An invitation this product accepted: what it keeps to post its reply again. */
+/** An invitation this product replied to: its protocol secret and the topics it made. */
 interface ReceivedState {
-  invitationId: string;
-  replyTopic: string;
-  /** `T_AB`, which this product watches. */
-  topic: string;
   protocolSecret: string;
-  /** The sealed reply, once the host gave its proof. */
-  reply: string | null;
+  topics: Topics;
 }
 
 interface State {
+  /** By request handle, or by a local id while the host decides. */
   sent: Record<string, SentState>;
   received: Record<string, ReceivedState>;
 }
@@ -214,8 +206,8 @@ pickedList.dataset.list = "picked";
 // Invitations.
 let state: State = { sent: {}, received: {} };
 const sent = new Map<string, OutgoingView>();
-const accepted = new Map<string, AcceptedView>();
-let chosen: ContactRef | null = null;
+const replied = new Map<string, RepliedView>();
+let chosen: ContactHandle | null = null;
 let busy = false;
 let inviteNote = "";
 const choose = make("button", "secondary", "Choose contact");
@@ -291,8 +283,8 @@ function render(): void {
 
   choose.disabled = busy;
   choose.textContent =
-    chosen === null ? "Choose contact" : `To contact ${shortRef(chosen)}`;
-  choose.dataset.contact = chosen ?? "";
+    chosen === null ? "Choose contact" : `To contact ${shortContact(chosen)}`;
+  choose.dataset.contact = chosen?.bytes ?? "";
   invite.disabled = busy || chosen === null;
   inviteStatus.textContent = busy ? "Waiting for the host…" : inviteNote;
   inviteStatus.hidden = inviteStatus.textContent === "";
@@ -304,23 +296,23 @@ function render(): void {
       .map((item) => {
         const when =
           item.status === "waiting"
-            ? `Expires ${clock(item.expiresAt)}`
+            ? `Expires ${clock(item.deadline)}`
             : item.status === "expired"
-              ? `Expired ${clock(item.expiresAt)}`
-              : clock(item.closedAt ?? item.expiresAt);
+              ? `Expired ${clock(item.deadline)}`
+              : clock(item.closedAt ?? item.deadline);
         let action: HTMLButtonElement | undefined;
         if (item.status === "waiting") {
           action = make("button", "secondary small", "Cancel");
           action.type = "button";
           action.dataset.action = "cancel-invitation";
-          action.addEventListener("click", () => void cancel(item.requestId));
+          action.addEventListener("click", () => void cancel(item.handle));
         }
         return row(
-          item.requestId,
+          item.handle,
           item.purpose,
           item.status,
           STATUS[item.status]!,
-          `Contact ${shortRef(item.contact)} · ${when}`,
+          `Contact ${shortContact(item.contact)} · ${when}`,
           action,
         );
       }),
@@ -328,15 +320,15 @@ function render(): void {
   section(
     acceptedList,
     "Accepted by you",
-    [...accepted.values()]
-      .sort((left, right) => right.acceptedAt - left.acceptedAt)
+    [...replied.values()]
+      .sort((left, right) => right.repliedAt - left.repliedAt)
       .map((item) =>
         row(
-          item.invitationId,
-          item.purpose,
+          item.handle,
+          `Chat with contact ${shortContact(item.sender)}`,
           "accepted",
-          state.received[item.invitationId]?.reply ? "Replied" : "Accepted",
-          `From contact ${shortRef(item.sender)} · ${clock(item.acceptedAt)}`,
+          "Replied",
+          clock(item.repliedAt),
         ),
       ),
   );
@@ -380,12 +372,6 @@ function call(fields: Record<string, unknown>): Promise<CallResult> {
   });
 }
 
-const watch = (topic: string) =>
-  port.postMessage({ statements: "subscribe", topic });
-
-const postStatement = (topic: string, data: string) =>
-  port.postMessage({ statements: "post", topic, data });
-
 choose.addEventListener("click", async () => {
   if (busy) return;
   busy = true;
@@ -393,8 +379,9 @@ choose.addEventListener("click", async () => {
   render();
   const result = await call({ call: "pickContact" });
   busy = false;
-  if (result.ok && result.contact !== undefined) chosen = result.contact;
-  else if (!result.ok) inviteNote = "No contact chosen.";
+  if (result.ok && result.outcome?.tag === "Picked")
+    chosen = result.outcome.value.handle;
+  else inviteNote = "No contact chosen.";
   render();
 });
 
@@ -403,158 +390,115 @@ invite.addEventListener("click", async () => {
   busy = true;
   inviteNote = "";
   render();
-  const { request, secrets } = createInvitation(cryptoRandom);
-  // The secrets are kept, and the reply topic watched, before the invitation leaves.
-  state.sent[secrets.requestId] = { secrets, request, peer: null };
+  const { payload, secrets } = createInvitation(cryptoRandom);
+  // The secrets are kept before the invitation leaves, under a local id until the host names it.
+  const local = `local:${toHex(cryptoRandom(8))}`;
+  state.sent[local] = { secrets, topics: null };
   await saveState();
-  watch(secrets.replyTopic);
   const result = await call({
-    call: "send",
+    call: "request",
     request: {
       contact: chosen,
       purpose: purpose.value,
       ttlMs: Number(expiry.value),
-      invitation: request,
+      payload,
     },
   });
   busy = false;
-  if (result.ok && result.invitation !== undefined) {
-    const view = result.invitation;
-    sent.set(view.requestId, view);
+  delete state.sent[local];
+  if (result.ok && result.request !== undefined) {
+    sent.set(result.request.handle, result.request);
+    state.sent[result.request.handle] = { secrets, topics: null };
     chosen = null;
-  } else {
-    delete state.sent[secrets.requestId];
-    inviteNote = !result.ok
-      ? result.reason === "Dismissed"
-        ? "Not sent."
-        : result.detail
-      : "";
-  }
+  } else if (!result.ok)
+    inviteNote = result.reason === "Dismissed" ? "Not sent." : result.detail;
   void saveState();
   render();
 });
 
-async function cancel(requestId: string): Promise<void> {
-  const result = await call({ call: "cancel", requestId });
-  if (result.ok && result.invitation !== undefined)
-    sent.set(requestId, result.invitation);
+async function cancel(handle: string): Promise<void> {
+  const result = await call({ call: "cancel", handle });
+  if (result.ok && result.request !== undefined)
+    sent.set(handle, result.request);
   render();
 }
 
 /** Replies being checked, so two copies of one are checked once. */
 const checking = new Set<string>();
 
-/** A statement on a reply topic: maybe a reply to one of this product's invitations. */
-async function replyArrived(topic: string, data: string): Promise<void> {
-  const entry = Object.values(state.sent).find(
-    (item) => item.secrets.replyTopic === topic,
-  );
-  if (entry === undefined) return;
-  const { requestId } = entry.secrets;
-  const view = sent.get(requestId);
-  if (view?.status !== "waiting" || checking.has(data)) return;
-  const reply = openReply(entry.secrets, data);
-  if (reply === null) return;
-  checking.add(data);
+/** An authenticated reply from the host: check it, keep the topics, then complete. */
+async function responseArrived(handle: string, payload: string): Promise<void> {
+  const entry = state.sent[handle];
+  if (entry === undefined || sent.get(handle)?.status !== "waiting") return;
+  if (checking.has(payload)) return;
+  const checked = checkResponse(entry.secrets, payload);
+  if (!checked.ok) return;
+  checking.add(payload);
   try {
-    const verified = await call({
-      call: "verify",
-      requestId,
-      response: reply.response,
-      proof: reply.proof,
-    });
-    if (!verified.ok) return;
-    const checked = checkResponse(
-      entry.secrets,
-      { ...entry.request, expiresAt: view.expiresAt },
-      reply.response,
-    );
-    if (!checked.ok) return;
-    const completed = await call({
-      call: "complete",
-      requestId,
-      response: reply.response,
-    });
-    if (!completed.ok || completed.invitation === undefined) return;
-    entry.peer = { topic: checked.topic, key: checked.peerKey };
-    sent.set(requestId, completed.invitation);
-    void saveState();
+    entry.topics = checked.topics;
+    await saveState();
+    const completed = await call({ call: "complete", handle });
+    if (completed.ok && completed.request !== undefined)
+      sent.set(handle, completed.request);
     render();
   } finally {
-    checking.delete(data);
+    checking.delete(payload);
   }
 }
 
-/** The user chose Accept: check the setup, respond, accept, then post the reply. */
-async function acceptIntent(intent: IncomingInvitation): Promise<void> {
-  const { invitationId, invitation } = intent;
-  if (state.received[invitationId] !== undefined) return;
-  const made = respond(invitation, cryptoRandom);
-  if (made === null || readSetup(invitation.setup) === null) {
+/** The user chose Accept: check the invitation, make the topics and response, reply through the host. */
+async function acceptIntent(request: IncomingRequest): Promise<void> {
+  const { handle, payload } = request;
+  if (state.received[handle] !== undefined) return;
+  const made = respond(payload, cryptoRandom);
+  if (made === null) {
     void call({
       call: "refuse",
-      invitationId,
-      reason: "Example Chat cannot use this invitation's setup data.",
+      handle,
+      reason: "Example Chat cannot use this invitation.",
     });
     return;
   }
-  const entry: ReceivedState = {
-    invitationId,
-    replyTopic: made.setup.replyTopic,
-    topic: made.topic,
+  state.received[handle] = {
     protocolSecret: made.protocolSecret,
-    reply: null,
+    topics: made.topics,
   };
-  state.received[invitationId] = entry;
   await saveState();
   const result = await call({
-    call: "accept",
-    invitationId,
-    response: made.response,
+    call: "reply",
+    handle,
+    payload: made.response,
     open: true,
   });
-  if (!result.ok || result.proof === undefined) {
-    delete state.received[invitationId];
+  if (!result.ok) {
+    delete state.received[handle];
     void saveState();
-    inviteNote = result.ok ? "" : `Not accepted: ${result.detail}`;
+    inviteNote = `Not accepted: ${result.detail}`;
     render();
     return;
   }
-  entry.reply = sealReply(
-    made.setup.replyKey,
-    made.response,
-    result.proof,
-    cryptoRandom,
-  );
-  await saveState();
-  watch(entry.topic);
-  postStatement(entry.replyTopic, entry.reply);
-  accepted.set(invitationId, { ...intent, acceptedAt: Date.now() });
+  replied.set(handle, {
+    handle,
+    sender: request.sender,
+    repliedAt: Date.now(),
+  });
   render();
 }
 
-port.onmessage = (
-  event: MessageEvent<
-    HostMessage | { statements: string; topic: string; data: string }
-  >,
-) => {
+port.onmessage = (event: MessageEvent<HostMessage>) => {
   const message = event.data;
-  if ("statements" in message) {
-    if (message.statements === "message")
-      void replyArrived(message.topic, message.data);
-    return;
-  }
   if (message.kind === "result") {
     calls.get(message.id)?.(message.result);
     calls.delete(message.id);
   } else if (message.kind === "outgoing")
-    sent.set(message.invitation.requestId, message.invitation);
-  else if (message.kind === "accepted")
-    accepted.set(message.invitation.invitationId, message.invitation);
-  else if (message.kind === "acceptIntent")
-    void acceptIntent(message.invitation);
+    sent.set(message.request.handle, message.request);
+  else if (message.kind === "response")
+    void responseArrived(message.handle, message.payload);
+  else if (message.kind === "replied")
+    replied.set(message.request.handle, message.request);
+  else if (message.kind === "acceptIntent") void acceptIntent(message.request);
   else if (message.kind === "openIntent")
-    void call({ call: "open", invitationId: message.invitationId });
+    void call({ call: "open", handle: message.handle });
   render();
 };
 
@@ -567,12 +511,4 @@ void loadState().then((saved) => {
     location.origin,
     [channel.port2],
   );
-  // Keep watching every reply topic, and post every reply again.
-  for (const entry of Object.values(state.sent))
-    watch(entry.secrets.replyTopic);
-  for (const entry of Object.values(state.received))
-    if (entry.reply !== null) {
-      watch(entry.topic);
-      postStatement(entry.replyTopic, entry.reply);
-    }
 });

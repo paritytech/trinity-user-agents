@@ -1,62 +1,70 @@
 import { describe, expect, test } from "bun:test";
+import {
+  FixtureIdentityAuth,
+  fixtureCredential,
+  publicIdentity,
+} from "../dev-tools/fixture-identity.js";
 import { NotificationStore } from "../notifications.js";
 import { MemoryStorage } from "../test-support.js";
 import {
-  hostKeys,
-  peerKeysOf,
-  sealEnvelope,
-  type Envelope,
-  type HostKeys,
+  REPLY_SEAL,
+  REQUEST_SEAL,
+  sealRequest,
+  type RequestContext,
 } from "./binding.js";
 import {
+  isProductHello,
   PAYLOAD_MAX_BYTES,
+  PRODUCT_HELLO,
   readProductCall,
   readSendRequest,
   type CallResult,
+  type ContactHandle,
   type HostMessage,
-  type OutgoingView,
 } from "./contract.js";
 import {
   INTENT_TIMEOUT_MS,
   InvitationService,
-  receivedId,
   type ProductPort,
 } from "./invitation-service.js";
-import type { ContactService, InvitationDelivery, Person } from "./ports.js";
-import { cryptoRandom, digest, toHex, x25519Pair } from "./sealing.js";
+import type { ContactService, HostDelivery, Person } from "./ports.js";
+import {
+  cryptoRandom,
+  digest,
+  fromHex,
+  sealTo,
+  toHex,
+  utf8,
+} from "./sealing.js";
 
 /**
- * The invitation service against fakes of its ports: made-up keys and
- * people, and a delivery the test plays. The two-user flow over the dev
- * fixtures is in `src/dev-tools/invitation-flow.test.ts`.
+ * The request service against fakes of its contacts and delivery, with the
+ * reference fixture identity profile. The two-user flow over the dev fixtures
+ * is in `src/dev-tools/invitation-flow.test.ts`.
  */
 
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const PRODUCT = { id: "chat.example", name: "Example Chat" };
-const SETUP = `0x${"ab".repeat(64)}`;
-const RESPONSE = `0x${"cd".repeat(64)}`;
+const PAYLOAD = `0x${"ab".repeat(64)}`;
+const REPLY = `0x${"cd".repeat(64)}`;
 
-const keysOf = (name: string): HostKeys =>
-  hostKeys(
+const credentialOf = (name: string) =>
+  fixtureCredential(
     digest("test-signing", name),
-    x25519Pair(digest("test-inbox", name)),
+    digest("test-agreement", name),
   );
-const ADA_KEYS = keysOf("ada");
-const LIN_KEYS = keysOf("lin");
-const ADA: Person = {
-  id: "ada",
-  name: "Ada",
-  handle: "ada.example",
-  keys: peerKeysOf(ADA_KEYS),
-};
-const LIN: Person = {
-  id: "lin",
-  name: "Lin",
-  handle: "lin.example",
-  keys: peerKeysOf(LIN_KEYS),
-};
+const person = (id: string, name: string): Person => ({
+  id,
+  name,
+  handle: `${id}.example`,
+  identity: publicIdentity(credentialOf(id)),
+});
+const ADA = person("ada", "Ada");
+const LIN = person("lin", "Lin");
+const handleOf = (who: Person): ContactHandle =>
+  ({ bytes: toHex(digest("test-handle", who.id)) }) as ContactHandle;
 
 class Clock {
   at = START;
@@ -83,19 +91,34 @@ class Clock {
   }
 }
 
-class FakeDelivery implements InvitationDelivery {
-  receive: ((sealed: string) => void) | null = null;
+/** Records what the service asks of its delivery, in order. */
+class FakeDelivery implements HostDelivery {
+  receive: Parameters<HostDelivery["listen"]>[0] | null = null;
+  readonly calls: string[] = [];
   readonly posts = new Map<string, string>();
-  readonly posted: string[] = [];
+  readonly watched = new Set<string>();
   closed = false;
-  listen(receive: (sealed: string) => void): void {
-    this.receive = receive;
+  listen(receiver: Parameters<HostDelivery["listen"]>[0]): void {
+    this.receive = receiver;
   }
-  post(_to: unknown, id: string, sealed: string): void {
+  postRequest(_to: unknown, id: string, sealed: string): void {
+    this.calls.push(`postRequest ${id}`);
     this.posts.set(id, sealed);
-    this.posted.push(id);
+  }
+  postReply(topic: string, id: string, sealed: string): void {
+    this.calls.push(`postReply ${topic} ${id}`);
+    this.posts.set(id, sealed);
+  }
+  watch(topic: string): void {
+    this.calls.push(`watch ${topic}`);
+    this.watched.add(topic);
+  }
+  unwatch(topic: string): void {
+    this.calls.push(`unwatch ${topic}`);
+    this.watched.delete(topic);
   }
   withdraw(id: string): void {
+    this.calls.push(`withdraw ${id}`);
     this.posts.delete(id);
   }
   close(): void {
@@ -130,25 +153,26 @@ class FakeProduct implements ProductPort {
   }
 }
 
-/** Ada's and Lin's directory: each knows the other, and refers to them as `ref:<id>`. */
+/** Ada's and Lin's directory: each knows the other. */
 function contacts(self: Person, picks: Person[]): ContactService {
-  const people = [ADA, LIN].filter((person) => person.id !== self.id);
+  const people = [ADA, LIN].filter((other) => other.id !== self.id);
   return {
     pick: async () => {
-      const person = picks.shift();
-      return person === undefined ? null : `ref:${person.id}`;
+      const chosen = picks.shift();
+      return chosen === undefined
+        ? { tag: "Dismissed" }
+        : { tag: "Picked", value: { handle: handleOf(chosen) } };
     },
-    resolve: (_product, contact) =>
-      people.find((person) => `ref:${person.id}` === contact) ?? null,
-    bySigningKey: (key) =>
-      people.find((person) => person.keys.signingPublic === key),
-    refFor: (_product, person) => `ref:${person.id}`,
+    resolve: (contact) =>
+      people.find((other) => handleOf(other).bytes === contact.bytes) ?? null,
+    byIdentity: (key) =>
+      people.find((other) => other.identity.signingPublic === key),
+    handleFor: handleOf,
   };
 }
 
 function host(
   self: Person,
-  keys: HostKeys,
   options: { storage?: MemoryStorage; clock?: Clock; picks?: Person[] } = {},
 ) {
   const storage = options.storage ?? new MemoryStorage();
@@ -159,7 +183,7 @@ function host(
   const shown: number[] = [];
   const service = new InvitationService({
     product: PRODUCT,
-    self: keys,
+    auth: new FixtureIdentityAuth(credentialOf(self.id), cryptoRandom),
     contacts: contacts(self, options.picks ?? []),
     notifications,
     storage,
@@ -178,91 +202,86 @@ function host(
   return { service, notifications, delivery, product, storage, clock, shown };
 }
 
-/** An invitation from Ada to Lin, as Ada's host seals it. */
-function fromAda(requestByte: string, overrides: Partial<Envelope> = {}) {
-  const envelope: Envelope = {
-    product: PRODUCT,
-    purpose: "Chat?",
-    createdAt: START,
-    invitation: {
-      requestId: `0x${requestByte.repeat(16)}`,
-      challenge: `0x${"11".repeat(32)}`,
-      expiresAt: START + HOUR,
-      setup: SETUP,
+/** A request from Ada to Lin, as Ada's host seals it. */
+function fromAda(overrides: Partial<RequestContext> = {}) {
+  return sealRequest(
+    new FixtureIdentityAuth(credentialOf("ada"), cryptoRandom),
+    LIN,
+    {
+      product: PRODUCT,
+      purpose: "Chat?",
+      requestId: toHex(cryptoRandom(16)),
+      createdAt: START,
+      deadline: START + HOUR,
+      setupTopic: toHex(cryptoRandom(32)),
+      replyKey: toHex(cryptoRandom(32)),
+      ...overrides,
     },
-    ...overrides,
-  };
-  return {
-    sealed: sealEnvelope(ADA_KEYS, LIN.keys, envelope, cryptoRandom),
-    id: receivedId(ADA.keys.signingPublic, envelope.invitation.requestId),
-  };
+    PAYLOAD,
+    cryptoRandom,
+  );
 }
 
-describe("the invitation service, receiving", () => {
-  test("Accept is the user's intent: only the product's accept, with its response, accepts", async () => {
-    const lin = host(LIN, LIN_KEYS);
-    const { sealed, id } = fromAda("aa");
-    lin.delivery.receive!(sealed);
-    expect(lin.notifications.get(id)!.state.tag).toBe("pending");
+/** Lin's host receives a request from Ada; the handle of its row. */
+function receive(lin: ReturnType<typeof host>, overrides = {}) {
+  const { sealed, context } = fromAda(overrides);
+  lin.delivery.receive!.request(sealed);
+  const row = lin.notifications.list()[0]!;
+  return { handle: row.id, context, sealed };
+}
+
+describe("the request service, receiving", () => {
+  test("Accept is the user's intent: only the product's reply accepts, and the host posts it on the request's return topic", async () => {
+    const lin = host(LIN);
+    const { handle, context } = receive(lin);
+    expect(lin.notifications.get(handle)!.state.tag).toBe("pending");
     expect(lin.product.received).toEqual([]);
 
-    const accepting = lin.service.requestAccept(id);
+    const accepting = lin.service.requestAccept(handle);
     expect(lin.product.received).toEqual([
       {
         kind: "acceptIntent",
-        invitation: {
-          invitationId: id,
-          sender: "ref:ada",
-          purpose: "Chat?",
-          invitation: {
-            requestId: `0x${"aa".repeat(16)}`,
-            challenge: `0x${"11".repeat(32)}`,
-            expiresAt: START + HOUR,
-            setup: SETUP,
-          },
-        },
+        request: { handle, sender: handleOf(ADA), payload: PAYLOAD },
       },
     ]);
-    expect(lin.notifications.get(id)!.state.tag).toBe("pending");
+    expect(lin.notifications.get(handle)!.state.tag).toBe("pending");
     const result = await lin.product.call({
-      call: "accept",
-      invitationId: id,
-      response: RESPONSE,
+      call: "reply",
+      handle,
+      payload: REPLY,
       open: true,
     });
     await accepting;
-    expect(result).toEqual({ ok: true, proof: expect.stringMatching(/^0x/) });
-    expect(lin.notifications.get(id)!.state.tag).toBe("accepted");
+    expect(result).toEqual({ ok: true });
+    expect(lin.notifications.get(handle)!.state.tag).toBe("accepted");
     expect(lin.shown).toHaveLength(1);
-    expect(lin.delivery.posted).toEqual([]);
+    expect(lin.delivery.calls).toEqual([
+      `postReply ${context.setupTopic} ${handle}`,
+    ]);
   });
 
-  test("the user's Accept fails, with a reason and nothing accepted, when the product refuses, is silent, or is closed", async () => {
-    const lin = host(LIN, LIN_KEYS);
-    const ids = ["a1", "b2", "c3", "d4"].map((byte) => {
-      const { sealed, id } = fromAda(byte);
-      lin.delivery.receive!(sealed);
-      return id;
-    });
+  test("the user's Accept fails, with a reason and nothing sent, when the product refuses, is silent, or is closed", async () => {
+    const lin = host(LIN);
+    const handles = [1, 2, 3, 4].map(() => receive(lin).handle);
 
-    const refused = lin.service.requestAccept(ids[0]!);
+    const refused = lin.service.requestAccept(handles[0]!);
     await lin.product.call({
       call: "refuse",
-      invitationId: ids[0],
+      handle: handles[0],
       reason: "Example Chat cannot use this invitation.",
     });
     await expect(refused).rejects.toThrow(
       "Example Chat cannot use this invitation.",
     );
 
-    const silent = lin.service.requestAccept(ids[1]!);
+    const silent = lin.service.requestAccept(handles[1]!);
     lin.clock.advance(INTENT_TIMEOUT_MS);
     await expect(silent).rejects.toThrow("Example Chat did not answer.");
     expect(
       await lin.product.call({
-        call: "accept",
-        invitationId: ids[1],
-        response: RESPONSE,
+        call: "reply",
+        handle: handles[1],
+        payload: REPLY,
         open: true,
       }),
     ).toEqual({
@@ -271,63 +290,61 @@ describe("the invitation service, receiving", () => {
       detail: "The user did not choose Accept for it.",
     });
 
-    const closing = lin.service.requestAccept(ids[2]!);
+    const closing = lin.service.requestAccept(handles[2]!);
     lin.service.detachProduct();
     await expect(closing).rejects.toThrow(
       "Example Chat closed before it answered.",
     );
-    await expect(lin.service.requestAccept(ids[3]!)).rejects.toThrow(
+    await expect(lin.service.requestAccept(handles[3]!)).rejects.toThrow(
       "Example Chat is not open.",
     );
 
-    for (const id of ids)
-      expect(lin.notifications.get(id)!.state.tag).toBe("pending");
+    for (const handle of handles)
+      expect(lin.notifications.get(handle)!.state.tag).toBe("pending");
+    expect(lin.delivery.calls).toEqual([]);
     expect(lin.shown).toEqual([]);
 
     // After a failure the user can try again.
     lin.product.closed = false;
     lin.service.attachProduct(lin.product);
-    const retry = lin.service.requestAccept(ids[0]!);
+    const retry = lin.service.requestAccept(handles[0]!);
     await lin.product.call({
-      call: "accept",
-      invitationId: ids[0],
-      response: RESPONSE,
+      call: "reply",
+      handle: handles[0],
+      payload: REPLY,
       open: false,
     });
     await retry;
-    expect(lin.notifications.get(ids[0]!)!.state.tag).toBe("accepted");
+    expect(lin.notifications.get(handles[0]!)!.state.tag).toBe("accepted");
   });
 
   test("reading the lists again after another tab wrote them keeps the product's port and an Accept under way", async () => {
-    const lin = host(LIN, LIN_KEYS);
-    const { sealed, id } = fromAda("ab");
-    lin.delivery.receive!(sealed);
-    const accepting = lin.service.requestAccept(id);
-
+    const lin = host(LIN);
+    const { handle } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
     lin.service.reload();
     expect(lin.product.closed).toBe(false);
-    const result = await lin.product.call({
-      call: "accept",
-      invitationId: id,
-      response: RESPONSE,
-      open: true,
-    });
+    expect(
+      await lin.product.call({
+        call: "reply",
+        handle,
+        payload: REPLY,
+        open: true,
+      }),
+    ).toEqual({ ok: true });
     await accepting;
-    expect(result).toEqual({ ok: true, proof: expect.stringMatching(/^0x/) });
-    expect(lin.notifications.get(id)!.state.tag).toBe("accepted");
   });
 
-  test("the product's accept after the expiry is refused, to it and to the user", async () => {
-    const lin = host(LIN, LIN_KEYS);
-    const { sealed, id } = fromAda("aa");
-    lin.delivery.receive!(sealed);
-    const accepting = lin.service.requestAccept(id);
+  test("the product's reply after the deadline is refused, to it and to the user", async () => {
+    const lin = host(LIN);
+    const { handle } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
     lin.clock.at = START + HOUR;
     expect(
       await lin.product.call({
-        call: "accept",
-        invitationId: id,
-        response: RESPONSE,
+        call: "reply",
+        handle,
+        payload: REPLY,
         open: true,
       }),
     ).toEqual({
@@ -336,39 +353,35 @@ describe("the invitation service, receiving", () => {
       detail: "This request expired.",
     });
     await expect(accepting).rejects.toThrow("This request expired.");
-    expect(lin.shown).toEqual([]);
+    expect(lin.delivery.calls).toEqual([]);
     await expect(lin.service.requestAccept("sample")).rejects.toThrow(
-      "This is not an invitation to you.",
+      "This is not a request to you.",
     );
   });
 
-  test("opening an accepted invitation asks the product, which shows itself only when asked", async () => {
-    const lin = host(LIN, LIN_KEYS);
-    const { sealed, id } = fromAda("aa");
-    lin.delivery.receive!(sealed);
-    const accepting = lin.service.requestAccept(id);
+  test("opening a replied request asks the product, which shows itself only when asked", async () => {
+    const lin = host(LIN);
+    const { handle } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
     await lin.product.call({
-      call: "accept",
-      invitationId: id,
-      response: RESPONSE,
+      call: "reply",
+      handle,
+      payload: REPLY,
       open: false,
     });
     await accepting;
     expect(lin.shown).toEqual([]);
-    await lin.product.call({ call: "open", invitationId: id });
+    await lin.product.call({ call: "open", handle });
     expect(lin.shown).toEqual([]);
-    lin.service.requestOpen(id);
-    expect(lin.product.received.at(-1)).toEqual({
-      kind: "openIntent",
-      invitationId: id,
-    });
-    await lin.product.call({ call: "open", invitationId: id });
-    await lin.product.call({ call: "open", invitationId: id });
+    lin.service.requestOpen(handle);
+    expect(lin.product.received.at(-1)).toEqual({ kind: "openIntent", handle });
+    await lin.product.call({ call: "open", handle });
+    await lin.product.call({ call: "open", handle });
     expect(lin.shown).toHaveLength(1);
   });
 
   test("leaves other requests in the list alone", () => {
-    const lin = host(LIN, LIN_KEYS);
+    const lin = host(LIN);
     lin.notifications.add({
       id: "sample",
       kind: "invitation",
@@ -383,125 +396,261 @@ describe("the invitation service, receiving", () => {
     lin.notifications.accept("sample");
     expect(lin.service.owns("sample")).toBe(false);
     expect(lin.product.received).toEqual([]);
+    expect(lin.delivery.calls).toEqual([]);
   });
 
-  test("ignores an invitation for another product or with a lifetime over the limit", () => {
-    const lin = host(LIN, LIN_KEYS);
-    lin.delivery.receive!(
-      fromAda("aa", { product: { id: "other.example", name: "Other" } }).sealed,
+  test("ignores a request for another product, with a lifetime over the limit, or whose deadline passed", () => {
+    const lin = host(LIN);
+    lin.delivery.receive!.request(
+      fromAda({
+        createdAt: START + 8 * 24 * HOUR,
+        deadline: START + 8 * 24 * HOUR + HOUR,
+      }).sealed,
     );
-    lin.delivery.receive!(
-      fromAda("bb", { createdAt: START - 8 * 24 * HOUR }).sealed,
+    lin.delivery.receive!.request(
+      fromAda({ product: { id: "other.example", name: "Other" } }).sealed,
     );
+    lin.delivery.receive!.request(
+      fromAda({ createdAt: START - 8 * 24 * HOUR }).sealed,
+    );
+    lin.delivery.receive!.request(fromAda({ deadline: START }).sealed);
     expect(lin.notifications.list()).toEqual([]);
   });
 
-  test("keeps what it received, and what it accepted, across a restart", async () => {
+  test("keeps what it received and replied across a restart, and recognises a repeat", async () => {
     const storage = new MemoryStorage();
     const clock = new Clock();
-    const lin = host(LIN, LIN_KEYS, { storage, clock });
-    const { sealed, id } = fromAda("aa");
-    lin.delivery.receive!(sealed);
-    const accepting = lin.service.requestAccept(id);
+    const lin = host(LIN, { storage, clock });
+    const { handle, sealed, context } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
     await lin.product.call({
-      call: "accept",
-      invitationId: id,
-      response: RESPONSE,
+      call: "reply",
+      handle,
+      payload: REPLY,
       open: false,
     });
     await accepting;
     lin.service.stop();
-    const again = host(LIN, LIN_KEYS, { storage, clock });
+    const again = host(LIN, { storage, clock });
     expect(again.product.received).toEqual([
       {
-        kind: "accepted",
-        invitation: expect.objectContaining({
-          invitationId: id,
-          sender: "ref:ada",
-          acceptedAt: START,
-        }),
+        kind: "replied",
+        request: { handle, sender: handleOf(ADA), repliedAt: START },
       },
     ]);
-    again.delivery.receive!(sealed);
+    expect(again.delivery.calls).toEqual([
+      `postReply ${context.setupTopic} ${handle}`,
+    ]);
+    again.delivery.receive!.request(sealed);
     expect(again.notifications.list()).toHaveLength(1);
   });
 });
 
-describe("the invitation service, sending", () => {
-  test("sends to a picked contact, posts again after a restart, and tells a new product everything", async () => {
+describe("the request service, across tabs and malformed input", () => {
+  test("sealed bytes that open but are not an envelope are ignored, in both directions", async () => {
+    const lin = host(LIN);
+    for (const text of ["null", "1", "[]", '"x"'])
+      expect(() =>
+        lin.delivery.receive!.request(
+          toHex(
+            sealTo(
+              fromHex(LIN.identity.agreementPublic),
+              utf8(text),
+              REQUEST_SEAL,
+              cryptoRandom,
+            ),
+          ),
+        ),
+      ).not.toThrow();
+    expect(lin.notifications.list()).toEqual([]);
+
+    const ada = host(ADA);
+    await ada.product.call({
+      call: "request",
+      request: {
+        contact: handleOf(LIN),
+        purpose: "Chat?",
+        ttlMs: HOUR,
+        payload: PAYLOAD,
+      },
+    });
+    const [item] = ada.service.outbox.list();
+    for (const text of ["null", "1", "[]"])
+      expect(() =>
+        ada.delivery.receive!.reply(
+          item!.context.setupTopic,
+          toHex(
+            sealTo(
+              fromHex(item!.context.replyKey),
+              utf8(text),
+              REPLY_SEAL,
+              cryptoRandom,
+            ),
+          ),
+        ),
+      ).not.toThrow();
+    expect(item!.replies).toEqual([]);
+  });
+
+  test("two tabs of one user give a request the same handle, and only one of them can reply", async () => {
     const storage = new MemoryStorage();
     const clock = new Clock();
-    const ada = host(ADA, ADA_KEYS, { storage, clock, picks: [LIN] });
-    const picked = await ada.product.call({ call: "pickContact" });
-    expect(picked).toEqual({ ok: true, contact: "ref:lin" });
-    expect(await ada.product.call({ call: "pickContact" })).toEqual({
-      ok: false,
-      reason: "Dismissed",
-      detail: "No contact was chosen.",
-    });
-    const request = {
-      contact: "ref:lin",
-      purpose: "Chat?",
-      ttlMs: HOUR,
-      invitation: {
-        requestId: `0x${"aa".repeat(16)}`,
-        challenge: `0x${"11".repeat(32)}`,
-        setup: SETUP,
-      },
-    };
-    const sent = await ada.product.call({ call: "send", request });
-    expect(sent).toEqual({
-      ok: true,
-      invitation: {
-        requestId: `0x${"aa".repeat(16)}`,
-        contact: "ref:lin",
-        purpose: "Chat?",
-        createdAt: START,
-        expiresAt: START + HOUR,
-        status: "waiting",
-      },
-    });
-    expect(await ada.product.call({ call: "send", request })).toEqual({
-      ok: false,
-      reason: "Invalid",
-      detail: "The request id is already in use.",
-    });
-    expect([...ada.delivery.posts.keys()]).toEqual([`0x${"aa".repeat(16)}`]);
+    const first = host(LIN, { storage, clock });
+    const second = host(LIN, { storage, clock });
+    const { sealed, context } = fromAda();
+    first.delivery.receive!.request(sealed);
+    second.delivery.receive!.request(sealed);
+    // As each tab does on the other's storage event.
+    first.service.reload();
+    second.service.reload();
+    expect(first.notifications.list().map((row) => row.id)).toEqual(
+      second.notifications.list().map((row) => row.id),
+    );
+    expect(first.notifications.list()).toHaveLength(1);
+    const handle = first.notifications.list()[0]!.id;
 
-    ada.service.stop();
-    expect(ada.delivery.closed).toBe(true);
-    const again = host(ADA, ADA_KEYS, { storage, clock });
-    expect([...again.delivery.posts.keys()]).toEqual([`0x${"aa".repeat(16)}`]);
-    expect(again.product.received).toEqual([
-      {
-        kind: "outgoing",
-        invitation: (sent as { invitation: OutgoingView }).invitation,
-      },
+    const accepts = [first, second].map((tab) => {
+      const accepting = tab.service.requestAccept(handle);
+      accepting.catch(() => {});
+      return accepting;
+    });
+    expect(
+      await first.product.call({
+        call: "reply",
+        handle,
+        payload: REPLY,
+        open: false,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      await second.product.call({
+        call: "reply",
+        handle,
+        payload: `0x${"ef".repeat(64)}`,
+        open: false,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Refused",
+      detail: "This request was already answered.",
+    });
+    await accepts[0];
+    await expect(accepts[1]!).rejects.toThrow(
+      "This request was already answered.",
+    );
+    expect(second.delivery.calls).toEqual([]);
+    expect(first.delivery.calls).toEqual([
+      `postReply ${context.setupTopic} ${handle}`,
     ]);
   });
 
-  test("an expired invitation is withdrawn and reported once, and not posted again", async () => {
-    const ada = host(ADA, ADA_KEYS);
-    await ada.product.call({
-      call: "send",
+  test("a request one tab cancels or completes stops posting in the user's other tabs once they read the lists", async () => {
+    const storage = new MemoryStorage();
+    const clock = new Clock();
+    const first = host(ADA, { storage, clock });
+    await first.product.call({
+      call: "request",
       request: {
-        contact: "ref:lin",
+        contact: handleOf(LIN),
         purpose: "Chat?",
-        ttlMs: 2 * MINUTE,
-        invitation: {
-          requestId: `0x${"aa".repeat(16)}`,
-          challenge: `0x${"11".repeat(32)}`,
-          setup: SETUP,
-        },
+        ttlMs: HOUR,
+        payload: PAYLOAD,
       },
     });
+    const second = host(ADA, { storage, clock });
+    const [item] = second.service.outbox.list();
+    expect([...second.delivery.posts.keys()]).toEqual([item!.handle]);
+    expect([...second.delivery.watched]).toEqual([item!.context.setupTopic]);
+    await first.product.call({ call: "cancel", handle: item!.handle });
+    second.service.reload();
+    expect([...second.delivery.posts.keys()]).toEqual([]);
+    expect([...second.delivery.watched]).toEqual([]);
+  });
+});
+
+describe("the request service, sending", () => {
+  const sendTo = (ada: ReturnType<typeof host>, ttlMs = HOUR) =>
+    ada.product.call({
+      call: "request",
+      request: {
+        contact: handleOf(LIN),
+        purpose: "Chat?",
+        ttlMs,
+        payload: PAYLOAD,
+      },
+    });
+
+  test("the host makes the request id, return topic and reply key, and watches the topic before it posts", async () => {
+    const ada = host(ADA, { picks: [LIN] });
+    expect(await ada.product.call({ call: "pickContact" })).toEqual({
+      ok: true,
+      outcome: { tag: "Picked", value: { handle: handleOf(LIN) } },
+    });
+    expect(await ada.product.call({ call: "pickContact" })).toEqual({
+      ok: true,
+      outcome: { tag: "Dismissed" },
+    });
+    const first = await sendTo(ada);
+    const second = await sendTo(ada);
+    const [one, two] = ada.service.outbox.list();
+    expect(first).toEqual({
+      ok: true,
+      request: {
+        handle: one!.handle,
+        contact: handleOf(LIN),
+        purpose: "Chat?",
+        createdAt: START,
+        deadline: START + HOUR,
+        status: "waiting",
+      },
+    });
+    expect(second.ok).toBe(true);
+    expect(one!.context.requestId).not.toBe(two!.context.requestId);
+    expect(one!.context.setupTopic).not.toBe(two!.context.setupTopic);
+    expect(one!.context.replyKey).not.toBe(two!.context.replyKey);
+    expect(one!.handle).not.toBe(one!.context.requestId);
+    expect(ada.delivery.calls).toEqual([
+      `watch ${one!.context.setupTopic}`,
+      `postRequest ${one!.handle}`,
+      `watch ${two!.context.setupTopic}`,
+      `postRequest ${two!.handle}`,
+    ]);
+  });
+
+  test("after a restart it watches and posts what still waits, and tells a new product everything", async () => {
+    const storage = new MemoryStorage();
+    const clock = new Clock();
+    const ada = host(ADA, { storage, clock });
+    const sent = await sendTo(ada);
+    ada.service.stop();
+    expect(ada.delivery.closed).toBe(true);
+    const again = host(ADA, { storage, clock });
+    const [item] = again.service.outbox.list();
+    expect(again.delivery.calls).toEqual([
+      `watch ${item!.context.setupTopic}`,
+      `postRequest ${item!.handle}`,
+    ]);
+    expect(again.product.received).toEqual([
+      {
+        kind: "outgoing",
+        request: (sent as { request: unknown }).request,
+      } as HostMessage,
+    ]);
+  });
+
+  test("a request past its deadline is withdrawn and unwatched, and reported once", async () => {
+    const ada = host(ADA);
+    await sendTo(ada, 2 * MINUTE);
+    const [item] = ada.service.outbox.list();
     ada.clock.advance(2 * MINUTE);
-    expect(ada.delivery.posts.size).toBe(0);
+    expect(ada.delivery.calls.slice(2)).toEqual([
+      `withdraw ${item!.handle}`,
+      `unwatch ${item!.context.setupTopic}`,
+    ]);
     const reports = () =>
       ada.product.received.filter(
         (message) =>
-          message.kind === "outgoing" &&
-          message.invitation.status === "expired",
+          message.kind === "outgoing" && message.request.status === "expired",
       );
     expect(reports()).toHaveLength(1);
     ada.clock.advance(HOUR);
@@ -511,18 +660,14 @@ describe("the invitation service, sending", () => {
 
 describe("a product's calls", () => {
   const request = (overrides: Record<string, unknown> = {}) => ({
-    contact: "ref:lin",
+    contact: handleOf(LIN),
     purpose: "Chat?",
     ttlMs: HOUR,
-    invitation: {
-      requestId: `0x${"aa".repeat(16)}`,
-      challenge: `0x${"11".repeat(32)}`,
-      setup: SETUP,
-    },
+    payload: PAYLOAD,
     ...overrides,
   });
 
-  test("a send request is bounded", () => {
+  test("a request is bounded, and names its contact by a contact handle", () => {
     expect(readSendRequest(request()).ok).toBe(true);
     expect(readSendRequest(request({ purpose: "x".repeat(281) }))).toEqual({
       ok: false,
@@ -532,74 +677,49 @@ describe("a product's calls", () => {
       ok: false,
       reason: "The expiry is outside one minute to seven days.",
     });
+    expect(readSendRequest(request({ payload: "0x" }))).toEqual({
+      ok: false,
+      reason: "The payload is empty.",
+    });
     expect(
       readSendRequest(
-        request({
-          invitation: { ...request().invitation, setup: "0x" },
-        }),
-      ),
-    ).toEqual({ ok: false, reason: "The setup data is empty." });
-    expect(
-      readSendRequest(
-        request({
-          invitation: {
-            ...request().invitation,
-            setup: `0x${"00".repeat(PAYLOAD_MAX_BYTES + 1)}`,
-          },
-        }),
+        request({ payload: `0x${"00".repeat(PAYLOAD_MAX_BYTES + 1)}` }),
       ),
     ).toEqual({
       ok: false,
-      reason: `The setup data is larger than ${PAYLOAD_MAX_BYTES} bytes.`,
+      reason: `The payload is larger than ${PAYLOAD_MAX_BYTES} bytes.`,
     });
-    expect(
-      readSendRequest(
-        request({ invitation: { ...request().invitation, challenge: "0x11" } }),
-      ),
-    ).toEqual({
-      ok: false,
-      reason: "The challenge is not 32 bytes of 0x hex.",
-    });
-    expect(readSendRequest(request({ contact: "" }))).toEqual({
-      ok: false,
-      reason: "No contact.",
-    });
+    for (const contact of [
+      "fixture-contact:0x00",
+      { bytes: "0x00" },
+      handleOf(LIN).bytes,
+    ])
+      expect(readSendRequest(request({ contact }))).toEqual({
+        ok: false,
+        reason: "The contact is not a contact handle.",
+      });
   });
 
-  test("a call without an id, or of an unknown kind, is not read", () => {
+  test("a call without an id, of a removed or unknown kind, or an earlier version's hello, is not read", () => {
     expect(readProductCall({ call: "pickContact" })).toBeNull();
+    for (const call of ["verify", "accept", "send", "decline"])
+      expect(readProductCall({ id: 1, call, handle: "x" })).toBeNull();
     expect(
-      readProductCall({ id: 1, call: "decline", invitationId: "x" }),
+      readProductCall({ id: 1, call: "refuse", handle: "x", reason: " " }),
     ).toBeNull();
     expect(
-      readProductCall({
-        id: 1,
-        call: "refuse",
-        invitationId: "x",
-        reason: " ",
-      }),
-    ).toBeNull();
+      readProductCall({ id: 2, call: "complete", handle: "0x00" }),
+    ).toEqual({ id: 2, call: "complete", handle: "0x00" });
     expect(
-      readProductCall({ id: 2, call: "cancel", requestId: "0x00" }),
-    ).toEqual({
-      id: 2,
-      call: "cancel",
-      requestId: "0x00",
-    });
-  });
-});
-
-describe("the host's keys", () => {
-  test("are separate per person, and a sealed envelope opens only for its recipient", () => {
-    expect(toHex(ADA_KEYS.signingPublic)).not.toBe(
-      toHex(LIN_KEYS.signingPublic),
-    );
-    const lin = host(LIN, LIN_KEYS);
-    const ada = host(ADA, ADA_KEYS);
-    const { sealed } = fromAda("aa");
-    ada.delivery.receive!(sealed);
-    expect(ada.notifications.list()).toEqual([]);
-    lin.delivery.receive!(sealed);
-    expect(lin.notifications.list()).toHaveLength(1);
+      isProductHello(
+        { type: "invitations-product", protocol: "invitations/1" },
+        [{}],
+      ),
+    ).toBe(false);
+    expect(
+      isProductHello({ type: PRODUCT_HELLO, protocol: "host-requests/1" }, [
+        {},
+      ]),
+    ).toBe(true);
   });
 });

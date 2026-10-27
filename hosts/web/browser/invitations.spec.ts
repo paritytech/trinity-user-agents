@@ -138,7 +138,7 @@ async function chooseContact(page: Page, name: string): Promise<string> {
   const picker = page.locator("dialog.prompt", { hasText: "Choose a contact" });
   await picker.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
   const chosen = product.locator(
-    '[data-action="choose-contact"][data-contact^="fixture-contact:"]',
+    '[data-action="choose-contact"][data-contact^="0x"]',
   );
   await chosen.waitFor();
   return (await chosen.getAttribute("data-contact"))!;
@@ -189,21 +189,28 @@ async function screenshot(page: Page, name: string): Promise<void> {
     await page.screenshot({ path: join(directory, `${name}.png`) });
 }
 
-/** The routes of every post in the local mailbox: who invitations were posted to. */
-const mailboxRoutes = (page: Page) =>
-  page.evaluate(() =>
-    [
-      ...new Set(
-        Object.keys(localStorage)
-          .filter((key) => key.includes(":dev:mailbox:"))
-          .map((key) => key.split(":dev:mailbox:")[1]!.split(":")[0]),
-      ),
-    ].sort(),
+/**
+ * What the local delivery holds: the routes requests were posted to, and the
+ * return topics replies were posted on.
+ */
+const posts = (page: Page, kind: "request" | "reply") =>
+  page.evaluate(
+    (kind) =>
+      [
+        ...new Set(
+          Object.keys(localStorage)
+            .filter((key) => key.includes(`:dev:delivery:v2:${kind}:`))
+            .map(
+              (key) => key.split(`:dev:delivery:v2:${kind}:`)[1]!.split(":")[0],
+            ),
+        ),
+      ].sort(),
+    kind,
   );
 
 describe("invitations between test users", () => {
   test(
-    "connects through a JIT invitation: pick, send, Accept, a verified reply, then Connected",
+    "connects through a JIT invitation: pick, send, Accept, an authenticated reply, then Connected",
     async () => {
       const { context, outside, errors, open } = await session();
       // From the first page on: a clock installed under a running light client breaks its timers.
@@ -242,7 +249,7 @@ describe("invitations between test users", () => {
         await exampleChat(alice)
           .locator('[data-card="invite"] .note', { hasText: "Not sent." })
           .waitFor();
-        expect(await mailboxRoutes(alice)).toEqual([]);
+        expect(await posts(alice, "request")).toEqual([]);
 
         const first = await invite(alice, {
           purpose: "Let's chat in Example Chat.",
@@ -252,8 +259,7 @@ describe("invitations between test users", () => {
         expect(await sentStatus(alice, first)).toBe("waiting");
         await eventually(() => badge(bob), 1);
         expect(await badge(carol)).toBe(0);
-        const bobRoute = await mailboxRoutes(alice);
-        expect(bobRoute).toHaveLength(1);
+        expect(await posts(alice, "request")).toHaveLength(1);
         await screenshot(bob, "bob-badge");
 
         // Bob sees Alice as his host names her. Seeing it sends nothing.
@@ -268,9 +274,10 @@ describe("invitations between test users", () => {
         const bobRequest = (await row.getAttribute("data-notification"))!;
         await screenshot(bob, "bob-notifications");
 
-        // Accept: Bob's Example Chat checks the setup, accepts with its
-        // response and posts the reply on T_BA. Alice's host verifies, her
-        // product checks, and only then is it Connected.
+        // Accept: Bob's Example Chat checks the payload and replies through
+        // its host, which posts the sealed reply on the request's return
+        // topic. Alice's host authenticates it, her product checks it, and only
+        // then is it Connected.
         await row.locator('[data-action="notification-accept"]').click();
         await eventually(
           () => bob.getAttribute("body", "data-surface"),
@@ -283,11 +290,12 @@ describe("invitations between test users", () => {
         await eventually(() => sentStatus(alice, first), "completed");
         expect(await sentRow(alice, first).innerText()).toContain("Connected");
         const aliceLog = (await alice.locator("#log").textContent())!;
-        expect(aliceLog).toContain("from the contact invited");
-        expect(aliceLog).toContain("reposting stopped");
+        expect(aliceLog).toContain("authenticated a reply from Bob");
+        expect(aliceLog).toContain("reposting stopped. Nothing is sent.");
         expect(await bob.locator("#log").textContent()).toContain(
-          "the host bound its proof to that response",
+          "the host sealed it for Alice and posted it on the request's return topic",
         );
+        expect(await posts(alice, "reply")).toHaveLength(1);
         // Neither product shows who the other person is.
         expect(
           await exampleChat(alice).locator("main").innerText(),
@@ -312,8 +320,10 @@ describe("invitations between test users", () => {
         await carol.locator(".notification-row").waitFor({ state: "detached" });
         await carol.waitForTimeout(300);
         expect(await sentStatus(alice, second)).toBe("waiting");
-        // Posts went only to Bob and Carol: no host wrote back to Alice.
-        expect(await mailboxRoutes(alice)).toHaveLength(2);
+        // Requests went to Bob and Carol; the one reply is Bob's, and Carol
+        // posted nothing.
+        expect(await posts(alice, "request")).toHaveLength(2);
+        expect(await posts(alice, "reply")).toHaveLength(1);
         await sentRow(alice, second)
           .locator('[data-action="cancel-invitation"]')
           .click();
@@ -385,14 +395,14 @@ describe("invitations between test users", () => {
             .sort(),
         );
         expect(keys).toEqual([
-          "truapi-web-signing-host:network:paseo:test-user:alice:outbox:v1",
+          "truapi-web-signing-host:network:paseo:test-user:alice:outbox:v2",
           "truapi-web-signing-host:network:paseo:test-user:bob:notifications:v1",
-          "truapi-web-signing-host:network:paseo:test-user:bob:received:v1",
+          "truapi-web-signing-host:network:paseo:test-user:bob:received:v2",
           "truapi-web-signing-host:network:paseo:test-user:carol:notifications:v1",
-          "truapi-web-signing-host:network:paseo:test-user:carol:received:v1",
+          "truapi-web-signing-host:network:paseo:test-user:carol:received:v2",
           // Example Chat's own secrets and replies, in its TrUAPI local storage.
-          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v1",
-          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v1",
+          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
+          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
         ]);
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);
