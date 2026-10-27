@@ -51,6 +51,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
+        extensionVersions = mockk(),
         scope = scope,
     )
 
@@ -148,7 +149,7 @@ class ProductTrUAPIHostBridgeTest {
 
         coVerify {
             gameReminder.schedule(game, 1_000)
-            gameReminder.cancel(game)
+            gameReminder.cancelByProduct(game)
         }
     }
 

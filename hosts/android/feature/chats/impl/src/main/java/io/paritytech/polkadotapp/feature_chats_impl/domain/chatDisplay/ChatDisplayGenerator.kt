@@ -28,10 +28,18 @@ class ChatDisplayGenerator @Inject constructor(
         return ChatDisplay(username, avatar)
     }
 
+    /** A room icon is drawn over the default letter, which stays if the icon cannot be loaded. */
     fun applyRoomMetadata(roomMetadata: RoomMetadata, defaultDisplay: ChatDisplay): ChatDisplay {
         val name = roomMetadata.name ?: defaultDisplay.name
-        val avatar = roomMetadata.icon?.let(ChatAvatar::Url) ?: defaultDisplay.avatar
+        val avatar = roomMetadata.icon
+            ?.let { ChatAvatar.Url(it, placeholder = defaultDisplay.avatar.letter()) }
+            ?: defaultDisplay.avatar
 
         return ChatDisplay(name, avatar)
+    }
+
+    private fun ChatAvatar.letter(): ChatAvatar.Account? = when (this) {
+        is ChatAvatar.Account -> this
+        is ChatAvatar.Url -> placeholder
     }
 }
