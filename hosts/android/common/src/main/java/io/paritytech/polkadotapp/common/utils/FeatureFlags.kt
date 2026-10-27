@@ -10,6 +10,8 @@ object FeatureFlags {
             FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
+            // Safetynet reports the same native host telemetry as the other non-release builds.
+            FeatureOption.HOST_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
             FeatureOption.ARBITRARY_PRODUCTS,
@@ -23,6 +25,7 @@ object FeatureFlags {
 
             FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR -> BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
             FeatureOption.COINAGE_DEBUG_FEATURES -> BuildConfig.COINAGE_DEBUG_FEATURES
+            FeatureOption.COINAGE_DEBUG_TOOLS -> BuildConfig.COINAGE_DEBUG_TOOLS
             FeatureOption.SAMPLE_BOT -> BuildConfig.SAMPLE_BOT
         }
     }
@@ -32,6 +35,7 @@ enum class FeatureOption {
     SHORT_WORKER_BACKOFF,
     SAMPLE_BOT,
     DEBUG_MENU,
+    HOST_TELEMETRY,
 
     // Opening a product from a development server on the developer's machine. The server's address
     // becomes a `localhost` product, which the core grants a development wildcard, so this is the debug
@@ -52,6 +56,10 @@ enum class FeatureOption {
     // log sharing. Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which
     // is also set on safetynet builds, where the card is wanted.
     COINAGE_DEBUG_FEATURES,
+
+    // The coinage card's test-data and coin-set switches. Debug builds only: COINAGE_DEBUG_FEATURES is also on
+    // in nightly builds, which testers use as the real thing.
+    COINAGE_DEBUG_TOOLS,
     ALL_CHAT_EXTENSIONS,
     LINKED_DEVICES,
     PRODUCT_SETTINGS,

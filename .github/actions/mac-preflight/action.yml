@@ -1,0 +1,95 @@
+name: Mac runner preflight
+description: >-
+  Fails fast, naming the runner, when a self-hosted Mac cannot reach GitHub,
+  its simulator service does not answer, or its disk is nearly full.
+
+# The self-hosted Macs are persistent and shared, so a host can be unhealthy
+# for reasons no change made: a dropped network, a wedged CoreSimulator
+# service, a disk filled by earlier jobs. Each of those otherwise surfaces
+# minutes later as a package resolution error or a block of failing tests that
+# reads like a regression. Checked first, it fails in seconds with the host
+# named, and a re-run on another host is the fix.
+#
+# A no-op on any runner that is not macOS, so a job whose runner is chosen at
+# run time can call it unconditionally.
+
+inputs:
+  simulator:
+    description: Whether the job uses the iOS simulator, so its service is checked
+    required: false
+    default: "true"
+  min_free_gb:
+    description: Free space the job needs on the system volume, in GB
+    required: false
+    default: "20"
+
+runs:
+  using: composite
+  steps:
+    - name: Check the runner is healthy
+      if: runner.os == 'macOS'
+      shell: bash
+      env:
+        CHECK_SIMULATOR: ${{ inputs.simulator }}
+        MIN_FREE_GB: ${{ inputs.min_free_gb }}
+      run: |
+        set -euo pipefail
+
+        unhealthy() {
+          echo "::error title=Runner unhealthy::${RUNNER_NAME}: $1. Re-run the job so it lands on another host."
+          {
+            echo "### Runner unhealthy"
+            echo
+            echo "\`${RUNNER_NAME}\`: $1. Re-run the job so it lands on another host."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+        }
+
+        # Package resolution, the core's crates and the signing repository are
+        # all fetched from github.com.
+        reachable=false
+        for attempt in 1 2 3; do
+          if curl -fsS --max-time 15 -o /dev/null https://github.com; then
+            reachable=true
+            break
+          fi
+          echo "github.com unreachable on attempt ${attempt}"
+          sleep 5
+        done
+        [ "$reachable" = true ] || unhealthy "github.com is unreachable"
+
+        # The system volume holds DerivedData, the simulators and the toolchain caches.
+        free_gb="$(df -g / | awk 'NR == 2 { print $4 }')"
+        case "$free_gb" in
+          '' | *[!0-9]*) unhealthy "the free space on the system volume could not be read" ;;
+        esac
+        if [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
+          unhealthy "${free_gb} GB free on the system volume, below the ${MIN_FREE_GB} GB this job needs"
+        fi
+
+        # A wedged CoreSimulator service hangs simctl rather than failing it,
+        # so the call runs under a deadline.
+        if [ "$CHECK_SIMULATOR" = true ]; then
+          simctl_status=0
+          python3 - <<'PY' || simctl_status=$?
+        import subprocess, sys
+        try:
+            subprocess.run(["xcrun", "simctl", "list", "devices", "available"],
+                           check=True, capture_output=True, timeout=90)
+        except subprocess.TimeoutExpired:
+            sys.exit(2)
+        except subprocess.CalledProcessError as error:
+            print(error.stderr.decode(errors="replace") or error, file=sys.stderr)
+            sys.exit(1)
+        except OSError as error:
+            print(error, file=sys.stderr)
+            sys.exit(1)
+        PY
+          case "$simctl_status" in
+            0) ;;
+            2) unhealthy "the simulator service did not answer within 90 seconds" ;;
+            *) unhealthy "simctl could not list the simulators" ;;
+          esac
+        fi
+
+        echo "${RUNNER_NAME} is healthy: github.com reachable, ${free_gb} GB free"

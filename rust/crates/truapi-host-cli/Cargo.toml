@@ -1,10 +1,10 @@
 [package]
 name = "truapi-host-cli"
-version = "0.25.0"
+version = "0.26.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
 license = "MIT"
-include = ["src/**", "js/**", "README.md", "SPEC.md"]
+include = ["src/**", "js/**", "deployments/**", "README.md", "SPEC.md"]
 
 [[bin]]
 name = "truapi-host"
@@ -17,12 +17,16 @@ rustix = { workspace = true, features = ["process"] }
 missing_docs = "warn"
 unsafe_code = "forbid"
 
+[features]
+# A scripted funding host and the core's test hooks, for the funding battery.
+test-host = ["truapi/test-host"]
 [lints.clippy]
 complexity = "warn"
 correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }
+trinity-stack = { path = "../trinity-stack" }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 async-trait = { workspace = true }
@@ -30,11 +34,12 @@ base64 = { workspace = true }
 bip39 = { workspace = true, features = ["rand"] }
 clap = { workspace = true, features = ["derive", "env"] }
 crossterm = { workspace = true, features = ["event-stream"] }
-derive_more = { workspace = true, features = ["debug", "display", "error"] }
+derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 flate2 = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 fs2 = { workspace = true }
+getrandom = { workspace = true }
 hex = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 parity-scale-codec = { workspace = true, features = ["derive"] }
@@ -47,6 +52,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 shlex = { workspace = true }
+subxt = { workspace = true, features = ["native"] }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }
@@ -59,3 +65,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 unicode-width = { workspace = true }
 zeroize = { workspace = true, features = ["alloc", "derive"] }
+
+[dev-dependencies]
+truapi = { path = "../truapi", features = ["mock"] }

@@ -267,7 +267,7 @@ private extension PeerSession {
             return handleIncomingMessageError(.decodingFailed, for: sessionStatement)
         }
 
-        let senderAccountId = statement.getSenderAccountId()
+        let senderAccountId = sessionStatement.topicAccountId
 
         do {
             let outcome: StatementDataDecodingResult<Message> = try statementDataCoder

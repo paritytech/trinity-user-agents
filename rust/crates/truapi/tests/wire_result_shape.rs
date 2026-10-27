@@ -270,7 +270,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	let core = make_core();
 	let request = v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: "peopl.dot".parse().expect("valid product id"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {
@@ -450,7 +450,9 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
 				trait_id: ids.trait_id,
 				method_id: ids.method_id,
 				message_type: MESSAGE_TYPE_START,
-				value: vec![0xff],
+				// V1, then an invalid `purse` option tag. A first byte naming a
+				// later version would be refused as unsupported, not malformed.
+				value: vec![0x00, 0xff],
 			},
 		},
 		transport.clone(),

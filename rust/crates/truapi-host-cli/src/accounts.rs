@@ -12,7 +12,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use truapi::host_logic::product_account::{
-	derive_full_person_ring_vrf_entropy, derive_identity_keypair,
+	ProductAccountError, derive_full_person_ring_vrf_entropy, derive_identity_keypair,
 	derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
 };
 
@@ -23,6 +23,11 @@ use zeroize::ZeroizeOnDrop;
 const ACCOUNT_STORE_FILE: &str = "accounts.json";
 const ACCOUNT_STORE_LOCK_FILE: &str = "accounts.json.lock";
 const DEFAULT_USERNAME_PREFIX: &str = "headless";
+
+/// The account's uid key could not be derived from its entropy.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("uid identity derivation failed")]
+pub struct IdentityDerivationError(ProductAccountError);
 
 /// Whether an account store has been written under `base_path`.
 ///
@@ -350,6 +355,7 @@ pub async fn resolve_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedS
 		});
 	}
 
+	config.network.ensure_disposable_identities()?;
 	let _lock = AccountStoreLock::acquire(config.base_path)?;
 	let mut store = AccountStore::load(config.base_path)?;
 	if let Some(name) = config.account {
@@ -447,9 +453,11 @@ pub async fn inspect_imported_signer(
 /// session's imported signer.
 pub fn persist_imported_signer(
 	base_path: &Path,
-	network_id: &str,
+	network: NetworkConfig,
 	imported: &ImportedSigner,
 ) -> Result<ResolvedSigner> {
+	network.ensure_disposable_identities()?;
+	let network_id = network.id;
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let mut store = AccountStore::load(base_path)?;
 	let public_key_hex = format!("0x{}", hex::encode(imported.public_key));
@@ -488,9 +496,11 @@ pub fn persist_imported_signer(
 /// attestation or ring-membership checks.
 pub fn resolve_cached_signer(
 	base_path: &Path,
-	network_id: &str,
+	network: NetworkConfig,
 	account: Option<&str>,
 ) -> Result<Option<ResolvedSigner>> {
+	network.ensure_disposable_identities()?;
+	let network_id = network.id;
 	let _lock = AccountStoreLock::acquire(base_path)?;
 	let store = AccountStore::load(base_path)?;
 	let (record, auto_managed) = if let Some(name) = account {
@@ -619,14 +629,12 @@ async fn attest_record(
 	reserved_username: Option<&str>,
 ) -> Result<String> {
 	let entropy = mnemonic_entropy(&record.mnemonic)?;
-	let lite_username = attestation::attest(&attestation::AttestConfig {
-		backend_base: network.identity_backend_base.to_string(),
-		asset_hub_ws: network.asset_hub_ws.to_string(),
-		network_suffix: network.network_suffix.to_string(),
+	let lite_username = attestation::attest(&attest_config(
+		network,
 		entropy,
-		username_base: record.lite_username.clone(),
-		reserved_username: reserved_username.map(str::to_string),
-	})
+		record.lite_username.clone(),
+		reserved_username,
+	)?)
 	.await
 	.with_context(|| format!("attest account {}", record.name))?;
 	debug!(
@@ -636,6 +644,22 @@ async fn attest_record(
 		"signer account attested"
 	);
 	Ok(lite_username)
+}
+
+fn attest_config(
+	network: NetworkConfig,
+	entropy: Vec<u8>,
+	username_base: String,
+	reserved_username: Option<&str>,
+) -> Result<attestation::AttestConfig> {
+	Ok(attestation::AttestConfig {
+		backend_base: network.identity_backend()?.to_string(),
+		asset_hub_ws: network.asset_hub_ws.to_string(),
+		network_suffix: network.network_suffix.to_string(),
+		entropy,
+		username_base,
+		reserved_username: reserved_username.map(str::to_string),
+	})
 }
 
 fn resolved_lite_username(username: &str) -> bool {
@@ -766,6 +790,42 @@ fn imported_session_name(username: Option<&str>, public_key: &[u8; 32]) -> Strin
 	username.map_or_else(|| format!("imported-{}", hex::encode(&public_key[..8])), str::to_string)
 }
 
+/// The identity [`attest_mnemonic`] registered.
+pub struct AttestedIdentity {
+	pub address: String,
+	pub public_key: [u8; 32],
+	pub lite_username: String,
+}
+
+/// Attest `mnemonic`'s `uid.<tld>` identity for `username_base` and wait until
+/// it is a personhood ring member. Nothing is written to the account store.
+pub async fn attest_mnemonic(
+	network: NetworkConfig,
+	mnemonic: &str,
+	username_base: &str,
+) -> Result<AttestedIdentity> {
+	anyhow::ensure!(
+		network.disposable_identities,
+		"{} holds real identities, so attest is only available on test network presets",
+		network.id
+	);
+	let username_base = lite_username_base(username_base)?;
+	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
+	let lite_username = attestation::attest(&attest_config(
+		network,
+		identity.entropy.clone(),
+		username_base,
+		None,
+	)?)
+	.await?;
+	wait_for_ring_membership(network, &identity.entropy).await?;
+	Ok(AttestedIdentity {
+		address: identity.address,
+		public_key: identity.public_key,
+		lite_username,
+	})
+}
+
 struct SignerIdentity {
 	entropy: Vec<u8>,
 	public_key: [u8; 32],
@@ -774,8 +834,8 @@ struct SignerIdentity {
 
 fn identity_from_mnemonic(mnemonic: &str, network_suffix: &str) -> Result<SignerIdentity> {
 	let entropy = mnemonic_entropy(mnemonic)?;
-	let candidate = derive_identity_keypair(&entropy, network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+	let candidate =
+		derive_identity_keypair(&entropy, network_suffix).map_err(IdentityDerivationError::from)?;
 	let public_key = candidate.public.to_bytes();
 	Ok(SignerIdentity { entropy, public_key, address: product_public_key_to_address(public_key) })
 }
@@ -872,7 +932,8 @@ mod tests {
 	#[tokio::test]
 	async fn interrupted_ring_readiness_keeps_the_same_account_pending() -> Result<()> {
 		let directory = tempdir()?;
-		let network_id = "paseo-next-v2";
+		let network = crate::network::Network::PaseoNextV2.config();
+		let network_id = network.id;
 		let mut store = AccountStore::load(directory.path())?;
 		let mut pending = record("auto-1", network_id, false);
 		pending.lite_username = "pending".to_string();
@@ -884,7 +945,7 @@ mod tests {
 			assert_eq!(
 				(
 					fs::read(&reloaded.path)?,
-					resolve_cached_signer(directory.path(), network_id, None)?
+					resolve_cached_signer(directory.path(), network, None)?
 						.map(|signer| signer.entropy),
 					serde_json::to_value(reloaded.pending_auto_candidate(network_id))?,
 				),
@@ -912,7 +973,7 @@ mod tests {
 		assert_pending()?;
 
 		finish_account_readiness(&mut store, registered, async { Ok(()) }).await?;
-		let cached = resolve_cached_signer(directory.path(), network_id, None)?
+		let cached = resolve_cached_signer(directory.path(), network, None)?
 			.expect("completed ring readiness makes the original account usable");
 		let reloaded = AccountStore::load(directory.path())?;
 		assert_eq!(
@@ -1101,7 +1162,8 @@ mod tests {
 		store.save()?;
 
 		let signer =
-			resolve_cached_signer(dir.path(), "paseo-next-v2", None)?.expect("cached signer");
+			resolve_cached_signer(dir.path(), crate::network::Network::PaseoNextV2.config(), None)?
+				.expect("cached signer");
 
 		assert_eq!(signer.account_name.as_deref(), Some("auto-1"));
 		assert_eq!(signer.lite_username.as_deref(), Some("auto-1lite.01"));
@@ -1118,7 +1180,83 @@ mod tests {
 		store.upsert(stale);
 		store.save()?;
 
-		assert!(resolve_cached_signer(dir.path(), "paseo-next-v2", None)?.is_none());
+		assert!(
+			resolve_cached_signer(dir.path(), crate::network::Network::PaseoNextV2.config(), None)?
+				.is_none()
+		);
+		Ok(())
+	}
+
+	#[tokio::test]
+	async fn attest_is_refused_on_a_real_identity_preset() {
+		let Err(error) = attest_mnemonic(production_network(), MNEMONIC, "abcdefg").await else {
+			panic!("attest is for test presets");
+		};
+		assert!(error.to_string().contains("attest"), "{error}");
+	}
+
+	/// A preset whose identities are real, standing in for a production one.
+	fn production_network() -> NetworkConfig {
+		NetworkConfig {
+			disposable_identities: false,
+			..crate::network::Network::PaseoNextV2.config()
+		}
+	}
+
+	#[tokio::test]
+	async fn production_network_never_writes_the_account_store() -> Result<()> {
+		let dir = tempdir()?;
+		let resolve = |mnemonic: Option<String>| ResolveSignerConfig {
+			base_path: dir.path(),
+			network: production_network(),
+			mnemonic,
+			account: None,
+			lite_username_prefix: None,
+			reserved_username: None,
+		};
+
+		let error = resolve_signer(resolve(None)).await.expect_err("auto accounts are refused");
+		assert!(error.to_string().contains("--mnemonic"), "{error}");
+
+		let identity = identity_from_mnemonic(MNEMONIC, "paseo")?;
+		let imported = ImportedSigner {
+			mnemonic: MNEMONIC.to_string(),
+			entropy: identity.entropy,
+			username: None,
+			session_name: "imported".to_string(),
+			public_key: identity.public_key,
+			address: identity.address,
+		};
+		persist_imported_signer(dir.path(), production_network(), &imported)
+			.expect_err("imports are refused");
+
+		let signer = resolve_signer(resolve(Some(MNEMONIC.to_string()))).await?;
+		assert!(!signer.auto_managed);
+		assert!(!dir.path().join(ACCOUNT_STORE_FILE).exists());
+		Ok(())
+	}
+
+	#[test]
+	fn production_network_never_signs_from_the_account_store() -> Result<()> {
+		let dir = tempdir()?;
+		let identity = identity_from_mnemonic(MNEMONIC, "paseo")?;
+		let imported = ImportedSigner {
+			mnemonic: MNEMONIC.to_string(),
+			entropy: identity.entropy,
+			username: None,
+			session_name: "imported".to_string(),
+			public_key: identity.public_key,
+			address: identity.address,
+		};
+		let testnet = crate::network::Network::PaseoNextV2.config();
+		persist_imported_signer(dir.path(), testnet, &imported)?;
+		let cached =
+			|network| resolve_cached_signer(dir.path(), network, Some(IMPORTED_ACCOUNT_NAME));
+		assert!(cached(testnet)?.is_some());
+
+		// Same network id, so the stored record is there to be found.
+		let error = cached(production_network()).expect_err("stored records are refused");
+		assert!(error.to_string().contains("--mnemonic"), "{error}");
 		Ok(())
 	}
 
@@ -1135,14 +1273,21 @@ mod tests {
 			address: identity.address,
 		};
 
-		let signer = persist_imported_signer(dir.path(), "paseo-next-v2", &imported)?;
+		let signer = persist_imported_signer(
+			dir.path(),
+			crate::network::Network::PaseoNextV2.config(),
+			&imported,
+		)?;
 
 		assert_eq!(signer.account_name.as_deref(), Some(IMPORTED_ACCOUNT_NAME));
 		assert_eq!(signer.lite_username.as_deref(), Some("alice.01"));
 		assert!(!signer.auto_managed);
-		let cached =
-			resolve_cached_signer(dir.path(), "paseo-next-v2", Some(IMPORTED_ACCOUNT_NAME))?
-				.expect("imported signer is cached");
+		let cached = resolve_cached_signer(
+			dir.path(),
+			crate::network::Network::PaseoNextV2.config(),
+			Some(IMPORTED_ACCOUNT_NAME),
+		)?
+		.expect("imported signer is cached");
 		assert_eq!(cached.lite_username.as_deref(), Some("alice.01"));
 		let store = AccountStore::load(dir.path())?;
 		assert!(store.auto_candidate("paseo-next-v2", 7).is_none());
@@ -1168,11 +1313,18 @@ mod tests {
 		};
 
 		assert!(session_name.starts_with("imported-"));
-		let signer = persist_imported_signer(dir.path(), "paseo-next-v2", &imported)?;
+		let signer = persist_imported_signer(
+			dir.path(),
+			crate::network::Network::PaseoNextV2.config(),
+			&imported,
+		)?;
 		assert_eq!(signer.lite_username, None);
-		let cached =
-			resolve_cached_signer(dir.path(), "paseo-next-v2", Some(IMPORTED_ACCOUNT_NAME))?
-				.expect("username-less imported signer is cached");
+		let cached = resolve_cached_signer(
+			dir.path(),
+			crate::network::Network::PaseoNextV2.config(),
+			Some(IMPORTED_ACCOUNT_NAME),
+		)?
+		.expect("username-less imported signer is cached");
 		assert_eq!(cached.lite_username, None);
 		assert!(!cached.auto_managed);
 		Ok(())

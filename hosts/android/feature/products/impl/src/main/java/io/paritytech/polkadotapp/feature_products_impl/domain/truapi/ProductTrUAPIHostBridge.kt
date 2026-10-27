@@ -43,6 +43,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -50,6 +51,7 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
@@ -82,6 +84,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
+    private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -213,9 +216,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision =
-            when (val domain = request.toDomain()) {
-                null -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
-                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, domain)
+            when (request) {
+                RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                is RemotePermission.NftPurseRead ->
+                    hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
                 .getOrElse { throw it }
                 .toNative()
@@ -235,6 +240,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
+
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -251,7 +259,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             productGameReminder.schedule(callingProductId, startsAt.toLong())
                 .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
 
-        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+        override suspend fun cancelReminder() = productGameReminder.cancelByProduct(callingProductId)
     }
 
     /**
@@ -396,15 +404,27 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-/** `null` for balance access, which this host asks about as a product permission. */
-private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
+/**
+ * The request this host's remote-access prompt shows for `this`. Balance access
+ * and NFT purse reads have their own prompts (`ProductPermission.BalanceAccess`,
+ * `ProductPermission.NftPurseRead`) and never reach here.
+ */
+private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
-    RemotePermission.BalanceAccess -> null
+    RemotePermission.BalanceAccess -> error("balance access has its own prompt")
+    is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
 }
+
+/** The owning product, or `null` for purses of the user's own account. */
+private val NftPurseOwner.productId: String?
+    get() = when (this) {
+        is NftPurseOwner.Product -> v1
+        NftPurseOwner.Root -> null
+    }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
     PermissionDecision.AllowOnce -> TrUAPIPermissionDecision.ALLOW_ONCE
