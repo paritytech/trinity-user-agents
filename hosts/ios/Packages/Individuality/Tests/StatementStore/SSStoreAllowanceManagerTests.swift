@@ -31,6 +31,35 @@ struct SSStoreAllowanceManagerTests {
         )
     }
 
+    @Test func ensureFundedAllocatesWithCallerPriority() async throws {
+        let capturingRepo = CapturingRepository()
+        let allocator = FakeAllowanceSlotAllocating(period: 100)
+        let manager = makeManager(
+            allocator: allocator,
+            repository: AnyDataProviderRepository(capturingRepo),
+            slotInfoProvider: FakeSlotInfoProvider()
+        )
+
+        try await manager.ensureFunded(accountId: testAccountId, priority: .critical, domain: .chat)
+
+        #expect(allocator.priorities == [.critical])
+        #expect(capturingRepo.savedRecords.map(\.accountId) == [testAccountId])
+        #expect(capturingRepo.savedRecords.map(\.domain) == [.chat])
+    }
+
+    @Test func ensureFundedSkipsAccountWithSlot() async throws {
+        let allocator = FakeAllowanceSlotAllocating(period: 100)
+        let manager = makeManager(
+            allocator: allocator,
+            repository: AnyDataProviderRepository(CapturingRepository()),
+            slotInfoProvider: CustomFakeSlotInfoProvider(hasExistingSlot: true)
+        )
+
+        try await manager.ensureFunded(accountId: testAccountId, priority: .normal, domain: .chat)
+
+        #expect(allocator.assignSlotCalls.isEmpty)
+    }
+
     // Test: allocate without eviction
     @Test func allocateUpsertsRecord() async throws {
         let capturingRepo = CapturingRepository()
@@ -50,7 +79,8 @@ struct SSStoreAllowanceManagerTests {
         try await manager.allocate(
             accountId: testAccountId,
             policy: .ignore,
-            priority: .normal
+            priority: .normal,
+            domain: .product
         )
 
         #expect(capturingRepo.savedRecords.count == 1)
@@ -77,7 +107,8 @@ struct SSStoreAllowanceManagerTests {
         try await manager.allocate(
             accountId: testAccountId,
             policy: .increase,
-            priority: .normal
+            priority: .normal,
+            domain: .product
         )
 
         #expect(capturingRepo.savedRecords.count == 1)
@@ -105,27 +136,78 @@ struct SSStoreAllowanceManagerTests {
         try await manager.allocate(
             accountId: testAccountId,
             policy: .ignore,
-            priority: .normal
+            priority: .normal,
+            domain: .product
         )
 
         // Should not call allocator or write to repository
         #expect(capturingRepo.savedRecords.isEmpty)
     }
 
-    @Test func releaseDeletesRecordByAccountId() async throws {
-        let capturingRepo = CapturingRepository()
-        let repository = AnyDataProviderRepository(capturingRepo)
+    @Test(arguments: [(UInt32?.some(100), true), (.some(101), true), (.some(99), false), (nil, false)])
+    func hasAllocationWhenRecordCoversPeriod(recordPeriod: UInt32?, expected: Bool) async throws {
+        let stored = recordPeriod.map { period in
+            AllowanceRecord(
+                accountId: testAccountId,
+                allocatedAt: Date(),
+                kind: .statementStore,
+                domain: .chat,
+                priority: .critical,
+                latestRenewedPeriod: period
+            )
+        }
 
         let manager = makeManager(
             allocator: FakeAllowanceSlotAllocating(period: 100),
-            repository: repository,
+            repository: AnyDataProviderRepository(CapturingRepository(storedRecords: stored.map { [$0] } ?? [])),
             slotInfoProvider: FakeSlotInfoProvider()
         )
 
-        try await manager.release(accountId: testAccountId)
+        #expect(try await manager.hasAllocation(accountId: testAccountId, coveringPeriod: 100) == expected)
+    }
+
+    @Test func releaseByAccountIdsDeletesWithoutReadingRecords() async throws {
+        let capturingRepo = CapturingRepository()
+
+        try await makeManager(
+            allocator: FakeAllowanceSlotAllocating(period: 100),
+            repository: AnyDataProviderRepository(capturingRepo),
+            slotInfoProvider: FakeSlotInfoProvider()
+        ).release(with: .accountIds([testAccountId]))
+
+        #expect(capturingRepo.deletedIds == [testAccountId.toHex()])
+        #expect(capturingRepo.fetchAllCount == 0)
+    }
+
+    @Test func releaseByFilterDeletesSelectedRecords() async throws {
+        let otherAccountId = Data(repeating: 0x0F, count: 32)
+        let capturingRepo = CapturingRepository(storedRecords: [testAccountId, otherAccountId].map { accountId in
+            AllowanceRecord(
+                accountId: accountId,
+                allocatedAt: Date(),
+                kind: .statementStore,
+                domain: .chat,
+                priority: .critical,
+                latestRenewedPeriod: 100
+            )
+        })
+
+        try await makeManager(
+            allocator: FakeAllowanceSlotAllocating(period: 100),
+            repository: AnyDataProviderRepository(capturingRepo),
+            slotInfoProvider: FakeSlotInfoProvider()
+        ).release(with: .filter(SelectingReleaseFilter(accountIds: [testAccountId])))
 
         #expect(capturingRepo.deletedIds == [testAccountId.toHex()])
         #expect(capturingRepo.savedRecords.isEmpty)
+    }
+}
+
+private struct SelectingReleaseFilter: AllowanceReleaseFiltering {
+    let accountIds: Set<AccountId>
+
+    func recordsToRelease(from records: [AllowanceRecord]) async throws -> [AllowanceRecord] {
+        records.filter { accountIds.contains($0.accountId) }
     }
 }
 
@@ -134,8 +216,14 @@ struct SSStoreAllowanceManagerTests {
 final class CapturingRepository: DataProviderRepositoryProtocol {
     typealias Model = AllowanceRecord
 
+    private let storedRecords: [AllowanceRecord]
     private(set) var savedRecords: [AllowanceRecord] = []
     private(set) var deletedIds: [String] = []
+    private(set) var fetchAllCount = 0
+
+    init(storedRecords: [AllowanceRecord] = []) {
+        self.storedRecords = storedRecords
+    }
 
     func saveOperation(
         _ updateModelsBlock: @escaping () throws -> [Model],
@@ -151,14 +239,18 @@ final class CapturingRepository: DataProviderRepositoryProtocol {
     }
 
     func fetchOperation(
-        by _: @escaping () throws -> String,
+        by identifierBlock: @escaping () throws -> String,
         options _: RepositoryFetchOptions
     ) -> BaseOperation<Model?> {
-        fatalError("Should not be called in tests")
+        ClosureOperation { [storedRecords] in
+            let identifier = try identifierBlock()
+            return storedRecords.first { $0.identifier == identifier }
+        }
     }
 
     func fetchAllOperation(with _: RepositoryFetchOptions) -> BaseOperation<[Model]> {
-        fatalError("Should not be called in tests")
+        fetchAllCount += 1
+        return BaseOperation.createWithResult(storedRecords)
     }
 
     func fetchOperation(
@@ -194,7 +286,10 @@ final class CustomFakeSlotInfoProvider: StatementStoreSlotInfoProviding {
         existingSlot
     }
 
-    func freeSlot(excluding _: AccountId, callerPriority _: AllowanceRecord.Priority) async throws -> SSSSlotInfo {
+    func freeSlot(
+        excluding _: AccountId,
+        callerPriority _: AllowanceRecord.Priority
+    ) async throws -> SSSSlotInfo {
         fatalError("Should not be called")
     }
 

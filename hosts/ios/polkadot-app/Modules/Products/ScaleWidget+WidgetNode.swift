@@ -31,10 +31,12 @@ extension ScaleWidget {
 
 private extension ScaleComponent where Props == ScaleBoxProps {
     func toBoxNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode {
-        let alignment = props.contentAlignment.value.map(\.swiftUIAlignment) ?? .center
+        let boxProps = props.contentAlignment.value.map {
+            CustomMessageWidgetNode.BoxProps(alignment: $0.swiftUIAlignment)
+        }
         let children = children.compactMap { $0.toWidgetNode(resolver: resolver) }
         return CustomMessageWidgetNode(
-            content: .box(.init(alignment: alignment), children: children),
+            content: .box(boxProps ?? .init(), children: children),
             modifiers: modifiers.toNodeModifiers(resolver: resolver)
         )
     }

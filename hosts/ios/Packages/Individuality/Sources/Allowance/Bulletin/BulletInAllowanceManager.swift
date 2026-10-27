@@ -37,7 +37,8 @@ extension BulletInAllowanceManager: AllowanceManaging {
     public func allocate(
         accountId: AccountId,
         policy: OnExistingAllowancePolicy,
-        priority: AllowanceRecord.Priority
+        priority: AllowanceRecord.Priority,
+        domain _: AllowanceRecord.Domain
     ) async throws {
         try await issueDiagnostics.observeAllocation {
             try await allocateInBackground(accountId: accountId, policy: policy, priority: priority)
@@ -49,7 +50,8 @@ extension BulletInAllowanceManager: AllowanceManaging {
     /// [allocate], which reads the extent to honour capacity.
     public func ensureCanSubmit(
         accountId: AccountId,
-        priority: AllowanceRecord.Priority
+        priority: AllowanceRecord.Priority,
+        domain _: AllowanceRecord.Domain
     ) async throws {
         // Coalesce overlapping calls for the same account: a second upload started while the first is
         // still claiming shares that in-flight check-and-claim instead of claiming a redundant slot.

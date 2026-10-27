@@ -57,7 +57,7 @@ let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "Kingfisher",
         url: "https://github.com/onevcat/Kingfisher",
-        version: .exact("8.2.0"),
+        version: .exact("8.14.0"),
         products: ["Kingfisher"]
     ),
     .init(

@@ -57,6 +57,9 @@ cd polkadot-ios-community
 # Scaffold gitignored secret files from templates and generate build-time config.
 ./Runscripts/setup-secrets.sh
 
+# Block commits that add a hardcoded UI string.
+git config core.hooksPath Runscripts/hooks
+
 open polkadot-app.xcodeproj
 ```
 
@@ -111,6 +114,10 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
+
+Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
+the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
+platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

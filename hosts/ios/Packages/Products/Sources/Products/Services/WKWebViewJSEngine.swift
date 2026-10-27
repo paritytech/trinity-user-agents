@@ -18,6 +18,7 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
     private var messageHandlers: [String: (Any) -> Void] = [:]
 
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
+    private var terminationHandler: (@Sendable () -> Void)?
 
     private let logger: SDKLoggerProtocol
     private let settings: WKWebViewJSEngineSettings
@@ -242,6 +243,12 @@ extension WKWebViewJSEngine: JSEngineProtocol {
             self.jsDeviceCapabilityHandler = handler
         }
     }
+
+    public func onTermination(_ handler: @escaping @Sendable () -> Void) async {
+        await MainActor.run {
+            self.terminationHandler = handler
+        }
+    }
 }
 
 // MARK: - WKNavigationDelegate
@@ -263,7 +270,16 @@ extension WKWebViewJSEngine: WKNavigationDelegate {
 
     public func webViewWebContentProcessDidTerminate(_: WKWebView) {
         logger.error("JSEngine WebView process terminated")
+
+        guard initContinuation == nil else {
+            completeInitialization(error: JSEngineError.processTerminated)
+            return
+        }
+
         state = .error("WebView process terminated")
+        let handler = terminationHandler
+        terminationHandler = nil
+        handler?()
     }
 }
 
@@ -383,6 +399,7 @@ private extension WKWebViewJSEngine {
 public enum JSEngineError: Error, LocalizedError {
     case notReady
     case moduleLoadFailed
+    case processTerminated
 
     public var errorDescription: String? {
         switch self {
@@ -390,6 +407,8 @@ public enum JSEngineError: Error, LocalizedError {
             "JS engine is not in ready state"
         case .moduleLoadFailed:
             "Failed to load ES module script"
+        case .processTerminated:
+            "WebView process terminated"
         }
     }
 }

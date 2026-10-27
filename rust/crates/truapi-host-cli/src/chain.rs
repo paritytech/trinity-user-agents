@@ -5,18 +5,12 @@
 //! opens a fresh socket; the runtime's `HostRpcClient` sits on top and speaks
 //! statement-store RPC.
 
-use std::{
-	collections::HashMap,
-	sync::{
-		Arc, Mutex,
-		atomic::{AtomicBool, Ordering},
-	},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, warn};
@@ -26,6 +20,18 @@ use crate::network::ChainEndpoint;
 
 /// Broadcast backlog for inbound JSON-RPC frames per connection.
 const INBOUND_CHANNEL_CAPACITY: usize = 1024;
+
+/// The CLI's answer to which chains build as V5, for its own extrinsics.
+pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
+
+#[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
 
 /// Chain provider that maps a requested genesis hash to a WebSocket endpoint.
 ///
@@ -94,15 +100,16 @@ impl ChainProvider for WsChainProvider {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let url = self.url_for(&genesis_hash);
 		debug!(genesis = %hex::encode(genesis_hash), %url, "chain connect");
-		let connection = WsJsonRpcConnection::connect(url)
-			.await
-			.map_err(|reason| ProviderError::Transport { reason })?;
+		let connection = WsJsonRpcConnection::connect(url).await?;
 		Ok(Box::new(connection))
 	}
 }
 
 /// One WebSocket JSON-RPC connection: outbound requests are queued to a writer
 /// task, inbound frames are broadcast to every `responses()` stream.
+///
+/// Every response stream ends once the socket closes or the lease is closed,
+/// which is how the `HostRpcClient` above learns to reconnect.
 pub struct WsJsonRpcConnection {
 	outbound: mpsc::UnboundedSender<Message>,
 	inbound: broadcast::Sender<String>,
@@ -110,18 +117,19 @@ pub struct WsJsonRpcConnection {
 	/// stream takes it so an immediate RPC response cannot race subscription
 	/// setup and disappear while the broadcast channel has no receivers.
 	initial_inbound: Mutex<Option<broadcast::Receiver<String>>>,
-	closed: Arc<AtomicBool>,
+	closed: watch::Sender<bool>,
 }
 
 impl WsJsonRpcConnection {
-	async fn connect(url: &str) -> Result<Self, String> {
-		let (stream, _response) = connect_async(url)
-			.await
-			.map_err(|err| format!("statement-store websocket connect failed: {err}"))?;
+	async fn connect(url: &str) -> Result<Self, ProviderError> {
+		let (stream, _response) =
+			connect_async(url).await.map_err(|err| ProviderError::Transport {
+				reason: format!("statement-store websocket connect failed: {err}"),
+			})?;
 		let (mut write, mut read) = stream.split();
 		let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
 		let (inbound_tx, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
-		let closed = Arc::new(AtomicBool::new(false));
+		let (closed, _) = watch::channel(false);
 
 		tokio::spawn(async move {
 			while let Some(message) = outbound_rx.recv().await {
@@ -149,7 +157,7 @@ impl WsJsonRpcConnection {
 					Ok(_) => {},
 				}
 			}
-			reader_closed.store(true, Ordering::Release);
+			reader_closed.send_replace(true);
 		});
 
 		Ok(Self {
@@ -163,7 +171,7 @@ impl WsJsonRpcConnection {
 
 impl JsonRpcConnection for WsJsonRpcConnection {
 	fn send(&self, request: String) {
-		if self.closed.load(Ordering::Acquire) {
+		if *self.closed.borrow() {
 			return;
 		}
 		let _ = self.outbound.send(Message::Text(request));
@@ -176,6 +184,7 @@ impl JsonRpcConnection for WsJsonRpcConnection {
 			.expect("initial chain response receiver mutex poisoned")
 			.take()
 			.unwrap_or_else(|| self.inbound.subscribe());
+		let mut closed = self.closed.subscribe();
 		BroadcastStream::new(receiver)
 			.filter_map(|item| async move {
 				match item {
@@ -188,11 +197,14 @@ impl JsonRpcConnection for WsJsonRpcConnection {
 					},
 				}
 			})
+			.take_until(async move {
+				let _ = closed.wait_for(|closed| *closed).await;
+			})
 			.boxed()
 	}
 
 	fn close(&self) {
-		self.closed.store(true, Ordering::Release);
+		self.closed.send_replace(true);
 	}
 }
 
@@ -211,7 +223,7 @@ mod tests {
 			outbound,
 			inbound: inbound.clone(),
 			initial_inbound: Mutex::new(Some(initial_inbound)),
-			closed: Arc::new(AtomicBool::new(false)),
+			closed: watch::channel(false).0,
 		};
 
 		inbound
@@ -221,6 +233,35 @@ mod tests {
 		let mut responses = connection.responses();
 		let frame = futures::executor::block_on(responses.next()).expect("buffered response");
 		assert_eq!(frame, r#"{"jsonrpc":"2.0","id":1,"result":"ready"}"#);
+	}
+
+	/// The runtime keeps a chain connection open across calls and reconnects
+	/// only once its response stream ends. A stream that outlived its socket
+	/// would leave every later request on that chain waiting forever.
+	#[tokio::test]
+	async fn responses_end_when_the_server_closes_the_socket() {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+			.await
+			.expect("bind a loopback listener");
+		let url = format!("ws://{}", listener.local_addr().expect("listener address"));
+		let server = tokio::spawn(async move {
+			let (socket, _) = listener.accept().await.expect("accept the client");
+			let mut socket = tokio_tungstenite::accept_async(socket)
+				.await
+				.expect("complete the WebSocket handshake");
+			socket.close(None).await.expect("close the socket");
+		});
+
+		let connection = WsJsonRpcConnection::connect(&url)
+			.await
+			.expect("connect to the loopback server");
+		let mut responses = connection.responses();
+		server.await.expect("server task");
+
+		let next = tokio::time::timeout(std::time::Duration::from_secs(5), responses.next())
+			.await
+			.expect("the response stream must end once the socket closes");
+		assert_eq!(next, None);
 	}
 
 	/// Every role the host says it serves has to route to that role's own chain

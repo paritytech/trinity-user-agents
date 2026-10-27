@@ -232,6 +232,17 @@
         }
       }
     },
+    "app.permission.nftPurses.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NFT purses"
+          }
+        }
+      }
+    },
     "app.permission.preimageSubmit.title": {
       "extractionState": "manual",
       "localizations": {
@@ -503,6 +514,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Network access is required to connect to %1$(domain)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadProduct": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of %1$(ownerProductId)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadRoot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of your account."
           }
         }
       }
@@ -1011,13 +1044,36 @@
         }
       }
     },
-    "product.tabs.accessibility.openApps": {
+    "product.tabs.accessibility.closeSearch": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open apps, %lld"
+            "value": "Close search"
+          }
+        }
+      }
+    },
+    "product.tabs.accessibility.openApps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open app, %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open apps, %lld"
+                }
+              }
+            }
           }
         }
       }
@@ -1029,6 +1085,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "QR scanner"
+          }
+        }
+      }
+    },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
           }
         }
       }

@@ -35,7 +35,10 @@ public struct SSSRenewalSlot {
 
 public protocol StatementStoreSlotInfoProviding {
     func hasExistingSlot(for accountId: AccountId) async throws -> Bool
-    func freeSlot(excluding accountId: AccountId, callerPriority: AllowanceRecord.Priority) async throws -> SSSSlotInfo
+    func freeSlot(
+        excluding accountId: AccountId,
+        callerPriority: AllowanceRecord.Priority
+    ) async throws -> SSSSlotInfo
     func renewalSlots(period: UInt32) async throws -> [SSSRenewalSlot]
 }
 

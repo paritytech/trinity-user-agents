@@ -17,15 +17,18 @@ final class LeaveChatService {
     private let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     private let contactRepository: AnyDataProviderRepository<Chat.Contact>
     private let removedChatRepository: AnyDataProviderRepository<Chat.RemovedChat>
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
+    private let allowanceCleanupService: AllowanceCleanupServicing
+    private let signingConsentStore: ChatSigningConsentStoring
 
     init(
         outboxService: ChatOutboxServicing,
-        messageExchangeModeProvider: MessageExchangeModeProviding,
+        allowanceCleanupService: AllowanceCleanupServicing,
+        signingConsentStore: ChatSigningConsentStoring,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared
     ) {
         self.outboxService = outboxService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
+        self.allowanceCleanupService = allowanceCleanupService
+        self.signingConsentStore = signingConsentStore
 
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -69,15 +72,14 @@ extension LeaveChatService: LeaveChatServicing {
         try await contactRepository.saveOperation({ [] }, { [contact.identifier] }).asyncExecute()
 
         try await saveRemovedChatTombstoneIfNeeded(for: contact)
+        try await signingConsentStore.revoke(for: contact.accountId)
+
+        await allowanceCleanupService.cleanup()
     }
 }
 
 private extension LeaveChatService {
     func saveRemovedChatTombstoneIfNeeded(for contact: Chat.Contact) async throws {
-        guard messageExchangeModeProvider.mode(for: contact) == .multidevice else {
-            return
-        }
-
         let tombstone = Chat.RemovedChat(
             accountId: contact.accountId,
             removedAt: Date()
