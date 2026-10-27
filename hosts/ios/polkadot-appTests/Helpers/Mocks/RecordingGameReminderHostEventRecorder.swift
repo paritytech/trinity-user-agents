@@ -44,7 +44,8 @@ final class RecordingGameReminderHostEventRecorder: HostEventRecording, @uncheck
 
     var events: [RecordedGameReminderEvent] { state.withLock { $0 } }
 
-    func record(_ event: HostEvent) {
+    func record(_ event: @autoclosure () -> HostEvent) {
+        let event = event()
         state.withLock { $0.append(RecordedGameReminderEvent(event)) }
     }
 
