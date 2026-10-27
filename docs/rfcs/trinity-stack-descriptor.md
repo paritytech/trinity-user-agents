@@ -232,8 +232,10 @@ schemes.
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
   disagree on shorthand, so two readers would reach different hosts.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
-  endpoints used as given. A `web-gateway` URL MUST use `https`, name a host, never an address, and carry no fragment,
-  and its path as written MUST end in `/`. It MAY carry a query, so one gateway can serve several stacks.
+  endpoints used as given. A `web-gateway` URL MUST name a host, never an address, carry no fragment, and use `https`,
+  except that a gateway on the host `localhost` MAY use `http`: browsers send `localhost` and its subdomains to loopback
+  without asking DNS, so a stack run on a laptop can name its local gateway, such as `http://localhost:5173/`. Its path
+  as written MUST end in `/`. It MAY carry a query, so one gateway can serve several stacks.
 
 A reader opens a dotNS name on the stack's `web-gateway` as follows. The name is lowercase labels joined by dots, each
 following the rule for `tld`, and readers refuse any other. A name ending in `.` and the stack's `tld` loses that

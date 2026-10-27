@@ -510,6 +510,9 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		plain("web-gateway-on-address", web_gateway("https://10.0.0.5/"), "invalid-url"),
 		plain("web-gateway-on-wss", web_gateway("wss://testnet.li/"), "invalid-url"),
+		plain("web-gateway-http-on-hostname", web_gateway("http://testnet.li/"), "invalid-url"),
+		plain("web-gateway-http-on-loopback", web_gateway("http://127.0.0.1:5173/"), "invalid-url"),
+		plain("valid-web-gateway-on-localhost", web_gateway("http://localhost:5173/"), "ok"),
 		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
@@ -785,9 +788,22 @@ fn with_web_gateway(gateway: Option<&str>) -> Value {
 fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Value)> {
 	let previewnet = Some("https://testnet.li/?network=previewnet");
 	let nested = Some("https://gateway.example/gw/?n=x");
+	let local = Some("http://localhost:5173/?network=previewnet");
 	let url = |url: &str| json!({ "url": url });
 	let invalid = json!({ "error": "invalid-name" });
 	vec![
+		(
+			"local-host-form-keeps-port",
+			local,
+			"my-app",
+			url("http://my-app.localhost:5173/?network=previewnet"),
+		),
+		(
+			"local-path-form-keeps-port",
+			local,
+			"sub.my-app",
+			url("http://localhost:5173/sub.my-app?network=previewnet"),
+		),
 		(
 			"host-form-keeps-query",
 			previewnet,

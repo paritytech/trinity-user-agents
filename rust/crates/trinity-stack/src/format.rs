@@ -36,7 +36,9 @@ pub enum Schemes {
 	Web,
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
-	/// `https` on a hostname, for a `web-gateway`, which takes a name's label in front of its host.
+	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
+	/// label in front of its host. Browsers send `localhost` and its subdomains to loopback without
+	/// asking DNS, so a local gateway needs no literal address.
 	Gateway,
 }
 
@@ -64,6 +66,7 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
 		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		(Schemes::Gateway, "http") => web && parsed.host_str() == Some("localhost"),
 		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }

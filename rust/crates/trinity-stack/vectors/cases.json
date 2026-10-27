@@ -505,6 +505,33 @@
       }
     },
     {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-hostname.json",
+      "name": "web-gateway-http-on-hostname",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-loopback.json",
+      "name": "web-gateway-http-on-loopback",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-web-gateway-on-localhost.json",
+      "name": "valid-web-gateway-on-localhost",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "chain-id",
       "file": "documents/eth-rpc-without-chain-id.json",
       "name": "eth-rpc-without-chain-id",
@@ -956,6 +983,72 @@
     }
   ],
   "webUrls": [
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "http://localhost:5173/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app",
+      "expect": {
+        "url": "http://my-app.localhost:5173/?network=previewnet"
+      },
+      "name": "local-host-form-keeps-port"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "http://localhost:5173/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app",
+      "expect": {
+        "url": "http://localhost:5173/sub.my-app?network=previewnet"
+      },
+      "name": "local-path-form-keeps-port"
+    },
     {
       "descriptor": {
         "$v": 1,
