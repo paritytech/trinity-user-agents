@@ -4,6 +4,7 @@ import SDKLogger
 
 public enum ProductResolutionError: Error {
     case malformedManifest(ProductId)
+    case productNotOnNetwork(ProductId)
 }
 
 public protocol ProductResolving: Sendable {
@@ -48,9 +49,8 @@ public actor ProductResolver: ProductResolving {
     public func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
         let unprefixed = try ProductManifestRecords.baseName(of: productId)
 
-        // A product outside this network, or whose TLD is unavailable, cannot be resolved here.
-        guard let baseName = try? await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
-            return .legacy(id: unprefixed)
+        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
+            throw ProductResolutionError.productNotOnNetwork(unprefixed)
         }
 
         if let cached = cache[baseName] {

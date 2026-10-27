@@ -18,6 +18,7 @@ import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import java.io.File
 

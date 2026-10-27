@@ -3,6 +3,17 @@ import Testing
 @testable import Products
 
 struct ProductPageTests {
+    @Test(arguments: ["browse.paseo", "browse.paseo.li"])
+    func rejectsOtherNetworkDestinations(_ host: String) {
+        #expect(ProductPage.fromNavigationDestination("\(host)/page?ref=abc#section", tld: "dot") == nil)
+    }
+
+    @Test func preservesNestedShareLinkRouteOnItsNetwork() {
+        let page = ProductPage.fromNavigationDestination("app.arena.browse.paseo.li/page?ref=abc#section", tld: "paseo")
+        #expect(page?.host.toDotDomain().rawValue == "app.arena.browse.paseo")
+        #expect(page?.page == "/page?ref=abc#section")
+    }
+
     // MARK: - fromUrl(_:)
 
     @Test func fromUrlWithoutPage() {

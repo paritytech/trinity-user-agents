@@ -55,6 +55,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":bindings:truapi-host"))
     implementation(libs.hilt.android)
     ksp(libs.hilt.android.compiler)
 
@@ -103,3 +104,5 @@ dependencies {
 
     testImplementation(project(":test-shared"))
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

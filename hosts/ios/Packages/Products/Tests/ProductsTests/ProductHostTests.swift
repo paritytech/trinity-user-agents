@@ -3,6 +3,12 @@ import Testing
 @testable import Products
 
 struct ProductHostTests {
+    @Test(arguments: ["browse.paseo", "browse.paseo.li", "sub.browse.paseo.li"])
+    func rejectsOtherNetworks(_ host: String) {
+        #expect(ProductHost.parse(host, tld: "dot") == nil)
+        #expect(ProductHost.fromUrl(URL(string: "https://\(host)/page")!, tld: "dot") == nil)
+    }
+
     // MARK: - parse(_:tld:)
 
     @Test func simpleDotDomain() {
@@ -36,12 +42,12 @@ struct ProductHostTests {
     }
 
     @Test func paseoLiDomain() {
-        let host = ProductHost.parse("browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("browse.paseo.li", tld: "paseo")
         #expect(host != nil)
     }
 
     @Test func subdomainPaseoLiDomain() {
-        let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("sub.browse.paseo.li", tld: "paseo")
         #expect(host != nil)
     }
 
@@ -93,12 +99,12 @@ struct ProductHostTests {
     }
 
     @Test func browsePaseoLiRoundTripsCorrectly() {
-        let host = ProductHost.parse("browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("browse.paseo.li", tld: "paseo")
         #expect(host?.toDotDomain().rawValue == "browse.paseo")
     }
 
     @Test func subBrowsePaseoLiRoundTripsCorrectly() {
-        let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("sub.browse.paseo.li", tld: "paseo")
         #expect(host?.toDotDomain().rawValue == "sub.browse.paseo")
     }
 
@@ -161,12 +167,12 @@ struct ProductHostTests {
     }
 
     @Test func nameForPaseoLiDomain() {
-        let host = ProductHost.parse("browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("browse.paseo.li", tld: "paseo")
         #expect(host?.name == "browse")
     }
 
     @Test func nameForSubdomainPaseoLiDomain() {
-        let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("sub.browse.paseo.li", tld: "paseo")
         #expect(host?.name == "sub.browse")
     }
 
@@ -198,12 +204,12 @@ struct ProductHostTests {
     }
 
     @Test func toDotDomainForPaseoLi() {
-        let host = ProductHost.parse("browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("browse.paseo.li", tld: "paseo")
         #expect(host?.toDotDomain().rawValue == "browse.paseo")
     }
 
     @Test func toDotDomainForSubdomainPaseoLi() {
-        let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
+        let host = ProductHost.parse("sub.browse.paseo.li", tld: "paseo")
         #expect(host?.toDotDomain().rawValue == "sub.browse.paseo")
     }
 
@@ -225,7 +231,7 @@ struct ProductHostTests {
 
     @Test func fromUrlWithPaseoLiDomain() {
         let url = URL(string: "https://browse.paseo.li/path")!
-        let host = ProductHost.fromUrl(url, tld: "dot")
+        let host = ProductHost.fromUrl(url, tld: "paseo")
         #expect(host != nil)
         #expect(host?.name == "browse")
         #expect(host?.toDotDomain().rawValue == "browse.paseo")

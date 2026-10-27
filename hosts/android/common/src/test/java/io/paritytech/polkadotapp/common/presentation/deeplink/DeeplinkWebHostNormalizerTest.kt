@@ -2,9 +2,20 @@ package io.paritytech.polkadotapp.common.presentation.deeplink
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.productShareHosts
+import java.io.File
 
 class DeeplinkWebHostNormalizerTest {
+    @Test
+    fun `every supported share domain reaches the app through its intent filters`() {
+        val manifest = File("../app/src/main/AndroidManifest.xml").readText()
+        val hosts = productShareHosts().flatMap { listOf(it, "*.$it") }
+
+        hosts.forEach { host -> assertTrue(host, manifest.contains("android:host=\"$host\"")) }
+    }
+
     // --- subdomain web mirror is a product: `<host>.dot.li` -> `<host>.dot` ---
 
     @Test
@@ -18,8 +29,8 @@ class DeeplinkWebHostNormalizerTest {
     }
 
     @Test
-    fun `maps test li product subdomain to its own test root`() {
-        assertEquals("coinflip.test", dotProductHost(scheme = "https", host = "coinflip.test.li"))
+    fun `maps testnet li product subdomain to its own testnet root`() {
+        assertEquals("coinflip.testnet", dotProductHost(scheme = "https", host = "coinflip.testnet.li"))
     }
 
     @Test
@@ -78,6 +89,12 @@ class DeeplinkWebHostNormalizerTest {
     @Test
     fun `maps bare paseo host first path segment to action`() {
         assertEquals("pair", bareHostDeeplinkAction(scheme = "https", host = "paseo.li", pathSegments = listOf("pair")))
+    }
+
+    @Test
+    fun `uses the supported network suffix for previewnet app links`() {
+        assertEquals("pair", bareHostDeeplinkAction(scheme = "https", host = "testnet.li", pathSegments = listOf("pair")))
+        assertNull(bareHostDeeplinkAction(scheme = "https", host = "test.li", pathSegments = listOf("pair")))
     }
 
     @Test

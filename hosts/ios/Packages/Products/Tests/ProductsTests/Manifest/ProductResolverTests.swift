@@ -34,30 +34,30 @@ struct ProductResolverTests {
         #expect(resolved.appContentId.rawValue == "app.hackm3.dot")
     }
 
-    /// The kind prefix still comes off when the TLD cannot be read, so an offline subname does not
-    /// become a product id of its own.
-    @Test func stripsTheKindPrefixEvenWhenTheNameCannotBeResolved() async throws {
+    @Test func propagatesUnavailableNetworkBeforeReadingRecords() async throws {
+        let stub = StubDotNsResolver()
         let resolver = ProductResolver(
-            dotNsResolver: StubDotNsResolver(),
+            dotNsResolver: stub,
             hostProvider: ProductHostFactory(tldProvider: FailingTldProvider()),
             logger: SilentLogger(),
             screening: .passingThrough
         )
 
-        let resolved = try await resolver.resolve(ProductId("worker.hackm3.dot"))
-
-        #expect(resolved.id.rawValue == "hackm3.dot")
-        #expect(!resolved.hasManifest)
+        await #expect(throws: FailingTldProvider.Unreachable.self) {
+            try await resolver.resolve(ProductId("worker.hackm3.dot"))
+        }
+        #expect(stub.readCount == 0)
     }
 
-    /// A mirror carries the root it mirrors, so a name under another root is a different product
-    /// rather than an alias of this one.
-    @Test func keepsAMirrorHostOnItsOwnRoot() async throws {
+    @Test(arguments: ["hackm3.paseo", "worker.hackm3.paseo", "localhost:3000"])
+    func rejectsProductsOutsideTheNetworkBeforeReadingRecords(_ input: String) async throws {
         let stub = StubDotNsResolver()
+        let resolver = makeResolver(stub)
 
-        let resolved = try await makeResolver(stub).resolve(try #require(ProductHost.parse("hackm3.paseo.li", tld: "dot")).toDotDomain())
-
-        #expect(resolved.id.rawValue == "hackm3.paseo")
+        await #expect(throws: ProductResolutionError.self) {
+            try await resolver.resolve(ProductId(input))
+        }
+        #expect(stub.readCount == 0)
     }
 
     @Test func readsMetadataAndEveryPublishedExecutable() async throws {
@@ -88,7 +88,7 @@ struct ProductResolverTests {
         let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.executables.widget?.identifier.rawValue == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
     }
 
     /// A product that publishes no executable of a kind is served from its base
@@ -98,9 +98,9 @@ struct ProductResolverTests {
     @Test func servesAnUnpublishedKindFromTheBaseName() async throws {
         let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app) == "hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "hackm3.dot")
-        #expect(resolved.contentId(for: .worker) == "hackm3.dot")
+        #expect(resolved.contentId(for: .app).rawValue == "hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "hackm3.dot")
+        #expect(resolved.contentId(for: .worker).rawValue == "hackm3.dot")
     }
 
     @Test func servesEachPublishedKindFromItsOwnSubname() async throws {
@@ -112,9 +112,9 @@ struct ProductResolverTests {
 
         let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app) == "app.hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .worker) == "worker.hackm3.dot")
+        #expect(resolved.contentId(for: .app).rawValue == "app.hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .worker).rawValue == "worker.hackm3.dot")
     }
 
     @Test func skipsAMalformedExecutableWithoutLosingItsSiblings() async throws {

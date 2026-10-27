@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.model.derivation
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import uniffi.truapi.ProductId
+import uniffi.truapi.productIdFromName
 
 /**
  * RFC-0022 governance-reserved dotNS identities for built-in app features.
@@ -20,6 +21,6 @@ object ReservedProductIds {
     fun personhood(tld: DotNsTld): ProductId = reserved("peopl", tld)
 
     private fun reserved(label: String, tld: DotNsTld): ProductId {
-        return ProductId.parse(label + tld.suffix)
+        return productIdFromName(label, tld.value)
     }
 }

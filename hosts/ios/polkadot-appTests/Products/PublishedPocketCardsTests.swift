@@ -102,9 +102,9 @@ struct PublishedPocketCardsTests {
     /// Left transient, the card asks the chain again every thirty seconds for
     /// as long as it is on screen, and never draws.
     @Test
-    func refusesAProductWhoseManifestCannotBeRead() async {
+    func refusesAProductWhoseManifestCannotBeRead() async throws {
         let cards = PublishedPocketCards(products: StubProductResolver(
-            alwaysFailing: ProductResolutionError.malformedManifest("game.paseo")
+            alwaysFailing: ProductResolutionError.malformedManifest(try ProductId("game.paseo"))
         ))
 
         await #expect(throws: PocketPublishError.unreadableProduct) {

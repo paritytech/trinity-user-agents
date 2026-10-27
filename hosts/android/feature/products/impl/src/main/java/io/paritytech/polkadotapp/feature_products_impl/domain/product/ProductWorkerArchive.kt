@@ -12,7 +12,8 @@ class ProductWorkerArchive @Inject constructor(
     private val dotNsResolver: DotNsResolver,
 ) {
     suspend fun file(productId: ProductId, path: String): Result<File> {
-        val workerHost = ProductManifest.hostOf(productId, ExecutableKind.WORKER)
+        val workerHost = runCatching { ProductManifest.hostOf(productId, ExecutableKind.WORKER) }
+            .getOrElse { return Result.failure(it) }
         return dotNsResolver.resolveToLocalFile(workerHost.value).mapCatching { archive -> archive.fileInside(path) }
     }
 

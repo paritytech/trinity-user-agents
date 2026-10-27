@@ -144,8 +144,8 @@
                 <data android:host="*.dot.li" />
                 <data android:host="paseo.li" />
                 <data android:host="*.paseo.li" />
-                <data android:host="test.li" />
-                <data android:host="*.test.li" />
+                <data android:host="testnet.li" />
+                <data android:host="*.testnet.li" />
             </intent-filter>
         </activity>
 

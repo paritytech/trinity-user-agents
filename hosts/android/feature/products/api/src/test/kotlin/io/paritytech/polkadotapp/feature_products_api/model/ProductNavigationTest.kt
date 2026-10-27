@@ -2,8 +2,12 @@ package io.paritytech.polkadotapp.feature_products_api.model
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
+import uniffi.truapi.ProductLink
+import uniffi.truapi.parseProductLink
 
 class ProductNavigationTest {
     private val dot = DotNsTld.parse("dot")!!
@@ -59,5 +63,35 @@ class ProductNavigationTest {
     fun `rejects malformed names`() {
         listOf("example.com", "dot", "coin_flip.dot", "coinflip.dotcom", "", "  ", "coinflip.dot/x")
             .forEach { assertTrue("expected '$it' to be rejected", productIdFromHost(it, dot).isFailure) }
+    }
+
+    @Test
+    fun `owner extraction preserves nested product names and removes only one executable label`() {
+        assertEquals("arena.coinflip.dot", productIdFromHost("app.arena.coinflip.dot", dot).getOrThrow().value)
+        assertEquals("worker.coinflip.dot", productIdFromHost("app.worker.coinflip.dot", dot).getOrThrow().value)
+    }
+
+    @Test
+    fun `owner extraction cannot produce the reserved localhost namespace`() {
+        assertTrue(productIdFromHost("app.localhost.dot", dot).isFailure)
+    }
+
+    @Test
+    fun `share links preserve executable identity and route across the Rust boundary`() {
+        assertEquals(
+            ProductLink(
+                identifier = ProductId.parse("app.arena.coinflip.paseo"),
+                path = "/play?level=2#start",
+                canonicalUrl = "https://app.arena.coinflip.paseo/play?level=2#start",
+            ),
+            parseProductLink("https://APP.arena.coinflip.paseo.li/play?level=2#start", "paseo"),
+        )
+    }
+
+    @Test
+    fun `share links cannot bypass the configured network`() {
+        listOf("browse.paseo", "browse.paseo.li", "https://browse.paseo.li/play").forEach { input ->
+            assertNull(input, parseProductLink(input, "dot"))
+        }
     }
 }

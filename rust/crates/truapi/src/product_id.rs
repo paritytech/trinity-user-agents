@@ -6,7 +6,7 @@ use parity_scale_codec::{Decode, Encode};
 
 use crate::{
 	CallError,
-	dotns_name::{has_dotns_tld, is_dns_label},
+	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label},
 };
 
 /// Largest accepted product identifier, in bytes. Manifest lookups are cached
@@ -115,6 +115,15 @@ impl FromStr for ProductId {
 }
 
 impl ProductId {
+	/// Construct a dotNS identity from its full name and explicit network suffix.
+	pub fn from_name(name: &str, network_suffix: &str) -> Result<Self, ProductIdError> {
+		let input = format!("{name}.{network_suffix}");
+		if !DOTNS_TLDS.contains(&network_suffix) {
+			return Err(ProductIdError::Invalid { input });
+		}
+		input.parse()
+	}
+
 	/// A product id for a test fixture. Panics when `product_id` does not parse.
 	#[cfg(any(test, feature = "mock"))]
 	pub fn for_test(product_id: &str) -> Self {
@@ -148,20 +157,26 @@ impl ProductId {
 	/// Whether `other` carries the same TLD. Two localhost identifiers carry
 	/// none, so they share a network.
 	pub fn on_one_network(&self, other: &Self) -> bool {
-		self.tld() == other.tld()
+		self.network_suffix() == other.network_suffix()
 	}
 
-	fn tld(&self) -> Option<&str> {
+	/// The network suffix, or `None` for a localhost development identity.
+	pub fn network_suffix(&self) -> Option<&str> {
 		self.0.rsplit_once('.').map(|(_, tld)| tld)
 	}
 
 	/// Everything before the TLD: `app.dim2` for `app.dim2.dot`. `None` for a
 	/// localhost identifier.
-	fn dotns_label(&self) -> Option<&str> {
+	pub fn dotns_name(&self) -> Option<&str> {
 		if !has_dotns_tld(&self.0) {
 			return None;
 		}
 		self.0.rsplit_once('.').map(|(label, _tld)| label)
+	}
+
+	/// Whether this dotNS identity belongs to the explicitly configured network.
+	pub fn matches_network(&self, network_suffix: &str) -> bool {
+		self.network_suffix() == Some(network_suffix)
 	}
 
 	/// Whether this is a development localhost identifier: exactly
@@ -179,7 +194,7 @@ impl ProductId {
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
-		self.dotns_label()
+		self.dotns_name()
 			.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
 	}
 
@@ -192,7 +207,7 @@ impl ProductId {
 	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
-		self.dotns_label() == Some(GAME_PRODUCT_LABEL)
+		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
 	}
 }
 
@@ -266,6 +281,31 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 mod tests {
 	use super::*;
 	use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+
+	#[test]
+	fn named_products_preserve_their_full_namespace() {
+		let identifier = ProductId::from_name("App.Arena.Coinflip", "paseo").unwrap();
+		assert_eq!(
+			(identifier.clone(), identifier.dotns_name(), identifier.network_suffix()),
+			(
+				ProductId::for_test("app.arena.coinflip.paseo"),
+				Some("app.arena.coinflip"),
+				Some("paseo")
+			)
+		);
+		assert!(identifier.matches_network("paseo"));
+		assert!(!identifier.matches_network("dot"));
+	}
+
+	#[test]
+	fn named_products_require_a_supported_network_suffix() {
+		for suffix in ["", "com", "test", "dot.li", "other.dot"] {
+			assert!(ProductId::from_name("browse", suffix).is_err(), "{suffix}");
+		}
+		let localhost = ProductId::for_test("localhost:3000");
+		assert_eq!((localhost.dotns_name(), localhost.network_suffix()), (None, None));
+		assert!(!localhost.matches_network("dot"));
+	}
 
 	#[test]
 	fn trusted_remote_permission_labels_match_the_bare_product_label() {

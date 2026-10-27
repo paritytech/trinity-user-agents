@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import Foundation
 import Operation_iOS
 import Products
@@ -14,19 +14,22 @@ final class DebugProductsViewModel {
     private let scriptDownloader: ProductScriptDownloaderProtocol
     private let scriptStorage: ChatScriptStorageProtocol
     private let notificationScheduler: ProductNotificationScheduling
+    private let tldProvider: DotNsTldProviding
 
     init(
         productRepository: AnyDataProviderRepository<Product>,
         chatRepositoryFactory: ChatRepositoryMaking,
         scriptDownloader: ProductScriptDownloaderProtocol = HTTPProductScriptDownloader(),
         scriptStorage: ChatScriptStorageProtocol = FileChatScriptStorage(),
-        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared
+        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared,
+        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
     ) {
         self.productRepository = productRepository
         self.chatRepositoryFactory = chatRepositoryFactory
         self.scriptDownloader = scriptDownloader
         self.scriptStorage = scriptStorage
         self.notificationScheduler = notificationScheduler
+        self.tldProvider = tldProvider
     }
 
     func loadProducts() {
@@ -44,7 +47,8 @@ final class DebugProductsViewModel {
             downloadError = nil
 
             do {
-                let product = Product(id: try ProductId("\(UUID().uuidString).dot"), name: name)
+                let suffix = try await tldProvider.resolveTld()
+                let product = Product(id: try productIdFromName(name: UUID().uuidString, networkSuffix: suffix), name: name)
                 let content = try await scriptDownloader.download(url: scriptURL)
                 try scriptStorage.saveScript(productId: product.id, content: content)
                 try await productRepository.saveOperation({ [product] }, { [] }).asyncExecute()

@@ -1,5 +1,5 @@
 import Foundation
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 
 /// Governance-reserved product identities for built-in app features.
 /// Only `dim2` and `personhood` are wired today; the rest are declared for
@@ -38,6 +38,6 @@ public enum BuiltInProduct {
     }
 
     static func product(for name: String, tld: String) throws -> ProductId {
-        try ProductId("\(name).\(tld)")
+        try productIdFromName(name: name, networkSuffix: tld)
     }
 }

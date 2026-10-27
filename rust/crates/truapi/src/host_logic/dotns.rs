@@ -92,6 +92,60 @@ pub enum NavigateDecision {
 	},
 }
 
+/// A product destination verified against a host's explicit network suffix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ProductLink {
+	/// The full executable or product identity, with a share suffix removed.
+	pub identifier: ProductId,
+	/// The route with its leading slash, query and fragment.
+	pub path: String,
+	/// The HTTPS destination under the canonical dotNS host.
+	pub canonical_url: String,
+}
+
+impl ProductLink {
+	/// Accept direct and share URLs only on the explicitly configured network.
+	pub fn parse(input: &str, network_suffix: &str) -> Option<Self> {
+		let parsed = parse_with_explicit_https(input.trim())?;
+		if !matches!(parsed.scheme(), "http" | "https" | "polkadot") ||
+			parsed.port().is_some() ||
+			!parsed.username().is_empty() ||
+			parsed.password().is_some()
+		{
+			return None;
+		}
+		let hostname = normalize_host(parsed.host_str()?);
+		let identifier =
+			ProductId::from_share_host(&hostname).or_else(|| hostname.parse::<ProductId>().ok())?;
+		if !identifier.matches_network(network_suffix) {
+			return None;
+		}
+		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
+		let path = route.to_string() + &suffix(&parsed);
+		let canonical_url = format!("https://{identifier}{path}");
+		Some(Self { identifier, path, canonical_url })
+	}
+}
+
+impl ProductId {
+	/// Parse only a supported `.li` share host, without a URL or network lookup.
+	pub fn from_share_host(input: &str) -> Option<Self> {
+		let hostname = normalize_host(input);
+		let identifier = hostname.strip_suffix(".li")?.parse::<Self>().ok()?;
+		identifier.network_suffix()?;
+		Some(identifier)
+	}
+}
+
+/// Public share domains for the canonical dotNS networks.
+pub fn product_share_hosts() -> Vec<String> {
+	crate::dotns_name::DOTNS_TLDS
+		.iter()
+		.map(|suffix| format!("{suffix}.li"))
+		.collect()
+}
+
 fn join_url(scheme: &str, host: &str, path: &str) -> String {
 	if path.is_empty() { format!("{scheme}{host}") } else { format!("{scheme}{host}/{path}") }
 }
@@ -317,6 +371,71 @@ fn suffix(url: &Url) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn product_links_require_the_explicit_network_for_direct_and_share_forms() {
+		for suffix in crate::dotns_name::DOTNS_TLDS {
+			for mirror in ["", ".li"] {
+				let input = format!("https://app.arena.coinflip.{suffix}{mirror}/play?mode=1#turn");
+				assert_eq!(
+					ProductLink::parse(&input, suffix),
+					Some(ProductLink {
+						identifier: ProductId::for_test(&format!("app.arena.coinflip.{suffix}")),
+						path: "/play?mode=1#turn".to_string(),
+						canonical_url: format!(
+							"https://app.arena.coinflip.{suffix}/play?mode=1#turn"
+						),
+					})
+				);
+				for other in crate::dotns_name::DOTNS_TLDS.iter().filter(|other| *other != suffix) {
+					assert_eq!(ProductLink::parse(&input, other), None);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn product_links_share_url_normalization_without_changing_external_navigation() {
+		assert_eq!(
+			ProductLink::parse(" HTTP://BROWSE.DOT.LI./a%20b?q=x%2Fy#frag ", "dot"),
+			Some(ProductLink {
+				identifier: ProductId::for_test("browse.dot"),
+				path: "/a%20b?q=x%2Fy#frag".to_string(),
+				canonical_url: "https://browse.dot/a%20b?q=x%2Fy#frag".to_string(),
+			})
+		);
+		assert!(matches!(parse_navigate("browse.dot.li"), NavigateDecision::External { .. }));
+	}
+
+	#[test]
+	fn product_links_reject_non_product_authorities() {
+		for input in [
+			"",
+			"browse.test.li",
+			"browse.com",
+			"localhost:3000",
+			"localhost.dot.li",
+			"https://browse.dot:8443/path",
+			"https://user@browse.dot.li/path",
+			"javascript://browse.dot",
+			"https://invalid_name.dot.li",
+			"https://dot.li",
+		] {
+			assert_eq!(ProductLink::parse(input, "dot"), None, "{input}");
+		}
+	}
+
+	#[test]
+	fn share_hosts_use_the_canonical_network_suffixes() {
+		assert_eq!(product_share_hosts(), ["dot.li", "paseo.li", "testnet.li"]);
+		assert_eq!(
+			ProductId::from_share_host("BROWSE.TESTNET.LI"),
+			Some(ProductId::for_test("browse.testnet"))
+		);
+		for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
+			assert_eq!(ProductId::from_share_host(input), None, "{input}");
+		}
+	}
 
 	enum Expected {
 		Decision(NavigateDecision),

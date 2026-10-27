@@ -66,8 +66,8 @@ struct BrandConfigTests {
         #expect(AppConfig.Brand.contactEmail.contains("@"))
     }
 
-    /// EXPECTED TO FAIL under any non-polkadot brand. ProductHost.shareRootDomains is the
-    /// inbound universal-link allow-list and is hardcoded to the polkadot roots, so iOS hands
+    /// EXPECTED TO FAIL under any non-polkadot brand. ProductHost.shareHosts is the
+    /// Rust-backed inbound universal-link allow-list for the supported product networks, so iOS hands
     /// the app a link that WebDeeplinkNormalizer then rejects. The failure is the intended
     /// signal for that known blocker, not a regression in this suite.
     @Test("Share root is matchable inbound")

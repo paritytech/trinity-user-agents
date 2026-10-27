@@ -163,24 +163,15 @@ private extension ProductBotProvider {
         return botFactory.create(resolved: resolved)
     }
 
-    /// Nil for a product whose published manifest is broken. That is the product's bug, and
-    /// running the base name's archive in its place would serve something it never declared.
-    ///
-    /// A name that cannot be read still degrades to the legacy shape. Since workers now come only
-    /// from a manifest, that yields a bot for hand-installed debug scripts and nothing else — a
-    /// published product's bot needs its worker subname, so it needs a resolve that succeeded.
     func resolveForBot(_ product: Product) async -> ResolvedProduct? {
         do {
             let resolved = try await productResolver.resolve(product.id)
             await warmWorkerArchive(of: resolved)
 
             return resolved
-        } catch ProductResolutionError.malformedManifest {
-            logger.error("Skipping the chat bot for \(product.identifier): its manifest is malformed")
-            return nil
         } catch {
-            logger.error("Falling back to the legacy chat worker for \(product.identifier): \(error)")
-            return .legacy(id: product.identifier, displayName: product.name)
+            logger.error("Skipping the chat bot for \(product.identifier): \(error)")
+            return nil
         }
     }
 

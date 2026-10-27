@@ -31,7 +31,7 @@ pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
 		dev_server::{DevServerError, DevServerProduct},
-		dotns::{NavigateDecision, PocketDeeplinkAction},
+		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
 };
@@ -78,6 +78,62 @@ pub fn truapi_host_version() -> String {
 #[uniffi::export]
 pub fn parse_product_id(input: String) -> Result<latest::ProductId, latest::ProductIdError> {
 	input.parse()
+}
+
+/// Construct a product name on an explicitly supplied network.
+#[uniffi::export]
+pub fn product_id_from_name(
+	name: String,
+	network_suffix: String,
+) -> Result<latest::ProductId, latest::ProductIdError> {
+	latest::ProductId::from_name(&name, &network_suffix)
+}
+
+/// The complete dotNS name above the network suffix, including nested labels.
+#[uniffi::export]
+pub fn product_id_name(product_id: latest::ProductId) -> Option<String> {
+	product_id.dotns_name().map(str::to_owned)
+}
+
+/// Check a product against an explicitly supplied network suffix.
+#[uniffi::export]
+pub fn product_id_matches_network(product_id: latest::ProductId, network_suffix: String) -> bool {
+	product_id.matches_network(&network_suffix)
+}
+
+/// Name an executable under its product's full dotNS namespace.
+#[uniffi::export]
+pub fn product_id_executable(
+	product_id: latest::ProductId,
+	kind: crate::platform::ProductExecutionKind,
+) -> Result<latest::ProductId, latest::ProductIdError> {
+	product_id.executable(kind)
+}
+
+/// Resolve an executable identity to its owning product without losing nested labels.
+#[uniffi::export]
+pub fn product_id_owner(
+	product_id: latest::ProductId,
+) -> Result<latest::ProductId, latest::ProductIdError> {
+	product_id.executable_owner()
+}
+
+/// Normalize a product link only when its network matches the supplied suffix.
+#[uniffi::export]
+pub fn parse_product_link(input: String, network_suffix: String) -> Option<ProductLink> {
+	ProductLink::parse(&input, &network_suffix)
+}
+
+/// Recognize a supported share host without consulting host configuration.
+#[uniffi::export]
+pub fn parse_product_share_host(input: String) -> Option<latest::ProductId> {
+	latest::ProductId::from_share_host(&input)
+}
+
+/// Share domains recognized by the canonical Rust parser.
+#[uniffi::export]
+pub fn product_share_hosts() -> Vec<String> {
+	dotns::product_share_hosts()
 }
 
 /// The development product a debug build opens for an address the developer

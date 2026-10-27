@@ -94,6 +94,10 @@ Swift's `try ProductId("my-product.dot")` and Kotlin's
 `ProductId.parse("my-product.dot")` call Rust once and return immutable values
 owned by the native application. Browser hosts can use their existing worker
 runtime's `parseProductId` method for the same validation and normalization.
+Native product name, executable-owner and share-link helpers also delegate to Rust.
+Product links require an explicitly supplied network suffix; both direct names
+and `.li` links must match it. iOS propagates product-resolution errors before
+loading content, while valid products without a manifest use their base name.
 Rust's reserved identity constructors return `ProductId` directly from the
 validated network suffix.
 

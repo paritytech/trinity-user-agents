@@ -29,8 +29,7 @@ public struct ResolvedProduct: Hashable, Sendable {
         self.hasManifest = hasManifest
     }
 
-    /// A product with no manifest: one app rooted at the base name, named after its domain. Also
-    /// the degraded shape when the chain cannot be reached, which keeps cached content usable.
+    /// A product with no manifest: one app rooted at the base name, named after its domain.
     ///
     /// Never the shape for a product whose manifest is published but broken — that one declared
     /// something, and serving the base name's archive instead would not be what it declared.

@@ -57,6 +57,8 @@ extension ProductResolutionError: @retroactive ErrorContentConvertible {
         switch self {
         case .malformedManifest:
             .productLoadDamaged
+        case .productNotOnNetwork:
+            .productLoadNotFound
         }
     }
 }

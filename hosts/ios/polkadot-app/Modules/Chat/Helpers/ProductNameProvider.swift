@@ -82,9 +82,7 @@ private extension ProductNameProvider {
         case let .declared(name):
             nameCache.store(name: name, for: domain)
             return name
-        case .malformed:
-            // The product's own bug. A title scraped from the base archive would name content the
-            // product stopped declaring, so it keeps the domain until the publisher fixes it.
+        case .unavailable:
             return fallback
         case .undeclared:
             break
@@ -110,11 +108,9 @@ private extension ProductNameProvider {
         return resolved
     }
 
-    /// `undeclared` covers both a product that publishes no manifest and a name that could not be
-    /// read at all; either way the archive is the only remaining source of a name.
     enum ManifestName {
         case declared(String)
-        case malformed
+        case unavailable
         case undeclared
     }
 
@@ -125,10 +121,8 @@ private extension ProductNameProvider {
             let resolved = try await productResolver.resolve(domain)
 
             return resolved.hasManifest ? .declared(resolved.displayName) : .undeclared
-        } catch ProductResolutionError.malformedManifest {
-            return .malformed
         } catch {
-            return .undeclared
+            return .unavailable
         }
     }
 
