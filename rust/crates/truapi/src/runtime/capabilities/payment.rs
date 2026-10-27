@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use futures::{StreamExt, stream::BoxStream};
+use parity_scale_codec::Encode;
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
@@ -43,11 +44,17 @@ use crate::{
 		extrinsic::sr25519_secret_from_bytes,
 		permissions::{PermissionsService, TemporaryPermissions},
 	},
+	host_logic::funding::StartRecord,
 	platform::{
 		PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext,
 		ProductExecutionKind,
 	},
-	runtime::{ProductRuntimeHost, payment_id::host_payment_id, versioning::version},
+	runtime::{
+		ProductRuntimeHost,
+		funding::{FundsAsked, StartGuard, engine_holds},
+		payment_id::host_payment_id,
+		versioning::version,
+	},
 };
 
 #[truapi::async_trait]
@@ -150,50 +157,126 @@ impl CoinPayment for ProductRuntimeHost {
 	}
 }
 
+/// Funds a funding provider's worker is starting for a session it serves,
+/// recorded before the host is asked.
+struct FundingStart {
+	intent: String,
+	host_id: [u8; 32],
+	/// Whether this call recorded them, rather than a call before it.
+	fresh: bool,
+	/// Keeps a second call under the id out until this one finished.
+	_guard: StartGuard,
+}
+
+/// What the host's engine did with funds a worker started for a session.
+enum EngineAnswer {
+	/// It took them.
+	Took,
+	/// It already held funds under the id.
+	Holds,
+	/// It refused them, so nothing moves under the id.
+	Refused,
+}
+
 impl ProductRuntimeHost {
-	/// Record funds this product's worker starts on the funding sessions it
-	/// serves, so its reports can name them, before the host sees them: funds
-	/// whose record cannot be stored are not started. Returns whether any
-	/// session recorded them.
-	async fn record_funding_start<E>(
+	/// Take `host_id` for a call that starts funds outside any funding
+	/// session. Refused with `already_exists` while a call under it is in
+	/// flight or a session holds funds under it.
+	fn begin_plain_start<E>(
 		&self,
-		direction: latest::FundingDirection,
 		host_id: [u8; 32],
-		amount: u128,
-	) -> Result<bool, CallError<E>> {
+		already_exists: E,
+	) -> Result<StartGuard, CallError<E>> {
+		let registry = self.connection.services.funding();
+		let product_id = self.connection.product.product_id.as_str();
+		registry
+			.begin_start(host_id)
+			.filter(|_| !registry.holds_start(product_id, &host_id))
+			.ok_or(CallError::Domain(already_exists))
+	}
+
+	/// Record funds this product's worker starts for funding session
+	/// `intent`, before the host is asked, so its reports can name them once
+	/// the host takes them. `not_served` when the caller is no funding
+	/// provider's worker or does not serve that session in `direction`, or
+	/// the session holds as many funds as it may; `already_exists` when the
+	/// id is held with other terms, by another session, or by the host's
+	/// engine already.
+	async fn begin_funding_start<E>(
+		&self,
+		intent: String,
+		asked: FundsAsked,
+		already_exists: E,
+		not_served: E,
+	) -> Result<FundingStart, CallError<E>> {
+		let host_id = asked.host_id;
 		let registry = self.connection.services.funding();
 		if self.connection.product.execution_kind != ProductExecutionKind::Worker ||
 			registry.platform().is_none()
 		{
-			return Ok(false);
+			return Err(CallError::Domain(not_served));
 		}
-		Ok(registry
+		let Some(guard) = registry.begin_start(host_id) else {
+			return Err(CallError::Domain(already_exists));
+		};
+		let provider_id = self.connection.product.product_id.as_str();
+		// A first call under the id must not take over funds the engine
+		// holds already, which this session never recorded.
+		if !registry.recorded_start(&intent, &host_id) {
+			let held = engine_holds(
+				&self.connection.services,
+				&self.connection.product,
+				asked.direction,
+				host_id,
+			)
+			.await
+			.map_err(|reason| CallError::HostFailure { reason })?;
+			if held {
+				return Err(CallError::Domain(already_exists));
+			}
+		}
+		let recorded = registry
 			.record_start(
 				self.connection.platform.as_ref(),
 				current_unix_millis(),
-				self.connection.product.product_id.as_str(),
-				direction,
-				host_id,
-				amount,
+				provider_id,
+				&intent,
+				asked,
 			)
-			.await?)
+			.await?;
+		match recorded {
+			None | Some(StartRecord::Full) => Err(CallError::Domain(not_served)),
+			Some(StartRecord::Conflict) => Err(CallError::Domain(already_exists)),
+			Some(kind @ (StartRecord::New | StartRecord::Repeat)) => {
+				Ok(FundingStart { intent, host_id, fresh: kind == StartRecord::New, _guard: guard })
+			},
+		}
 	}
 
-	/// Drop the record of funds the host refused to start.
-	async fn forget_funding_start(&self, host_id: [u8; 32]) {
-		let forgotten = self
+	/// Settle the record `start` made by what the engine did: kept as taken
+	/// when it took the funds, or when it holds the id from an earlier call
+	/// that recorded them; dropped otherwise. A record that cannot be stored
+	/// is placed later by the reconciler, from the engine.
+	async fn finish_funding_start(&self, start: FundingStart, answer: EngineAnswer) {
+		let taken = match answer {
+			EngineAnswer::Took => true,
+			EngineAnswer::Holds => !start.fresh,
+			EngineAnswer::Refused => false,
+		};
+		let finished = self
 			.connection
 			.services
 			.funding()
-			.forget_start(
+			.finish_start(
 				self.connection.platform.as_ref(),
 				current_unix_millis(),
-				self.connection.product.product_id.as_str(),
-				host_id,
+				&start.intent,
+				start.host_id,
+				taken,
 			)
 			.await;
-		if let Err(error) = forgotten {
-			tracing::warn!(%error, "dropping the record of refused funds failed");
+		if let Err(error) = finished {
+			tracing::warn!(%error, "storing what the host did with started funds failed");
 		}
 	}
 }
@@ -386,21 +469,40 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		let (host_id, amount) = (request.id, request.amount);
-		let recorded = self
-			.record_funding_start(latest::FundingDirection::Out, host_id, amount)
-			.await?;
-		let requested = platform.request_payment(&self.connection.product, request).await;
-		// A repeat of a payment the host already holds keeps the record an
-		// earlier call made, so a worker that restarted can still name it. A
-		// record this call made goes: the host's payment under that id may ask
-		// another amount or belong to an ended session. Any other failure
-		// means no money moves under this id.
-		if requested.as_ref().is_err_and(|error| {
-			recorded || !matches!(error, latest::HostPaymentError::AlreadyExists)
-		}) {
-			self.forget_funding_start(host_id).await;
-		}
+		let host_id = request.id;
+		let requested = match request.funding.clone() {
+			None => {
+				let _guard =
+					self.begin_plain_start(host_id, latest::HostPaymentError::AlreadyExists)?;
+				platform.request_payment(&self.connection.product, request).await
+			},
+			Some(intent) => {
+				let terms = sp_crypto_hashing::blake2_256(
+					&(b"truapi/funding-terms", request.from, request.destination).encode(),
+				);
+				let start = self
+					.begin_funding_start(
+						intent,
+						FundsAsked {
+							direction: latest::FundingDirection::Out,
+							host_id,
+							amount: request.amount,
+							terms,
+						},
+						latest::HostPaymentError::AlreadyExists,
+						latest::HostPaymentError::FundingNotServed,
+					)
+					.await?;
+				let requested = platform.request_payment(&self.connection.product, request).await;
+				let answer = match &requested {
+					Ok(()) => EngineAnswer::Took,
+					Err(latest::HostPaymentError::AlreadyExists) => EngineAnswer::Holds,
+					Err(_) => EngineAnswer::Refused,
+				};
+				self.finish_funding_start(start, answer).await;
+				requested
+			},
+		};
 		match requested {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
@@ -429,17 +531,39 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		let (host_id, amount) = (request.id, request.amount);
-		let recorded =
-			self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
+		let host_id = request.id;
+		let Some(intent) = request.funding.clone() else {
+			let _guard =
+				self.begin_plain_start(host_id, latest::HostPaymentTopUpError::AlreadyExists)?;
+			return platform
+				.top_up(&self.connection.product, request)
+				.await
+				.map_err(CallError::Domain);
+		};
+		// A hash, so the core keeps no source key.
+		let terms = sp_crypto_hashing::blake2_256(
+			&(b"truapi/funding-terms", request.into, &request.source).encode(),
+		);
+		let start = self
+			.begin_funding_start(
+				intent,
+				FundsAsked {
+					direction: latest::FundingDirection::In,
+					host_id,
+					amount: request.amount,
+					terms,
+				},
+				latest::HostPaymentTopUpError::AlreadyExists,
+				latest::HostPaymentTopUpError::FundingNotServed,
+			)
+			.await?;
 		let started = platform.top_up(&self.connection.product, request).await;
-		// As for payments: only a record an earlier call made survives a
-		// top-up the host already holds.
-		if started.as_ref().is_err_and(|error| {
-			recorded || !matches!(error, latest::HostPaymentTopUpError::AlreadyExists)
-		}) {
-			self.forget_funding_start(host_id).await;
-		}
+		let answer = match &started {
+			Ok(()) => EngineAnswer::Took,
+			Err(latest::HostPaymentTopUpError::AlreadyExists) => EngineAnswer::Holds,
+			Err(_) => EngineAnswer::Refused,
+		};
+		self.finish_funding_start(start, answer).await;
 		started.map_err(CallError::Domain)
 	}
 }
