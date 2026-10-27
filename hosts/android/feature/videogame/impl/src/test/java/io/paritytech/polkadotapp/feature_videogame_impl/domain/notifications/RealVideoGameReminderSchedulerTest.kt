@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -12,6 +11,7 @@ import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 
 class RealVideoGameReminderSchedulerTest {
     private val alarms: GameReminderAlarms = mock(GameReminderAlarms::class.java)
@@ -19,7 +19,7 @@ class RealVideoGameReminderSchedulerTest {
 
     private val scheduler = RealVideoGameReminderScheduler(alarms, FakeTimeProvider { NOW }, telemetry)
 
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot")
 
     @Test
     fun `an exact alarm is reported as scheduled for alarm delivery`() {

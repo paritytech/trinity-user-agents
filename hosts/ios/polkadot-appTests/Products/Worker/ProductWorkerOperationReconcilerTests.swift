@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import os

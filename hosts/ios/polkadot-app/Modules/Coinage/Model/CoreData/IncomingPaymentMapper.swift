@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Coinage
 import CoreData
@@ -27,7 +28,7 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
 
         return try IncomingPayment(
             paymentId: paymentId,
-            productId: productId,
+            productId: try ProductId(productId),
             amount: amount,
             createdAt: createdAt,
             outcome: IncomingPaymentOutcomeSerialization.outcome(
@@ -44,7 +45,7 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
     ) throws {
         entity.identifier = model.groupId
         entity.paymentId = model.paymentId
-        entity.productId = model.productId
+        entity.productId = model.productId.rawValue
         entity.amount = String(model.amount)
         entity.createdAt = model.createdAt
 

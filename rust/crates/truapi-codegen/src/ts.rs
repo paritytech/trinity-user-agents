@@ -737,6 +737,9 @@ fn type_signature(
 			format!("({})", inner.join(","))
 		},
 		TypeRef::Named { name, args } => {
+			if name == "ProductId" {
+				return "str".to_string();
+			}
 			let rendered_args: Vec<String> =
 				args.iter().map(|arg| type_signature(arg, types, seen)).collect();
 			let suffix = if rendered_args.is_empty() {
@@ -2166,6 +2169,22 @@ fn write_type_definition(
 	let generated_names = NameMode::Generated { aliases };
 	let generic_decl = generic_param_declaration(&ty.generic_params);
 	let emitted_name = emitted_type_name(ty, emit_versions, aliases);
+	if ty.name == "ProductId" {
+		writedoc!(
+			out,
+			r#"
+            declare const productIdBrand: unique symbol;
+            /** A product identifier. Rust validates identifiers received by the host. */
+            export type ProductId = string & {{ readonly [productIdBrand]: true }};
+            /** Designate a product identifier without changing or validating its value. */
+            export function asProductId(value: string): ProductId {{
+              return value as ProductId;
+            }}
+            "#,
+		)
+		.unwrap();
+		return Ok(());
+	}
 
 	write_jsdoc(out, "", ty.docs.as_deref());
 	match &ty.kind {
@@ -2249,6 +2268,14 @@ fn write_codec_definition(
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
 ) -> Result<()> {
+	if ty.name == "ProductId" {
+		writeln!(
+			out,
+			"export const ProductId = S.enhanceCodec(S.str, (value: ProductId) => value, asProductId);"
+		)
+		.unwrap();
+		return Ok(());
+	}
 	let generated_names = NameMode::Generated { aliases };
 	if ty.generic_params.is_empty() {
 		let ctx = codec_context(&[]);
@@ -2865,6 +2892,31 @@ fn to_camel_case(s: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn product_id_keeps_its_type_without_changing_wire_shape() {
+		let product_id = TypeDef {
+			name: "ProductId".to_string(),
+			module_path: vec![],
+			generic_params: vec![],
+			kind: TypeDefKind::Alias(TypeRef::Primitive("str".to_string())),
+			docs: None,
+		};
+		let mut typed = api_with_payload_fields(vec![("product_id", named_type("ProductId"))]);
+		typed.types.push(product_id);
+		let strings =
+			api_with_payload_fields(vec![("product_id", TypeRef::Primitive("str".to_string()))]);
+		assert_eq!(
+			wire_schema_hash(&typed, 1, 1).unwrap(),
+			wire_schema_hash(&strings, 1, 1).unwrap()
+		);
+		let emitted = generate_types(&typed, 1).unwrap();
+		assert!(emitted.contains("export type ProductId = string &"));
+		assert!(emitted.contains("productId: ProductId"));
+		assert!(
+			emitted.contains("S.enhanceCodec(S.str, (value: ProductId) => value, asProductId)")
+		);
+	}
 
 	fn unit_variant(name: &str, codec_index: Option<u8>) -> VariantDef {
 		VariantDef { name: name.to_string(), fields: VariantFields::Unit, docs: None, codec_index }

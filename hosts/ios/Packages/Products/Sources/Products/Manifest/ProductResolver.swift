@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SDKLogger
 
@@ -45,19 +46,11 @@ public actor ProductResolver: ProductResolving {
     }
 
     public func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
-        // Every form a caller might hold collapses here — a `<kind>.` subname, a `<root>.li`
-        // mirror host, any casing — so no call site has to remember to canonicalise, and two
-        // forms of one product cannot key the cache twice.
-        //
-        // dotNS is case-insensitive while name hashing is byte-exact.
-        let unprefixed = ProductManifestRecords.baseName(of: productId.lowercased())
+        let unprefixed = try ProductManifestRecords.baseName(of: productId)
 
-        // An id that is not a name on this network holds no records: a product installed by hand
-        // through debug settings, or one whose TLD could not be read. Neither is worth a read.
-        guard let baseName = try? await hostProvider.resolveHost(rawString: unprefixed)?.toDotDomain() else {
-            // Strip the kind prefix but keep the case: a hand-installed id is keyed byte-exact by the
-            // script storage and the chat extension id, so lowercasing it here loses the debug bot.
-            return .legacy(id: ProductManifestRecords.baseName(of: productId))
+        // A product outside this network, or whose TLD is unavailable, cannot be resolved here.
+        guard let baseName = try? await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
+            return .legacy(id: unprefixed)
         }
 
         if let cached = cache[baseName] {
@@ -84,7 +77,7 @@ public actor ProductResolver: ProductResolving {
 private extension ProductResolver {
     func resolveFromChain(_ baseName: ProductId) async throws -> ResolvedProduct {
         let rootText = try await dotNsResolver.getMetadataEntry(
-            dotNsName: baseName,
+            dotNsName: baseName.rawValue,
             key: ProductManifestRecords.rootKey
         )
 
@@ -131,10 +124,10 @@ private extension ProductResolver {
     /// different thing and propagates: swallowing it would cache a product as missing executables
     /// it actually publishes, and every surface would serve the base archive until the next launch.
     func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ProductExecutable? {
-        let subname = ProductManifestRecords.subname(base: baseName, kind: kind)
+        let subname = try ProductManifestRecords.subname(base: baseName, kind: kind)
 
         let text = try await dotNsResolver.getMetadataEntry(
-            dotNsName: subname,
+            dotNsName: subname.rawValue,
             key: ProductManifestRecords.executableKey
         )
 

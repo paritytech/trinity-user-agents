@@ -78,28 +78,28 @@ struct ProductHostTests {
     }
 
     @Test func browseTestParsesWithTestTld() {
-        let host = ProductHost.parse("browse.test", tld: "test")
+        let host = ProductHost.parse("browse.testnet", tld: "testnet")
         #expect(host != nil)
     }
 
     @Test func browseTestDotReturnsNilWithWrongTld() {
-        let host = ProductHost.parse("browse.dot", tld: "test")
+        let host = ProductHost.parse("browse.dot", tld: "testnet")
         #expect(host == nil)
     }
 
     @Test func browseTestLiParsesInShareDomains() {
-        let host = ProductHost.parse("browse.test.li", tld: "test")
+        let host = ProductHost.parse("browse.testnet.li", tld: "testnet")
         #expect(host != nil)
     }
 
     @Test func browsePaseoLiRoundTripsCorrectly() {
         let host = ProductHost.parse("browse.paseo.li", tld: "dot")
-        #expect(host?.toDotDomain() == "browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "browse.paseo")
     }
 
     @Test func subBrowsePaseoLiRoundTripsCorrectly() {
         let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
-        #expect(host?.toDotDomain() == "sub.browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "sub.browse.paseo")
     }
 
     // MARK: - init?(name:root:)
@@ -107,19 +107,19 @@ struct ProductHostTests {
     @Test func directConstructionSimple() {
         let host = ProductHost(name: "browse", root: "dot")
         #expect(host != nil)
-        #expect(host?.toDotDomain() == "browse.dot")
+        #expect(host?.toDotDomain().rawValue == "browse.dot")
     }
 
     @Test func directConstructionWithSubdomain() {
         let host = ProductHost(name: "sub.browse", root: "paseo")
         #expect(host != nil)
-        #expect(host?.toDotDomain() == "sub.browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "sub.browse.paseo")
     }
 
     @Test func directConstructionWithDeepSubdomain() {
         let host = ProductHost(name: "a.b.c.browse", root: "dot")
         #expect(host != nil)
-        #expect(host?.toDotDomain() == "a.b.c.browse.dot")
+        #expect(host?.toDotDomain().rawValue == "a.b.c.browse.dot")
     }
 
     @Test func directConstructionRejectsEmptyName() {
@@ -175,36 +175,36 @@ struct ProductHostTests {
         #expect(host?.name == "a.b.c")
     }
 
-    // MARK: - toDotDomain()
+    // MARK: - toDotDomain().rawValue
 
     @Test func toDotDomainForSimple() {
         let host = ProductHost.parse("browse.dot", tld: "dot")
-        #expect(host?.toDotDomain() == "browse.dot")
+        #expect(host?.toDotDomain().rawValue == "browse.dot")
     }
 
     @Test func toDotDomainForDotLi() {
         let host = ProductHost.parse("browse.dot.li", tld: "dot")
-        #expect(host?.toDotDomain() == "browse.dot")
+        #expect(host?.toDotDomain().rawValue == "browse.dot")
     }
 
     @Test func toDotDomainForSubdomain() {
         let host = ProductHost.parse("sub.browse.dot", tld: "dot")
-        #expect(host?.toDotDomain() == "sub.browse.dot")
+        #expect(host?.toDotDomain().rawValue == "sub.browse.dot")
     }
 
     @Test func toDotDomainForSubdomainDotLi() {
         let host = ProductHost.parse("sub.browse.dot.li", tld: "dot")
-        #expect(host?.toDotDomain() == "sub.browse.dot")
+        #expect(host?.toDotDomain().rawValue == "sub.browse.dot")
     }
 
     @Test func toDotDomainForPaseoLi() {
         let host = ProductHost.parse("browse.paseo.li", tld: "dot")
-        #expect(host?.toDotDomain() == "browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "browse.paseo")
     }
 
     @Test func toDotDomainForSubdomainPaseoLi() {
         let host = ProductHost.parse("sub.browse.paseo.li", tld: "dot")
-        #expect(host?.toDotDomain() == "sub.browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "sub.browse.paseo")
     }
 
     // MARK: - fromUrl(_:)
@@ -228,7 +228,7 @@ struct ProductHostTests {
         let host = ProductHost.fromUrl(url, tld: "dot")
         #expect(host != nil)
         #expect(host?.name == "browse")
-        #expect(host?.toDotDomain() == "browse.paseo")
+        #expect(host?.toDotDomain().rawValue == "browse.paseo")
     }
 
     @Test func fromUrlRejectsInvalidHost() {
@@ -263,7 +263,7 @@ struct ProductHostTests {
     @Test func fromNavigationDestinationSchemelessHostWithFragmentRoute() {
         let host = ProductHost.fromNavigationDestination("getcash.paseo/#/", tld: "paseo")
         #expect(host?.name == "getcash")
-        #expect(host?.toDotDomain() == "getcash.paseo")
+        #expect(host?.toDotDomain().rawValue == "getcash.paseo")
     }
 
     @Test func fromNavigationDestinationSchemelessHostWithPath() {
@@ -273,7 +273,7 @@ struct ProductHostTests {
 
     @Test func fromNavigationDestinationSchemelessShareHostWithPath() {
         let host = ProductHost.fromNavigationDestination("browse.dot.li/#/onboarding", tld: "dot")
-        #expect(host?.toDotDomain() == "browse.dot")
+        #expect(host?.toDotDomain().rawValue == "browse.dot")
     }
 
     @Test func fromNavigationDestinationSchemelessExternalHostWithPath() {

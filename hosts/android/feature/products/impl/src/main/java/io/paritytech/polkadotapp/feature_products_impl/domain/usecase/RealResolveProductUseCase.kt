@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
@@ -25,6 +24,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,15 +38,15 @@ internal class RealResolveProductUseCase @Inject constructor(
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
-    private val cache = ConcurrentHashMap<String, ResolvedProduct>()
+    private val cache = ConcurrentHashMap<ProductId, ResolvedProduct>()
     private val resolveMutex = Mutex()
 
     override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> {
-        cache[productId.value]?.let { return Result.success(it) }
+        cache[productId]?.let { return Result.success(it) }
 
         return resolveMutex.withLock {
             // Another caller may have resolved the same product while this one waited.
-            cache[productId.value]?.let { return@withLock Result.success(it) }
+            cache[productId]?.let { return@withLock Result.success(it) }
 
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
             runCatching { resolveFromChain(productId) }
@@ -56,12 +56,12 @@ internal class RealResolveProductUseCase @Inject constructor(
                     Timber.e(it, "Product resolution failed")
                     ProductResolutionError.Unknown
                 }
-                .onSuccess { cache[productId.value] = it }
+                .onSuccess { cache[productId] = it }
         }
     }
 
     override suspend fun invalidate(productId: ProductId) {
-        cache.remove(productId.value)
+        cache.remove(productId)
     }
 
     private suspend fun resolveFromChain(productId: ProductId): Result<ResolvedProduct> {

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import WebKit
 import UniformTypeIdentifiers
@@ -26,7 +27,7 @@ public final class ProductScriptSchemeHandler: NSObject {
     public func getBaseUrl() -> URL? {
         var components = URLComponents()
         components.scheme = Self.scheme
-        components.host = productId
+        components.host = productId.rawValue
         components.path = "/"
         return components.url
     }

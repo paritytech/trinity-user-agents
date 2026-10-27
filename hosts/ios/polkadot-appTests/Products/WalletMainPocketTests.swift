@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import ChainRegistry
 import Foundation
@@ -70,7 +71,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == "stash.\(network)")
+        #expect(screen.wireframe.openedProduct == (try ProductId("stash.\(network)")))
     }
 
     /// The remote switch pulls the card from every installed app without a
@@ -103,7 +104,7 @@ struct WalletMainPocketTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
@@ -223,7 +224,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
-    private(set) var openedProduct: String?
+    private(set) var openedProduct: ProductId?
 
     func showProduct(page: ProductPage) {
         openedProduct = page.host.toDotDomain()

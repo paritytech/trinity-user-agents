@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
@@ -29,7 +30,7 @@ final class AppDetailPresenter {
 extension AppDetailPresenter: AppDetailPresenterProtocol {
     func setup() {
         // The icon is keyed by domain alone, so it starts loading without waiting for the manifest.
-        view?.didReceive(name: productId, subtitle: nil)
+        view?.didReceive(name: productId.rawValue, subtitle: nil)
         view?.didReceive(icon: iconViewModelFactory.createViewModel(for: productId))
 
         interactor.setup()
@@ -38,7 +39,7 @@ extension AppDetailPresenter: AppDetailPresenterProtocol {
     func didTapPermissions() {
         wireframe.showPermissions(
             productId: productId,
-            productName: product?.displayName ?? productId,
+            productName: product?.displayName ?? productId.rawValue,
             from: view
         )
     }

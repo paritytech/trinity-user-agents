@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance
 
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 enum class AllowanceResourceKind {
     BULLETIN,

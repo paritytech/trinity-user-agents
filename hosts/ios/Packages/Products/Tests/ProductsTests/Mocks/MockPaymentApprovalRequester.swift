@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SubstrateSdk
 @testable import Products
@@ -5,10 +6,10 @@ import SubstrateSdk
 final class MockPaymentApprovalRequester: PaymentApprovalRequesting, @unchecked Sendable {
     var decision: PaymentApprovalDecision = .approved
 
-    private(set) var calls: [(productId: String, amount: Balance, destination: AccountId)] = []
+    private(set) var calls: [(productId: ProductId, amount: Balance, destination: AccountId)] = []
 
     func requestApproval(
-        productId: String,
+        productId: ProductId,
         amount: Balance,
         destination: AccountId
     ) async -> PaymentApprovalDecision {

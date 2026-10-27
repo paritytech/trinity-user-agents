@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 
 @Dao
 abstract class ProductDao {
@@ -14,7 +15,7 @@ abstract class ProductDao {
     abstract fun observeAll(): Flow<List<ProductLocal>>
 
     @Query("SELECT * FROM products WHERE id = :id")
-    abstract suspend fun getById(id: String): ProductLocal?
+    abstract suspend fun getById(id: ProductId): ProductLocal?
 
     // IGNORE, not REPLACE: registration races on the same product would otherwise cascade-delete
     // the existing row's integrations and scheduled notifications.
@@ -22,10 +23,10 @@ abstract class ProductDao {
     abstract suspend fun insert(product: ProductLocal)
 
     @Query("SELECT userWorkerUrl FROM products WHERE id = :id")
-    abstract suspend fun getUserWorkerUrl(id: String): String?
+    abstract suspend fun getUserWorkerUrl(id: ProductId): String?
 
     @Query("DELETE FROM products WHERE id = :id")
-    abstract suspend fun deleteById(id: String)
+    abstract suspend fun deleteById(id: ProductId)
 
     /** Writes name + icon, leaving `userWorkerUrl` and the row's FK children intact. */
     @Transaction
@@ -53,15 +54,15 @@ abstract class ProductDao {
 
     @Query("UPDATE products SET name = :name, iconCid = :iconCid, iconFormat = :iconFormat WHERE id = :id")
     protected abstract suspend fun updateMetadata(
-        id: String,
+        id: ProductId,
         name: String,
         iconCid: String?,
         iconFormat: String?,
     )
 
     @Query("UPDATE products SET name = :name WHERE id = :id")
-    protected abstract suspend fun updateName(id: String, name: String)
+    protected abstract suspend fun updateName(id: ProductId, name: String)
 
     @Query("UPDATE products SET userWorkerUrl = :userWorkerUrl WHERE id = :id")
-    protected abstract suspend fun updateUserWorkerUrl(id: String, userWorkerUrl: String?)
+    protected abstract suspend fun updateUserWorkerUrl(id: ProductId, userWorkerUrl: String?)
 }

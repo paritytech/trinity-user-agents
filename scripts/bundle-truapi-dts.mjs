@@ -76,7 +76,7 @@ async function readFileNamespace(name, relPath) {
   // `S.X` namespace accesses inside the bundle to bare `X` since the
   // referenced symbols all live at module scope (scale.d.ts inlined below).
   const body = stripImports(await readFile(path, "utf8"))
-    .replace(/^(\s*export\s+)declare\s+/gm, "$1")
+    .replace(/^(\s*(?:export\s+)?)declare\s+/gm, "$1")
     .replace(/\bS\.([A-Za-z_$][\w$]*)/g, "$1");
   typeFiles.delete(relPath);
   return `declare namespace ${name} {\n${body}\n}\n`;
@@ -186,7 +186,7 @@ ${hostClient}
 /** Context injected alongside \`truapi\` by the headless host runner. */
 export interface HostContext {
   /** Product id served by the host. */
-  productId: string;
+  productId: T.ProductId;
   /** Product account for \`derivationIndex\`, which defaults to zero. */
   productAccount(index?: number): T.ProductAccountId;
 }

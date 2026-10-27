@@ -1,12 +1,13 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Foundation
 
 extension NSPredicate {
-    static func permissionGrant(productId: String) -> NSPredicate {
+    static func permissionGrant(productId: ProductId) -> NSPredicate {
         NSPredicate(
             format: "%K == %@",
             #keyPath(CDProductPermissionGrant.productId),
-            productId
+            productId.rawValue
         )
     }
 

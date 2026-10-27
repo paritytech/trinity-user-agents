@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -22,9 +21,10 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 class TrUAPIWorkerSupervisorFailureTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.parse("chat.dot")
 
     private class FailingScriptResolver(private val error: Throwable) : ProductScriptResolver {
         override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> =

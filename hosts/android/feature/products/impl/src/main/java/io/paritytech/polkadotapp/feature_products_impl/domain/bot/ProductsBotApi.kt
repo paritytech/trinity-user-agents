@@ -19,7 +19,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Vr
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -42,6 +41,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementsPage
 import io.paritytech.polkadotapp.feature_statement_store_api.data.TopicFilter
 import io.paritytech.polkadotapp.feature_statement_store_api.data.models.StatementStoreMessageProof
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 

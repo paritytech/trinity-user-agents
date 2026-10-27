@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -106,8 +107,8 @@ struct PocketCardHostsTests {
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
-private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
+private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+private let trophy = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))
 
 @MainActor
 private final class CountingFactory {

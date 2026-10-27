@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveToLocalFile
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import java.io.File
 import javax.inject.Inject
 

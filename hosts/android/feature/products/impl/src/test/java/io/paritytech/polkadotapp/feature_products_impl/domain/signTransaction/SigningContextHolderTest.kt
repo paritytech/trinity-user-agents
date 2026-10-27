@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningReque
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class SigningContextHolderTest {
     @Test
@@ -42,7 +43,7 @@ class SigningContextHolderTest {
         override val requesterName = "product.dot"
         override val requesterIconUrl = ""
         override val signingRequestBody = SigningRequestBody.SignVrf(
-            account = ProductAccountId("product.dot", DerivationIndex32.default()),
+            account = ProductAccountId(ProductId.parse("product.dot"), DerivationIndex32.default()),
             transcriptLabel = ByteArray(0),
             items = emptyList(),
         )

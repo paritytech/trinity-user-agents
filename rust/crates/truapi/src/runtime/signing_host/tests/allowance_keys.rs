@@ -32,7 +32,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 			.expect("allowance derivation succeeds");
 	let slot_entry = (allowance.public.to_bytes(), 0u32, 0u64).encode();
 	let people_row = slot::testing::slot_row(
-		derive_full_person_ring_vrf_entropy(&ENTROPY, TEST_NETWORK_SUFFIX),
+		derive_full_person_ring_vrf_entropy(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap(),
 		TEST_NETWORK_SUFFIX.as_bytes(),
 		slot::current_period(crate::unix_time::current_unix_secs()),
 		&[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],

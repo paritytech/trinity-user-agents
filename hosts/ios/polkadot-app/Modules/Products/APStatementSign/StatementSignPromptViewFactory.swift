@@ -36,7 +36,7 @@ private extension StatementSignPromptViewFactory {
                 String(localized: .Products.statementSignTitle)
             },
             message: LocalizableResource { _ in
-                .normal(String(localized: .Products.statementSignBody(productId: request.productId)))
+                .normal(String(localized: .Products.statementSignBody(productId: request.productId.rawValue)))
             },
             mainAction: makeAction(
                 title: String(localized: .Common.confirm)

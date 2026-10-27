@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import EventKit
 import Foundation
 import Keystore_iOS

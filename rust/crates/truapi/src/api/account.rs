@@ -49,6 +49,8 @@ pub trait Account: Send + Sync {
 	/// Retrieve a product-scoped account.
 	///
 	/// ```ts
+	/// import { asProductId } from "@parity/truapi";
+	///
 	/// const productContext = await truapi.system.getProductContext();
 	/// assert(productContext.isOk(), "getProductContext failed:", productContext);
 	///
@@ -63,7 +65,7 @@ pub trait Account: Send + Sync {
 	///
 	/// const otherProduct = await truapi.account.getAccount({
 	///   productAccountId: {
-	///     dotNsIdentifier: "other-product.dot",
+	///     dotNsIdentifier: asProductId("other-product.dot"),
 	///     derivationIndex: { tag: "Index", value: 0 },
 	///   },
 	/// });
@@ -126,6 +128,8 @@ pub trait Account: Send + Sync {
 	/// Generate a ring VRF proof with an explicitly registered member key.
 	///
 	/// ```ts
+	/// import { asProductId } from "@parity/truapi";
+	///
 	/// const productContext = await truapi.system.getProductContext();
 	/// assert(productContext.isOk(), "getProductContext failed:", productContext);
 	///
@@ -137,7 +141,7 @@ pub trait Account: Send + Sync {
 	///
 	/// const result = await truapi.account.createAccountProof({
 	///   keyHandle: {
-	///     dotNsIdentifier: "peopl.dot",
+	///     dotNsIdentifier: asProductId("peopl.dot"),
 	///     derivationIndex: { tag: "Index", value: 1 },
 	///   },
 	///   context: { productId: productContext.value.productId, suffix: { tag: "Index", value: 0 } },
@@ -244,8 +248,10 @@ pub trait Account: Send + Sync {
 	/// List registered ring-VRF keys owned by a product.
 	///
 	/// ```ts
+	/// import { asProductId } from "@parity/truapi";
+	///
 	/// const result = await truapi.account.listRingVrfKeys({
-	///   owner: "peopl.paseo",
+	///   owner: asProductId("peopl.paseo"),
 	///   disclosure: "Anonymized",
 	/// });
 	/// assert(result.isOk(), "listRingVrfKeys failed:", result);

@@ -4,16 +4,16 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.test.TestScope
 import org.junit.Test
 import uniffi.truapi.DevServerProduct
+import uniffi.truapi.ProductId
 
 class ProductTabSessionFactoryTest {
     private val devServer = DevServerProduct(
-        productId = "humanity.dot",
+        productId = ProductId.parse("humanity.dot"),
         origin = "http://192.168.1.59:3000",
         url = "http://192.168.1.59:3000/app?product_id=humanity.dot",
     )
@@ -44,7 +44,7 @@ class ProductTabSessionFactoryTest {
 
         factory.create(devServer.url, scope) {}
 
-        val productId = ProductId.fromStoredValue("humanity.dot")
+        val productId = ProductId.parse("humanity.dot")
         verify {
             webViewProviders.create(devServer.url, any(), true, scope, productId, devServer.origin, any())
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)

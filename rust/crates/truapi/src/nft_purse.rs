@@ -16,29 +16,11 @@ use crate::{
 		AllocateItemsError, CreatePurseError, ItemKey, NftLedger, PageRequest, PurseId,
 		PurseRecord, PurseTag,
 	},
-	platform::{ProductId, ProductIdError},
+	platform::ProductId,
 	store::DbError,
 };
 
-/// Who owns a purse, with a product's id validated and normalized.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PurseOwner {
-	/// The user's own account: the main purse, and purses recovered without
-	/// metadata.
-	Root,
-	/// The product that created the purse.
-	Product(ProductId),
-}
-
-impl PurseOwner {
-	/// The owner a product named, refusing a product id that is not one.
-	pub fn parse(owner: &NftPurseOwner) -> Result<Self, ProductIdError> {
-		match owner {
-			NftPurseOwner::Root => Ok(Self::Root),
-			NftPurseOwner::Product(id) => id.parse().map(Self::Product),
-		}
-	}
-
+impl NftPurseOwner {
 	/// Root is the empty tag. A product is the UTF-8 of its id, which
 	/// [`ProductId`] guarantees is never empty.
 	fn tag(&self) -> PurseTag {
@@ -55,13 +37,6 @@ impl PurseOwner {
 		}
 		let id = core::str::from_utf8(&tag.0).ok()?;
 		id.parse().ok().map(Self::Product)
-	}
-
-	fn to_wire(&self) -> NftPurseOwner {
-		match self {
-			Self::Root => NftPurseOwner::Root,
-			Self::Product(id) => NftPurseOwner::Product(id.as_str().to_owned()),
-		}
 	}
 }
 
@@ -140,18 +115,21 @@ impl NftPurses {
 		if name.len() > NFT_PURSE_MAX_NAME_BYTES {
 			return Err(CreateProductPurseError::NameTooLong { len: name.len() });
 		}
-		let owner = PurseOwner::Product(caller.clone());
+		let owner = NftPurseOwner::Product(caller.clone());
 		let created = self.ledger.create_purse(name, owner.tag()).await?;
 		Ok(created)
 	}
 
 	/// Who owns `purse`, or `None` when no purse has that id.
-	pub async fn owner_of(&self, purse: PurseId) -> Result<Option<PurseOwner>, OwnerLookupError> {
+	pub async fn owner_of(
+		&self,
+		purse: PurseId,
+	) -> Result<Option<NftPurseOwner>, OwnerLookupError> {
 		let Some(record) = self.ledger.purse(purse).await? else {
 			return Ok(None);
 		};
 		let unreadable = || OwnerLookupError::UnreadableTag { purse, tag: record.tag.0.clone() };
-		PurseOwner::from_tag(&record.tag).ok_or_else(unreadable).map(Some)
+		NftPurseOwner::from_tag(&record.tag).ok_or_else(unreadable).map(Some)
 	}
 
 	/// Allocates `count` keys in `purse`. The caller checks [`read_grant`] on
@@ -180,7 +158,7 @@ impl NftPurses {
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.
-	pub async fn list_purses(&self, owner: &PurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
+	pub async fn list_purses(&self, owner: &NftPurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
 		let records = self.ledger.purses_tagged(owner.tag()).await?;
 		Ok(records.into_iter().map(listed_purse).collect())
 	}
@@ -188,11 +166,11 @@ impl NftPurses {
 
 /// The grant `caller` needs to read `owner`'s purses, or `None` when they are
 /// its own.
-pub fn read_grant(caller: &ProductId, owner: &PurseOwner) -> Option<RemotePermission> {
-	if matches!(owner, PurseOwner::Product(id) if id == caller) {
+pub fn read_grant(caller: &ProductId, owner: &NftPurseOwner) -> Option<RemotePermission> {
+	if matches!(owner, NftPurseOwner::Product(id) if id == caller) {
 		return None;
 	}
-	Some(RemotePermission::NftPurseRead { owner: owner.to_wire() })
+	Some(RemotePermission::NftPurseRead { owner: owner.clone() })
 }
 
 fn item_key(key: ItemKey) -> NftPurseItemKey {
@@ -223,15 +201,15 @@ mod tests {
 		ProductId::for_test(id)
 	}
 
-	fn product(id: &str) -> PurseOwner {
-		PurseOwner::Product(product_id(id))
+	fn product(id: &str) -> NftPurseOwner {
+		NftPurseOwner::Product(product_id(id))
 	}
 
 	fn create(purses: &NftPurses, caller: &str, name: &str) -> PurseId {
 		block_on(purses.create_purse(&product_id(caller), name.to_owned())).expect("purse created")
 	}
 
-	fn listed(purses: &NftPurses, owner: &PurseOwner) -> Vec<NftPursePurse> {
+	fn listed(purses: &NftPurses, owner: &NftPurseOwner) -> Vec<NftPursePurse> {
 		block_on(purses.list_purses(owner)).expect("purses list")
 	}
 
@@ -252,7 +230,7 @@ mod tests {
 	#[test]
 	fn a_fresh_database_gives_root_the_main_purse() {
 		let (_dir, purses) = purses();
-		assert_eq!(listed(&purses, &PurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
+		assert_eq!(listed(&purses, &NftPurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
 	}
 
 	#[test]
@@ -273,8 +251,9 @@ mod tests {
 	/// owner must fail rather than reach Root's purses.
 	#[test]
 	fn an_empty_product_owner_is_refused() {
-		let refused = PurseOwner::parse(&NftPurseOwner::Product(String::new()));
-		assert_eq!(refused, Err(ProductIdError::Empty));
+		use parity_scale_codec::{Decode, Encode};
+		let encoded = (0u8, "").encode();
+		assert!(NftPurseOwner::decode(&mut encoded.as_slice()).is_err());
 	}
 
 	/// Lookups match tags byte for byte, so an owner a product spells
@@ -283,8 +262,7 @@ mod tests {
 	fn an_owner_is_found_however_the_product_spells_its_id() {
 		let (_dir, purses) = purses();
 		create(&purses, PRODUCT, "mine");
-		let spelled = PurseOwner::parse(&NftPurseOwner::Product("Tickets.DOT".to_owned()))
-			.expect("valid product id");
+		let spelled = NftPurseOwner::Product(product_id("Tickets.DOT"));
 		assert_eq!(listed(&purses, &spelled), vec![purse(0, "mine")]);
 	}
 
@@ -322,13 +300,13 @@ mod tests {
 		let caller = product_id(PRODUCT);
 		assert_eq!(read_grant(&caller, &product(PRODUCT)), None);
 		assert_eq!(
-			read_grant(&caller, &PurseOwner::Root),
+			read_grant(&caller, &NftPurseOwner::Root),
 			Some(RemotePermission::NftPurseRead { owner: NftPurseOwner::Root })
 		);
 		assert_eq!(
 			read_grant(&caller, &product("other.dot")),
 			Some(RemotePermission::NftPurseRead {
-				owner: NftPurseOwner::Product("other.dot".to_owned())
+				owner: NftPurseOwner::Product(product_id("other.dot"))
 			})
 		);
 	}
@@ -341,7 +319,7 @@ mod tests {
 		let created = create(&purses, PRODUCT, "Tickets");
 		let owners = [created, PurseId::MAIN, PurseId(7)]
 			.map(|purse| block_on(purses.owner_of(purse)).expect("owner is read"));
-		assert_eq!(owners, [Some(product(PRODUCT)), Some(PurseOwner::Root), None]);
+		assert_eq!(owners, [Some(product(PRODUCT)), Some(NftPurseOwner::Root), None]);
 	}
 
 	/// A tag that names no product must not be read as Root, which would

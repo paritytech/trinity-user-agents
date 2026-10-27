@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.InMemoryPocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
@@ -21,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.NativePocketRemoval
+import uniffi.truapi.ProductId
 import uniffi.truapi.PocketCard as NativePocketCard
 
 class ProductPocketHostBridgeTest {
@@ -103,7 +103,7 @@ class ProductPocketHostBridgeTest {
     fun `another product's removal request cannot touch this product's card`() = runTest {
         val scope = executionScope()
         store.addCard(loyalty)
-        val otherProduct = ProductId.fromStoredValue("other.dot")
+        val otherProduct = ProductId.parse("other.dot")
         val bridge = ProductPocketHostBridge(otherProduct, store, scope)
         bridge.start {}
         advanceUntilIdle()

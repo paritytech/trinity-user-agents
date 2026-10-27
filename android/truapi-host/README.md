@@ -61,7 +61,14 @@ configuration update in the embedding app's package upgrade.
 
 ## Public surface
 
-The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
+Product identities use `uniffi.truapi.ProductId`. Construct values with
+`ProductId.parse("browse.dot")`, which calls Rust for validation and
+normalization and throws `ProductIdException` for invalid input. Kotlin owns
+the resulting immutable string value; equality, hashing and display do not
+call Rust. Use `.value` at text or persistence boundaries. The value supports
+`Parcelable` for Android navigation.
+
+Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 
 - `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
 - `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.

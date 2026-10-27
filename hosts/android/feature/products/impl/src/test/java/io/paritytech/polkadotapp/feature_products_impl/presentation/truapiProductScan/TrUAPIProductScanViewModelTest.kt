@@ -19,6 +19,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 import uniffi.truapi.CodeFormat
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
@@ -37,7 +38,7 @@ class TrUAPIProductScanViewModelTest {
 
     private fun scan(): Pair<TrUAPIPrompt<ProductScanRequest, HostScan>, TrUAPIProductScanViewModel> {
         val request = HostScannerScanRequest(listOf(CodeFormat.QR), "https://greenmarket.example/r/", null)
-        val prompt = TrUAPIPrompt(ProductScanRequest("greenmarket.dot", ProductExecutionKind.APP, request), HostScan.Dismissed as HostScan)
+        val prompt = TrUAPIPrompt(ProductScanRequest(ProductId.parse("greenmarket.dot"), ProductExecutionKind.APP, request), HostScan.Dismissed as HostScan)
         val scans = mockk<TrUAPIProductScans> { every { current } returns prompt }
         return prompt to TrUAPIProductScanViewModel(router, scans, mockk(), mockk())
     }

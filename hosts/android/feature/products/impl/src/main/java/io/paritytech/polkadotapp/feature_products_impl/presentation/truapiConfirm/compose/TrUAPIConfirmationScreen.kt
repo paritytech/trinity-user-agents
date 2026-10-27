@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfir
 import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfirm.TrUAPIConfirmationDetail
 import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConfirm.TrUAPIConfirmationUiState
 import kotlinx.collections.immutable.persistentListOf
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -65,7 +66,7 @@ private fun TrUAPIConfirmationScreenInternal(
             VerticalSpacer { small }
 
             NovaText(
-                text = stringResource(RCommon.string.truapi_confirm_requested_by, state.productId),
+                text = stringResource(RCommon.string.truapi_confirm_requested_by, state.productId.value),
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.secondary,
             )
@@ -131,7 +132,7 @@ private fun TrUAPIConfirmationScreenPreview() {
         TrUAPIConfirmationScreenInternal(
             state = TrUAPIConfirmationUiState(
                 titleRes = RCommon.string.truapi_confirm_title_create_proof,
-                productId = "browse.dot",
+                productId = ProductId.parse("browse.dot"),
                 details = persistentListOf(
                     TrUAPIConfirmationDetail(
                         RCommon.string.truapi_confirm_label_ring,

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import Products
@@ -9,7 +10,7 @@ import Testing
 struct APSignVrfHandlerTests {
     let confirmation = MockSignVrfConfirmation()
 
-    func makeHandler(callingProductId: ProductId? = "caller.product") -> APSignVrfHandling {
+    func makeHandler(callingProductId: ProductId? = try! ProductId("caller.product.dot")) -> APSignVrfHandling {
         APSignVrfHandler(
             callingProductId: callingProductId,
             confirmationRequester: confirmation,
@@ -24,7 +25,7 @@ struct APSignVrfHandlerTests {
     }
 
     func makePayload(
-        productId: ProductId = "target.product",
+        productId: ProductId = try! ProductId("target.product.dot"),
         items: [VrfTranscriptItem] = [VrfTranscriptItem(label: Data("key".utf8), value: Data([0x01]))]
     ) -> SignVrfPayload {
         SignVrfPayload(
@@ -44,7 +45,7 @@ struct APSignVrfHandlerTests {
         #expect(signature.proof.count == 64)
         #expect(confirmation.requests.count == 1)
         #expect(confirmation.requests.first?.payload == payload)
-        #expect(confirmation.requests.first?.callingProductId == "caller.product")
+        #expect(confirmation.requests.first?.callingProductId.rawValue == "caller.product.dot")
     }
 
     @Test("Rejected prompt throws rejected and never signs")
@@ -60,9 +61,9 @@ struct APSignVrfHandlerTests {
     // callers: sign_vrf is prompt-only on every host.
     @Test("Same-product caller still prompts")
     func sameProductCallerPrompts() async throws {
-        let payload = makePayload(productId: "caller.product")
+        let payload = makePayload(productId: try! ProductId("caller.product.dot"))
 
-        _ = try await makeHandler(callingProductId: "caller.product").signVrf(payload)
+        _ = try await makeHandler(callingProductId: try! ProductId("caller.product.dot")).signVrf(payload)
 
         #expect(confirmation.requests.count == 1)
     }

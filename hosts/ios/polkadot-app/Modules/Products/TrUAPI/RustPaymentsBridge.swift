@@ -90,7 +90,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
 
     // MARK: - TopUpHostBridge
 
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws {
         guard request.into == nil else {
             throw TrUAPIHostPaymentTopUpError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -111,13 +111,13 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         topUps.follow(EngineStatusKey(productId: productId, id: request.id))
     }
 
-    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem? {
         try topUps.current(EngineStatusKey(productId: productId, id: id))
     }
 
     // MARK: - PaymentHostBridge
 
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws {
         guard request.from == nil else {
             throw HostPaymentError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -154,13 +154,13 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
         paymentStatuses.follow(EngineStatusKey(productId: productId, id: request.id))
     }
 
-    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem? {
+    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem? {
         try paymentStatuses.current(EngineStatusKey(productId: productId, id: id))
     }
 
     // MARK: - BalanceHostBridge
 
-    func balance(productId _: String, purse: UInt32?) async throws -> U128 {
+    func balance(productId _: ProductId, purse: UInt32?) async throws -> U128 {
         guard purse == nil else {
             throw HostPaymentBalanceSubscribeError.Unknown(reason: Self.onlyMainPurse)
         }
@@ -240,7 +240,7 @@ private final class RuntimeTarget: @unchecked Sendable {
 // MARK: - Engine status followers
 
 struct EngineStatusKey: Hashable, Sendable {
-    let productId: String
+    let productId: ProductId
     let id: Data
 }
 

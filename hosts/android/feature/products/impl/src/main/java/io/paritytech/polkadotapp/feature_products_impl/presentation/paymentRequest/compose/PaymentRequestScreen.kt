@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Local
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -119,7 +120,7 @@ private fun PaymentRequestScreenPreview() {
         PolkadotTheme {
             PaymentRequestScreenInternal(
                 state = PaymentRequestUiState(
-                    productId = "alice.dot",
+                    productId = ProductId.parse("alice.dot"),
                     amount = TokenAmountModel.mock,
                     step = PaymentRequestStep.Confirm,
                 ),

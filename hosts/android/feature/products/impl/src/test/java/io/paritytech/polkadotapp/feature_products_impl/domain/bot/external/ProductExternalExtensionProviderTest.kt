@@ -5,7 +5,6 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
@@ -17,11 +16,12 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
     private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
-    private val playground = Product(ProductId.fromStoredValue("truapi-playground.paseo"), "TrUAPI Playground", icon = null)
+    private val playground = Product(ProductId.parse("truapi-playground.paseo"), "TrUAPI Playground", icon = null)
 
     private val integrationRepository: ProductIntegrationRepository = mockk()
     private val hostPlacedProducts: HostPlacedProducts = mockk()

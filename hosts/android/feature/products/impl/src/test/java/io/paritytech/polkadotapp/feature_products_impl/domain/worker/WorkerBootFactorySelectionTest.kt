@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 import dagger.Lazy
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -22,10 +21,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactorySelectionTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.parse("chat.dot")
     private val botApi = BindableProductsBotApi(mock(), mock())
 
     private fun TestScope.factory(
@@ -112,7 +112,7 @@ class WorkerBootFactorySelectionTest {
         val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
-        whenever(runtime.acquireWorker(productId.value)).thenThrow(IllegalStateException("acquireWorker boom"))
+        whenever(runtime.acquireWorker(productId)).thenThrow(IllegalStateException("acquireWorker boom"))
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
         val factory = factory(
             settingsWith(enabled = true),

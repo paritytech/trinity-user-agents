@@ -36,7 +36,7 @@ private extension AllowancePromptViewFactory {
             title: LocalizableResource { _ in
                 String(
                     localized: .Products.allowancePromptTitle(
-                        productId: context.productId
+                        productId: context.productId.rawValue
                     )
                 )
             },

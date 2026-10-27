@@ -18,7 +18,7 @@ struct PocketCardKey: Hashable {
     var launchUrl: URL? {
         var components = URLComponents()
         components.scheme = "https"
-        components.host = productId
+        components.host = productId.rawValue
         components.queryItems = [URLQueryItem(name: "card", value: cardId.value)]
 
         return components.url

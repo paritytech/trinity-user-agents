@@ -23,7 +23,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ExplicitInjection
@@ -50,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ProductId
 
 class HostApiProductsScriptExecutor @AssistedInject constructor(
     private val serializer: JsWidgetSerializer,

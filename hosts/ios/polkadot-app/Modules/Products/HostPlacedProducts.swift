@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 
@@ -17,7 +18,7 @@ struct HostPlacedProduct: Sendable {
     let fallbackName: String
 
     /// Reserved identity as a function of the network TLD, so one entry covers every chain.
-    let productId: @Sendable (String) -> String
+    let productId: @Sendable (String) throws -> ProductId
 }
 
 enum HostPlacedProducts {
@@ -29,11 +30,12 @@ enum HostPlacedProducts {
     /// Read against the candidate's own TLD, so it answers without the chain read that listing
     /// needs — the trick Pocket's `pinned(key:)` uses. An exact match, not a prefix test, so
     /// `app.dim2.dot` is a different publisher and is not host-placed.
-    static func contains(productId: String) -> Bool {
-        guard let tld = productId.components(separatedBy: ".").last, !tld.isEmpty else {
+    static func contains(productId: ProductId) -> Bool {
+        let labels = productId.rawValue.split(separator: ".")
+        guard labels.count > 1, let tld = labels.last else {
             return false
         }
 
-        return all.contains { $0.productId(tld) == productId }
+        return all.contains { (try? $0.productId(String(tld))) == productId }
     }
 }

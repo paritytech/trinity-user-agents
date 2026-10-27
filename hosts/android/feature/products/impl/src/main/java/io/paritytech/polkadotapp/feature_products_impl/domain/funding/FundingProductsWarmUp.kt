@@ -9,8 +9,8 @@ import io.paritytech.polkadotapp.common.utils.mapAsync
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 interface FundingProductsWarmUp {

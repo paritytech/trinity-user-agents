@@ -5,7 +5,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -26,12 +25,13 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.verifyNoMoreInteractions
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
 import java.net.URI
 
 class WebViewPermissionClientTest {
-    private val productId = ProductId.fromStoredValue("product.paseo")
+    private val productId = ProductId.parse("product.paseo")
     private var currentProduct = productId
     private val guard = mock(ProductPermissionGuard::class.java)
     private val execution = mock(TrUAPIProductExecution::class.java)
@@ -82,7 +82,7 @@ class WebViewPermissionClientTest {
     @Test
     fun `a different current product cannot borrow the execution authorization`() = runBlocking<Unit> {
         client.useTrUAPIPermissions(productId, execution, scope)
-        currentProduct = ProductId.fromStoredValue("other.paseo")
+        currentProduct = ProductId.parse("other.paseo")
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 

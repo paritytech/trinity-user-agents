@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import KeyDerivation
@@ -166,7 +167,7 @@ private extension DefaultProductWorkerFactory {
         guard let published = ProductWorkerSource.published(for: resolved, serving: .chat) else { return }
 
         do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId.rawValue)
         } catch {
             logger.error("Failed to warm the worker archive \(published.contentId): \(error)")
         }

@@ -1,3 +1,4 @@
+import type { ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -62,7 +63,7 @@ export type LogLevel = string;
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
   /** Stable identifier used to scope product accounts, permissions, and storage. */
-  productId: string;
+  productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
   executionKind?: ProductExecutionKind;
   /** Metadata describing the host application. */
@@ -153,7 +154,7 @@ export interface RenderSink {
  * one left, so the host may stop it.
  */
 export interface WorkerDemandChange {
-  productId: string;
+  productId: ProductId;
   wanted: boolean;
 }
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import BigInt
@@ -6,21 +7,21 @@ import SubstrateSdk
 
 struct IncomingPaymentModelTests {
     @Test func groupIdIsProductBoundAndPrefixed() {
-        #expect(IncomingPayment.groupId(productId: "prodA", paymentId: "pay1") == "top up:prodA:pay1")
+        #expect(IncomingPayment.groupId(productId: try! ProductId("prodA.dot"), paymentId: "pay1") == "top up:proda.dot:pay1")
 
         let payment = IncomingPayment(
             paymentId: "pay1",
-            productId: "prodA",
+            productId: try! ProductId("prodA.dot"),
             amount: 0,
             createdAt: Date(),
             outcome: nil
         )
-        #expect(payment.groupId == "top up:prodA:pay1")
+        #expect(payment.groupId == "top up:proda.dot:pay1")
     }
 
     @Test func isActiveReflectsOutcome() {
         func make(_ outcome: IncomingPaymentTerminalOutcome?) -> IncomingPayment {
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 0, createdAt: Date(), outcome: outcome)
+            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 0, createdAt: Date(), outcome: outcome)
         }
         #expect(make(nil).isActive)
         #expect(!make(.claimed).isActive)

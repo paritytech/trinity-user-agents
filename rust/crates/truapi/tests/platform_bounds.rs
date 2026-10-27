@@ -124,7 +124,7 @@ fn product_id_validation_cases() {
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
 		assert_eq!(
 			domain.parse::<ProductId>(),
-			Err(ProductIdError::Invalid { product_id: domain.to_string() }),
+			Err(ProductIdError::Invalid { input: domain.to_string() }),
 			"{domain} must not be accepted as a product identifier"
 		);
 	}

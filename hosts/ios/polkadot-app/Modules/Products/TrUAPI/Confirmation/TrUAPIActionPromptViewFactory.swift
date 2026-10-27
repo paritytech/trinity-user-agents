@@ -22,7 +22,7 @@ enum TrUAPIActionPromptViewFactory {
         switch context.request {
         case let .productSubtree(productId):
             title = String(localized: .Products.actionProductSubtreeTitle)
-            body = String(localized: .Products.actionProductSubtreeBody(productId: productId))
+            body = String(localized: .Products.actionProductSubtreeBody(productId: productId.rawValue))
             iconName = "person.crop.circle"
         }
 

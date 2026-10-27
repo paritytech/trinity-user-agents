@@ -27,6 +27,7 @@ import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import java.io.Closeable
@@ -69,7 +70,7 @@ class ContainerHttpAuthorizationTest {
         )
 
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.paseo"), kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
                     MockWebServer().use { server ->

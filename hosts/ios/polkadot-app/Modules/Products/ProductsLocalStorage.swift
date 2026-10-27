@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import Products
@@ -6,12 +7,12 @@ import AsyncExtensions
 final class ProductsLocalStorage: ProductLocalStorageProtocol, @unchecked Sendable {
     private static let keyPrefix = "io.polkadotapp.ProductStorage"
 
-    private let productId: String
+    private let productId: ProductId
     private let settingsManager: SettingsManagerProtocol
     private let lock = NSLock()
     private var continuations: [String: [UUID: AsyncStream<String?>.Continuation]] = [:]
 
-    init(productId: String, settingsManager: SettingsManagerProtocol) {
+    init(productId: ProductId, settingsManager: SettingsManagerProtocol) {
         self.productId = productId
         self.settingsManager = settingsManager
     }

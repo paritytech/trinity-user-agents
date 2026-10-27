@@ -38,7 +38,7 @@ struct ProductNavigationTargetResolverTests {
             return
         }
 
-        #expect(page.host.toDotDomain() == "wallet.dot")
+        #expect(page.host.toDotDomain().rawValue == "wallet.dot")
     }
 
     @Test("Resolves allowlisted schemes to external URLs", arguments: [

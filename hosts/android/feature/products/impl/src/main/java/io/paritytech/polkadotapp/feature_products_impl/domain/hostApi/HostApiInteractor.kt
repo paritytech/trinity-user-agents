@@ -44,7 +44,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.Deriv
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
@@ -84,6 +83,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -321,7 +321,7 @@ class HostApiInteractor @Inject constructor(
 
     suspend fun requestNftPurseReadDecision(
         callingProductId: ProductId,
-        ownerProductId: String?,
+        ownerProductId: ProductId?,
     ): Result<PermissionDecision> = runCatching {
         permissionRequester.prompt(callingProductId, ProductPermission.NftPurseRead(ownerProductId))
     }

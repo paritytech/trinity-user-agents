@@ -5,7 +5,7 @@ import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.HostRejection
-import java.text.Normalizer
+import uniffi.truapi.ProductId
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
@@ -16,10 +16,8 @@ import java.text.Normalizer
  */
 class EncryptedHostStorage(
     private val preferences: EncryptedPreferences,
-    private val productId: String,
+    private val productId: ProductId,
 ) : HostStorage {
-    private val normalizedProductId = normalizeProductId(productId)
-
     override suspend fun read(key: String): ByteArray? = readValue(preferences, "${productStorageNamespace(ownerOf(key))}/$key")
 
     override suspend fun write(key: String, value: ByteArray) {
@@ -34,8 +32,7 @@ class EncryptedHostStorage(
 
     private fun qualify(key: String) = "${productStorageNamespace(productId)}/$key"
 
-    private fun ownerOf(key: String): String =
-        productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
+    private fun ownerOf(key: String): ProductId = productStorageKeyOwner(key) ?: productId
 }
 
 /**
@@ -70,24 +67,20 @@ class EncryptedHostCoreStorage(
 }
 
 /** Namespace for one product's core-facing local storage. */
-fun productStorageNamespace(productId: String): String = "truapi/product/$productId"
+fun productStorageNamespace(productId: ProductId): String = "truapi/product/$productId"
 
 private const val PRODUCT_STORAGE_KEY_PREFIX = "truapi:product-storage:v1:"
 
 /** Mirrors `ProductStorageKey::decode` in truapi: `truapi:product-storage:v1:<byte length>:<product id>:<key>`. */
-internal fun productStorageKeyOwner(key: String): String? {
+internal fun productStorageKeyOwner(key: String): ProductId? {
     if (!key.startsWith(PRODUCT_STORAGE_KEY_PREFIX)) return null
     val rest = key.removePrefix(PRODUCT_STORAGE_KEY_PREFIX).encodeToByteArray()
     val colon = rest.indexOf(':'.code.toByte()).takeIf { it > 0 } ?: return null
     val length = rest.decodeToString(0, colon).toIntOrNull()?.takeIf { it > 0 } ?: return null
     val start = colon + 1
     if (length > rest.size - start - 1 || rest[start + length] != ':'.code.toByte()) return null
-    return runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+    return runCatching { ProductId.parse(rest.decodeToString(start, start + length, throwOnInvalidSequence = true)) }.getOrNull()
 }
-
-/** Matches the normalization in the core's `ProductId::parse`, the form written into keys. */
-internal fun normalizeProductId(productId: String): String =
-    Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 
 /**
  * `EncryptionUtil` reports both a failed encrypt and a failed decrypt by

@@ -147,7 +147,7 @@ private extension SPARustRuntime {
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
         let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
-        let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
 
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,

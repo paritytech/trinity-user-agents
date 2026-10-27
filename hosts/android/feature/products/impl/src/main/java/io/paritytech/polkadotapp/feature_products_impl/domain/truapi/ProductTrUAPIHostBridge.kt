@@ -21,7 +21,6 @@ import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
@@ -54,6 +53,7 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
@@ -133,7 +133,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         card: ExpandedCardFace?,
     ) = object : HostBridge {
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
+            EncryptedHostStorage(encryptedPreferences, callingProductId)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
@@ -195,7 +195,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+            confirmationLauncher.decide(review, requesterFallback = callingProductId)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -293,7 +293,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
-                configuration = ProductExecutionConfig(productId.value, kind),
+                configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
                 pocket = pocket,
                 game = gameBridge(productId),
@@ -368,11 +368,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
  * answers yes/no and never produces a signature. A review the app cannot
  * describe fails closed, but that is a mapping bug rather than the normal
  * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * not carry a product id itself; null denotes the host.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
-    requesterFallback: String,
+    requesterFallback: ProductId? = null,
 ): Boolean {
     val confirmation = runCatching { review.toConfirmation(requesterFallback) }
         .getOrElse {
@@ -422,7 +422,7 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
 }
 
 /** The owning product, or `null` for purses of the user's own account. */
-private val NftPurseOwner.productId: String?
+private val NftPurseOwner.productId: ProductId?
     get() = when (this) {
         is NftPurseOwner.Product -> v1
         NftPurseOwner.Root -> null

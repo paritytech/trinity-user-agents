@@ -3,15 +3,15 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
-internal val gameProduct = ProductId.fromStoredValue("game.dot")
-internal val personhoodProduct = ProductId.fromStoredValue("peopl.dot")
+internal val gameProduct = ProductId.parse("game.dot")
+internal val personhoodProduct = ProductId.parse("peopl.dot")
 
 internal fun cardKey(productId: ProductId, cardId: String) = PocketCardKey(productId, PocketCardId(cardId))
 

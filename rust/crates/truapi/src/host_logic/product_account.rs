@@ -22,7 +22,7 @@ use schnorrkel::{
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::platform::ProductId;
+use crate::{latest::ProductIdError, platform::ProductId};
 
 const JUNCTION_ID_LEN: usize = 32;
 const PRODUCT_JUNCTION: &str = "product";
@@ -38,8 +38,8 @@ const RING_VRF_ROOT_KEY: &[u8] = b"ring-vrf";
 /// The reserved identity product id on the network with `network_suffix`:
 /// `uid.dot` on Polkadot, `uid.paseo` on paseo-next-v2, `uid.testnet` on
 /// previewnet.
-pub fn identity_product_id(network_suffix: &str) -> String {
-	format!("{IDENTITY_LABEL}.{network_suffix}")
+pub fn identity_product_id(network_suffix: &str) -> Result<ProductId, ProductIdError> {
+	format!("{IDENTITY_LABEL}.{network_suffix}").parse()
 }
 
 /// The reserved personhood product id on the network with `network_suffix`:
@@ -47,8 +47,8 @@ pub fn identity_product_id(network_suffix: &str) -> String {
 /// previewnet. It is the product id a personhood app is opened under on that
 /// network, so the keys derived here are the ones such an app owns through
 /// the RFC-0024 registry.
-pub fn personhood_product_id(network_suffix: &str) -> String {
-	format!("{PERSONHOOD_LABEL}.{network_suffix}")
+pub fn personhood_product_id(network_suffix: &str) -> Result<ProductId, ProductIdError> {
+	format!("{PERSONHOOD_LABEL}.{network_suffix}").parse()
 }
 
 /// Substrate sr25519 signing-context string. Shared by every sr25519 signature
@@ -58,6 +58,9 @@ pub const SR25519_SIGNING_CONTEXT: &[u8] = b"substrate";
 /// Error deriving product accounts or keys.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ProductAccountError {
+	/// The network does not identify a supported product namespace.
+	#[error(transparent)]
+	ProductId(#[from] ProductIdError),
 	/// Root public key bytes are not a valid sr25519 point.
 	#[error("invalid sr25519 root public key")]
 	InvalidRootPublicKey,
@@ -121,7 +124,7 @@ pub fn derive_identity_keypair(
 	let root = derive_root_keypair_from_entropy(entropy)?;
 	let subtree = derive_hard_path_from_keypair(
 		root,
-		&[PRODUCT_JUNCTION, &identity_product_id(network_suffix)],
+		&[PRODUCT_JUNCTION, identity_product_id(network_suffix)?.as_str()],
 	)?;
 	Ok(subtree.derived_key_simple(ChainCode(index_bytes(0)), []).0)
 }
@@ -129,14 +132,20 @@ pub fn derive_identity_keypair(
 /// Derive the RFC-0022 full-person ring-VRF entropy on the network with
 /// `network_suffix`:
 /// `hash(root_entropy, "ring-vrf")//peopl.<network_suffix>//index_bytes(0)`.
-pub fn derive_full_person_ring_vrf_entropy(root_entropy: &[u8], network_suffix: &str) -> [u8; 32] {
+pub fn derive_full_person_ring_vrf_entropy(
+	root_entropy: &[u8],
+	network_suffix: &str,
+) -> Result<[u8; 32], ProductAccountError> {
 	derive_person_ring_vrf_entropy(root_entropy, network_suffix, 0)
 }
 
 /// Derive the RFC-0022 light-person ring-VRF entropy on the network with
 /// `network_suffix`:
 /// `hash(root_entropy, "ring-vrf")//peopl.<network_suffix>//index_bytes(1)`.
-pub fn derive_lite_person_ring_vrf_entropy(root_entropy: &[u8], network_suffix: &str) -> [u8; 32] {
+pub fn derive_lite_person_ring_vrf_entropy(
+	root_entropy: &[u8],
+	network_suffix: &str,
+) -> Result<[u8; 32], ProductAccountError> {
 	derive_person_ring_vrf_entropy(root_entropy, network_suffix, 1)
 }
 
@@ -144,15 +153,12 @@ fn derive_person_ring_vrf_entropy(
 	root_entropy: &[u8],
 	network_suffix: &str,
 	index: u32,
-) -> [u8; 32] {
-	ring_vrf_entropy(
+) -> Result<[u8; 32], ProductAccountError> {
+	derive_ring_vrf_entropy(
 		root_entropy,
-		&personhood_product_id(network_suffix),
+		&personhood_product_id(network_suffix)?,
 		&truapi::v01::DerivationIndex::Index(index),
 	)
-	// The only failing junction is an all-digit string outside `u64`, and
-	// this one always starts with the `peopl.` label.
-	.expect("the reserved personhood product id is a valid junction")
 }
 
 /// Derive arbitrary RFC-0022 ring-VRF entropy:
@@ -162,7 +168,8 @@ pub fn derive_ring_vrf_entropy(
 	product_id: &ProductId,
 	derivation_index: &truapi::v01::DerivationIndex,
 ) -> Result<[u8; 32], ProductAccountError> {
-	ring_vrf_entropy(root_entropy, product_id.as_str(), derivation_index)
+	let domain = derive_ring_vrf_domain_entropy(root_entropy, product_id)?;
+	Ok(derive_ring_vrf_entropy_from_domain(&domain, derivation_index))
 }
 
 /// Derive the RFC-0024 AutoSigning entropy for a product in the ring-VRF tree.
@@ -170,27 +177,8 @@ pub fn derive_ring_vrf_domain_entropy(
 	root_entropy: &[u8],
 	product_id: &ProductId,
 ) -> Result<[u8; 32], ProductAccountError> {
-	ring_vrf_domain_entropy(root_entropy, product_id.as_str())
-}
-
-/// [`derive_ring_vrf_entropy`] for a junction string that is not parsed as a
-/// product id, such as the reserved personhood path.
-fn ring_vrf_entropy(
-	root_entropy: &[u8],
-	junction: &str,
-	derivation_index: &truapi::v01::DerivationIndex,
-) -> Result<[u8; 32], ProductAccountError> {
-	let domain = ring_vrf_domain_entropy(root_entropy, junction)?;
-	Ok(derive_ring_vrf_entropy_from_domain(&domain, derivation_index))
-}
-
-/// [`derive_ring_vrf_domain_entropy`] for a junction string used as written.
-fn ring_vrf_domain_entropy(
-	root_entropy: &[u8],
-	junction: &str,
-) -> Result<[u8; 32], ProductAccountError> {
 	let root = blake2b256_keyed(root_entropy, RING_VRF_ROOT_KEY);
-	Ok(blake2b256_keyed(&root, &create_chain_code(junction)?))
+	Ok(blake2b256_keyed(&root, &create_chain_code(product_id.as_str())?))
 }
 
 /// Derive one registered member key from an RFC-0024 product-domain entropy.
@@ -455,6 +443,14 @@ mod tests {
 	}
 
 	#[test]
+	fn reserved_id_derivation_rejects_unknown_namespaces() {
+		assert_eq!(identity_product_id("dot"), Ok(ProductId::for_test("uid.dot")));
+		assert_eq!(personhood_product_id("paseo"), Ok(ProductId::for_test("peopl.paseo")));
+		assert!(identity_product_id("com").is_err());
+		assert!(derive_full_person_ring_vrf_entropy(&[1; 32], "com").is_err());
+	}
+
+	#[test]
 	fn person_ring_vrf_entropy_matches_ios_vectors() {
 		let root_entropy: Vec<u8> = (1..=32).collect();
 		assert_eq!(
@@ -462,11 +458,11 @@ mod tests {
 			"372b08255c7798fe3193756296005adc4c44adb9f3986fb718aa98a48b4bf725"
 		);
 		assert_eq!(
-			hex::encode(derive_full_person_ring_vrf_entropy(&root_entropy, "dot")),
+			hex::encode(derive_full_person_ring_vrf_entropy(&root_entropy, "dot").unwrap()),
 			"c47086f94a7f4c05b7afd9f2339d3fea168f3823b5424ba1f7b31043d8ef60af"
 		);
 		assert_eq!(
-			hex::encode(derive_lite_person_ring_vrf_entropy(&root_entropy, "dot")),
+			hex::encode(derive_lite_person_ring_vrf_entropy(&root_entropy, "dot").unwrap()),
 			"8d7f5e1510a7e8d813887e100f5a260ec9de60e68695477b93360ee7e3d16a9f"
 		);
 	}
@@ -492,18 +488,18 @@ mod tests {
 		];
 		for (suffix, full, lite) in vectors {
 			assert_eq!(
-				hex::encode(derive_full_person_ring_vrf_entropy(&root_entropy, suffix)),
+				hex::encode(derive_full_person_ring_vrf_entropy(&root_entropy, suffix).unwrap()),
 				full,
 				"full person key under peopl.{suffix}"
 			);
 			assert_eq!(
-				hex::encode(derive_lite_person_ring_vrf_entropy(&root_entropy, suffix)),
+				hex::encode(derive_lite_person_ring_vrf_entropy(&root_entropy, suffix).unwrap()),
 				lite,
 				"light person key under peopl.{suffix}"
 			);
 			// The reserved keys are exactly what a `peopl.<suffix>` product
 			// registers through RFC-0024 at indexes 0 and 1: no special case.
-			let product_id = ProductId::for_test(&personhood_product_id(suffix));
+			let product_id = personhood_product_id(suffix).unwrap();
 			for (index, expected) in [(0u32, full), (1, lite)] {
 				assert_eq!(
 					hex::encode(
@@ -586,7 +582,7 @@ mod tests {
 			);
 			let subtree = derive_product_subtree_keypair(
 				&derive_root_keypair_from_entropy(&entropy).unwrap(),
-				&ProductId::for_test(&identity_product_id(suffix)),
+				&identity_product_id(suffix).unwrap(),
 			)
 			.unwrap();
 			assert_eq!(

@@ -6,8 +6,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**

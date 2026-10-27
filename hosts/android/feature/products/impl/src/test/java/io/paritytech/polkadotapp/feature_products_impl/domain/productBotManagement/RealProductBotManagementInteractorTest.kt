@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagem
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.UninstallProductUseCase
@@ -17,6 +16,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 import java.util.concurrent.Executors
 
 class RealProductBotManagementInteractorTest {
@@ -149,7 +149,7 @@ class RealProductBotManagementInteractorTest {
         const val APP_URL = "http://127.0.0.1:5173/"
         const val WORKER_URL = "http://127.0.0.1:5173/worker.js"
 
-        val PRODUCT = ProductId.fromStoredValue("coinflip.dot")
+        val PRODUCT = ProductId.parse("coinflip.dot")
 
         val CARD = DebugPocketCard(
             cardId = PocketCardId("loyalty"),

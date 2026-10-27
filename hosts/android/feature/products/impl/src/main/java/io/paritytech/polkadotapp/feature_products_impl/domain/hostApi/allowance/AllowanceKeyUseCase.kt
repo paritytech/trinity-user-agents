@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ap
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.OnExistingAllowancePolicy
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.requestResourceAllocation
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.AllowanceDeniedException
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.AllowanceUnavailableException
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**

@@ -514,7 +514,7 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 		.map_err(IdentityDerivationError::from)?;
 	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity_path =
-		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
+		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix)?);
 
 	for (label, public) in
 		[("<root>", root.public.to_bytes()), (identity_path.as_str(), identity.public.to_bytes())]

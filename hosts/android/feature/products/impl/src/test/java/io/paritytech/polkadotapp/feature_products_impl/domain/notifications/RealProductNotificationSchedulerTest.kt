@@ -4,7 +4,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
 import android.app.AlarmManager
 import android.content.Context
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
@@ -14,6 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -22,7 +22,7 @@ class RealProductNotificationSchedulerTest {
     private val alarmManager: AlarmManager = mock()
     private val repository: ScheduledProductNotificationRepository = mock()
 
-    private val productId = ProductId.fromStoredValue("acme.dot")
+    private val productId = ProductId.parse("acme.dot")
     private val scheduledAt = Instant.fromEpochMilliseconds(2_000_000_000_000L)
 
     private lateinit var scheduler: RealProductNotificationScheduler

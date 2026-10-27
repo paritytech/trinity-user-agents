@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
@@ -24,12 +23,13 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
 
 class ProductChatHostBridgeTest {
-    private val productId = ProductId.fromStoredValue("dim2.dot")
+    private val productId = ProductId.parse("dim2.dot")
 
     @Test
     fun `a text message is posted to the room the core names`() = runTest {

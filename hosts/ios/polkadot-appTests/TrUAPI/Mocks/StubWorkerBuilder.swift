@@ -54,7 +54,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     private let buildDelay: Duration
     /// The only product whose build waits on `buildDelay`, so a barrier product never waits.
-    private let slowProduct: ProductId = "game.paseo"
+    private let slowProduct: ProductId = try! ProductId("game.paseo")
     /// How long the first worker sits inside `start()` before failing. The
     /// window a stop and a restart have to land in.
     private let firstStartFailsAfter: Duration?

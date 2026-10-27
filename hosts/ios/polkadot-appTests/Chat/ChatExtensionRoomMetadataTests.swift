@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import Keystore_iOS
@@ -117,7 +118,7 @@ private final class StubRoomBot: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Jollity",
-            icon: .product(domain: identifier),
+            icon: .product(domain: try! ProductId(identifier)),
             input: .empty,
             moreActions: []
         )

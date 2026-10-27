@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketAddCard.PocketAddCardInteractor
@@ -32,7 +31,7 @@ class PocketAddCardViewModel @Inject constructor(
     private val router: ProductsRouter,
 ) : BaseViewModel(), PocketAddCardContract {
     private val payload = savedStateHandle.getPayload<PocketAddCardPayload>()
-    private val productId = ProductId.fromStoredValue(payload.productId)
+    private val productId = payload.productId
 
     private val adding = MutableStateFlow(false)
 

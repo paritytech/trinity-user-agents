@@ -48,7 +48,7 @@ final class ProductBotFactory {
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
-                productId: product.identifier,
+                productId: product.id,
                 workers: workers,
                 logger: logger
             )
@@ -61,7 +61,7 @@ final class ProductBotFactory {
             )
         }
 
-        let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
+        let runtime = ManagedChatRuntime(productId: product.id, manager: workerManager)
         return ProductBot(
             product: product,
             description: description,

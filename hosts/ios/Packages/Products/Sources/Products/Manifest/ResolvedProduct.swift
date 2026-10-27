@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Manifest products and legacy ones share this shape, so callers branch on `executables`
@@ -36,7 +37,7 @@ public struct ResolvedProduct: Hashable, Sendable {
     public static func legacy(id: ProductId, displayName: String? = nil) -> ResolvedProduct {
         ResolvedProduct(
             id: id,
-            displayName: displayName ?? id,
+            displayName: displayName ?? id.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(

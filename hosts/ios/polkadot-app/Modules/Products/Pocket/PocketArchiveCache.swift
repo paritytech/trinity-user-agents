@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
@@ -8,7 +9,7 @@ import Products
 /// into. Nil means nothing has been fetched for that name yet.
 enum PocketArchiveCache {
     static let onDisk: @Sendable (ProductId) -> URL? = { productId in
-        guard let hash = ContentHashCache.shared.getContentHash(name: productId) else { return nil }
+        guard let hash = ContentHashCache.shared.getContentHash(name: productId.rawValue) else { return nil }
 
         return DotNsContentStorage().getContentDirectory(contentHash: hash)
     }
@@ -22,7 +23,7 @@ enum PocketArchiveCache {
 /// archive holding them unpacked on disk. The subname dotNS fixes by convention
 /// needs no read, so it answers whenever its archive is already there.
 struct PocketWorkerArchiveName: Sendable {
-    private let conventional: ProductId
+    private let conventional: ProductId?
     private let published: @Sendable () async -> ProductId?
     private let onDisk: @Sendable (ProductId) -> URL?
 
@@ -31,8 +32,8 @@ struct PocketWorkerArchiveName: Sendable {
         published: @escaping @Sendable () async -> ProductId?,
         onDisk: @escaping @Sendable (ProductId) -> URL? = PocketArchiveCache.onDisk
     ) {
-        conventional = ProductManifestRecords.subname(
-            base: ProductManifestRecords.baseName(of: productId.lowercased()),
+        conventional = try? ProductManifestRecords.subname(
+            base: ProductManifestRecords.baseName(of: productId),
             kind: .worker
         )
         self.published = published
@@ -42,7 +43,7 @@ struct PocketWorkerArchiveName: Sendable {
     /// Nothing unpacked under the conventional subname is a worker this device
     /// has never fetched, and only the manifest can name where that one lives.
     func resolve() async -> ProductId? {
-        if onDisk(conventional) != nil { return conventional }
+        if let conventional, onDisk(conventional) != nil { return conventional }
 
         return await published()
     }

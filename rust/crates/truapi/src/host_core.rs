@@ -2253,7 +2253,7 @@ mod tests {
 		futures::executor::block_on(runtime.set_permission_authorization_status(
 			&requester,
 			PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: "peopl.dot".to_string(),
+				target_product_id: "peopl.dot".parse().expect("valid product id"),
 			},
 			PermissionAuthorizationStatus::NotDetermined,
 		))
@@ -4176,7 +4176,7 @@ mod tests {
 			&host,
 			&truapi::CallContext::default(),
 			HostLocalStorageReadRequest::V2(truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some("wallet.dot".parse().expect("valid product id")),
 				key: "k".to_string(),
 			}),
 		));

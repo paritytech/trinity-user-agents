@@ -22,6 +22,7 @@ import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
 import uniffi.truapi.ProductAccountTxPayload
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.RawPayload
 import uniffi.truapi.ResourceAllocationReview
@@ -37,7 +38,7 @@ import uniffi.truapi.ProductAccountId as NativeProductAccountId
 private const val ALICE_SS58 = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
 
 class ConfirmationReviewMappingTest {
-    private val caller = "caller-product.dot"
+    private val caller = ProductId.parse("caller-product.dot")
 
     @OptIn(ExperimentalStdlibApi::class)
     private fun aliceAccountId() =
@@ -54,7 +55,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Transaction
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot"), DerivationIndex32.fromUInt(7u)), body.payload.account)
         assertArrayEquals(byteArrayOf(0xde.toByte(), 0xad.toByte()), body.payload.method)
         assertEquals(listOf("CheckNonce", "CheckWeight"), body.payload.signedExtensions)
         assertEquals(4, body.payload.version)
@@ -108,7 +109,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.Raw
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot"), DerivationIndex32.fromUInt(7u)), body.payload.account)
         val content = body.payload.type as RawPayloadContent.Bytes
         assertArrayEquals(byteArrayOf(0xca.toByte(), 0xfe.toByte()), content.data)
     }
@@ -178,7 +179,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.CreateTransaction
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.payload.signer)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot"), DerivationIndex32.fromUInt(7u)), body.payload.signer)
         val extension = body.payload.extensions.single()
         assertEquals("CheckNonce", extension.id)
         assertArrayEquals(byteArrayOf(1), extension.explicit.value)
@@ -208,7 +209,7 @@ class ConfirmationReviewMappingTest {
     fun `sign vrf maps transcript`() {
         val review = UserConfirmationReview.SignVrf(
             SignVrfReview(
-                callingProductId = "caller-product.dot",
+                callingProductId = ProductId.parse("caller-product.dot"),
                 request = HostAccountSignVrfRequest(
                     account = nativeAccount(),
                     transcriptLabel = "pop:airdrop".toByteArray(),
@@ -221,7 +222,7 @@ class ConfirmationReviewMappingTest {
 
         val body = review.signingRequest() as SigningRequestBody.SignVrf
 
-        assertEquals(ProductAccountId("demo-product.dot", DerivationIndex32.fromUInt(7u)), body.account)
+        assertEquals(ProductAccountId(ProductId.parse("demo-product.dot"), DerivationIndex32.fromUInt(7u)), body.account)
         assertArrayEquals("pop:airdrop".toByteArray(), body.transcriptLabel)
         val item = body.items.single()
         assertArrayEquals("round".toByteArray(), item.label.value)
@@ -247,10 +248,10 @@ class ConfirmationReviewMappingTest {
 
     private fun signVrfReview(derivationIndex: DerivationIndex) = UserConfirmationReview.SignVrf(
         SignVrfReview(
-            callingProductId = "caller-product.dot",
+            callingProductId = ProductId.parse("caller-product.dot"),
             request = HostAccountSignVrfRequest(
                 account = NativeProductAccountId(
-                    dotNsIdentifier = "demo-product.dot",
+                    dotNsIdentifier = ProductId.parse("demo-product.dot"),
                     derivationIndex = derivationIndex,
                 ),
                 transcriptLabel = ByteArray(0),
@@ -271,47 +272,47 @@ class ConfirmationReviewMappingTest {
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.StatementSign
 
-        assertEquals("demo-product.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("demo-product.dot"), confirmation.requesterProductId)
         assertEquals(3, confirmation.payloadSize)
     }
 
     @Test
     fun `account access maps both products`() {
         val review = UserConfirmationReview.AccountAccess(
-            AccountAccessReview(requestingProductId = "caller.dot", targetProductId = "target.dot"),
+            AccountAccessReview(requestingProductId = ProductId.parse("caller.dot"), targetProductId = ProductId.parse("target.dot")),
         )
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.AccountAccess
 
-        assertEquals("caller.dot", confirmation.requesterProductId)
-        assertEquals("target.dot", confirmation.targetProductId)
+        assertEquals(ProductId.parse("caller.dot"), confirmation.requesterProductId)
+        assertEquals(ProductId.parse("target.dot"), confirmation.targetProductId)
     }
 
     @Test
     fun `product subtree maps the product as its own requester`() {
-        val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = "self.dot"))
+        val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = ProductId.parse("self.dot")))
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ProductSubtree
 
-        assertEquals("self.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("self.dot"), confirmation.requesterProductId)
     }
 
     @Test
     fun `identity disclosure maps the product`() {
         val review = UserConfirmationReview.IdentityDisclosure(
-            IdentityDisclosureReview(productId = "discloser.dot"),
+            IdentityDisclosureReview(productId = ProductId.parse("discloser.dot")),
         )
 
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.IdentityDisclosure
 
-        assertEquals("discloser.dot", confirmation.requesterProductId)
+        assertEquals(ProductId.parse("discloser.dot"), confirmation.requesterProductId)
     }
 
     @Test
     fun `resource allocation labels every resource`() {
         val review = UserConfirmationReview.ResourceAllocation(
             ResourceAllocationReview(
-                callingProductId = "caller.dot",
+                callingProductId = ProductId.parse("caller.dot"),
                 resources = listOf(
                     AllocatableResource.StatementStoreAllowance,
                     AllocatableResource.AutoSigning,
@@ -328,7 +329,7 @@ class ConfirmationReviewMappingTest {
         (toConfirmation(caller) as TrUAPIConfirmation.Signing).request
 
     private fun nativeAccount() = NativeProductAccountId(
-        dotNsIdentifier = "demo-product.dot",
+        dotNsIdentifier = ProductId.parse("demo-product.dot"),
         derivationIndex = DerivationIndex.Index(7u),
     )
 

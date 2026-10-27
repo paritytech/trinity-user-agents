@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import BigInt
 import ExtrinsicService
@@ -102,7 +103,7 @@ final class ExternalPaymentService: ExternalPaymentServicing, @unchecked Sendabl
     }
 
     func initiatePayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -128,7 +129,7 @@ final class ExternalPaymentService: ExternalPaymentServicing, @unchecked Sendabl
     }
 
     func subscribePaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus> {
         let id = ExternalPayment.identifier(productId: productId, paymentId: paymentId)

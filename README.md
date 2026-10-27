@@ -73,6 +73,7 @@ npm install @parity/truapi
 
 ```ts
 import {
+  asProductId,
   createClient,
   createMessagePortProvider,
   createTransport,
@@ -82,9 +83,17 @@ const transport = createTransport(createMessagePortProvider(port));
 const truapi = createClient(transport);
 
 const result = await truapi.accountManagement.accountGet({
-  productAccountId: { dotNsIdentifier: "my-product.dot", derivationIndex: { tag: "Index", value: 0 } },
+  productAccountId: { dotNsIdentifier: asProductId("my-product.dot"), derivationIndex: { tag: "Index", value: 0 } },
 });
 ```
+
+Product identifiers use `ProductId` throughout the protocol and host APIs.
+The client receives typed IDs from the host; `asProductId` brands an explicit
+string without parsing or loading WASM. Rust validates IDs at the host boundary.
+Swift's `try ProductId("my-product.dot")` and Kotlin's
+`ProductId.parse("my-product.dot")` call Rust once and return immutable values
+owned by the native application. Browser hosts can use their existing worker
+runtime's `parseProductId` method for the same validation and normalization.
 
 The transport retries iframe bootstrap until the host channel arrives and rejects unanswered
 requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` to override it.

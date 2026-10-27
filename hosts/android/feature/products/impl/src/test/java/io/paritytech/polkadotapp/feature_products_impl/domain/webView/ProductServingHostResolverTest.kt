@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -16,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 class ProductServingHostResolverTest {
     private val resolveProductUseCase: ResolveProductUseCase = mock()
@@ -25,7 +25,7 @@ class ProductServingHostResolverTest {
     private val resolver = ProductServingHostResolver(resolveProductUseCase, dotNsTldProvider)
 
     private fun resolvedWith(appHost: String?, widgetHost: String?) = ResolvedProduct(
-        product = Product(id = ProductId.fromStoredValue("coinflip.dot"), name = "Coinflip", icon = null),
+        product = Product(id = ProductId.parse("coinflip.dot"), name = "Coinflip", icon = null),
         description = null,
         executables = Executables(
             app = appHost?.let { ProductExecutable.App(ExecutableHost(it), SemVer.ZERO) },
@@ -37,7 +37,7 @@ class ProductServingHostResolverTest {
     )
 
     private suspend fun stubResolution(appHost: String?, widgetHost: String? = null) {
-        whenever(resolveProductUseCase.resolve(ProductId.fromStoredValue("coinflip.dot")))
+        whenever(resolveProductUseCase.resolve(ProductId.parse("coinflip.dot")))
             .thenReturn(Result.success(resolvedWith(appHost, widgetHost)))
     }
 

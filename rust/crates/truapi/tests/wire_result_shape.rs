@@ -274,7 +274,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {
-			product_id: "myapp.dot".to_string(),
+			product_id: "myapp.dot".parse().expect("valid product id"),
 			suffix: v01::DerivationIndex::Index(0),
 		},
 		ring_location: v01::RingLocation {

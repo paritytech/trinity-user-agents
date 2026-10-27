@@ -4,7 +4,6 @@ import io.parity.truapi.ChatHostBridge
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -17,6 +16,7 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 class ProductChatHostBridge(
     private val productId: ProductId,

@@ -108,7 +108,7 @@ struct SPARustRuntimeTests {
         @Test func devServerLoadsItsAddressAndRunsUnderTheCoresIdentifier() async throws {
             let address = try #require(URL(string: "http://192.168.1.59:3000/app?product_id=humanity.dot"))
             let configuration = try makeConfiguration(
-                contentSource: .devServer(url: address, productId: "humanity.dot")
+                contentSource: .devServer(url: address, productId: try! ProductId("humanity.dot"))
             )
             let resolver = StubDotNsResolver()
             let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
@@ -117,7 +117,7 @@ struct SPARustRuntimeTests {
 
             #expect(url == address)
             #expect(resolver.resolvedNames.isEmpty)
-            #expect(configuration.productId == "humanity.dot")
+            #expect(configuration.productId.rawValue == "humanity.dot")
 
             await runtime.dispose()
         }
@@ -129,7 +129,7 @@ struct SPARustRuntimeTests {
             contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
         )
 
-        #expect(configuration.productId == "test.dot")
+        #expect(configuration.productId.rawValue == "test.dot")
     }
 
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
@@ -156,14 +156,14 @@ struct SPARustRuntimeTests {
         let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
         let resolver = StubDotNsResolver()
         let widget = ProductExecutable.Widget(
-            identifier: "widget.test.dot",
+            identifier: try! ProductId("widget.test.dot"),
             appVersion: .zero,
             description: nil,
             heights: [1],
             width: 1
         )
         let product = ResolvedProduct(
-            id: "test.dot",
+            id: try! ProductId("test.dot"),
             displayName: "Test",
             description: nil,
             icon: nil,

@@ -38,7 +38,7 @@ pub enum NavigateDecision {
 	/// A dotNS identifier plus path/query/hash suffix (no leading `/`).
 	DotName {
 		/// Lower-cased dotNS host (e.g. `mytestapp.dot`).
-		identifier: String,
+		identifier: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
 		/// Normalized `polkadot://` form, which is what `navigate_to` hands the
@@ -49,7 +49,7 @@ pub enum NavigateDecision {
 	/// A `localhost[:port]` URL plus path/query/hash suffix (no leading `/`).
 	Localhost {
 		/// `localhost` with optional `:port` suffix.
-		host: String,
+		host: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
 		/// Loadable `http://` URL for this decision.
@@ -243,9 +243,12 @@ fn classify_dotns(input: &str) -> Option<NavigateDecision> {
 		});
 	}
 
-	let identifier = normalize_host(hostname);
+	let identifier = match normalize_host(hostname).parse::<ProductId>() {
+		Ok(identifier) => identifier,
+		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
+	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("polkadot://", &identifier, &path);
+	let canonical_url = join_url("polkadot://", identifier.as_str(), &path);
 	Some(NavigateDecision::DotName { identifier, path, canonical_url })
 }
 
@@ -264,8 +267,12 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 		None => "localhost".to_string(),
 	};
 
+	let host = match host.parse::<ProductId>() {
+		Ok(host) => host,
+		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
+	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("http://", &host, &path);
+	let canonical_url = join_url("http://", host.as_str(), &path);
 	Some(NavigateDecision::Localhost { host, path, canonical_url })
 }
 
@@ -325,7 +332,7 @@ mod tests {
 
 	fn dot(identifier: &str, path: &str) -> Expected {
 		Expected::Decision(NavigateDecision::DotName {
-			identifier: identifier.to_string(),
+			identifier: ProductId::for_test(identifier),
 			path: path.to_string(),
 			canonical_url: join_url("polkadot://", identifier, path),
 		})
@@ -356,7 +363,7 @@ mod tests {
 
 	fn localhost(host: &str, path: &str) -> Expected {
 		Expected::Decision(NavigateDecision::Localhost {
-			host: host.to_string(),
+			host: ProductId::for_test(host),
 			path: path.to_string(),
 			canonical_url: join_url("http://", host, path),
 		})
@@ -368,6 +375,13 @@ mod tests {
 
 	/// Pinned as literals so the expectation does not borrow the production
 	/// builder it checks.
+	#[test]
+	fn product_destinations_require_canonical_product_identifiers() {
+		for input in ["polkadot://invalid_name.dot", "localhost.dot", "-invalid.dot"] {
+			assert!(matches!(parse_navigate(input), NavigateDecision::Reject { .. }), "{input}");
+		}
+	}
+
 	#[test]
 	fn a_product_destination_is_handed_over_as_a_polkadot_url() {
 		for (input, expected) in [

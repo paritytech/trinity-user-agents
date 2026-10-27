@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.resourceAllocationRequest.ResourceAllocationRequestContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.resourceAllocationRequest.ResourceAllocationRequestUiState
 import kotlinx.collections.immutable.persistentListOf
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -161,7 +162,7 @@ private fun ResourceAllocationRequestScreenStalledPreview() {
 }
 
 private fun previewState(isAllocating: Boolean) = ResourceAllocationRequestUiState(
-    productId = "alice.dot",
+    productId = ProductId.parse("alice.dot"),
     resourceLabels = persistentListOf(
         RCommon.string.product_resource_allocation_bulletin,
         RCommon.string.product_resource_allocation_statement_store,

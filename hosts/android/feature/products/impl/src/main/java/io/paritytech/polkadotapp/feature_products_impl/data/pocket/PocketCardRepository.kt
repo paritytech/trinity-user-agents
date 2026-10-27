@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.CachedPocketCard
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -42,14 +41,14 @@ class RealPocketCardRepository @Inject constructor(
         dao.observeAll().map { cards -> cards.map { it.toDomain() } }
 
     override suspend fun insert(card: CachedPocketCard) {
-        dao.insert(PocketCardLocal(card.card.key.productId.value, card.card.key.cardId.value, card.card.title))
+        dao.insert(PocketCardLocal(card.card.key.productId, card.card.key.cardId.value, card.card.title))
         saveFace(card.card.key, card.face)
     }
 
     override suspend fun delete(key: PocketCardKey): Boolean {
-        dao.deleteFace(key.productId.value, key.cardId.value)
+        dao.deleteFace(key.productId, key.cardId.value)
 
-        return dao.delete(key.productId.value, key.cardId.value) > 0
+        return dao.delete(key.productId, key.cardId.value) > 0
     }
 
     /**
@@ -58,7 +57,7 @@ class RealPocketCardRepository @Inject constructor(
      * the home tab, the core's card list and the deeplink handler alike, none of which catch.
      */
     override suspend fun face(key: PocketCardKey): RendererNode? {
-        val stored = dao.getFace(key.productId.value, key.cardId.value) ?: return null
+        val stored = dao.getFace(key.productId, key.cardId.value) ?: return null
 
         return runCatching { decodeRendererNode(stored) }
             .onFailure { Timber.w(it, "pocket: the stored face for %s no longer decodes", key.cardId.value) }
@@ -67,14 +66,14 @@ class RealPocketCardRepository @Inject constructor(
 
     override suspend fun saveFace(key: PocketCardKey, face: RendererNode) = dao.insertFace(
         PocketCardFaceLocal(
-            productId = key.productId.value,
+            productId = key.productId,
             cardId = key.cardId.value,
             face = encodeRendererNode(face),
         ),
     )
 
     private fun PocketCardLocal.toDomain() = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue(productId), PocketCardId(cardId)),
+        key = PocketCardKey(productId, PocketCardId(cardId)),
         title = title,
         privileged = false,
     )

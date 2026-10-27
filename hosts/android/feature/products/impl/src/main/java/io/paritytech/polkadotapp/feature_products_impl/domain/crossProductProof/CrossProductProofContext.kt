@@ -2,8 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.crossProductProof
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.CompletableDeferred
+import uniffi.truapi.ProductId
 
 class CrossProductProofContext(
     val callingProduct: ProductId,

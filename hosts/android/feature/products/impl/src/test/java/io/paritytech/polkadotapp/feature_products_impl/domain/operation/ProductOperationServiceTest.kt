@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.operation
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingOperationRecord
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
@@ -14,11 +13,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProductOperationServiceTest {
-    private val productId = ProductId.fromStoredValue("coinflip.dot")
+    private val productId = ProductId.parse("coinflip.dot")
 
     private class FakeRefCounter : ProductWorkerRefCounter {
         val acquires = AtomicInteger(0)
@@ -123,7 +123,7 @@ class ProductOperationServiceTest {
         val repo = FakeRepository()
         // Simulate records left open by a previous run.
         val id1 = repo.insert(productId, "a").getOrThrow()
-        repo.insert(ProductId.fromStoredValue("arena.dot"), "b").getOrThrow()
+        repo.insert(ProductId.parse("arena.dot"), "b").getOrThrow()
 
         val service = RealProductOperationService(refCounter, repo)
         service.resumeOpenOperations()

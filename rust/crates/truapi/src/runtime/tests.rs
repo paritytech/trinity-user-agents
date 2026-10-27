@@ -316,7 +316,7 @@ fn read_storage(
 		host,
 		&CallContext::default(),
 		HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
-			product: product.map(str::to_string),
+			product: product.map(ProductId::for_test),
 			key: key.to_string(),
 		}),
 	))
@@ -363,12 +363,8 @@ fn a_read_naming_the_caller_however_it_is_spelled_reaches_its_own_storage() {
 
 #[test]
 fn an_unresolvable_product_is_refused_identically_to_an_ungranted_one() {
-	// One answer for every reason, so the call cannot be used to probe which
-	// products exist. Two of these are not product ids at all and the third is
-	// a perfectly good one; on a host that reaches no chain none of them
-	// resolves, and the caller cannot tell that apart from a refused grant.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	for target in ["not a product", "", "wallet.dot"] {
+	for target in ["missing.dot", "wallet.dot"] {
 		assert_eq!(
 			read_storage(&host, Some(target), "k").unwrap_err(),
 			access_not_granted(),
@@ -4276,23 +4272,20 @@ fn a_request_for_an_account_of_no_product_does_not_decode() {
 	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
 }
 
-/// An owner that names no product is the product's malformed request, not a
-/// failure of the host.
 #[test]
-fn list_ring_vrf_keys_reports_an_invalid_owner_as_a_malformed_request() {
-	let host =
-		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
-	install_pairing_session(&host, session_info());
-	let request = HostAccountListRingVrfKeysRequest::V1(v01::HostAccountListRingVrfKeysRequest {
-		owner: "example.com".to_string(),
-		disclosure: v01::RingVrfKeyDisclosure::Anonymized,
-	});
+fn list_ring_vrf_keys_rejects_invalid_owners_before_dispatch() {
+	let frame = (0u8, "example.com", v01::RingVrfKeyDisclosure::Anonymized).encode();
+	assert!(HostAccountListRingVrfKeysRequest::decode(&mut frame.as_slice()).is_err());
+}
 
-	let err =
-		futures::executor::block_on(host.list_ring_vrf_keys(&CallContext::default(), request))
-			.unwrap_err();
-
-	assert!(matches!(err, CallError::MalformedFrame { .. }), "{err:?}");
+#[test]
+fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
+	for target in ["not a product", "", "example.com"] {
+		let frame = (1u8, Some(target), "k").encode();
+		assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_err());
+	}
+	let frame = (1u8, Some("wallet.dot"), "k").encode();
+	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
 }
 
 #[test]
@@ -4415,7 +4408,10 @@ fn get_account_allow_once_answers_later_disclosures_without_saving() {
 			disclosed.push(response.account.public_key);
 		}
 		let saved = platform
-			.read_core_storage(CoreStorageKey::account_access_authorization("myapp", "other"))
+			.read_core_storage(CoreStorageKey::product_account_access_authorization(
+				&ProductId::for_test("myapp.dot"),
+				&ProductId::for_test("other.dot"),
+			))
 			.await
 			.unwrap();
 		assert_eq!(
@@ -7294,7 +7290,9 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	)
 	.unwrap();
 	let platform = Arc::new(StubPlatform::default());
-	let legacy_key = CoreStorageKey::AutoSigningKey { product_id: "myapp.dot".to_string() };
+	let legacy_key = CoreStorageKey::AutoSigningKey {
+		product_id: "myapp.dot".parse().expect("valid product id"),
+	};
 	platform
 		.local_storage
 		.lock()
@@ -8026,7 +8024,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				context: v01::ProductProofContext {
-					product_id: "dim2.dot".to_string(),
+					product_id: "dim2.dot".parse().expect("valid product id"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring_location_fixture(),
@@ -8112,7 +8110,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					context: v01::ProductProofContext {
-						product_id: "dim2.dot".to_string(),
+						product_id: "dim2.dot".parse().expect("valid product id"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: ring_location_fixture(),

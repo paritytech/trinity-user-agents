@@ -74,6 +74,12 @@ pub fn truapi_host_version() -> String {
 	env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Validate and normalize an identifier before storing it in a native value.
+#[uniffi::export]
+pub fn parse_product_id(input: String) -> Result<latest::ProductId, latest::ProductIdError> {
+	input.parse()
+}
+
 /// The development product a debug build opens for an address the developer
 /// typed. Hosts call it only in development builds, since the product it
 /// returns runs with the core's development wildcard or as a named product.
@@ -303,12 +309,9 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 /// Trusted products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant. Hosts mediating product network access
 /// can use this check before storage.
-///
-/// Normalizes before matching, and answers `false` for an id that does not
-/// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
+pub fn has_trusted_remote_permissions(product_id: latest::ProductId) -> bool {
+	product_id.has_trusted_remote_permissions()
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

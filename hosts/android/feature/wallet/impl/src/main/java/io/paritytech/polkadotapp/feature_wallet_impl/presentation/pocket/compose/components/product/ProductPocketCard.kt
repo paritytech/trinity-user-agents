@@ -23,7 +23,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
@@ -35,6 +34,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import uniffi.truapi.ProductId
 
 /**
  * A product-backed card: the frame is the host's, the face inside it is the product's tree. The
@@ -98,7 +98,7 @@ private fun ProductPocketCardPreview() {
     PolkadotTheme {
         ProductPocketCard(
             card = PocketCardUiModel.ProductCard(
-                key = PocketCardKey(ProductId.fromStoredValue("game.dot"), PocketCardId("loyalty")),
+                key = PocketCardKey(ProductId.parse("game.dot"), PocketCardId("loyalty")),
                 title = "Loyalty",
                 pinned = false
             ),

@@ -4,7 +4,7 @@ import io.paritytech.polkadotapp.bandersnatch_crypto.ContextualAlias
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 interface AccountsProtocol {
     /**

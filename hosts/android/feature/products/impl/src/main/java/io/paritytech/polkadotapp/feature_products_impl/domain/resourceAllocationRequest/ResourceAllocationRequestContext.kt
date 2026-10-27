@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.resourceAllocatio
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.ApAllocatableResource
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.ApAllocationOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.OnExistingAllowancePolicy
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.CompletableDeferred
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 

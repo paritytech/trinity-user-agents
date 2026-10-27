@@ -12,10 +12,10 @@ struct AssetPinnedPocketCards: PinnedPocketCards {
     private struct Definition {
         let cardId: String
         let title: String
-        let backingProduct: (String) -> String
+        let backingProduct: (String) throws -> ProductId
 
-        func card(tld: String) -> PocketCardEntry {
-            PocketCardEntry(
+        func card(tld: String) throws -> PocketCardEntry {
+            try PocketCardEntry(
                 key: PocketCardKey(productId: backingProduct(tld), cardId: PocketCardId(value: cardId)),
                 title: title,
                 privileged: true
@@ -34,15 +34,16 @@ struct AssetPinnedPocketCards: PinnedPocketCards {
     }
 
     func cards() async -> [PocketCardEntry] {
-        Self.definitions.map { $0.card(tld: tld) }
+        Self.definitions.compactMap { try? $0.card(tld: tld) }
     }
 
     /// Answers without awaiting: a removal arrives from the core on a thread it
     /// cannot spare, and a key already names the product that must back it.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
         Self.definitions
-            .first { $0.cardId == key.cardId.value && $0.backingProduct(tld) == key.productId }
-            .map { $0.card(tld: tld) }
+            .lazy
+            .compactMap { try? $0.card(tld: tld) }
+            .first { $0.key == key }
     }
 
     /// The face shipped with the app, shown until the backing product draws its

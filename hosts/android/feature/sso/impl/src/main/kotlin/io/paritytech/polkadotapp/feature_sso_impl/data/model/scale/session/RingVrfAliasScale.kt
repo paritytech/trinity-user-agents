@@ -1,3 +1,5 @@
+@file:UseSerializers(ProductIdSerializer::class)
+
 package io.paritytech.polkadotapp.feature_sso_impl.data.model.scale.session
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.annotations.AsTuple
@@ -6,19 +8,20 @@ import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.ProductProofContext
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RegisteredRingVrfKey
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfKeyDisclosure
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductAccountIdScale
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductDerivationIndexScale
-import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductIdScale
 import io.paritytech.polkadotapp.feature_products_api.model.scale.RingLocationScale
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toDomain
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toScale
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.UseSerializers
+import uniffi.truapi.ProductId
 
 @Serializable
 @AsTuple
 data class ProductProofContextScale(
-    val productId: ProductIdScale,
+    val productId: ProductId,
     val suffix: ProductDerivationIndexScale,
 )
 
@@ -86,10 +89,10 @@ data class SsoRingVrfProofScale(
 )
 
 fun ProductProofContext.toScale(): ProductProofContextScale =
-    ProductProofContextScale(productId.value, suffix.toScale())
+    ProductProofContextScale(productId, suffix.toScale())
 
 fun ProductProofContextScale.toDomain(): Result<ProductProofContext> =
-    suffix.toDomain().map { ProductProofContext(ProductId.fromStoredValue(productId), it) }
+    suffix.toDomain().map { ProductProofContext(productId, it) }
 
 fun RingVrfKeyDisclosure.toScale(): RingVrfKeyDisclosureScale = when (this) {
     RingVrfKeyDisclosure.ANONYMIZED -> RingVrfKeyDisclosureScale.Anonymized

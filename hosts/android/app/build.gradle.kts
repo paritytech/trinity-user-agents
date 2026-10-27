@@ -219,3 +219,5 @@ sentry {
     // doesn't try to process a variant that has no DSN/auth token
     ignoredBuildTypes.set(setOf("release"))
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

@@ -11,6 +11,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.milliseconds
@@ -18,7 +19,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /** What the viewfinder shows: who is asking, and what they accept. */
 class ProductScanRequest(
-    val productId: String,
+    val productId: ProductId,
     val executionKind: ProductExecutionKind,
     val request: HostScannerScanRequest,
 )
@@ -37,7 +38,7 @@ class TrUAPIProductScans @Inject constructor(
 ) : TrUAPIPrompts<ProductScanRequest, HostScan>(unanswered = HostScan.Dismissed, notShown = HostScan.NotVisible),
     ScannerHostBridge {
     override suspend fun scanCode(
-        productId: String,
+        productId: ProductId,
         executionKind: ProductExecutionKind,
         request: HostScannerScanRequest,
     ): HostScan = ask(ProductScanRequest(productId, executionKind, request))
@@ -55,7 +56,7 @@ class TrUAPIProductScans @Inject constructor(
     override suspend fun close() = productsRouter.closeTrUAPIProductScan()
 
     // A host screen closing over the page, such as the last scanner, holds focus for a moment.
-    private suspend fun pageOnScreen(productId: String) = withTimeoutOrNull(FOCUS_RETURN_TIMEOUT) {
+    private suspend fun pageOnScreen(productId: ProductId) = withTimeoutOrNull(FOCUS_RETURN_TIMEOUT) {
         while (!visibleProducts.isOnScreen(productId)) delay(FOCUS_POLL_INTERVAL)
     } != null
 

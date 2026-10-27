@@ -1,6 +1,6 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::{PermissionAuthorizationStatus, ProductId};
+use crate::platform::PermissionAuthorizationStatus;
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -255,8 +255,6 @@ impl LocalStorage for ProductRuntimeHost {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
-						let target =
-							target.parse::<ProductId>().map_err(|_| access_not_granted())?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)

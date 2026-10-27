@@ -49,7 +49,7 @@ struct ProductHostFactoryTests {
     }
 
     @Test func rawStringReturnsHostWhenTldMatches() {
-        let result = makeFactory(tld: "test").host(rawString: "browse.test")
+        let result = makeFactory(tld: "testnet").host(rawString: "browse.testnet")
 
         #expect(result != nil)
     }
@@ -63,15 +63,15 @@ struct ProductHostFactoryTests {
     }
 
     @Test func labelSuffixesAndReturnsHost() {
-        let result = makeFactory(tld: "test").host(label: "browse")
+        let result = makeFactory(tld: "testnet").host(label: "browse")
 
-        #expect(result?.toDotDomain() == "browse.test")
+        #expect(result?.toDotDomain().rawValue == "browse.testnet")
     }
 
     @Test func labelProvesSuffixingBeforeParsingFails() {
         // A bare label can never satisfy the isDotDomain check without suffixing.
-        #expect(ProductHost.parse("browse", tld: "test") == nil)
-        #expect(makeFactory(tld: "test").host(label: "browse") != nil)
+        #expect(ProductHost.parse("browse", tld: "testnet") == nil)
+        #expect(makeFactory(tld: "testnet").host(label: "browse") != nil)
     }
 
     // MARK: - resolveHost(label:)
@@ -79,7 +79,7 @@ struct ProductHostFactoryTests {
     @Test func resolveHostLabelSucceedsWhenTldResolved() async throws {
         let result = try await makeFactory(tld: "dot").resolveHost(label: "browse")
 
-        #expect(result?.toDotDomain() == "browse.dot")
+        #expect(result?.toDotDomain().rawValue == "browse.dot")
     }
 
     @Test func resolveHostLabelPropagatesError() async {
@@ -115,7 +115,7 @@ struct ProductHostFactoryTests {
     @Test func pageNavigationDestinationPreservesPage() {
         let result = makeFactory(tld: "dot").page(navigationDestination: "https://browse.dot/onboarding")
 
-        #expect(result?.host.toDotDomain() == "browse.dot")
+        #expect(result?.host.toDotDomain().rawValue == "browse.dot")
         #expect(result?.page == "/onboarding")
     }
 

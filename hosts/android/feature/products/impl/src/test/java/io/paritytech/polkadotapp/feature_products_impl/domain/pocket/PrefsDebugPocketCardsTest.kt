@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import android.content.SharedPreferences
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -11,10 +10,11 @@ import org.junit.Test
 import org.mockito.Mockito.RETURNS_SELF
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 
 class PrefsDebugPocketCardsTest {
     private val prefs: SharedPreferences = mock()
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot")
 
     private fun cards(isDebugBuild: Boolean = true) = PrefsDebugPocketCards(prefs, isDebugBuild)
 

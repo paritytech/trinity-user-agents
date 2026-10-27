@@ -4,11 +4,11 @@ import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.sentry.Sentry
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.protocol.Message
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 sealed interface GameReminderEvent {

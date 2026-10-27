@@ -179,7 +179,7 @@ pub struct EventCallbacks {
 	pub chain_sends: Mutex<Vec<(u32, String)>>,
 	pub chain_closes: Mutex<Vec<u32>>,
 	/// Worker demand transitions, in arrival order.
-	pub worker_demand: Mutex<Vec<(String, WorkerTransition)>>,
+	pub worker_demand: Mutex<Vec<(ProductId, WorkerTransition)>>,
 	/// Devices reported as paired, in arrival order.
 	pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
 	/// Every `durable_work_changed` report, in order.
@@ -259,7 +259,7 @@ impl HostCallbacks for EventCallbacks {
 		self.worker_demand
 			.lock()
 			.expect("worker demand mutex poisoned")
-			.push((product_id.into(), transition));
+			.push((product_id, transition));
 	}
 
 	fn device_paired(&self, device: PairedSsoPeer) {
@@ -824,7 +824,7 @@ fn process_runtime_counts_worker_references_per_product() {
 		native_host_runtime_config(),
 	)
 	.expect("host runtime config should be valid");
-	let product = || "shared.dot".to_string();
+	let product = || ProductId::for_test("shared.dot");
 
 	host.acquire_worker(product());
 	host.acquire_worker(product());
@@ -848,17 +848,17 @@ fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
 	)
 	.expect("host runtime config should be valid");
 
-	host.acquire_worker("Shared.DOT".to_string());
-	host.acquire_worker("shared.dot".to_string());
-	host.acquire_worker("not_a.dot".to_string());
-	host.release_worker("shared.dot".to_string());
-	host.release_worker("SHARED.dot".to_string());
+	host.acquire_worker(super::parse_product_id("Shared.DOT".to_string()).unwrap());
+	host.acquire_worker(super::parse_product_id("shared.dot".to_string()).unwrap());
+	assert!(super::parse_product_id("not_a.dot".to_string()).is_err());
+	host.release_worker(super::parse_product_id("shared.dot".to_string()).unwrap());
+	host.release_worker(super::parse_product_id("SHARED.dot".to_string()).unwrap());
 
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
 		vec![
-			("shared.dot".to_string(), WorkerTransition::Start),
-			("shared.dot".to_string(), WorkerTransition::Stop),
+			(ProductId::for_test("shared.dot"), WorkerTransition::Start),
+			(ProductId::for_test("shared.dot"), WorkerTransition::Stop),
 		]
 	);
 }
@@ -1018,13 +1018,17 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 fn the_trusted_export_normalizes_before_matching() {
 	for trusted in ["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", "stash.dot"] {
 		assert!(
-			super::has_trusted_remote_permissions(trusted.to_string()),
+			super::has_trusted_remote_permissions(
+				super::parse_product_id(trusted.to_string()).unwrap()
+			),
 			"{trusted} is a first-party product",
 		);
 	}
-	for untrusted in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
+	for untrusted in ["app.peopl.dot", "notpeopl.dot", "localhost:3000"] {
 		assert!(
-			!super::has_trusted_remote_permissions(untrusted.to_string()),
+			!super::has_trusted_remote_permissions(
+				super::parse_product_id(untrusted.to_string()).unwrap()
+			),
 			"{untrusted} is not",
 		);
 	}
@@ -1059,7 +1063,7 @@ fn permission_authorization_request_mirror_round_trips() {
 	}));
 	cases.push(PermissionAuthorizationRequest::IdentityDisclosure);
 	cases.push(PermissionAuthorizationRequest::AccountAccess {
-		target_product_id: "other.dot".to_string(),
+		target_product_id: "other.dot".parse().expect("valid product id"),
 	});
 
 	for case in cases {
@@ -3209,4 +3213,16 @@ fn a_chat_icon_is_screened_as_create_room_screens_it() {
 fn screening_normalizes_and_trims() {
 	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
+}
+
+#[test]
+fn native_product_ids_are_canonical_before_they_reach_host_apis() {
+	assert_eq!(
+		super::parse_product_id("  Peopl.DOT  ".to_string()),
+		Ok(crate::latest::ProductId::for_test("peopl.dot"))
+	);
+	assert_eq!(
+		super::parse_product_id("localhost.dot".to_string()),
+		Err(crate::latest::ProductIdError::Invalid { input: "localhost.dot".to_string() })
+	);
 }

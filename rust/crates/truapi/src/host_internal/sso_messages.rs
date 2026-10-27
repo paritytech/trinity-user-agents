@@ -762,7 +762,7 @@ mod tests {
 			ProductRequest {
 				calling_product_id: ProductId::for_test("caller.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
+					owner: "peopl.dot".parse().expect("valid product id"),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::Anonymized,
 				},
 			},
@@ -837,7 +837,7 @@ mod tests {
 			v1::RemoteMessage::ListRingVrfKeysRequest(ProductRequest {
 				calling_product_id: ProductId::for_test("game.dot"),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
+					owner: "peopl.dot".parse().expect("valid product id"),
 					disclosure: truapi::v01::RingVrfKeyDisclosure::PublicKey,
 				},
 			}),
@@ -866,7 +866,7 @@ mod tests {
 	#[test]
 	fn ring_vrf_messages_wire_shape_pin() {
 		let context = truapi::latest::ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: "voting.dot".parse().expect("valid product id"),
 			suffix: DerivationIndex::Index(0),
 		};
 		let ring_location = RingLocation {

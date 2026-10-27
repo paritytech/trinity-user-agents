@@ -2,15 +2,15 @@ package io.paritytech.polkadotapp.feature_products_api.presentation.deeplink
 
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class ProductDeepLinkGateTest {
-    private val onramp = ProductId.fromStoredValue("fund.dot")
-    private val arbitrary = ProductId.fromStoredValue("anything.dot")
+    private val onramp = ProductId.parse("fund.dot")
+    private val arbitrary = ProductId.parse("anything.dot")
 
     private class FundingProducts(private val ids: Set<ProductId>) : FundingDomainProvider {
         override suspend fun getFundingConfig(): Result<FundingConfig> =

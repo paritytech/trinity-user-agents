@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 
 import androidx.compose.runtime.Immutable
+import uniffi.truapi.ProductId
 
 @Immutable
 sealed interface ProductPermission {
@@ -60,10 +61,10 @@ sealed interface ProductPermission {
     }
 
     data class AccountAccess(
-        val targetProductId: String,
+        val targetProductId: ProductId,
     ) : ProductPermission {
         override val typeName: String get() = TYPE_NAME
-        override val key: String get() = targetProductId
+        override val key: String get() = targetProductId.value
 
         companion object {
             const val TYPE_NAME = "account_access"
@@ -84,10 +85,10 @@ sealed interface ProductPermission {
 
     /** Reading the NFT purses of another owner: a product, or the user's own account when `null`. */
     data class NftPurseRead(
-        val ownerProductId: String?,
+        val ownerProductId: ProductId?,
     ) : ProductPermission {
         override val typeName: String get() = TYPE_NAME
-        override val key: String get() = ownerProductId.orEmpty()
+        override val key: String get() = ownerProductId?.value.orEmpty()
 
         companion object {
             const val TYPE_NAME = "nft_purse_read"
@@ -98,10 +99,10 @@ sealed interface ProductPermission {
         fun fromLocal(typeName: String, key: String): ProductPermission {
             return when (typeName) {
                 DeviceCapability.TYPE_NAME -> DeviceCapability(DeviceCapabilityType.valueOf(key))
-                AccountAccess.TYPE_NAME -> AccountAccess(key)
+                AccountAccess.TYPE_NAME -> AccountAccess(ProductId.parse(key))
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
-                NftPurseRead.TYPE_NAME -> NftPurseRead(key.ifEmpty { null })
+                NftPurseRead.TYPE_NAME -> NftPurseRead(key.takeIf { it.isNotEmpty() }?.let(ProductId::parse))
                 RemotePermission.NetworkAccess.TYPE_NAME -> RemotePermission.NetworkAccess(key)
                 RemotePermission.WebRtcAccess.TYPE_NAME -> RemotePermission.WebRtcAccess
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess

@@ -57,8 +57,7 @@ val truapiDir: String = run {
     }
 }
 
-// Generated source root that `syncHostShell` populates with truapi's canonical
-// `io.parity.truapi` shell.
+// Handwritten Kotlin adapters and value types synced from the core checkout.
 val hostShellDir: Provider<Directory> = layout.buildDirectory.dir("truapi-shell")
 
 android {
@@ -87,12 +86,10 @@ android {
 // truapi owns the `io.parity.truapi` host shell. Sync it from the checkout at
 // build time so this repo holds no copy of it and the two cannot drift.
 //
-// Only the package directory is taken. truapi's `src/main/kotlin` root also holds
-// its own generated UniFFI bindings, which would collide with the ones generated
-// here (`Redeclaration` / `Conflicting overloads`).
+// Generated bindings are excluded because this module generates its own copy.
 val syncHostShell by tasks.registering(Sync::class) {
-    from("$truapiDir/android/truapi-host/src/main/kotlin/io/parity/truapi")
-    into(hostShellDir.map { it.dir("io/parity/truapi") })
+    from("$truapiDir/android/truapi-host/src/main/kotlin") { exclude("generated/**") }
+    into(hostShellDir)
 }
 
 // Every Kotlin compilation here consumes the synced shell and the generated
@@ -205,6 +202,7 @@ val generateUniffiKotlin by tasks.registering(Exec::class) {
         "--out-dir", outDir.asFile.absolutePath,
     )
     inputs.file(hostCdylib).withPropertyName("hostCdylib")
+    inputs.file("$truapiDir/rust/crates/truapi/uniffi.toml").withPropertyName("uniffiConfig")
     outputs.dir(outDir).withPropertyName("generatedBindings")
 }
 

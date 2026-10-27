@@ -1,7 +1,7 @@
-# Host apps define their own `ProductId`, and a second `ProductId` in the
-# bindings makes the name ambiguous wherever an app imports both.
-[bindings.swift.rename]
-ProductId = "TrUApiProductId"
+[bindings.swift.custom_types.ProductId]
+lift = "ProductId(fromRust: {})"
+lower = "{}.rawValue"
 
-[bindings.kotlin.rename]
-ProductId = "TrUApiProductId"
+[bindings.kotlin.custom_types.ProductId]
+lift = "ProductId.fromRust({})"
+lower = "{}.value"

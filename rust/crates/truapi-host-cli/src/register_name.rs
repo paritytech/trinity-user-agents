@@ -111,7 +111,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
 	let full_entropy =
-		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix);
+		derive_full_person_ring_vrf_entropy(&config.entropy, config.network.network_suffix)?;
 	let candidates =
 		[CollectionCandidate { collection: PersonhoodCollection::People, entropy: full_entropy }];
 	let signer = FixedPersonhoodSigner::new(&candidates).await?;

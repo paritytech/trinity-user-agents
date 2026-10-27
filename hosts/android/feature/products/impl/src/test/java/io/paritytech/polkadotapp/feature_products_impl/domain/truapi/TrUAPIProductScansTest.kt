@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 import uniffi.truapi.CodeFormat
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
@@ -31,7 +32,7 @@ class TrUAPIProductScansTest {
     private fun TestScope.scansOnTestClock() =
         TrUAPIProductScans(router, visible, contextManager, TestCoroutineDispatchers(UnconfinedTestDispatcher(testScheduler)))
 
-    private suspend fun TrUAPIProductScans.scan(kind: ProductExecutionKind) = scanCode("greenmarket.dot", kind, request)
+    private suspend fun TrUAPIProductScans.scan(kind: ProductExecutionKind) = scanCode(ProductId.parse("greenmarket.dot"), kind, request)
 
     private fun appInFront() {
         val resumed = mockk<ComponentActivity> { every { lifecycle.currentState } returns Lifecycle.State.RESUMED }
@@ -54,12 +55,12 @@ class TrUAPIProductScansTest {
         // By then the user may have left the page that asked.
         val scans = scansOnTestClock()
         appInFront()
-        every { visible.isOnScreen("greenmarket.dot") } returns true
+        every { visible.isOnScreen(ProductId.parse("greenmarket.dot")) } returns true
         val first = async(start = CoroutineStart.UNDISPATCHED) { scans.scan(ProductExecutionKind.WORKER) }
         val firstPrompt = checkNotNull(scans.current).also { it.markShown() }
         val waiting = async(start = CoroutineStart.UNDISPATCHED) { scans.scan(ProductExecutionKind.APP) }
 
-        every { visible.isOnScreen("greenmarket.dot") } returns false
+        every { visible.isOnScreen(ProductId.parse("greenmarket.dot")) } returns false
         firstPrompt.answer(HostScan.Dismissed)
 
         assertEquals(HostScan.Dismissed, first.await())
@@ -71,7 +72,7 @@ class TrUAPIProductScansTest {
     fun `a page getting focus back from the closing scanner can scan again`() = runTest {
         // The product hears the last answer before the closing sheet hands focus back to its page.
         val scans = scansOnTestClock()
-        every { visible.isOnScreen("greenmarket.dot") } returnsMany listOf(false, false, true)
+        every { visible.isOnScreen(ProductId.parse("greenmarket.dot")) } returnsMany listOf(false, false, true)
         val scanned = async(start = CoroutineStart.UNDISPATCHED) { scans.scan(ProductExecutionKind.APP) }
 
         advanceTimeBy(200)

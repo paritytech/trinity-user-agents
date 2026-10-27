@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("RemotePermissionHandler Tests")
 struct RemotePermissionHandlerTests {
-    private let productId = "test-product"
+    private let productId = try! ProductId("test-product.dot")
     private let permission = ProductPermission.webRtcAccess
 
     private func makeSUT(

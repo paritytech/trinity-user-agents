@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface TrUAPIConfirmationContract {
     val state: StateFlow<LoadingState<TrUAPIConfirmationUiState>>
@@ -15,7 +16,7 @@ interface TrUAPIConfirmationContract {
 
 data class TrUAPIConfirmationUiState(
     @StringRes val titleRes: Int,
-    val productId: String,
+    val productId: ProductId,
     val details: ImmutableList<TrUAPIConfirmationDetail>,
 )
 

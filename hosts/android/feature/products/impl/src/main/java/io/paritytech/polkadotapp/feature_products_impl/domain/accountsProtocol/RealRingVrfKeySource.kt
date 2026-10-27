@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Me
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ringVrfPath
-import io.paritytech.polkadotapp.feature_products_api.model.productIdTyped
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.ReservedRingVrfKeys
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.registry.RingVrfKeyRegistry
 import javax.inject.Inject
@@ -47,6 +46,6 @@ class RealRingVrfKeySource @Inject constructor(
     }
 
     private suspend fun deriveEntropy(handle: ProductAccountId): Result<BandersnatchEntropy> = runCatching {
-        ringVrfEntropyDeriver.deriveRingVrfEntropy(ringVrfPath(handle.productIdTyped, handle.index))
+        ringVrfEntropyDeriver.deriveRingVrfEntropy(ringVrfPath(handle.productId, handle.index))
     }
 }

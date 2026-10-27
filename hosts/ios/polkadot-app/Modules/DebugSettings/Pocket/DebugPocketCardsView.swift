@@ -16,7 +16,7 @@ struct DebugPocketCardsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(card.title): \(card.cardId)")
                             .font(.headline)
-                        Text(card.productId)
+                        Text(card.productId.rawValue)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(card.faceUrl)
@@ -40,7 +40,7 @@ struct DebugPocketCardsView: View {
             }
 
             Section("Add a card") {
-                TextField("Product (dotNS name)", text: $viewModel.productId)
+                TextField("Product (dotNS name)", text: $viewModel.productIdInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 TextField("Card id", text: $viewModel.cardId)

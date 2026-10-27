@@ -902,7 +902,7 @@ impl PairingHost {
 		&self,
 		product_id: &ProductId,
 	) -> Result<bool, AuthorityError> {
-		let storage_key = CoreStorageKey::AutoSigningKey { product_id: product_id.to_string() };
+		let storage_key = CoreStorageKey::AutoSigningKey { product_id: product_id.clone() };
 		let legacy = self.platform.read_core_storage(storage_key.clone()).await.map_err(|err| {
 			AuthorityError::Unknown {
 				reason: format!("failed to inspect legacy AutoSigning key: {}", err.reason),
@@ -1556,11 +1556,7 @@ impl PairingHost {
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		let owner = request
-			.payload
-			.owner
-			.parse::<ProductId>()
-			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
+		let owner = request.payload.owner.clone();
 		if request.calling_product_id == owner.as_str() &&
 			let Some(mut entries) = self
 				.ring_vrf_registry

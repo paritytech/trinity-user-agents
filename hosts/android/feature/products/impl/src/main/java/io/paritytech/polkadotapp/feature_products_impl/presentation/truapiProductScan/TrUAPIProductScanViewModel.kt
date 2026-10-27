@@ -33,7 +33,7 @@ class TrUAPIProductScanViewModel @Inject constructor(
     private val filter = prompt?.let { ScanFilter(it.question.request) }
     private val answered = AtomicBoolean(prompt == null)
 
-    val productId = prompt?.question?.productId.orEmpty()
+    val productId = prompt?.question?.productId
     val hint = prompt?.question?.request?.hint
     val surfaceRequest = MutableStateFlow<SurfaceRequest?>(null)
     val cameraPermissionDenied = MutableStateFlow(false)

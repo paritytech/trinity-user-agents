@@ -455,30 +455,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
-	/// [`Self::release_worker`]. An id that is not a product id is logged and
-	/// dropped.
-	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// first one requests [`WorkerTransition::Start`]; pair every call with
+	/// one [`Self::release_worker`].
+	pub fn acquire_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().acquire(&product_id);
 	}
 
-	/// Release one reference. The last one reports
-	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
-	/// releasing with none held is a no-op, and so is an id that is not a
-	/// product id.
-	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
+	/// Releasing with none held is a no-op.
+	pub fn release_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -943,12 +929,9 @@ impl NativeProductExecution {
 	/// an error; `None` means no active session.
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
 			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),
 		)?)

@@ -7,10 +7,10 @@ import io.paritytech.polkadotapp.common.domain.model.EncodedPublicKey
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.AccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.productAccountPath
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.productSubtreePath
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class ProductAccountDerivationUseCase @Inject constructor(
@@ -36,5 +36,5 @@ class ProductAccountDerivationUseCase @Inject constructor(
             .map { it as Sr25519Keypair }
     }
 
-    private fun ProductAccountId.derivationPath(): String = productAccountPath(ProductId.fromStoredValue(productId), index)
+    private fun ProductAccountId.derivationPath(): String = productAccountPath(productId, index)
 }

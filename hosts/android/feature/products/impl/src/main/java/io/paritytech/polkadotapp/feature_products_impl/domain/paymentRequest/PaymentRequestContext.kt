@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.CompletableDeferred
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 

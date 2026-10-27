@@ -16,6 +16,7 @@ dependencies {
     ksp(libs.hilt.android.compiler)
 
     implementation(project(":common"))
+    api(project(":bindings:truapi-host"))
 
     api(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

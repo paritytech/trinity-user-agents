@@ -10,7 +10,6 @@ import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -30,6 +29,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
@@ -147,7 +147,7 @@ class TrUAPIWorkerSupervisorTest {
     }
 
     private companion object {
-        val PRODUCT = ProductId.fromStoredValue("worker.paseo")
+        val PRODUCT = ProductId.parse("worker.paseo")
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
     }
 }

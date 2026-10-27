@@ -46,12 +46,12 @@ class TopUpRequestViewModel @Inject constructor(
 
     private suspend fun mapAcknowledgement(acknowledgement: TopUpAcknowledgement): TopUpRequestUiState =
         when (acknowledgement) {
-            is TopUpAcknowledgement.Failure -> TopUpRequestUiState.Failure(acknowledgement.productId.value)
+            is TopUpAcknowledgement.Failure -> TopUpRequestUiState.Failure(acknowledgement.productId)
 
             is TopUpAcknowledgement.PartialPayment -> {
                 val asset = chainAssetProvider.asset()
                 TopUpRequestUiState.PartialPayment(
-                    productId = acknowledgement.productId.value,
+                    productId = acknowledgement.productId,
                     requestedAmount = tokenAmountMapper.mapFrom(asset.withAmount(acknowledgement.requested)),
                     creditedAmount = tokenAmountMapper.mapFrom(asset.withAmount(acknowledgement.credited)),
                 )

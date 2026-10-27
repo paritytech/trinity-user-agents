@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPay
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.first
+import uniffi.truapi.ProductId
 
 class ProductChatSearchResultProvider(
     private val arbitraryProductsEnabled: Boolean,
@@ -33,7 +34,7 @@ class ProductChatSearchResultProvider(
     }
 
     override suspend fun onAppResultSelected(result: ChatListSearchResult.App) {
-        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(result.id))
+        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(ProductId.parse(result.id)))
     }
 }
 

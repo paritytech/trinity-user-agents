@@ -4,7 +4,7 @@ import io.paritytech.polkadotapp.common.utils.toCanonicalDotHost
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import javax.inject.Inject
 
@@ -24,7 +24,7 @@ class ProductServingHostResolver @Inject constructor(
         val tld = dotNsTldProvider.getTld().getOrNull() ?: return requestHost
         // Archives are keyed by the canonical dotNS name, so a `.dot.li` mirror maps to it as well.
         val host = requestHost.toCanonicalDotHost()
-        val productId = ProductId.fromString(host, tld).getOrNull() ?: return requestHost
+        val productId = productIdFromHost(host, tld).getOrNull() ?: return requestHost
         // A host that already names an executable is served by that executable's own archive.
         if (!productId.value.equals(host, ignoreCase = true)) return host
 

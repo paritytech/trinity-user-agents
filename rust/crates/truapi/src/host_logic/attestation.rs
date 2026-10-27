@@ -105,7 +105,7 @@ pub fn build_lite_registration(
 	let candidate = derive_identity_keypair(entropy, network_suffix)?;
 	let candidate_public_key = candidate.public.to_bytes();
 
-	let vrf_entropy = derive_lite_person_ring_vrf_entropy(entropy, network_suffix);
+	let vrf_entropy = derive_lite_person_ring_vrf_entropy(entropy, network_suffix)?;
 	let vrf_secret = BandersnatchVrfVerifiable::new_secret(vrf_entropy);
 	let ring_vrf_key = BandersnatchVrfVerifiable::member_from_secret(&vrf_secret);
 
@@ -199,7 +199,7 @@ mod tests {
 			derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap().public.to_bytes(),
 			"registration uses the network's uid.paseo identity account"
 		);
-		let lite_entropy = derive_lite_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX);
+		let lite_entropy = derive_lite_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX).unwrap();
 		assert_eq!(
 			reg.ring_vrf_key,
 			BandersnatchVrfVerifiable::member_from_secret(&BandersnatchVrfVerifiable::new_secret(
@@ -210,7 +210,7 @@ mod tests {
 		assert_ne!(
 			reg.ring_vrf_key,
 			BandersnatchVrfVerifiable::member_from_secret(&BandersnatchVrfVerifiable::new_secret(
-				derive_lite_person_ring_vrf_entropy(&ENTROPY, "dot")
+				derive_lite_person_ring_vrf_entropy(&ENTROPY, "dot").unwrap()
 			)),
 			"a person registered on paseo-next-v2 is not the seed's .dot person"
 		);

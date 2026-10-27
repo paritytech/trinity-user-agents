@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.ExperimentalTime

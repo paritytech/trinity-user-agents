@@ -6,12 +6,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.CachedPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPreviewLoader
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import javax.inject.Inject
 

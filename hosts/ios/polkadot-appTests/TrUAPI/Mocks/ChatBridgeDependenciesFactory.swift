@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import ChainRegistry
 import Foundation
 import Products
@@ -7,7 +8,7 @@ import Products
 /// are exercised, so the rest are inert stand-ins.
 @MainActor
 func makeChatBridgeDependencies(
-    productId: String = "test.dot"
+    productId: ProductId = try! ProductId("test.dot")
 ) -> RustProductExecutionBridge.Dependencies {
     let defaults = UserDefaults(suiteName: "io.parity.tests.chat-bridge") ?? .standard
     return .init(

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import PolkadotUI
@@ -30,7 +31,7 @@ actor ProductNameProvider {
 }
 
 extension ProductNameProvider: ChatProductNameProviding {
-    nonisolated var identifier: String { host.toDotDomain() }
+    nonisolated var identifier: String { host.toDotDomain().rawValue }
 
     nonisolated func provideName(
         _ completion: @escaping (String?) -> Void
@@ -90,7 +91,7 @@ private extension ProductNameProvider {
         }
 
         let storedProduct = try? await productRepository
-            .fetchOperation(by: { domain }, options: RepositoryFetchOptions())
+            .fetchOperation(by: { domain.rawValue }, options: RepositoryFetchOptions())
             .asyncExecute()
 
         let resolved: String =
@@ -117,7 +118,7 @@ private extension ProductNameProvider {
         case undeclared
     }
 
-    nonisolated func fetchManifestName(domain: String) async -> ManifestName {
+    nonisolated func fetchManifestName(domain: ProductId) async -> ManifestName {
         guard let productResolver else { return .undeclared }
 
         do {
@@ -131,10 +132,10 @@ private extension ProductNameProvider {
         }
     }
 
-    nonisolated func fetchHTMLTitle(domain: String) async -> String? {
+    nonisolated func fetchHTMLTitle(domain: ProductId) async -> String? {
         guard
             let dotNsResolver,
-            let contentDirectory = try? await dotNsResolver.resolveToLocalURL(dotNsName: domain)
+            let contentDirectory = try? await dotNsResolver.resolveToLocalURL(dotNsName: domain.rawValue)
         else {
             return nil
         }

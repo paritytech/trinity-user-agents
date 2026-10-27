@@ -2,20 +2,24 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 @Serializable
-data class ScheduledProductGame(val productId: String, val startsAtMillis: Long)
+data class ScheduledProductGame(
+    @Serializable(with = ProductIdSerializer::class) val productId: ProductId,
+    val startsAtMillis: Long,
+)
 
 private val PRODUCT_GAME_START_GRACE = 30.seconds
 
@@ -48,7 +52,7 @@ class RealProductGameReminder @Inject constructor(
     fun currentlyScheduled(): List<ScheduledProductGame> = preferences.getScheduledProductGames()
 
     fun scheduledFor(productId: ProductId): ScheduledProductGame? =
-        currentlyScheduled().firstOrNull { it.productId == productId.value }
+        currentlyScheduled().firstOrNull { it.productId == productId }
 
     override fun scheduledStartFor(productId: ProductId): Long? = scheduledFor(productId)?.startsAtMillis
 
@@ -57,7 +61,7 @@ class RealProductGameReminder @Inject constructor(
         val leadMillis = startsAtMillis - now()
         osAccess.requestNotifications().map {
             osAccess.requestExactAlarms()
-            lock.withLock { add(ScheduledProductGame(productId.value, startsAtMillis)) }
+            lock.withLock { add(ScheduledProductGame(productId, startsAtMillis)) }
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
@@ -116,4 +120,4 @@ class RealProductGameReminder @Inject constructor(
     }
 }
 
-fun ScheduledProductGame.product(): ProductId = ProductId.fromStoredValue(productId)
+fun ScheduledProductGame.product(): ProductId = productId

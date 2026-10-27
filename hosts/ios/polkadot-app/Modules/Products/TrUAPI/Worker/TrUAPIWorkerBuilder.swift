@@ -77,7 +77,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             // Fetched before the engine boots: the scheme handler reads the
             // archive off disk, and a page loaded before it is there fails as a
             // missing module rather than waiting.
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId.rawValue)
 
             return published
         }

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 @preconcurrency import Products
 
@@ -20,6 +21,6 @@ struct ProductArchiveWarmer: Sendable {
     func warm(_ productId: ProductId, serving kind: ExecutableKind) async throws {
         let contentId = try await products.resolve(productId).contentId(for: kind)
 
-        _ = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        _ = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
     }
 }

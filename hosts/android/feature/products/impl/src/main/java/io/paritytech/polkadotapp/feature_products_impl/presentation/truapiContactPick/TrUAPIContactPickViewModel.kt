@@ -52,7 +52,7 @@ class TrUAPIContactPickViewModel @Inject constructor(
     }
 
     private fun toUiState() = TrUAPIContactPickUiState(
-        productId = prompt?.question?.productId.orEmpty(),
+        productId = prompt?.question?.productId,
         contacts = prompt?.question?.options.orEmpty().mapIndexed { index, option ->
             TrUAPIContactPickRow(index = index, name = option.displayName)
         }.toImmutableList(),

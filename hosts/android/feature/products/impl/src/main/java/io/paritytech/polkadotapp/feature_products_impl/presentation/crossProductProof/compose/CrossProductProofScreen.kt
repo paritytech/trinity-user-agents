@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.crossProductProof.CrossProductProofUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.crossProductProof.CrossProductProofViewModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -61,7 +62,7 @@ private fun CrossProductProofScreenInternal(
             VerticalSpacer { mediumIncreased }
 
             Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny)) {
-                DetailRow(RCommon.string.product_cross_product_proof_on_behalf_of, state.onBehalfOf)
+                DetailRow(RCommon.string.product_cross_product_proof_on_behalf_of, state.onBehalfOf.value)
                 DetailRow(RCommon.string.product_cross_product_proof_suffix, state.suffix)
                 DetailRow(RCommon.string.product_cross_product_proof_message, state.message)
             }
@@ -102,8 +103,8 @@ private fun CrossProductProofScreenPreview() {
     PolkadotTheme {
         CrossProductProofScreenInternal(
             state = CrossProductProofUiState(
-                callingProduct = "voting.dot",
-                onBehalfOf = "identity.dot",
+                callingProduct = ProductId.parse("voting.dot"),
+                onBehalfOf = ProductId.parse("identity.dot"),
                 suffix = "period/3",
                 message = "0xdeadbeef",
             ),

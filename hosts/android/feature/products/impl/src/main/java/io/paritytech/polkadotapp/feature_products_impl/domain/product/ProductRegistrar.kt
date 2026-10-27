@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import kotlinx.coroutines.CoroutineScope
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 

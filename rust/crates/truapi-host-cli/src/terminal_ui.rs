@@ -35,7 +35,7 @@ use tracing::{
 	field::{Field, Visit},
 };
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
-use truapi::platform::PermissionDecision;
+use truapi::{latest::ProductId, platform::PermissionDecision};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{
@@ -298,7 +298,7 @@ pub enum SystemEvent {
 impl SystemEvent {
 	/// Render the same sentence-case copy used by the interactive transcript.
 	pub fn human(&self) -> String {
-		let mut app = App::new_pairing(String::new(), String::new(), "info".to_string());
+		let mut app = App::transcript();
 		app.connection = "connected".to_string();
 		app.handle_system_event(self.clone());
 		let text = app.transcript_text();
@@ -388,7 +388,7 @@ pub fn output_success(title: impl Into<String>, detail: Option<String>) {
 		title: title.clone(),
 		detail: detail.clone(),
 	}) {
-		let mut app = App::new_pairing(String::new(), String::new(), "info".to_string());
+		let mut app = App::transcript();
 		app.notice(NoticeTone::Success, title, detail);
 		write_human_stdout(&app.transcript_text());
 	}
@@ -402,7 +402,7 @@ pub fn output_warning(title: impl Into<String>, detail: Option<String>) {
 		title: title.clone(),
 		detail: detail.clone(),
 	}) {
-		let mut app = App::new_pairing(String::new(), String::new(), "info".to_string());
+		let mut app = App::transcript();
 		app.notice(NoticeTone::Warning, title, detail);
 		write_human_stderr(&app.transcript_text());
 	}
@@ -499,7 +499,7 @@ where
 }
 
 fn sso_event_text(event: SsoEvent) -> String {
-	let mut app = App::new_pairing(String::new(), String::new(), "info".to_string());
+	let mut app = App::transcript();
 	app.handle_sso_event(event);
 	app.transcript_text()
 }
@@ -666,7 +666,7 @@ impl TerminalUi {
 	/// Create a terminal transcript and its cloneable host bridge.
 	pub fn new(
 		network: impl Into<String>,
-		product_id: impl Into<String>,
+		product_id: ProductId,
 		session: impl Into<String>,
 		session_names: Vec<String>,
 		log_filter: String,
@@ -679,7 +679,7 @@ impl TerminalUi {
 				receiver,
 				app: App::new(
 					network.into(),
-					product_id.into(),
+					product_id,
 					session.into(),
 					session_names,
 					log_filter,
@@ -692,7 +692,7 @@ impl TerminalUi {
 	/// Create the same terminal surface for a product-side pairing host.
 	pub fn new_pairing(
 		network: impl Into<String>,
-		product_id: impl Into<String>,
+		product_id: ProductId,
 		log_filter: String,
 	) -> (Self, UiHandle) {
 		let (sender, receiver) = mpsc::unbounded_channel();
@@ -701,7 +701,7 @@ impl TerminalUi {
 			Self {
 				sender,
 				receiver,
-				app: App::new_pairing(network.into(), product_id.into(), log_filter),
+				app: App::new_pairing(network.into(), product_id, log_filter),
 			},
 			handle,
 		)
@@ -849,8 +849,8 @@ impl ActiveTerminalUi {
 	}
 
 	/// Update the product shown in the host status bar.
-	pub fn set_product(&mut self, product_id: impl Into<String>) {
-		self.app.product = product_id.into();
+	pub fn set_product(&mut self, product_id: ProductId) {
+		self.app.product = Some(product_id);
 	}
 
 	/// Return an activity id boundary for one operational command.
@@ -1242,7 +1242,7 @@ enum HostRole {
 struct App {
 	role: HostRole,
 	network: String,
-	product: String,
+	product: Option<ProductId>,
 	session: String,
 	connection: String,
 	log_filter: String,
@@ -1260,21 +1260,39 @@ struct App {
 }
 
 impl App {
+	fn transcript() -> Self {
+		Self::with_role(
+			HostRole::Pairing,
+			String::new(),
+			None,
+			String::new(),
+			Vec::new(),
+			"info".to_string(),
+		)
+	}
+
 	fn new(
 		network: String,
-		product_id: String,
+		product_id: ProductId,
 		session: String,
 		session_names: Vec<String>,
 		log_filter: String,
 	) -> Self {
-		Self::with_role(HostRole::Signing, network, product_id, session, session_names, log_filter)
+		Self::with_role(
+			HostRole::Signing,
+			network,
+			Some(product_id),
+			session,
+			session_names,
+			log_filter,
+		)
 	}
 
-	fn new_pairing(network: String, product_id: String, log_filter: String) -> Self {
+	fn new_pairing(network: String, product_id: ProductId, log_filter: String) -> Self {
 		Self::with_role(
 			HostRole::Pairing,
 			network,
-			product_id,
+			Some(product_id),
 			String::new(),
 			Vec::new(),
 			log_filter,
@@ -1284,7 +1302,7 @@ impl App {
 	fn with_role(
 		role: HostRole,
 		network: String,
-		product: String,
+		product: Option<ProductId>,
 		session: String,
 		session_names: Vec<String>,
 		log_filter: String,
@@ -2492,7 +2510,10 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 		.saturating_add(text_display_width(&log_suffix));
 
 	if fixed_width < width {
-		let product = ellipsize_display_width(&app.product, width - fixed_width);
+		let product = ellipsize_display_width(
+			app.product.as_ref().map(ProductId::as_str).unwrap_or_default(),
+			width - fixed_width,
+		);
 		return Line::from(vec![
 			Span::styled(title, semantic_style(Color::Cyan).add_modifier(Modifier::BOLD)),
 			Span::raw(user_prefix),
@@ -2533,7 +2554,10 @@ fn header_line(app: &App, width: u16) -> Line<'static> {
 		),
 		Span::raw(product_prefix),
 		Span::styled(
-			ellipsize_display_width(&app.product, product_budget),
+			ellipsize_display_width(
+				app.product.as_ref().map(ProductId::as_str).unwrap_or_default(),
+				product_budget,
+			),
 			semantic_style(Color::Cyan),
 		),
 		Span::styled(log_suffix, Style::default().add_modifier(Modifier::DIM)),
@@ -3014,7 +3038,7 @@ mod tests {
 	fn test_app() -> App {
 		App::new(
 			"testnet".to_string(),
-			"playground.dot".to_string(),
+			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
 			"info".to_string(),
@@ -3197,7 +3221,8 @@ mod tests {
 	#[test]
 	fn scroll_guidance_takes_space_from_a_long_status_line() {
 		let mut app = test_app();
-		app.product = "product-name-that-would-otherwise-fill-the-status-line".to_string();
+		app.product =
+			Some(ProductId::for_test("product-name-that-would-otherwise-fill-the-status-line.dot"));
 		app.max_scroll_from_bottom = 10;
 
 		let status = line_text(composer_status_line(&app, false, false, 80));
@@ -3463,7 +3488,7 @@ mod tests {
 	fn pairing_host_status_shows_the_selected_log_level() -> Result<()> {
 		let mut app = App::new_pairing(
 			"paseo-next-v2".to_string(),
-			"playground.dot".to_string(),
+			ProductId::for_test("playground.dot"),
 			"info".to_string(),
 		);
 		app.editor.set_text("/");
@@ -3511,7 +3536,7 @@ mod tests {
 	fn rust_log_filter_value_is_visible_in_the_status_bar() {
 		let app = App::new(
 			"testnet".to_string(),
-			"playground.dot".to_string(),
+			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
 			"warn,truapi=debug".to_string(),
@@ -3524,7 +3549,7 @@ mod tests {
 	fn narrow_status_prioritizes_the_log_level() {
 		let app = App::new(
 			"testnet".to_string(),
-			"playground.dot".to_string(),
+			ProductId::for_test("playground.dot"),
 			"default".to_string(),
 			vec!["default".to_string()],
 			"debug".to_string(),
@@ -3536,12 +3561,13 @@ mod tests {
 	#[test]
 	fn long_product_name_is_ellipsized_in_the_status_bar() -> Result<()> {
 		let mut app = test_app();
-		app.product = "product-name-that-is-far-too-long-for-the-status-bar".to_string();
+		app.product =
+			Some(ProductId::for_test("product-name-that-is-far-too-long-for-the-status-bar.dot"));
 
 		let status = line_text(header_line(&app, 80));
 
 		assert!(status.contains('…'));
-		assert!(!status.contains(&app.product));
+		assert!(!status.contains(app.product.as_ref().map(ProductId::as_str).unwrap_or_default()));
 		assert!(status.ends_with(" · log info"));
 		assert!(text_display_width(&status) <= 80);
 		for width in 1..=120 {

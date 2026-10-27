@@ -40,19 +40,23 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, derive_more::Display)]
+#[cfg_attr(feature = "runtime", derive(serde::Serialize))]
+#[cfg_attr(feature = "runtime", serde(transparent))]
 pub struct ProductId(String);
 
 /// Why a string is not a product identifier.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(flat_error))]
 pub enum ProductIdError {
 	/// The identifier was empty or whitespace-only.
 	#[display("product_id must not be empty")]
 	Empty,
 	/// The identifier was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
+	#[display("product_id must be a dotNS or localhost product identifier, got {input:?}")]
 	Invalid {
 		/// The identifier as received.
-		product_id: String,
+		input: String,
 	},
 	/// The identifier was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
 	///
@@ -92,7 +96,7 @@ impl FromStr for ProductId {
 			});
 		}
 		if !has_well_formed_labels(&normalized) {
-			return Err(ProductIdError::Invalid { product_id: product_id.to_string() });
+			return Err(ProductIdError::Invalid { input: product_id.to_string() });
 		}
 		if is_localhost_form(&normalized) {
 			return Ok(Self(normalized));
@@ -105,7 +109,7 @@ impl FromStr for ProductId {
 		if has_dotns_tld(&normalized) && !reserves_localhost {
 			Ok(Self(normalized))
 		} else {
-			Err(ProductIdError::Invalid { product_id: product_id.to_string() })
+			Err(ProductIdError::Invalid { input: product_id.to_string() })
 		}
 	}
 }
@@ -226,9 +230,6 @@ impl<'de> serde::Deserialize<'de> for ProductId {
 	}
 }
 
-// UniFFI parses a `ProductId` argument before the call runs. If that fails in
-// a Swift call that can't throw, the app crashes, so only take one in calls
-// that return a `Result`.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 uniffi::custom_type!(ProductId, String, {
 	lower: |product_id| product_id.0,
@@ -441,6 +442,15 @@ mod tests {
 			overlong.parse::<ProductId>().is_err(),
 			"a product id past the cap must be rejected, not stored"
 		);
+	}
+
+	#[cfg(feature = "runtime")]
+	#[test]
+	fn persisted_json_is_a_canonical_string_and_validates_on_restore() {
+		let id = ProductId::for_test(" App.Peopl.DOT ");
+		assert_eq!(serde_json::to_string(&id).unwrap(), r#""app.peopl.dot""#);
+		assert_eq!(serde_json::from_str::<ProductId>(r#"" App.Peopl.DOT ""#).unwrap(), id);
+		assert!(serde_json::from_str::<ProductId>(r#""not_a.dot""#).is_err());
 	}
 
 	#[test]

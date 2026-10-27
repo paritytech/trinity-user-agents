@@ -15,7 +15,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
@@ -53,6 +52,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
+import uniffi.truapi.ProductId
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
@@ -137,13 +137,13 @@ class PocketViewModelTest {
     }
 
     private fun productCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue("game.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("game.dot"), PocketCardId(cardId)),
         title = cardId,
         privileged = false,
     )
 
     private fun privilegedCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("peopl.dot"), PocketCardId(cardId)),
         title = cardId,
         privileged = true,
     )

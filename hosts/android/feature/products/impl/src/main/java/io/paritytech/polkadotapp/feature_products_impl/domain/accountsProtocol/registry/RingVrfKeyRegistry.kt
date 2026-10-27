@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.Derivatio
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RegisteredRingVrfKey
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * RFC-0024 key registry. The Account Holder is the authority, so this is the only place that decides

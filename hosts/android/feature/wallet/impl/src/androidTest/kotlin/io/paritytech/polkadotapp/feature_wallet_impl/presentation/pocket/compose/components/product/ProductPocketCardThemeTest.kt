@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
@@ -29,6 +28,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.truapi.ProductId
 
 @RunWith(AndroidJUnit4::class)
 class ProductPocketCardThemeTest {
@@ -59,7 +59,7 @@ class ProductPocketCardThemeTest {
             PolkadotTheme(theme = pickedTheme) {
                 ProductPocketCard(
                     card = PocketCardUiModel.ProductCard(
-                        key = PocketCardKey(ProductId.fromStoredValue("pocketdemo.dot"), PocketCardId("loyalty")),
+                        key = PocketCardKey(ProductId.parse("pocketdemo.dot"), PocketCardId("loyalty")),
                         title = "Loyalty",
                         pinned = false,
                     ),

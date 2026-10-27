@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.domain
 
 import io.paritytech.polkadotapp.common.domain.model.EncodedPublicKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 interface ProductAccountIdProvider {
     suspend fun deriveAccountId(productAccountId: ProductAccountId): Result<EncodedPublicKey>

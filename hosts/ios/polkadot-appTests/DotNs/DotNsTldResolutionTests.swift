@@ -37,12 +37,12 @@ struct DotNsTldResolutionTests {
 
     /// The bug fix itself: product domains and derivation paths must embed the resolved TLD, not a
     /// hardcoded `.dot`. Parameterized so a reverted fix (constant `.dot`) fails on any non-dot TLD.
-    @Test(arguments: ["dot", "ksm", "paseo"])
-    func derivationPathsEmbedResolvedTld(_ tld: String) {
-        #expect(BuiltInProduct.personhood(for: tld) == "peopl.\(tld)")
-        #expect(BuiltInProduct.dim2(for: tld) == "dim2.\(tld)")
-        #expect(BuiltInProduct.uid(for: tld) == "uid.\(tld)")
-        #expect(WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
+    @Test(arguments: ["dot", "testnet", "paseo"])
+    func derivationPathsEmbedResolvedTld(_ tld: String) throws {
+        #expect(try BuiltInProduct.personhood(for: tld).rawValue == "peopl.\(tld)")
+        #expect(try BuiltInProduct.dim2(for: tld).rawValue == "dim2.\(tld)")
+        #expect(try BuiltInProduct.uid(for: tld).rawValue == "uid.\(tld)")
+        #expect(try WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
     }
 
     /// End-to-end proof that the TLD flows into real key material: two TLDs over the same root
@@ -54,15 +54,15 @@ struct DotNsTldResolutionTests {
 
         let dotMain = try MockWalletManagerRepository(tld: "dot", entropyManager: entropyManager)
             .main().getRawPublicKey()
-        let ksmMain = try MockWalletManagerRepository(tld: "ksm", entropyManager: entropyManager)
+        let testnetMain = try MockWalletManagerRepository(tld: "testnet", entropyManager: entropyManager)
             .main().getRawPublicKey()
-        #expect(dotMain != ksmMain)
+        #expect(dotMain != testnetMain)
 
         let dotMember = try MockBandersnatchManagerRepository(tld: "dot", entropyManager: entropyManager)
             .fullPerson().getMemberKey()
-        let ksmMember = try MockBandersnatchManagerRepository(tld: "ksm", entropyManager: entropyManager)
+        let testnetMember = try MockBandersnatchManagerRepository(tld: "testnet", entropyManager: entropyManager)
             .fullPerson().getMemberKey()
-        #expect(dotMember != ksmMember)
+        #expect(dotMember != testnetMember)
     }
 }
 

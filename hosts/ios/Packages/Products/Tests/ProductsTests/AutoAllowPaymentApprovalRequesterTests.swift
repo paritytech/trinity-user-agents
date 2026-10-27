@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 import SubstrateSdk
@@ -22,7 +23,7 @@ struct AutoAllowPaymentApprovalRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = await requester.requestApproval(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             amount: 100,
             destination: destination
         )
@@ -36,27 +37,20 @@ struct AutoAllowPaymentApprovalRequesterTests {
         let (requester, wrapped) = makeSUT(wrappedDecision: .rejected)
 
         let decision = await requester.requestApproval(
-            productId: "other.dot",
+            productId: try! ProductId("other.dot"),
             amount: 100,
             destination: destination
         )
 
         #expect(decision == .rejected)
         #expect(wrapped.calls.count == 1)
-        #expect(wrapped.calls.first?.productId == "other.dot")
+        #expect(wrapped.calls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("delegates bare productId without root", arguments: ["getcash", "getcash..dot"])
-    func delegatesMalformedProductId(productId: String) async {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .approved)
-
-        let decision = await requester.requestApproval(
-            productId: productId,
-            amount: 100,
-            destination: destination
-        )
-
-        #expect(decision == .approved)
-        #expect(wrapped.calls.count == 1)
+    @Test("malformed IDs cannot reach approval", arguments: ["getcash", "getcash..dot"])
+    func malformedInputIsRejected(input: String) {
+        #expect(throws: (any Error).self) {
+            try ProductId(input)
+        }
     }
 }

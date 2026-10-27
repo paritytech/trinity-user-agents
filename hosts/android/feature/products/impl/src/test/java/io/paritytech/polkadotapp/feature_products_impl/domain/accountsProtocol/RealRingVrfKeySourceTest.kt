@@ -20,13 +20,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
+import uniffi.truapi.ProductId
 
 private val PEOPLE_RING = ringOf("pop:polkadot.network/people")
 private val OTHER_RING = ringOf("pop:polkadot.network/people-lite")
 
-private val OWN_HANDLE = ProductAccountId("game.dot", DerivationIndex32.fromUInt(7u))
-private val PERSONHOOD_HANDLE = ProductAccountId("peopl.dot", DerivationIndex32.fromUInt(0u))
-private val UNKNOWN_HANDLE = ProductAccountId("stranger.dot", DerivationIndex32.fromUInt(3u))
+private val OWN_HANDLE = ProductAccountId(ProductId.parse("game.dot"), DerivationIndex32.fromUInt(7u))
+private val PERSONHOOD_HANDLE = ProductAccountId(ProductId.parse("peopl.dot"), DerivationIndex32.fromUInt(0u))
+private val UNKNOWN_HANDLE = ProductAccountId(ProductId.parse("stranger.dot"), DerivationIndex32.fromUInt(3u))
 
 private fun ringOf(collection: String) = RingLocation(
     chainId = ByteArray(32) { 1 }.toDataByteArray(),

@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import io.paritytech.polkadotapp.database.model.ProductTopUpLocal
+import uniffi.truapi.ProductId
 import java.math.BigInteger
 
 @Dao
@@ -14,7 +15,7 @@ interface ProductTopUpDao {
     suspend fun insert(topUp: ProductTopUpLocal)
 
     @Query("SELECT * FROM product_top_ups WHERE productId = :productId AND topUpId = :topUpId")
-    suspend fun get(productId: String, topUpId: String): ProductTopUpLocal?
+    suspend fun get(productId: ProductId, topUpId: String): ProductTopUpLocal?
 
     /** The top-ups still worth running: the ones that have not reached a verdict. */
     @Query("SELECT * FROM product_top_ups WHERE outcome IS NULL")
@@ -28,7 +29,7 @@ interface ProductTopUpDao {
         """
     )
     suspend fun settle(
-        productId: String,
+        productId: ProductId,
         topUpId: String,
         outcome: ProductTopUpLocal.Outcome,
         actualClaimedPlanks: BigInteger?,

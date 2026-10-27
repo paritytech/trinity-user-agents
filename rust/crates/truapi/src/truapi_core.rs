@@ -330,7 +330,7 @@ mod tests {
 		// manifest, which is the only thing that reaches a chain with this hash.
 		let request = truapi::versioned::local_storage::HostLocalStorageReadRequest::V2(
 			truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some("wallet.dot".parse().expect("valid product id")),
 				key: "k".to_string(),
 			},
 		);

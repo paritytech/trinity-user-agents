@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -39,14 +40,13 @@ final class DebugProductsViewModel {
     }
 
     func saveProduct(name: String, scriptURL: String) {
-        let product = Product(id: UUID().uuidString, name: name)
-
         Task { @MainActor in
             downloadError = nil
 
             do {
+                let product = Product(id: try ProductId("\(UUID().uuidString).dot"), name: name)
                 let content = try await scriptDownloader.download(url: scriptURL)
-                try scriptStorage.saveScript(productId: product.identifier, content: content)
+                try scriptStorage.saveScript(productId: product.id, content: content)
                 try await productRepository.saveOperation({ [product] }, { [] }).asyncExecute()
 
                 loadProducts()
@@ -62,10 +62,10 @@ final class DebugProductsViewModel {
         )
 
         Task { @MainActor [notificationScheduler] in
-            try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            try? await notificationScheduler.cancelAll(forProductId: product.id)
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()
-            try? scriptStorage.deleteScript(productId: product.identifier)
+            try? scriptStorage.deleteScript(productId: product.id)
             loadProducts()
         }
     }

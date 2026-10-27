@@ -11,8 +11,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -54,7 +54,7 @@ class SpaBrowserViewModel @Inject constructor(
         .map { tab ->
             // Waits rather than guesses: a tab classified before the TLD lands would stick as
             // "not a product" for its whole lifetime.
-            tab?.url?.toUri()?.let { ProductId.fromUrl(it, dotNsTldProvider.getTldRetrying()).getOrNull() }
+            tab?.url?.toUri()?.let { productIdFromUrl(it, dotNsTldProvider.getTldRetrying()).getOrNull() }
         }
         .distinctUntilChanged()
         .flatMapLatest { productId ->
@@ -91,7 +91,7 @@ class SpaBrowserViewModel @Inject constructor(
         // With no payload (opened from the tab bar) the active tab is already selected — just make
         // sure its WebView is live.
         when (val payload = savedStateHandle.get<SpaBrowserPayload>(SpaBrowserPayload::class.java.name)) {
-            is SpaBrowserPayload.ByProductId -> productSessionController.openProduct(ProductId.fromStoredValue(payload.productId))
+            is SpaBrowserPayload.ByProductId -> productSessionController.openProduct(payload.productId)
             is SpaBrowserPayload.ByUrl -> productSessionController.openUrl(payload.url)
             null -> productSessionController.ensureActiveLive()
         }
