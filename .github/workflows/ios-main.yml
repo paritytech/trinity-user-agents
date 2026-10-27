@@ -15,6 +15,7 @@ on:
     paths:
       - ".github/actions/bootstrap-ios-core/**"
       - ".github/actions/find-main-artifact/**"
+      - ".github/actions/ios-core-key/**"
       - ".github/actions/mac-preflight/**"
       - ".github/actions/rust-cache/**"
       - ".github/actions/rust-nightly/**"
