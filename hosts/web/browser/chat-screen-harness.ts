@@ -571,6 +571,8 @@ export interface ChatHarness {
   /** Stop the chat product and start a fresh one, as a worker restart does. */
   restartProduct(): Promise<void>;
   newSession(): Promise<void>;
+  /** Show a person chosen outside Chat, as the Docklet's search does. */
+  startWith(account: HexString, name: string, found: boolean): boolean;
   /** What the stand-in engine and worker were asked, in order. */
   asked(): string[];
   /** Kim's side of the call, as it stands. */
@@ -618,6 +620,8 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
     show: (visible) => screen.show(visible),
     restartProduct: () => inbox.restartProduct(),
     newSession: () => inbox.session(),
+    startWith: (account, name, found) =>
+      screen.startWith({ account, name, found }),
     asked: () => [...asked],
     kimCall: () => {
       const held = kim.current();

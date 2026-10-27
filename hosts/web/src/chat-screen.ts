@@ -298,9 +298,7 @@ export class ChatScreen {
   private drawList(): HTMLElement[] {
     const providers = this.inbox.providers();
     const starter =
-      this.choosePerson === undefined
-        ? undefined
-        : providers.find((provider) => provider.start !== undefined);
+      this.choosePerson === undefined ? undefined : this.starter();
     const body = el("div", "chat-body chat-inbox");
     const problem = this.inbox.problem();
     if (problem !== null)
@@ -496,6 +494,40 @@ export class ChatScreen {
       () => (this.choosing = false),
     );
     if (person === null || this.provider(provider.id) !== provider) return;
+    this.showPerson(provider, person);
+  }
+
+  /** The provider that starts conversations, as New chat does, or none. */
+  private starter(): ChatProvider | undefined {
+    return this.inbox
+      .providers()
+      .find((provider) => provider.start !== undefined);
+  }
+
+  /** Whether a person chosen elsewhere, such as in the Docklet's search, can be shown here. */
+  canStart(): boolean {
+    return this.inbox.signedIn() && this.starter() !== undefined;
+  }
+
+  /**
+   * Show `person`, chosen outside Chat, as New chat would: their
+   * conversation, or a request to them that is sent only when the user asks.
+   * False when no provider here can start one.
+   */
+  startWith(person: PickedPerson): boolean {
+    const provider = this.canStart() ? this.starter() : undefined;
+    if (provider === undefined) return false;
+    this.formError = null;
+    this.showPerson(provider, person);
+    this.root
+      .querySelector<HTMLElement>(
+        '[data-focus="welcome"], [data-focus="composer"]',
+      )
+      ?.focus();
+    return true;
+  }
+
+  private showPerson(provider: ChatProvider, person: PickedPerson): void {
     const existing =
       provider.start?.conversationWith !== undefined
         ? provider.start.conversationWith(person.account)

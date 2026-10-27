@@ -830,12 +830,25 @@ it are five tabs:
 - **More:** Versions, the dev server's own controls (test users, sample Inbox items, the chat engine and the chat demo),
   and the Log.
 
-**Address field.** The Docklet's middle button, the Pill, opens a card with the address field and the recent products.
-Typing only edits the text; the field shows a dashed outline and a go button while it holds an address that is not open.
-The product loads on Enter, the go button, or **Open** in the Product tab, and `Escape` restores the address that is
-open, then closes the card. When an address typed there does not open, the card opens again with the reason. The chip
-inside the field shows the product id the open page runs under. Scanning a code is not available in this host, and the
-card says so.
+**Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
+(`src/search-card.ts`, `src/address-recents.ts`). Typing only edits the text and lists suggestions; it opens nothing and
+picks no one. The field shows a dashed outline and a go button while it holds an address that is not open.
+
+- **Apps.** The recent products that match. Enter with no suggestion chosen, the go button, or **Open** in the Product
+  tab opens what is typed as a product, as before. When people show too, the Apps group starts with **Open** and the
+  name or URL Enter would open, so a name that could be either reads as two choices.
+- **People** (`src/search-people.ts`), only while a wallet's chat can start a conversation (not for a test user, and not
+  signed out), and only for text that can be a username, so a URL looks no one up. First the session's contacts whose
+  names match, then people found by username in the contact picker's own directory: the dev server's username index on
+  this machine, else the chain by exact username. Blocked people are never listed. A person found by username is checked
+  on chain first, as in the picker; until the check passes nothing is chosen, and typing again lets it go.
+- **Choosing a person** opens Chat as New chat does (`ChatScreen.startWith`): a contact's conversation, or a request to
+  someone new that the provider sends only on **Send request**, with focus in the message field. Nothing is given to a
+  product. A choice made before the session changed is dropped.
+
+`Escape` closes the suggestions, then restores the address that is open and closes the card. When an address typed there
+does not open, the card opens again with the reason. The chip inside the field shows the product id the open page runs
+under. Scanning a code is not available in this host.
 
 **Product id.** The Product tab's **Product id** field sets the id the core takes the page for. Leave it empty to derive
 one from the address: `localhost:<port>` for a local server, the name itself for a product name, or the host name for a
@@ -1136,6 +1149,15 @@ above the Docklet and its Pill; the product reads no safe-area inset of its own;
 frame and what the host keeps; More opens its menu from the keyboard, clear of the island and inside the app, Escape
 gives focus back; and Minimize keeps the same product running until Browse brings it back.
 
+`browser/docklet-search.spec.ts` checks the Docklet's search with a synthetic wallet whose saved chat holds one contact,
+every socket closed, a synthetic answer on the dev server's username route and every other request outside this host and
+a loopback product refused: the field reads **Find a person or app** with no scanning note; a name lists **Apps** (Open
+and the name) apart from **People** (found by username, marked as not a contact), and typing opens and picks nothing;
+the list stays inside the app above the field; a person found by username is checked first and, offline, is not chosen;
+a contact chosen with the keyboard opens their chat with focus in the composer; `Escape` gives focus back to the Pill; a
+URL looks no one up and Enter opens it; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks
+that a person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
+
 `browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
 closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no
 Workers page or demo panel; a typed name survives hiding the developer tools, and an empty one is refused until edited;
@@ -1169,24 +1191,24 @@ the bottom across the window, the Phone-sized app keeping its size and its devic
 the tools, that their top edge sets their height at the bottom, and that the side is kept after a reload; that Focus
 gives the app the whole window and brings the tools back at the same view; that the side switch and Hide are 28 px
 circles with their icons centred, on either side, in either colour scheme and on hover and focus; that a narrow window
-keeps them a sheet over the app; and that the Pill opens the address card with focus in the field, says scanning is not
-available, shows why an address cannot open, and on `Escape` closes and gives focus back.
-`browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs a chat exchange
-between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer, the copies, the
-capture levels, and that no key or secret shows. `browser/chat-screen.spec.ts` mounts the Chat screen alone over the
-Nova and product room providers with stand-ins behind them and the chat product provider with the synthetic chat product
-on the other side of the bridge in the page, synthetic data only and every request outside this host refused, and checks
-one list across providers, paging on scroll, sender names and the user's own messages, status changes, a retried message
-staying one message, a product room's custom card, buttons, reaction and non-`https` file, the chat product answering
-while another room is open, unread cleared only for messages on screen, a product restart and a new session. It checks
-New chat through the host's contact picker over a test username index: Cancel changes nothing, a username that names
-another account on chain is not chosen, a contact opens their chat, anyone else opens a request that the provider is
-asked to send only on Send, once, and a choice made after the session changed is dropped. It also checks the user's
-reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated image sent and
-fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call manager in the
-same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every track stopped when
-the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set
-`CHAT_SCREENSHOTS` to a directory to keep screenshots.
+keeps them a sheet over the app; and that the Pill opens the search card with focus in the field, shows why an address
+cannot open, and on `Escape` closes and gives focus back. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat
+view alone on made-up events, and runs a chat exchange between two synthetic wallets over an in-memory JSON-RPC
+statement store to check each payload layer, the copies, the capture levels, and that no key or secret shows.
+`browser/chat-screen.spec.ts` mounts the Chat screen alone over the Nova and product room providers with stand-ins
+behind them and the chat product provider with the synthetic chat product on the other side of the bridge in the page,
+synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
+sender names and the user's own messages, status changes, a retried message staying one message, a product room's custom
+card, buttons, reaction and non-`https` file, the chat product answering while another room is open, unread cleared only
+for messages on screen, a product restart and a new session. It checks New chat through the host's contact picker over a
+test username index: Cancel changes nothing, a username that names another account on chain is not chosen, a contact
+opens their chat, anyone else opens a request that the provider is asked to send only on Send, once, and a choice made
+after the session changed is dropped. It also checks the user's reactions in a Nova conversation and a product room,
+blocking, unblocking and leaving, a generated image sent and fetched through a HOP node held in the page, and audio and
+video calls over real WebRTC to a second call manager in the same page, with generated media (a WebAudio tone and a
+canvas), not a camera or microphone, and every track stopped when the call ends. The shared Chromium runs with
+`WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep
+screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
