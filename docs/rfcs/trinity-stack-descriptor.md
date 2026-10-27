@@ -261,13 +261,22 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 | DUB attester                                        | the DUB's `api/v1/attester`                                                             |
 | TURN servers and their short-lived credentials      | the `turn` service, when needed                                                         |
 
-A reader finds the dotNS contracts in three steps. It reads `DotnsGateway.DispatcherAddress` from Asset Hub's storage; a
-stack without it has no dotNS gateway. It calls `protocolRegistry()` on that contract, through the `eth-rpc` service or
-Asset Hub's own runtime call. A dispatcher that is a `RootGatewayDispatcher` has no `protocolRegistry()` and forwards to
-the PoP controller its `TARGET()` returns, which has one. It then calls the registry's `get(bytes32)` with each key
-dotNS's `DotnsConstants` names, such as `bytes32("registrar")`, and an unset key returns the zero address. The addresses
-change when the stack redeploys dotNS, as a restart of the chains does, or when the registry's owner rewires a key, so a
-reader can keep them for a while under one `generation`. `@parity/trinity-stack/dotns` does this as `resolveDotns`.
+A reader finds the dotNS contracts in three steps:
+
+1. It reads `DotnsGateway.DispatcherAddress` from Asset Hub's storage, which holds a raw 20-byte contract address. A
+   stack without it has no dotNS gateway.
+2. It calls `protocolRegistry()` on that contract, through the `eth-rpc` service or Asset Hub's `ReviveApi_call` runtime
+   API. If that call reverts, the reader calls `TARGET()` on the same contract and `protocolRegistry()` on the address
+   it returns. Paseo Next v2 needs this, because its gateway dispatches through a `RootGatewayDispatcher`; the step can
+   go once that gateway is redeployed.
+3. It calls the registry's `get(bytes32)` with each of these keys, written as the ASCII bytes of the key padded on the
+   right with zeros: `registrar`, `controller`, `registry`, `reverseResolver`, `popRules`, `storeFactory`, `resolver`,
+   `contentResolver`, `popController`, `popResolver`, `popLens`, `nameEscrow`, `multicall3`, `create3Factory`,
+   `nameWhitelist` and `costModel`. A key the registry leaves unset returns the zero address.
+
+The addresses change when the stack redeploys dotNS, as a restart of the chains does, or when the registry's owner
+rewires a key, so a reader can keep them for a while under one `generation`. `@parity/trinity-stack/dotns` does this as
+`resolveDotns`.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
