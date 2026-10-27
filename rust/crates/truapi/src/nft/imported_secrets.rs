@@ -28,7 +28,7 @@ impl ImportedSecretStore {
 	}
 
 	/// Stores the secret of each of `keys` under that key.
-	pub async fn store(&self, keys: &[ImportedItemKey]) -> Result<(), GenericError> {
+	pub async fn store_secrets(&self, keys: &[ImportedItemKey]) -> Result<(), GenericError> {
 		for imported in keys {
 			let storage_key = imported_secret_storage_key(&imported.key());
 			self.encrypted
@@ -80,7 +80,7 @@ mod tests {
 		let imported = imported_test_key(0);
 		let expected = *imported.secret().as_bytes();
 
-		block_on(store.store(&[imported_test_key(0)])).unwrap();
+		block_on(store.store_secrets(&[imported_test_key(0)])).unwrap();
 		let read = block_on(store.secret_of(&imported.key())).unwrap();
 		let other = block_on(store.secret_of(&KEY)).unwrap();
 

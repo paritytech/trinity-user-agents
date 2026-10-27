@@ -235,7 +235,7 @@ impl ScarcityTransferPolicy {
 			TransferDecision::Wait => return give_up_after_limit(transfer, build.now),
 			TransferDecision::Build(nft_transfer) => nft_transfer,
 		};
-		match self.ready_to_submit(transfer, &nft_transfer, build).await {
+		match self.sign_transfer(transfer, &nft_transfer, build).await {
 			SignedTransfer::Ready(ready) => Some(ready),
 			SignedTransfer::Unsignable => Some(Preparation::GiveUp),
 			SignedTransfer::Unavailable => give_up_after_limit(transfer, build.now),
@@ -244,7 +244,7 @@ impl ScarcityTransferPolicy {
 
 	/// What signing `nft_transfer` for `transfer` came to: ready, with the
 	/// instance and revision it signed recorded in its params, or why not.
-	async fn ready_to_submit(
+	async fn sign_transfer(
 		&self,
 		transfer: &PlannedTransfer,
 		nft_transfer: &NftTransfer,
@@ -253,14 +253,14 @@ impl ScarcityTransferPolicy {
 		let signer = match self.signer_for(&transfer.params).await {
 			Ok(Some(signer)) => signer,
 			Ok(None) => return SignedTransfer::Unsignable,
-			Err(error) => return transfer_not_signed(error),
+			Err(error) => return log_unsigned_transfer(error),
 		};
 		build
 			.extrinsics
 			.sign_nft_transfer(self.deps.genesis, &signer, nft_transfer)
 			.await
 			.map(|extrinsic| ready_preparation(transfer, nft_transfer, extrinsic))
-			.map_or_else(transfer_not_signed, SignedTransfer::Ready)
+			.map_or_else(log_unsigned_transfer, SignedTransfer::Ready)
 	}
 
 	/// The signer of the source key of `params`, or `None` when it is an
@@ -309,7 +309,7 @@ fn ready_preparation(
 
 /// [`SignedTransfer::Unavailable`], after logging the `error` that kept the
 /// transfer from being signed.
-fn transfer_not_signed(error: impl core::fmt::Display) -> SignedTransfer {
+fn log_unsigned_transfer(error: impl core::fmt::Display) -> SignedTransfer {
 	tracing::warn!(%error, "NFT transfer not signed");
 	SignedTransfer::Unavailable
 }
@@ -534,7 +534,7 @@ mod tests {
 	fn storage_with_imported_secret() -> Arc<dyn EncryptedStorage> {
 		let encrypted = Arc::new(MemoryEncryptedStorage::default());
 		let store = ImportedSecretStore::new(encrypted.clone());
-		block_on(store.store(&[imported_test_key(0)])).unwrap();
+		block_on(store.store_secrets(&[imported_test_key(0)])).unwrap();
 		encrypted
 	}
 

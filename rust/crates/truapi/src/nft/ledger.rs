@@ -194,7 +194,7 @@ impl NftLedger {
 	/// an hour from now. Returns once the moves are registered.
 	pub async fn start_imports(&self, request: ImportRequest) -> Result<(), StartImportError> {
 		self.imported
-			.store(&request.keys)
+			.store_secrets(&request.keys)
 			.await
 			.map_err(StartImportError::StoreSecrets)?;
 		let installation = self.current_installation().await?;

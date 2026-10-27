@@ -119,7 +119,7 @@ impl NftPurses {
 		}
 		let record = self
 			.db
-			.read(move |conn| dao::receive_key(conn, &key))
+			.read(move |conn| dao::find_receive_key(conn, &key))
 			.await?
 			.filter(|record| record.creator == depositor.as_str())
 			.ok_or(DepositRefusal::UnknownReceiveKey(key))?;

@@ -32,7 +32,7 @@ pub struct ReceiveKeyRecord {
 }
 
 /// The record of `key`, if it was made on this host.
-pub fn receive_key(
+pub fn find_receive_key(
 	conn: &Connection,
 	key: &NftPurseReceiveKey,
 ) -> Result<Option<ReceiveKeyRecord>, DbError> {
