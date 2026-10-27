@@ -237,7 +237,11 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
   the status line from Account as its label; there is no per-chain status. While the shelf is open the bar keeps its
   place, the Pill and the lens on the current tab; Apps gets no lens of its own. Escape or a tap outside closes the
   shelf.
-- **An open product.** Two glass circles sit over its top corners, as on iOS, with the Docklet kept below. On the left,
+- **An open product.** Two glass circles sit in a band over it, as in the iOS browser tab (`SPAViewLayout`): the
+  product's frame starts below the band, which is the top inset (a device's 54 px, or the page's own
+  `env(safe-area-inset-top)`), a 12 px gap, the 44 px circles and a 12 px gap. Nothing of the product is under the
+  circles or a device's island, and the product is told of no inset, so it adds none of its own. The band does not fold
+  away on scroll as the iOS one does: the host cannot see a product's scrolling. The Docklet is kept below. On the left,
   **Minimize** for a product that belongs to Browse: it goes back to the last host screen and keeps running, and Browse
   or the shelf brings it back. A product that cannot run behind, such as one opened from a link or a Pocket card, gets
   **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer tools' Product
@@ -863,9 +867,11 @@ Custom. The choice stays when another tab shows. Two lines under it say what the
 of the window and the tools; a set size also has a caption under it. The app lays out at exactly the chosen CSS size
 (393 × 852 for Phone) and the rectangle is shrunk to fit; the window and the tools keep their own size. A set size has a
 **Frame**: **Device** draws a bezel outside the size, **Round** rounds its corners and **No frame** leaves a plain
-rectangle. On a phone size the device also draws the island and the home indicator over the screen. Host screens and the
-Docklet keep clear of them; a product runs full-bleed under them, as on iOS. No frame draws a clock or status icons. The
-size and frame are kept for the tab. On a narrow screen the app fills the screen and the tab holds only a note.
+rectangle. On a phone size the device also draws the island and the home indicator over the screen. Host screens, the
+Docklet and a product's frame keep clear of the island. The size is the screen's: a product in front gets less, and a
+third line under the size controls says how much (`Product frame 393 × …`, and what the host keeps). No frame draws a
+clock or status icons. The size and frame are kept for the tab. On a narrow screen the app fills the screen and the tab
+holds only a note.
 
 **Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
 the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
@@ -1119,6 +1125,13 @@ backdrop; the picker names the product once and lists contacts by name only, wit
 title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its detail and is denied; focus
 returns where it was; a scaled preview draws the sheet at the app's scale; and on a phone browser nothing scrolls
 sideways and the buttons are 44px or taller.
+
+`browser/app-area.spec.ts` checks where a product in front sits, with a synthetic product on loopback that has a field
+at its very top, no wallet, every socket closed and every request outside this host and the product refused: in the
+Phone preview with each frame, drawn at full size and shrunk, and in a phone-sized window, the field starts below both
+circles and, in the device frame, below the island; the product reads no safe-area inset of its own; the Preview tab
+states the product's frame and what the host keeps; More opens its menu from the keyboard, clear of the island and
+inside the app, Escape gives focus back; and Minimize keeps the same product running until Browse brings it back.
 
 `browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
 closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no

@@ -4514,8 +4514,24 @@ body[data-search="open"] .product-slot::after {
   padding-top: var(--safe-top, 0px);
 }
 
+/*
+ * A product in front sits under a band that holds the circles, as the iOS
+ * browser tab lays out its web view (SPAViewLayout.topChromeHeight): the top
+ * inset, a 12 px gap, the 44 px circles and a 12 px gap. Its frame starts
+ * below the band, so nothing of it is under the circles or a device's
+ * island, and it gets no inset to add of its own.
+ */
+.product-frame {
+  --top-inset: max(var(--safe-top, 0px), env(safe-area-inset-top));
+  --app-top: calc(var(--top-inset) + 68px);
+}
+
+.product-frame[data-app-chrome="true"] .product-slot {
+  padding-top: var(--app-top);
+}
+
 .app-chrome {
-  top: calc(12px + var(--safe-top, 0px));
+  top: calc(12px + var(--top-inset));
 }
 
 /*
