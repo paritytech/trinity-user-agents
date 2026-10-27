@@ -1045,6 +1045,10 @@ started. `src/follow-spread.ts` gives the core one connection that opens each fo
 free slot, a new one when none has, and sends every `chainHead_v1_*` call that names a follow to the connection that
 holds it. The connections share the light client's sync.
 
+A product's preimage lookups, such as Browse's catalog and app icons, are read from the network's Bulletin gateway, as
+the native hosts read them. `src/preimage.ts` fetches `/ipfs/<cid>` for the raw blake2b-256 CID of the key, and the core
+checks the bytes against the key. A gateway that does not have it, or does not answer within 30 s, gives a miss.
+
 ## Tests
 
 From `hosts/web`:
@@ -1171,6 +1175,10 @@ the new one in front; going back to Browse keeps both and Browse's document; a t
 brings an app back without a reload; opening an app that is already open brings it in front with no second frame;
 Minimize keeps it in the shelf; Close in More ends only it; and signing out ends every app.
 
+`browser/preimage-image.spec.ts` checks preimage lookups, with a synthetic archive on a fake Asset Hub, a stood-in
+gateway and every socket closed: an image a product looks up by its preimage key, as Browse looks up an app's icon, is
+read once from the gateway's `/ipfs/<cid>` path and drawn.
+
 `browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
 closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no
 Workers page or demo panel; a typed name survives hiding the developer tools, and an empty one is refused until edited;
@@ -1237,7 +1245,8 @@ a project path, the inspector's rendering, and layout on narrow screens.
   `src/callbacks.ts`, `src/prompt.ts`, `src/reviews.ts`: the host callbacks and prompts.
 - `src/wallets.ts`, `src/storage.ts`: wallet and per-wallet, per-network storage. `src/network.ts`,
   `src/network-config.ts`, `src/network-choice.ts`: the light client, the networks it serves and the per-tab choice.
-  `src/follow-spread.ts`: spreading the core's follows over light-client connections.
+  `src/follow-spread.ts`: spreading the core's follows over light-client connections. `src/preimage.ts`: preimage
+  lookups from the Bulletin gateway.
 - `src/dotns.ts`, `src/address.ts`: name lookup and the address bar's grammar.
 - `src/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
   `src/pocket.ts`, `src/pocket-screen.ts`: the Pocket cards, the Pocket the core's calls see, and how the screen draws
@@ -1296,6 +1305,5 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - Keeping held products across a reload or a session change.
 - Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs
   from Product → **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
-- Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing
   core's product runtime does not install the debug tap the dial reads. The in-page inspector does not depend on it.

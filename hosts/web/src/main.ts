@@ -40,6 +40,7 @@ import {
 } from "./chat-worker/worker-mode.js";
 import { sessionChatKeys } from "./nova-chat-provider.js";
 import { createHostCallbacks } from "./callbacks.js";
+import { gatewayPreimages } from "./preimage.js";
 import { connectNetwork, type Network } from "./network.js";
 import {
   NETWORKS,
@@ -2556,6 +2557,7 @@ async function boot(): Promise<void> {
       askedDomains = [...new Set([...askedDomains, ...domains])];
     },
     onPermissionDecided: refreshPermissionsSoon,
+    preimage: gatewayPreimages(activeNetwork.dotns.contentGateway),
     chat: productChat.platform,
     pocket: pocketPlatform(connection.networkSuffix),
     contacts: hostContacts.platform,

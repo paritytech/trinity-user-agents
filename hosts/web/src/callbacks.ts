@@ -4,6 +4,7 @@ import type {
   ContactsPlatform,
   PermissionDecision,
   PocketPlatform,
+  PreimageHost,
   ProductContext,
   RequiredHostCallbacks,
 } from "@parity/truapi-host";
@@ -35,6 +36,8 @@ export interface HostCallbackOptions {
   onNetworkAsked?: (domains: string[]) => void;
   /** Called once a permission prompt, or an automatic answer, has been given. */
   onPermissionDecided?: () => void;
+  /** Where preimage lookups are read from. */
+  preimage: Required<PreimageHost>;
   /** Where product workers' chat rooms and messages go. Without it, Chat is `Unsupported`. */
   chat?: Required<ChatPlatform>;
   /** The Pocket cards each product sees. Without it, Pocket is `Unsupported`. */
@@ -68,6 +71,7 @@ export function createHostCallbacks(
     navigate,
     onNetworkAsked,
     onPermissionDecided,
+    preimage,
     chat,
     pocket,
     contacts,
@@ -189,11 +193,8 @@ export function createHostCallbacks(
         constant<HostLocaleSubscribeItem>({ languageTag: navigator.language }),
     },
 
-    // No preimage network is reachable from this host, so every lookup is an
-    // honest miss. The core submits preimages to Bulletin itself.
-    preimage: {
-      lookupPreimage: () => constant<Uint8Array | undefined>(undefined),
-    },
+    // The core submits preimages to Bulletin itself; the host only reads them.
+    preimage,
 
     // A worker this host runs stays up while its wallet is signed in, so no
     // operation needs to keep it alive. Ids stay unique across products,
