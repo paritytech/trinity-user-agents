@@ -105,7 +105,7 @@ scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
 # wasm host perform, so these are not target-gated.
 frame-metadata = { workspace = true, features = ["std", "current", "decode"], optional = true }
-scale-info = { workspace = true, features = ["decode"], optional = true }
+scale-info = { workspace = true, features = ["decode", "derive"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }

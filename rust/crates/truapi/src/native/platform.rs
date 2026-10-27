@@ -5,10 +5,11 @@ use std::sync::{
 };
 
 use crate::platform::{
-	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 use futures::{
 	FutureExt,
@@ -249,6 +250,22 @@ impl Features for CallbackPlatform {
 			.on_core_log("truapi.native.callback.supported_chains".to_string(), String::new());
 
 		self.callbacks.supported_chains().map_err(v01::GenericError::from)
+	}
+}
+
+#[async_trait]
+impl ExtrinsicVersionHost for CallbackPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, v01::GenericError> {
+		self.callbacks.on_core_log(
+			"truapi.native.callback.transaction_extension_versions".to_string(),
+			String::new(),
+		);
+		self.callbacks
+			.transaction_extension_versions()
+			.await
+			.map_err(v01::GenericError::from)
 	}
 }
 
