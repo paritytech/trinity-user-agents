@@ -45,6 +45,26 @@ truapi_macros::versioned_type! {
 		V1 => v01::HostChatSetRoomFooterError,
 		V2 => v01::HostChatSetRoomFooterError,
 	}
+	pub enum HostChatRoomError { V1 => v01::HostChatRoomError }
+	pub enum ProductChatQueryError { V1 => v01::ProductChatQueryError }
+	pub enum HostChatSetRoomMetadataRequest { V1 => v01::HostChatSetRoomMetadataRequest }
+	pub enum HostChatSetRoomMetadataResponse { V1 }
+	pub enum HostChatSetRoomPreviewRequest { V1 => v01::HostChatSetRoomPreviewRequest }
+	pub enum HostChatSetRoomPreviewResponse { V1 }
+	pub enum HostChatDeleteRoomRequest { V1 => v01::HostChatDeleteRoomRequest }
+	pub enum HostChatDeleteRoomResponse { V1 }
+	pub enum HostChatUpdateFeedRequest { V1 => v01::HostChatUpdateFeedRequest }
+	pub enum HostChatUpdateFeedResponse { V1 }
+	pub enum HostChatUpdateFeedError { V1 => v01::HostChatUpdateFeedError }
+	pub enum ProductChatMessagesQueryRequest { V1 => v01::ProductChatMessagesQueryRequest }
+	pub enum ProductChatMessagesQueryItem { V1 => v01::ProductChatMessagesQueryItem }
+	pub enum ProductChatUserActionRequest { V1 => v01::ProductChatUserActionRequest }
+	pub enum ProductChatUserActionItem { V1 => v01::ProductChatUserActionItem }
+	pub enum ProductChatUserActionError { V1 => v01::ProductChatUserActionError }
+	pub enum ProductChatReactionsQueryRequest { V1 => v01::ProductChatReactionsQueryRequest }
+	pub enum ProductChatReactionsQueryItem { V1 => v01::ProductChatReactionsQueryItem }
+	pub enum HostChatSetRoomConfigRequest { V1 => v01::HostChatSetRoomConfigRequest }
+	pub enum HostChatSetRoomConfigResponse { V1 }
 }
 
 impl IntoLatest for HostChatPostMessageRequest {

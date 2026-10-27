@@ -49,6 +49,31 @@ fn a_footer_answers_in_the_callers_version() {
 	assert_eq!(HostChatSetRoomFooterResponse::from_latest((), 2).version(), 2);
 }
 
+// Products built against the first SDK create rooms, set footers and post
+// in these shapes through whichever client the host injects, so the v1
+// envelopes keep their first wire.
+#[test]
+fn a_room_its_footer_and_a_post_keep_the_first_wire() {
+	assert_eq!(HostChatCreateRoomRequest::LATEST, 1);
+	assert_eq!(HostChatSetRoomFooterRequest::LATEST, 2);
+	assert_eq!(HostChatPostMessageRequest::LATEST, 2);
+
+	let room = HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+		room_id: "room".into(),
+		name: "Room".into(),
+		icon: String::new(),
+	});
+	// V1 envelope, the room id, the name, then the empty icon.
+	assert_eq!(hex::encode(room.encode()), "0010726f6f6d10526f6f6d00");
+
+	let footer = HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+		room_id: "room".into(),
+		footer: v01::ChatRoomFooter::TextInput,
+	});
+	// V1 envelope, the room id, then `TextInput` at index 0.
+	assert_eq!(hex::encode(footer.encode()), "0010726f6f6d00");
+}
+
 // Fixture is `ChatRegisterBotV1_request` output from triangle-js-sdks
 // `packages/host-api`, under an `Enum({ v1: … })` envelope. Requests and
 // success responses match that host; error frames do not, because
