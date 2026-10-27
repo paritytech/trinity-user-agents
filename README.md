@@ -629,6 +629,19 @@ A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
 
+### The iOS nightly
+
+`ios-nightly-prepare.yml` runs at 20:00 UTC when main has moved since the last
+night whose run succeeded, and on dispatch by someone in `IOS_SIGNING_ACTORS`.
+One run is the whole night: it prepares the build, fetches the core main
+published for the same inputs or builds it once, then uploads to TestFlight,
+publishes the simulator `.app` as a prerelease and runs the host-playground e2e
+from that core, all from one commit, and announces the night once. A failed leg
+is re-run in place with "Re-run failed jobs"; the TestFlight upload re-runs only
+for someone in the same list. A re-run never announces the night a second
+time. A re-run reuses the night's build number, so once an upload has reached
+App Store Connect a failed TestFlight leg needs a new night instead.
+
 ### Android builds that reach testers
 
 Two workflows deliver through Firebase App Distribution, which reaches a named
