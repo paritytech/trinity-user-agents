@@ -29,8 +29,10 @@ const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 /// sessions blob without bound. Older ones are compacted into the session
 /// pack.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
-/// Most top-ups a provider may start for one session, as getcash claims in
-/// up to three attempts.
+/// Most top-ups a provider may name for one session, and most top-ups or
+/// payments it may hold started for one at a time, as getcash claims or pays
+/// in up to three attempts, each under a new id after the host refused the
+/// last.
 const TOP_UP_LIMIT: usize = 3;
 /// How long an assigned session with no funds moving waits for its
 /// provider's next update before it expires, so a provider that went silent
@@ -42,9 +44,9 @@ const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 pub(crate) const RECORDED_PER_OWNER: usize = 64;
 /// Format of the stored sessions blob, which leads it as a `u16`. The stored
 /// enums pin their SCALE indexes, so variants added later decode alongside
-/// the ones a blob was written with. A blob that leads with another format is
-/// set aside rather than read.
-const SESSIONS_FORMAT: u16 = 1;
+/// the ones a blob was written with. A blob of an older format is dropped,
+/// as no app used funding before this one; a corrupt one is set aside.
+const SESSIONS_FORMAT: u16 = 2;
 /// Format of the stored session pack, which leads it as a `u16`, read like
 /// the sessions blob.
 const PACK_FORMAT: u16 = 1;
@@ -145,9 +147,9 @@ pub struct FundingSession {
 	pub cancel: Option<FundingCancel>,
 	/// Every update the provider reported, oldest first.
 	pub updates: Vec<FundingUpdateRecord>,
-	/// The top-ups or payment requests the provider started while serving
-	/// the session, oldest first. A `Crediting` or `Collecting` report must
-	/// name one of them.
+	/// The top-ups or payment requests the provider started for the
+	/// session, oldest first. A `Crediting` or `Collecting` report must name
+	/// one the host took.
 	pub started: Vec<StartedFunds>,
 	/// What the user chose the provider on: its quote, and the rail and
 	/// asset it priced. `None` until chosen, or when chosen unquoted.
@@ -242,8 +244,8 @@ pub struct FundingUpdateRecord {
 	pub at_ms: u64,
 }
 
-/// A top-up or payment request the provider started with `payment.topUp` or
-/// `payment.request` while serving a session.
+/// A top-up or payment request the provider started for a session with
+/// `payment.topUp` or `payment.request`, recorded before the host is asked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct StartedFunds {
@@ -251,9 +253,30 @@ pub struct StartedFunds {
 	pub host_id: [u8; 32],
 	/// Amount it asks to move, which the session settles from.
 	pub amount: u128,
+	/// Digest of the rest of the request, so a repeat under the same id must
+	/// ask the same.
+	pub terms: [u8; 32],
+	/// When the core recorded it, in Unix milliseconds.
+	pub recorded_at_ms: u64,
+	/// Whether the host took it. Until then no report can name it, and it
+	/// goes once the host is known not to hold it.
+	pub accepted: bool,
 	/// When a report named it, in Unix milliseconds. A record is named at
 	/// most once.
 	pub named_at_ms: Option<u64>,
+}
+
+/// What recording funds a provider starts for a session found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartRecord {
+	/// Recorded now.
+	New,
+	/// Recorded before with the same amount and terms: a retried call.
+	Repeat,
+	/// Recorded before under this id with another amount or terms.
+	Conflict,
+	/// The session holds as many funds as it may.
+	Full,
 }
 
 /// Where a user's cancel of a served session stands.
@@ -618,7 +641,7 @@ impl FundingSession {
 				.started
 				.iter_mut()
 				.find(|record| record.host_id == named && record.named_at_ms.is_none())
-				.filter(|record| record.amount == amount)
+				.filter(|record| record.accepted && record.amount == amount)
 				.ok_or(HostFundingReportError::NotStarted)?;
 			record.named_at_ms = Some(now_ms);
 		}
@@ -680,24 +703,58 @@ impl FundingSession {
 			.collect()
 	}
 
-	/// Record funds the serving provider started under `host_id`, unless
-	/// they are recorded already. Returns whether this recorded them.
-	pub fn record_start(&mut self, host_id: [u8; 32], amount: u128) -> bool {
-		if self.is_terminal() ||
-			self.provider_id.is_none() ||
-			self.started.iter().any(|record| record.host_id == host_id)
-		{
-			return false;
+	/// Record funds the serving provider starts for the session under
+	/// `host_id`, not yet taken by the host. The caller checked the session
+	/// is open and served in their direction.
+	pub fn record_start(
+		&mut self,
+		host_id: [u8; 32],
+		amount: u128,
+		terms: [u8; 32],
+		now_ms: u64,
+	) -> StartRecord {
+		if let Some(record) = self.started.iter().find(|record| record.host_id == host_id) {
+			return if record.amount == amount && record.terms == terms {
+				StartRecord::Repeat
+			} else {
+				StartRecord::Conflict
+			};
 		}
-		self.started.push(StartedFunds { host_id, amount, named_at_ms: None });
-		true
+		if self.started.len() >= TOP_UP_LIMIT {
+			return StartRecord::Full;
+		}
+		self.started.push(StartedFunds {
+			host_id,
+			amount,
+			terms,
+			recorded_at_ms: now_ms,
+			accepted: false,
+			named_at_ms: None,
+		});
+		StartRecord::New
 	}
 
-	/// Drop the record of funds under `host_id` that no report named, as the
-	/// host refused them or another session named them.
-	pub fn forget_start(&mut self, host_id: &[u8; 32]) {
+	/// Mark the funds under `host_id` as taken by the host. Returns whether
+	/// that changed them.
+	pub fn accept_start(&mut self, host_id: &[u8; 32]) -> bool {
 		self.started
-			.retain(|record| record.host_id != *host_id || record.named_at_ms.is_some());
+			.iter_mut()
+			.find(|record| record.host_id == *host_id && !record.accepted)
+			.map(|record| record.accepted = true)
+			.is_some()
+	}
+
+	/// Drop the record of funds under `host_id` the host did not take.
+	/// Returns whether one went.
+	pub fn forget_start(&mut self, host_id: &[u8; 32]) -> bool {
+		let before = self.started.len();
+		self.started.retain(|record| record.host_id != *host_id || record.accepted);
+		self.started.len() != before
+	}
+
+	/// The funds recorded for the session that the host has not taken yet.
+	pub fn pending_starts(&self) -> impl Iterator<Item = &StartedFunds> {
+		self.started.iter().filter(|record| !record.accepted)
 	}
 
 	/// Whether funds are moving: the provider named a top-up or a payment
@@ -1061,14 +1118,14 @@ pub enum FundingSessionError {
 	},
 }
 
-/// `target` as the host may show it: an App route must stay inside the
-/// provider's App, and a page and its return URL must be https URLs with a
-/// host and no credentials. A page is passed on as parsed, so the host opens
-/// exactly what was checked.
+/// `target` as the host may show it: an App route must be a relative route
+/// inside the provider's App, and a page and its return URL must be https URLs
+/// with a host and no credentials. Both are passed on as parsed, so the host
+/// opens exactly what was checked.
 pub fn checked_frame_target(target: FundingFrameTarget) -> Option<FundingFrameTarget> {
 	match target {
 		FundingFrameTarget::App { route } => {
-			app_route_stays_inside(&route).then_some(FundingFrameTarget::App { route })
+			checked_app_route(&route).map(|route| FundingFrameTarget::App { route })
 		},
 		FundingFrameTarget::Page { url, return_url } => Some(FundingFrameTarget::Page {
 			url: checked_page_url(&url)?,
@@ -1080,15 +1137,22 @@ pub fn checked_frame_target(target: FundingFrameTarget) -> Option<FundingFrameTa
 	}
 }
 
-/// Whether `route`, resolved against the provider's App, stays on it: no
-/// scheme, no host and no scheme-relative `//`.
-fn app_route_stays_inside(route: &str) -> bool {
+/// `route` as the provider's App is handed it: the path, query and fragment
+/// it resolves to inside the App. Only relative syntax is taken: no scheme
+/// and no authority, so no host, credentials or port, whether written with
+/// `//` or with the backslashes a browser reads as slashes.
+fn checked_app_route(route: &str) -> Option<String> {
 	const APP: &str = "https://app.invalid/";
-	let Ok(base) = Url::parse(APP) else {
-		return false;
-	};
-	base.join(route)
-		.is_ok_and(|joined| joined.scheme() == "https" && joined.host_str() == Some("app.invalid"))
+	let authority = ["//", "\\", "/\\", "\\/"].iter().any(|lead| route.starts_with(lead));
+	if authority || Url::parse(route).is_ok() {
+		return None;
+	}
+	let joined = Url::parse(APP).ok()?.join(route).ok()?;
+	let inside = joined.host_str() == Some("app.invalid") &&
+		joined.port().is_none() &&
+		joined.username().is_empty() &&
+		joined.password().is_none();
+	inside.then(|| joined[url::Position::BeforePath..].to_string())
 }
 
 fn checked_page_url(raw: &str) -> Option<String> {
@@ -1152,7 +1216,8 @@ pub fn retained(
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is set aside under
+/// A blob of an older format is cleared and reads as no sessions; one that
+/// does not decode is set aside under
 /// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions; one
 /// in a newer format fails with [`FundingSessionError::NewerFormat`] and stays
 /// where it is.
@@ -1176,7 +1241,8 @@ pub async fn load_pack(
 
 /// Read the list stored under `key`, which leads with `format`.
 ///
-/// A blob that does not decode is appended to the list kept under
+/// A blob of an older format is cleared: records from before a format bump
+/// are not carried over. A blob that does not decode is appended to the list kept under
 /// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as an empty list,
 /// so one bad write cannot disable funding for good, the next store cannot
 /// overwrite records it never read, and a later bad blob does not replace an
@@ -1196,6 +1262,11 @@ async fn load_versioned<T: Decode>(
 	match decode_versioned(&blob, format) {
 		Decoded::Records(records) => return Ok(records),
 		Decoded::Newer(stored) => return Err(FundingSessionError::NewerFormat { format: stored }),
+		Decoded::Older(stored) => {
+			tracing::info!(?key, stored, format, "dropping funding records of an older format");
+			storage.clear_core_storage(key).await.map_err(storage_error)?;
+			return Ok(Vec::new());
+		},
 		Decoded::Unreadable => {},
 	}
 	error!(?key, bytes = blob.len(), "funding records do not decode; keeping them aside");
@@ -1224,7 +1295,9 @@ enum Decoded<T> {
 	Records(Vec<T>),
 	/// A list in a newer format, left for the app that wrote it.
 	Newer(u16),
-	/// Anything else: an older format or a corrupt blob.
+	/// A list in an older format, which this core drops.
+	Older(u16),
+	/// A corrupt blob.
 	Unreadable,
 }
 
@@ -1237,8 +1310,11 @@ fn decode_versioned<T: Decode>(blob: &[u8], format: u16) -> Decoded<T> {
 	if stored > format {
 		return Decoded::Newer(stored);
 	}
+	if stored < format {
+		return Decoded::Older(stored);
+	}
 	match Vec::<T>::decode(input) {
-		Ok(records) if stored == format && input.is_empty() => Decoded::Records(records),
+		Ok(records) if input.is_empty() => Decoded::Records(records),
 		_ => Decoded::Unreadable,
 	}
 }
@@ -1333,20 +1409,43 @@ mod tests {
 
 	#[test]
 	fn an_app_route_stays_inside_the_provider_app() {
-		let route = |route: &str| {
-			checked_frame_target(FundingFrameTarget::App { route: route.to_string() }).is_some()
+		let route = |route: &str| match checked_frame_target(FundingFrameTarget::App {
+			route: route.to_string(),
+		}) {
+			Some(FundingFrameTarget::App { route }) => Some(route),
+			_ => None,
 		};
 
 		assert_eq!(
 			[
 				route("/kyc"),
-				route("deposit?step=2"),
+				route("deposit?step=2#top"),
+				route("/a/../kyc"),
 				route("//evil.example/x"),
 				route("https://evil.example/"),
 				route("javascript:alert(1)"),
 				route("\\\\evil.example"),
+				route("/\\evil.example"),
+				// The base the core resolves against is no way in either.
+				route("https://app.invalid/x"),
+				route("//app.invalid/x"),
+				route("https://user:secret@app.invalid/"),
+				route("https://app.invalid:8443/"),
 			],
-			[true, true, false, false, false, false]
+			[
+				Some("/kyc".to_string()),
+				Some("/deposit?step=2#top".to_string()),
+				Some("/kyc".to_string()),
+				None,
+				None,
+				None,
+				None,
+				None,
+				None,
+				None,
+				None,
+				None,
+			]
 		);
 	}
 
@@ -1546,15 +1645,33 @@ mod tests {
 	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
 		for update in updates {
 			if let Some((id, amount)) = named_funds(update) {
-				session.record_start(*id, amount);
+				taken(session, *id, amount);
 			}
 			report(session, update.clone())
 				.unwrap_or_else(|refusal| panic!("{update:?} refused: {refusal:?}"));
 		}
 	}
 
+	/// Record funds the provider starts, before the host takes them.
+	fn start(session: &mut FundingSession, host_id: [u8; 32], amount: u128) -> StartRecord {
+		session.record_start(host_id, amount, [0; 32], NOW)
+	}
+
+	/// Record funds the provider started and the host took.
+	fn taken(session: &mut FundingSession, host_id: [u8; 32], amount: u128) {
+		start(session, host_id, amount);
+		session.accept_start(&host_id);
+	}
+
 	fn named(host_id: [u8; 32], amount: u128) -> StartedFunds {
-		StartedFunds { host_id, amount, named_at_ms: Some(NOW) }
+		StartedFunds {
+			host_id,
+			amount,
+			terms: [0; 32],
+			recorded_at_ms: NOW,
+			accepted: true,
+			named_at_ms: Some(NOW),
+		}
 	}
 
 	// With no provider to ask, a cancel ends the session itself; once it
@@ -1750,7 +1867,7 @@ mod tests {
 	#[test]
 	fn an_inbound_session_whose_credit_started_is_too_late_to_cancel() {
 		let mut recorded = served(FundingDirection::In);
-		recorded.record_start([1; 32], 100);
+		start(&mut recorded, [1; 32], 100);
 		let mut named = served(FundingDirection::In);
 		reported(&mut named, &[FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }]);
 
@@ -1767,7 +1884,7 @@ mod tests {
 	#[test]
 	fn recorded_funds_lock_the_session_before_they_are_named() {
 		let mut session = served(FundingDirection::Out);
-		session.record_start([3; 32], 40);
+		start(&mut session, [3; 32], 40);
 
 		let first = cancelled(&mut session);
 		let second = cancelled(&mut session);
@@ -1856,7 +1973,7 @@ mod tests {
 		);
 		cancelled(&mut session);
 		session.answer_cancel(offer(5, 95, None), NOW);
-		session.record_start([1; 32], 100);
+		start(&mut session, [1; 32], 100);
 
 		let answer = session.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW);
 
@@ -1875,7 +1992,7 @@ mod tests {
 		reported(&mut over, &[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }]);
 		cancelled(&mut over);
 		let mut crediting = over.clone();
-		crediting.record_start([1; 32], 100);
+		start(&mut crediting, [1; 32], 100);
 		let mut outbound = served(FundingDirection::Out);
 		cancelled(&mut outbound);
 
@@ -1993,30 +2110,34 @@ mod tests {
 		);
 	}
 
-	// The core settles from what it saw the provider start, so a provider
-	// cannot claim a top-up it never started for this session, inflate one,
-	// or name one twice.
+	// The core settles from what it saw the provider start and the host
+	// take, so a provider cannot claim a top-up it never started for this
+	// session, one the host has not taken, an inflated one, or one twice.
 	#[test]
-	fn a_report_names_only_funds_started_for_the_session_at_their_amount() {
-		let mut unassigned = session(FundingDirection::In);
+	fn a_report_names_only_funds_the_host_took_for_the_session_at_their_amount() {
 		let mut session = served(FundingDirection::In);
-		let recorded_unassigned = unassigned.record_start([1; 32], 70);
-		session.record_start([1; 32], 70);
+		start(&mut session, [1; 32], 70);
 
 		let never_started =
 			report(&mut session, FundingUpdate::Crediting { top_up_id: [9; 32], amount: 70 });
+		let not_taken =
+			report(&mut session, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 70 });
+		session.accept_start(&[1; 32]);
 		let inflated =
 			report(&mut session, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 700 });
 		let credited =
 			report(&mut session, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 70 });
+		let twice =
+			report(&mut session, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 70 });
 
 		assert_eq!(
-			(recorded_unassigned, never_started, inflated, credited, session.started),
+			(never_started, not_taken, inflated, credited, twice, session.started),
 			(
-				false,
+				Err(HostFundingReportError::NotStarted),
 				Err(HostFundingReportError::NotStarted),
 				Err(HostFundingReportError::NotStarted),
 				Ok(()),
+				Err(HostFundingReportError::OutOfOrder),
 				vec![named([1; 32], 70)],
 			)
 		);
@@ -2040,7 +2161,7 @@ mod tests {
 
 	fn report_at(session: &mut FundingSession, update: FundingUpdate, at_ms: u64) {
 		if let Some((id, amount)) = named_funds(&update) {
-			session.record_start(*id, amount);
+			taken(session, *id, amount);
 		}
 		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
 	}
@@ -2057,7 +2178,7 @@ mod tests {
 		let mut paid = served(FundingDirection::In);
 		reported(&mut paid, &[FundingUpdate::PaymentReceived { finalized: false, mismatch: None }]);
 		let mut started = served(FundingDirection::Out);
-		assert!(started.record_start([7; 32], 100));
+		assert_eq!(start(&mut started, [7; 32], 100), StartRecord::New);
 
 		let states = [&fresh, &paid, &started]
 			.map(|session| (session.progress().money_moved, session.money_moved()));
@@ -2228,6 +2349,44 @@ mod tests {
 		);
 	}
 
+	// A repeat under one id must ask what the first call asked, the host's
+	// refusal drops only funds it never took, and a session holds a bounded
+	// number of started funds.
+	#[test]
+	fn started_funds_are_recorded_once_per_id_and_bounded() {
+		let mut session = served(FundingDirection::In);
+		let first = start(&mut session, [1; 32], 70);
+		let repeat = start(&mut session, [1; 32], 70);
+		let other_amount = start(&mut session, [1; 32], 71);
+		let other_terms = session.record_start([1; 32], 70, [5; 32], NOW);
+		taken(&mut session, [2; 32], 10);
+		start(&mut session, [3; 32], 10);
+		let full = start(&mut session, [4; 32], 10);
+		let forgot_taken = session.forget_start(&[2; 32]);
+		let forgot_pending = session.forget_start(&[3; 32]);
+
+		assert_eq!(
+			(
+				[first, repeat, other_amount, other_terms, full],
+				forgot_taken,
+				forgot_pending,
+				session.pending_starts().map(|funds| funds.host_id).collect::<Vec<_>>(),
+			),
+			(
+				[
+					StartRecord::New,
+					StartRecord::Repeat,
+					StartRecord::Conflict,
+					StartRecord::Conflict,
+					StartRecord::Full,
+				],
+				false,
+				true,
+				vec![[1; 32]],
+			)
+		);
+	}
+
 	// A partial claim is retried with a new top-up, as getcash does in up to
 	// three attempts; the host follows all of them once the provider is done.
 	#[test]
@@ -2394,17 +2553,49 @@ mod tests {
 
 	// A blob of an older format is not this core's either, but it is not
 	// coming back, so it is set aside like a corrupt one.
+	// No app used funding before this format, so sessions stored by an
+	// older one are dropped on purpose: the blob is cleared rather than kept
+	// aside as unreadable, and reads as no sessions. The fixture is the exact
+	// layout 0.26.0 stored, eight fields under format 1.
 	#[test]
-	fn a_blob_of_an_older_format_is_kept_aside() {
+	fn sessions_of_an_older_format_are_dropped() {
+		#[derive(Encode)]
+		struct ShippedSession {
+			intent: String,
+			owner_product_id: Option<String>,
+			direction: FundingDirection,
+			amount: Option<u128>,
+			stage: FundingStage,
+			opened_at_ms: u64,
+			deadline_ms: u64,
+			acknowledged: bool,
+		}
 		let storage = stub_platform();
-		let blob = (0u16, vec![session(FundingDirection::In)]).encode();
-		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
-			.expect("written");
+		let shipped = ShippedSession {
+			intent: "fs_shipped".to_string(),
+			owner_product_id: Some("wallet.dot".to_string()),
+			direction: FundingDirection::In,
+			amount: Some(1_000),
+			stage: FundingStage::Open,
+			opened_at_ms: NOW,
+			deadline_ms: NOW + SESSION_WINDOW_MS,
+			acknowledged: false,
+		};
+		block_on(
+			storage.write_core_storage(
+				CoreStorageKey::FundingSessions,
+				(1u16, vec![shipped]).encode(),
+			),
+		)
+		.expect("written");
 
-		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
-			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
-			Ok(Some(vec![blob].encode()))
+			(
+				block_on(load_sessions(storage.as_ref())),
+				block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
+				block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			),
+			(Ok(Vec::new()), Ok(None), Ok(None))
 		);
 	}
 
