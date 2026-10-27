@@ -106,16 +106,25 @@ impl Preimage for ProductRuntimeHost {
 	> {
 		version(request)
 			.exec(|latest::RemotePreimageLookupSubscribeRequest { key }| async move {
-				// A cache hit is final: preimages are content-addressed and immutable.
-				// Emit the value once, then keep the subscription open until the
-				// caller unsubscribes, since there is nothing left to report.
-				if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice()) &&
-					let Some(value) = self.connection.services.cached_preimage(&key_bytes)
-				{
-					let item = latest::RemotePreimageLookupSubscribeItem { value: Some(value) };
+				// Emit an answer that cannot change, then keep the subscription
+				// open until the caller unsubscribes, since there is nothing left
+				// to report.
+				let final_answer = |value| {
+					let item = latest::RemotePreimageLookupSubscribeItem { value };
 					let stream = futures::stream::once(async move { Ok(item) })
 						.chain(futures::stream::pending());
-					return Subscription::new(stream);
+					Subscription::new(stream)
+				};
+
+				// A preimage key is a blake2b-256 digest, so no value can answer a
+				// key of any other length.
+				let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else {
+					return final_answer(None);
+				};
+
+				// A cache hit is final: preimages are content-addressed and immutable.
+				if let Some(value) = self.connection.services.cached_preimage(&key) {
+					return final_answer(Some(value));
 				}
 
 				// Otherwise delegate to the host content backend, verifying that any
@@ -123,30 +132,29 @@ impl Preimage for ProductRuntimeHost {
 				// cannot feed products forged content. A mismatch is reported as a
 				// miss, so the product still gets its initial current-value/miss
 				// emission.
-				let stream =
-					self.connection.platform.lookup_preimage(key.clone()).map(move |item| {
-						let value = match item {
-							Ok(value) => value,
-							Err(error) => {
-								warn!(
-									reason = %error.reason,
-									"preimage lookup platform stream failed"
-								);
-								return Err(CallError::HostFailure { reason: error.reason });
-							},
-						};
-						let value = value.filter(|value| {
-							let matches = preimage_key(value)[..] == key[..];
-							if !matches {
-								warn!(
-									"preimage lookup returned a value whose hash does not match the \
+				let stream = self.connection.platform.lookup_preimage(key).map(move |item| {
+					let value = match item {
+						Ok(value) => value,
+						Err(error) => {
+							warn!(
+								reason = %error.reason,
+								"preimage lookup platform stream failed"
+							);
+							return Err(CallError::HostFailure { reason: error.reason });
+						},
+					};
+					let value = value.filter(|value| {
+						let matches = preimage_key(value) == key;
+						if !matches {
+							warn!(
+								"preimage lookup returned a value whose hash does not match the \
 		                         requested key; downgrading to a miss"
-								);
-							}
-							matches
-						});
-						Ok(latest::RemotePreimageLookupSubscribeItem { value })
+							);
+						}
+						matches
 					});
+					Ok(latest::RemotePreimageLookupSubscribeItem { value })
+				});
 				Subscription::new(stream)
 			})
 			.await

@@ -1,5 +1,6 @@
 import Foundation
 
+/// The schema-v1 object a product page reads from `globalThis.__trinityHostTelemetry`.
 public struct NativeHostTelemetry: Encodable, Sendable {
     public let hostSessionId: String
     public let appVersion: String?

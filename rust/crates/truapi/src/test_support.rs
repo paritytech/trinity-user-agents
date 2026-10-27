@@ -1134,6 +1134,16 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[crate::platform::async_trait]
+impl crate::installation::InstallationIdProvider for StubPlatform {
+	async fn current_installation(
+		&self,
+	) -> Result<crate::installation::InstallationId, v01::GenericError> {
+		Ok(crate::nft::TEST_INSTALLATION)
+	}
+}
+
 #[crate::platform::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
@@ -1992,7 +2002,7 @@ impl LocaleHost for StubPlatform {
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))

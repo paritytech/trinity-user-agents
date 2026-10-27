@@ -99,7 +99,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
             hostSessionID: hostSessionId,
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: ProcessInfo.processInfo.systemUptime * 1_000
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
         ))
 
         // Disposed while initializing: dispose captured nil for the engine,

@@ -15,7 +15,7 @@ struct HostEventTests {
         let event = HostEvent.processStarted(
             origin: origin,
             truapiHostVersion: "0.9.0",
-            monotonicMilliseconds: 42.5
+            monotonicMilliseconds: 42
         )
 
         #expect(event.name == "host.process.started")
@@ -25,7 +25,7 @@ struct HostEventTests {
         #expect(event.tags["truapi.host_version"] == "0.9.0")
         #expect(event.extras["app.launch_id"] == .string("18a5320e-3a4d-46df-ad7a-ebba4ef3ee3f"))
         #expect(event.extras["host.app_build"] == .integer(456))
-        #expect(event.extras["event.monotonic_ms"] == .double(42.5))
+        #expect(event.extras["event.monotonic_ms"] == .integer(42))
     }
 
     @Test func webViewCreatedCarriesItsCorrelationIDAsAnExtra() throws {
@@ -47,8 +47,19 @@ struct HostEventTests {
 
         #expect(event.name == "host.webview.created")
         #expect(event.extras["host.session_id"] == .string("d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
-        #expect(event.extras["event.monotonic_ms"] == .double(84))
+        #expect(event.extras["event.monotonic_ms"] == .integer(84))
         #expect(event.extras["app.launch_id"] == nil)
         #expect(event.tags["host.os_version"] == nil)
+    }
+
+    @Test func aNoopRecorderNeverBuildsTheEvent() {
+        var built = false
+
+        NoopHostEventRecorder().record({
+            built = true
+            return HostEvent(name: "host.test", tags: [:], extras: [:])
+        }())
+
+        #expect(!built)
     }
 }

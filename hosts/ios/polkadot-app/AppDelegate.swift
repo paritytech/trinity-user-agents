@@ -33,7 +33,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         hostEventRecorder.record(.processStarted(
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: ProcessInfo.processInfo.systemUptime * 1_000
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
         ))
 
         // The OS requires every background task handler to be registered before launch finishes.
