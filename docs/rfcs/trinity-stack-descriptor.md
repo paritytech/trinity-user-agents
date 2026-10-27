@@ -261,6 +261,14 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 | DUB attester                                        | the DUB's `api/v1/attester`                                                             |
 | TURN servers and their short-lived credentials      | the `turn` service, when needed                                                         |
 
+A reader finds the dotNS contracts in three steps. It reads `DotnsGateway.DispatcherAddress` from Asset Hub's storage; a
+stack without it has no dotNS gateway. It calls `protocolRegistry()` on that contract, through the `eth-rpc` service or
+Asset Hub's own runtime call. A dispatcher that is a `RootGatewayDispatcher` has no `protocolRegistry()` and forwards to
+the PoP controller its `TARGET()` returns, which has one. It then calls the registry's `get(bytes32)` with each key
+dotNS's `DotnsConstants` names, such as `bytes32("registrar")`, and an unset key returns the zero address. The addresses
+change when the stack redeploys dotNS, as a restart of the chains does, or when the registry's owner rewires a key, so a
+reader can keep them for a while under one `generation`. `@parity/trinity-stack/dotns` does this as `resolveDotns`.
+
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
 `fork` and each chain's `forkedAt`, so readers can show what the stack is, such as "Fork of previewnet, forked at
