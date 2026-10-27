@@ -21,6 +21,11 @@ import { decodeMessage, encodeMessage } from "../src/chat/protocol.js";
 import type { ChatInboxView, InboxChange } from "../src/chat-inbox.js";
 import type { ChatProvider } from "../src/chat-provider.js";
 import { ChatScreen } from "../src/chat-screen.js";
+import { HostContacts, chooseContact } from "../src/contacts.js";
+import {
+  type UsernameDirectory,
+  fixtureDirectory,
+} from "../src/username-directory.js";
 import { messagePortBridge } from "../src/chat-v2/contract.js";
 import { ChatV2Host } from "../src/chat-v2/host.js";
 import { chatV2Over, type ChatV2Product } from "../src/chat-v2/product.js";
@@ -54,6 +59,24 @@ const QUIZ = "quiz.test";
 const CHAT_PRODUCT = "chat.test";
 const KIM = `0x${"4b".repeat(32)}` as HexString;
 const SAM = `0x${"5a".repeat(32)}` as HexString;
+const ZED = `0x${"7e".repeat(32)}` as HexString;
+const EVE = `0x${"e5".repeat(32)}` as HexString;
+
+/**
+ * The username index New chat's picker searches: Kim, a contact, and two
+ * people who are not. Eve's username names someone else on chain.
+ */
+const usernames: UsernameDirectory = {
+  ...fixtureDirectory("the test index", [
+    { account: KIM, username: "kim.01" },
+    { account: ZED, username: "zed.01" },
+    { account: EVE, username: "eve.02" },
+  ]),
+  confirm: async ({ username }) =>
+    username === "eve.02"
+      ? "On chain, eve.02 names another account than the index lists."
+      : null,
+};
 const quizWorker: ProductContext = { productId: QUIZ, executionKind: "Worker" };
 
 /** What the stand-ins were asked to do, for the test to read. */
@@ -192,7 +215,8 @@ function novaEngine(): NovaEngine {
     stop: () => {},
     accept: async () => {},
     decline: () => {},
-    startChat: async () => {
+    startChat: async (target, welcome) => {
+      asked.push(`nova startChat ${target} ${welcome}`);
       throw new Error("Not in this test.");
     },
     send: async () => {},
@@ -559,6 +583,23 @@ export interface ChatHarness {
 
 export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
   const inbox = new TestInbox();
+  const people = new HostContacts({
+    list: () =>
+      inbox.providers().flatMap((provider) => provider.contacts?.() ?? []),
+    onChange: (listener) => inbox.onChange(() => listener()),
+    choose: (asker, contacts, blocked) =>
+      chooseContact(asker, contacts, usernames, blocked),
+    blocked: () =>
+      inbox
+        .providers()
+        .flatMap((provider) => provider.blocked?.() ?? [])
+        .map((summary) => summary.id as HexString),
+    onSessionChange: (listener) =>
+      inbox.onChange((change) => {
+        if (change.type === "session") listener();
+      }),
+    removed: () => {},
+  });
   const screen = new ChatScreen(
     root,
     inbox,
@@ -571,6 +612,8 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
       onChange: () => () => {},
     },
     (pending) => (root.dataset.pending = String(pending)),
+    undefined,
+    () => people.choose({ title: "New chat" }),
   );
   await inbox.session();
   screen.show(true);

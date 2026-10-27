@@ -37,6 +37,52 @@ export interface PromptRequest<T> {
   dismissed: T;
   /** `list` stacks the choices, one per row, for a choice among many. */
   layout?: "list";
+  /** A field that filters a list's rows by their label as the user types. */
+  search?: {
+    /** The field's accessible name. */
+    label: string;
+    placeholder: string;
+    /** What shows when no row matches. */
+    empty: string;
+    /** A second group, below the rows, filled from elsewhere as the user types. */
+    lookup?: PromptLookup<T>;
+  };
+}
+
+/**
+ * A group of people found elsewhere for what the user typed, such as by
+ * username, each a choice like the prompt's own rows.
+ */
+export interface PromptLookup<T> {
+  /** The heading over the prompt's own rows, so the two groups read apart. */
+  ownHeading: string;
+  heading: string;
+  /** What the group's rows are, under its heading. */
+  note: string;
+  /**
+   * Start following what is typed. `render` draws each new state; `answer`
+   * gives the prompt's answer, once, and closes it.
+   */
+  open(
+    render: (view: PromptLookupView) => void,
+    answer: (value: T) => void,
+  ): {
+    type(text: string): void;
+    more(): void;
+    close(): void;
+  };
+}
+
+export interface PromptLookupView {
+  /** Whether the group shows at all, as it does not before anything is typed. */
+  visible: boolean;
+  rows: { label: string; avatarSeed: string; choose(): void }[];
+  /** Whether the rows take a tap now, as they do not while one is being checked. */
+  enabled: boolean;
+  /** A line under the rows, such as "Searching…" or why it failed. */
+  status: string | null;
+  /** Whether a next page can be asked for. */
+  more: boolean;
 }
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -127,6 +173,93 @@ function avatar(label: string, seed: string): HTMLElement {
   return initial;
 }
 
+/** The lookup group's elements, redrawn on each view. Returns the redraw. */
+function lookupGroup(
+  lookup: PromptLookup<unknown>,
+  group: HTMLElement,
+  onMore: () => void,
+): (view: PromptLookupView) => void {
+  const list = el("div", "prompt-list");
+  list.setAttribute("aria-label", lookup.heading);
+  const status = el("p", "prompt-empty");
+  status.setAttribute("role", "status");
+  const more = el("button", "prompt-more", "Show more");
+  more.type = "button";
+  more.addEventListener("click", onMore);
+  group.append(
+    el("h3", "prompt-group", lookup.heading),
+    el("p", "prompt-group-note", lookup.note),
+    list,
+    status,
+    more,
+  );
+  return (view) => {
+    group.hidden = !view.visible;
+    list.replaceChildren(
+      ...view.rows.map((row) => {
+        const item = el("button", "prompt-row");
+        item.type = "button";
+        item.disabled = !view.enabled;
+        item.append(
+          avatar(row.label, row.avatarSeed),
+          el("span", "prompt-label", row.label),
+        );
+        item.addEventListener("click", () => row.choose());
+        return item;
+      }),
+    );
+    status.textContent = view.status ?? "";
+    status.hidden = view.status === null;
+    more.hidden = !view.more;
+  };
+}
+
+/**
+ * A field over `list` that hides the rows whose label does not contain what
+ * the user typed, ignoring case, and says so when none is left. Focus starts
+ * here, so the user can type at once.
+ */
+function searchField(
+  search: NonNullable<PromptRequest<unknown>["search"]>,
+  list: HTMLElement,
+  onType: (text: string) => void,
+): HTMLElement {
+  const box = el("div", "prompt-search");
+  const input = el("input", "");
+  // A text field, not `type="search"`: a search field eats the first Escape
+  // to clear itself, and Escape must dismiss the sheet as everywhere else.
+  input.type = "text";
+  input.inputMode = "search";
+  input.enterKeyHint = "search";
+  input.setAttribute("role", "searchbox");
+  input.placeholder = search.placeholder;
+  input.setAttribute("aria-label", search.label);
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.autocapitalize = "off";
+  input.autofocus = true;
+  const empty = el("p", "prompt-empty", search.empty);
+  empty.hidden = true;
+  empty.setAttribute("role", "status");
+  input.addEventListener("input", () => {
+    const query = input.value.trim().toLowerCase();
+    let shown = 0;
+    for (const row of list.querySelectorAll<HTMLElement>(".prompt-row")) {
+      const label = row.querySelector(".prompt-label")?.textContent ?? "";
+      const match = label.toLowerCase().includes(query);
+      row.hidden = !match;
+      if (match) shown += 1;
+    }
+    empty.hidden = shown > 0;
+    onType(input.value);
+  });
+  box.append(input);
+  if (search.lookup !== undefined)
+    box.append(el("h3", "prompt-group", search.lookup.ownHeading));
+  box.append(empty);
+  return box;
+}
+
 function show<T>(request: PromptRequest<T>): Promise<T> {
   const dialog = el("dialog", "prompt");
   const scrim = el("div", "prompt-scrim");
@@ -139,8 +272,9 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   const title = el("h2", "", request.title);
   title.id = titleId;
   title.tabIndex = -1;
-  // Focus starts on the title, so Enter does not answer before the user reads.
-  title.autofocus = true;
+  // Focus starts on the title, so Enter does not answer before the user reads,
+  // or on the search field when there is one.
+  title.autofocus = request.search === undefined;
   sheet.append(grabber, title);
   if (request.from !== undefined)
     sheet.append(el("p", "prompt-from", `Requested by ${request.from}`));
@@ -160,10 +294,12 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   return new Promise<T>((resolve) => {
     const before = document.activeElement;
     let stopFollowing = () => {};
+    let lookupSession: ReturnType<PromptLookup<T>["open"]> | null = null;
     let answered = false;
     const finish = (value: T) => {
       if (answered) return;
       answered = true;
+      lookupSession?.close();
       stopFollowing();
       dialog.close();
       dialog.remove();
@@ -176,11 +312,31 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
       ? request.choices.filter((choice) => choice.tone !== "cancel")
       : [];
     const footer = request.choices.filter((choice) => !rows.includes(choice));
-    if (rows.length > 0) {
+    if (rows.length > 0 || request.search?.lookup !== undefined) {
       const list = el("div", "prompt-list");
       for (const choice of rows)
         list.append(choiceButton(choice, "prompt-row", finish));
+      const lookup = request.search?.lookup;
+      const group = el("section", "prompt-lookup");
+      if (lookup !== undefined) {
+        const redraw = lookupGroup(lookup, group, () => lookupSession?.more());
+        redraw({
+          visible: false,
+          rows: [],
+          enabled: true,
+          status: null,
+          more: false,
+        });
+        lookupSession = lookup.open(redraw, finish);
+      }
+      if (request.search !== undefined)
+        sheet.append(
+          searchField(request.search, list, (text) =>
+            lookupSession?.type(text),
+          ),
+        );
       sheet.append(list);
+      if (lookup !== undefined) sheet.append(group);
     }
     const actions = el("div", "prompt-actions");
     actions.dataset.layout = listed ? "stack" : "row";

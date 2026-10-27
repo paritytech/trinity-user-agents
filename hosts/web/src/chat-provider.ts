@@ -310,8 +310,6 @@ export interface CustomView {
 }
 
 export interface StartChat {
-  /** What the form asks for, such as a username. */
-  placeholder: string;
   /** Why a conversation cannot be started now, or null. */
   blocked(): string | null;
   /** Start a conversation with `target`. Resolves to its id. */
@@ -340,6 +338,8 @@ export interface ChatContact {
   account: HexString;
   /** How the host names them in its own UI. Never given to a product. */
   name: string;
+  /** When the last message with them was sent or received, when the provider keeps one. */
+  lastActiveAt?: number;
 }
 
 export interface ProviderAccount {

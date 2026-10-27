@@ -1415,6 +1415,18 @@ body[data-surface="notifications"] .stage-empty {
   resize: vertical;
 }
 
+/* New chat: a request to the person chosen in the contact picker. */
+.chat-new {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.chat-new .chat-form {
+  padding: 0;
+}
+
 .chat-form .chat-pill-primary {
   justify-self: end;
   margin-top: 8px;
@@ -2571,6 +2583,47 @@ body[data-product="open"] .stage-loading {
   color: var(--sheet-warning);
 }
 
+/* A field that filters the rows below it, like the app's "Type username" field. */
+.prompt-search {
+  margin-top: 16px;
+}
+
+.prompt-search input {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 16px 0 44px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 999px;
+  background: var(--sheet-raised)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%238c8f98' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='8.5' cy='8.5' r='5.5'/%3E%3Cpath d='M13 13l4 4'/%3E%3C/svg%3E")
+    no-repeat 16px center / 18px;
+  color: var(--sheet-text);
+  font:
+    400 16px/20px "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.prompt-search input::placeholder {
+  color: var(--sheet-muted);
+}
+
+.prompt-search input:focus-visible {
+  outline: 2px solid var(--sheet-text);
+  outline-offset: 1px;
+}
+
+.prompt-empty {
+  margin: 16px 0 0;
+  text-align: center;
+  color: var(--sheet-muted);
+}
+
+.prompt-row[hidden] {
+  display: none;
+}
+
 /* A choice among many: rows like the app's contact list. */
 .prompt-list {
   display: grid;
@@ -2602,6 +2655,56 @@ body[data-product="open"] .stage-loading {
 
 .prompt-row[data-tone="destructive"] {
   color: var(--sheet-danger);
+}
+
+/* A list's group heading, as when a picker shows contacts and people found by username. */
+.prompt-group {
+  margin: 20px 0 0;
+  font:
+    600 13px/18px "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  color: var(--sheet-muted);
+}
+
+.prompt-group + .prompt-list,
+.prompt-search:has(.prompt-group) + .prompt-list,
+.prompt-group-note + .prompt-list {
+  margin-top: 4px;
+}
+
+.prompt-group-note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--sheet-muted);
+}
+
+/* Rows wait while a chosen person is checked. */
+.prompt-row:disabled {
+  opacity: 0.5;
+}
+
+.prompt-more {
+  display: block;
+  margin: 8px auto 0;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sheet-text);
+  font:
+    600 14px/1.2 "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.prompt-more[hidden],
+.prompt-empty[hidden] {
+  display: none;
 }
 
 .prompt-label {

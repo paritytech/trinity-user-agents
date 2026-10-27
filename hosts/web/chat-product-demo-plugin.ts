@@ -72,7 +72,7 @@ function pack(code: string): Built {
 }
 
 /** Whether the request came from this machine, to this machine's name. */
-function loopback(request: IncomingMessage): boolean {
+export function loopback(request: IncomingMessage): boolean {
   const host = (request.headers.host ?? "").replace(/:\d+$/, "");
   const remote = request.socket.remoteAddress ?? "";
   return (

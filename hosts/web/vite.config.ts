@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chatProductDemo } from "./chat-product-demo-plugin.js";
 import { sandboxAssets } from "./sandbox-plugin.js";
+import { usernameSearch } from "./username-search-plugin.js";
 import type { BuildInfo } from "./src/versions.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
@@ -133,7 +134,12 @@ export default defineConfig({
   define: {
     __BUILD_INFO__: JSON.stringify(readBuildInfo()),
   },
-  plugins: [sandboxAssets(), chatProductDemo(), assetLicenses],
+  plugins: [
+    sandboxAssets(),
+    chatProductDemo(),
+    usernameSearch(),
+    assetLicenses,
+  ],
   resolve: { alias: [signingCore] },
   worker: { format: "es" },
   server: {

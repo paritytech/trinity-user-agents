@@ -1125,12 +1125,27 @@ describe("contacts", () => {
         await page.keyboard.press("Escape");
         expect((await escaped).outcome).toEqual({ tag: "Dismissed" });
 
-        // A wallet with no chat contacts gets NoContacts, and no picker is drawn.
+        // A wallet with no chat contacts still gets the picker, to find someone by username.
         await signInWith(page, EMPTY_MNEMONIC);
         await openAddress(page, PRODUCT);
-        const empty = await contactsFrame(page, frame);
-        expect((await pick(empty)).outcome).toEqual({ tag: "NoContacts" });
-        expect(await page.locator("dialog.prompt").count()).toBe(0);
+        // The product may load more than once as the session changes; ask the frame that stays.
+        let none: ReturnType<typeof pick> | null = null;
+        for (let previous = frame; none === null; ) {
+          const current = await contactsFrame(page, previous);
+          const asked = pick(current);
+          const shown = await Promise.race([
+            picker.waitFor().then(() => true),
+            asked.then(
+              () => true,
+              () => false,
+            ),
+          ]);
+          if (shown) none = asked;
+          else previous = current;
+        }
+        expect(await picker.locator(".prompt-list button").count()).toBe(0);
+        await page.keyboard.press("Escape");
+        expect((await none!).outcome).toEqual({ tag: "Dismissed" });
       } finally {
         await context.close();
       }

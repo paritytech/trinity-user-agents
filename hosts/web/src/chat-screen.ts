@@ -5,6 +5,7 @@ import type {
   ConversationSummary,
 } from "./chat-provider.js";
 import { CallOverlay } from "./call-view.js";
+import type { PickedPerson } from "./contacts.js";
 import { ConversationView, avatar, time } from "./conversation-view.js";
 import { NOVA_PROVIDER_ID } from "./nova-chat-provider.js";
 import type { WorkerState } from "./product-workers.js";
@@ -24,7 +25,7 @@ import type { WorkerState } from "./product-workers.js";
 
 type View =
   | { kind: "list" }
-  | { kind: "new"; providerId: string }
+  | { kind: "request"; providerId: string; person: PickedPerson }
   | { kind: "conversation"; providerId: string; conversationId: string }
   | { kind: "workers" }
   | { kind: "blocked" };
@@ -88,9 +89,10 @@ const STATUS_LINE: Record<string, string> = {
 export class ChatScreen {
   private view: View = { kind: "list" };
   private conversation: ConversationView | null = null;
-  private newTarget = "";
   private newWelcome = "";
   private workerName = "";
+  /** Whether New chat's picker is open, so a second tap does not queue another. */
+  private choosing = false;
   private formError: string | null = null;
   private workerError: string | null = null;
   private busy = false;
@@ -105,6 +107,11 @@ export class ChatScreen {
     private readonly workers: WorkersPanel,
     private readonly onActivity: (pendingRequests: number) => void,
     private readonly demo?: LocalDemoControl,
+    /**
+     * The host's contact picker, which New chat opens. Absent, New chat is
+     * not offered.
+     */
+    private readonly choosePerson?: () => Promise<PickedPerson | null>,
   ) {
     root.dataset.chatEngine = "off";
     document.body.append(this.call.root);
@@ -116,7 +123,7 @@ export class ChatScreen {
     if (change.type === "session") {
       this.leaveConversation();
       this.view = { kind: "list" };
-      this.newTarget = this.newWelcome = this.workerName = "";
+      this.newWelcome = this.workerName = "";
       this.formError = this.workerError = null;
     }
     if (
@@ -287,9 +294,10 @@ export class ChatScreen {
       ];
     if (this.view.kind === "workers") return this.drawWorkers();
     if (this.view.kind === "blocked") return this.drawBlocked();
-    if (this.view.kind === "new") {
+    if (this.view.kind === "request") {
       const provider = this.provider(this.view.providerId);
-      if (provider?.start !== undefined) return this.drawNewChat(provider);
+      if (provider?.start !== undefined)
+        return this.drawRequestForm(provider, this.view.person);
       this.view = { kind: "list" };
     }
     return this.drawList();
@@ -319,7 +327,10 @@ export class ChatScreen {
 
   private drawList(): HTMLElement[] {
     const providers = this.inbox.providers();
-    const starter = providers.find((provider) => provider.start !== undefined);
+    const starter =
+      this.choosePerson === undefined
+        ? undefined
+        : providers.find((provider) => provider.start !== undefined);
     const body = el("div", "chat-body chat-inbox");
     const problem = this.inbox.problem();
     if (problem !== null)
@@ -357,7 +368,7 @@ export class ChatScreen {
           "Add your first contact",
           starter === undefined
             ? "Add a product's worker to chat with it."
-            : "Tap + to send a chat request by username.",
+            : "Tap + to choose someone to chat with.",
         ),
       );
 
@@ -397,11 +408,7 @@ export class ChatScreen {
 
     let add: HTMLButtonElement | undefined;
     if (starter !== undefined) {
-      add = button("chat-icon-button", "+", () => {
-        this.view = { kind: "new", providerId: starter.id };
-        this.formError = null;
-        this.render();
-      });
+      add = button("chat-icon-button", "+", () => void this.newChat(starter));
       add.setAttribute("aria-label", "New chat");
       add.title = "New chat";
     }
@@ -507,51 +514,88 @@ export class ChatScreen {
     return item;
   }
 
-  private drawNewChat(provider: ChatProvider): HTMLElement[] {
+  /**
+   * New chat: the host's contact picker, the same one products open. A person
+   * the user already chats with opens that conversation. Anyone else opens a
+   * request to them, which is sent only when the user asks. Closing the
+   * picker leaves the screen as it was.
+   */
+  private async newChat(provider: ChatProvider): Promise<void> {
+    if (this.choosing) return;
+    this.choosing = true;
+    this.formError = null;
+    const person = await this.choosePerson!().finally(
+      () => (this.choosing = false),
+    );
+    if (person === null || this.provider(provider.id) !== provider) return;
+    const existing =
+      provider
+        .conversations()
+        .find(
+          (summary) =>
+            summary.id.toLowerCase() === person.account.toLowerCase(),
+        )?.id ?? null;
+    if (existing !== null) return this.open(provider.id, existing);
+    this.leaveConversation();
+    this.newWelcome = "";
+    this.view = { kind: "request", providerId: provider.id, person };
+    this.render();
+  }
+
+  /** A chat request to `person`, with an optional first message, sent through the provider's own start. */
+  private drawRequestForm(
+    provider: ChatProvider,
+    person: PickedPerson,
+  ): HTMLElement[] {
     const start = provider.start!;
-    const form = el("form", "chat-form");
-    const target = el("input", "chat-input");
-    target.dataset.focus = "target";
-    target.placeholder = start.placeholder;
-    target.value = this.newTarget;
-    target.autocomplete = "off";
-    target.addEventListener("input", () => (this.newTarget = target.value));
+    const body = el("div", "chat-body chat-new");
+    const form = el("form", "chat-form chat-new-request");
     const welcome = el("textarea", "chat-input chat-textarea");
     welcome.dataset.focus = "welcome";
     welcome.placeholder = "First message";
     welcome.value = this.newWelcome;
+    welcome.setAttribute("aria-label", "First message");
     welcome.addEventListener("input", () => (this.newWelcome = welcome.value));
-    const submit = el("button", "chat-pill chat-pill-primary", "Send request");
+    const submit = el(
+      "button",
+      "chat-pill chat-pill-primary",
+      `Send request to ${person.name}`,
+    );
     submit.type = "submit";
+    submit.dataset.action = "start-chat";
     const blocked = start.blocked();
     submit.disabled = this.busy || blocked !== null;
     form.append(
-      el("label", "chat-label", "To"),
-      target,
-      el("label", "chat-label", "Message"),
+      el(
+        "p",
+        "chat-identity-line",
+        `${person.name} sees your request and decides whether to chat.`,
+      ),
       welcome,
       submit,
     );
     if (blocked !== null) form.append(el("p", "chat-note", blocked));
-    if (this.formError !== null)
-      form.append(el("p", "chat-error", this.formError));
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.act(async () => {
         const conversationId = await start.start(
-          this.newTarget,
+          person.account,
           this.newWelcome.trim(),
         );
-        this.newTarget = this.newWelcome = "";
+        this.newWelcome = "";
         this.open(provider.id, conversationId);
       });
     });
+    body.append(form);
+    if (this.formError !== null)
+      body.append(el("p", "chat-error", this.formError));
+
     const bar = el("header", "chat-bar chat-bar-small");
     bar.append(
       this.back(),
       el("h2", "chat-title chat-title-small", "New chat"),
     );
-    return [bar, form];
+    return [bar, body];
   }
 
   /** The people the user blocked, from every provider that blocks, each with Unblock. */
