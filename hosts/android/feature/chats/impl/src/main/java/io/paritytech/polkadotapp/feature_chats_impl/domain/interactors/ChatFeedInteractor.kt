@@ -59,6 +59,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.IncomingC
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.ChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPageOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
@@ -193,6 +194,19 @@ class ChatFeedInteractor @Inject internal constructor(
         roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() },
         attachmentStager.observe(chatId),
     ) { snapshot, outbox -> snapshot.withOutbox(outbox) }
+
+    suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
+
+    suspend fun loadNewerMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadNewer()
+
+    /** Replaces the window with the newest page of the room. */
+    suspend fun showNewestMessages(chatId: ChatId) = roomSource(chatId).source().reload()
+
+    /** Pages until the message is in the window. False when the room has no such message. */
+    suspend fun jumpToMessage(chatId: ChatId, messageId: ChatMessageId): Boolean = roomSource(chatId).source().jump(messageId)
+
+    /** True when the product of the room keeps its messages, and the host only a page cache. */
+    suspend fun isProductSource(chatId: ChatId): Boolean = roomSource(chatId).productSource() != null
 
     /** Stops the source of the room and closes the room when it is open. Call it when the room screen goes away. */
     fun releaseRoom(chatId: ChatId) {

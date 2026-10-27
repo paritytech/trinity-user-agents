@@ -70,6 +70,15 @@ interface ChatFeedContract {
 
     fun onClearEdit()
 
+    /** The user came near the oldest loaded message. */
+    fun onLoadOlderMessages()
+
+    /** The user came near the newest loaded message. */
+    fun onLoadNewerMessages()
+
+    /** The user asked for the newest messages of the room. */
+    fun onShowNewestMessages()
+
     fun onMessageAction(action: MessageAction)
 
     fun onAcceptChatRequest()

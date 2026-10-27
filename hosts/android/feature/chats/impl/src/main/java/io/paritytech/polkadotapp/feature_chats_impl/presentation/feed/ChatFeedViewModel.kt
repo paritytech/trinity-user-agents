@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
-import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
@@ -179,6 +178,8 @@ class ChatFeedViewModel @Inject constructor(
         )
     }.shareInBackground()
 
+    private val paging = feedSnapshot.map { it.paging }.distinctUntilChanged()
+
     private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
 
     override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
@@ -257,12 +258,16 @@ class ChatFeedViewModel @Inject constructor(
         messages,
         firstNewMessageInfo,
         unreadCounter.distinctUntilChanged(),
+        paging,
         readiness,
-    ) { messagesList, firstNewMessageInfo, unreadCounter, readiness ->
+    ) { messagesList, firstNewMessageInfo, unreadCounter, paging, readiness ->
         readiness to ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
-            firstNewMessageInfo = firstNewMessageInfo
+            firstNewMessageInfo = firstNewMessageInfo,
+            olderPage = paging.older.toUi(),
+            newerPage = paging.newer.toUi(),
+            readiness = readiness.toUi(),
         )
     }
         // The list stays loading until the first page of a product-source room, so it opens at the first unread message.
@@ -270,6 +275,8 @@ class ChatFeedViewModel @Inject constructor(
         .map { (_, state) -> state }
         .withLoading()
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
+
+    private val feedPaging = ChatFeedPaging(chatId, interactor, chatMessagesState)
 
     override val menuState = MutableStateFlow(ChatMenuState())
 
@@ -489,6 +496,15 @@ class ChatFeedViewModel @Inject constructor(
         interactor.reportMessageSeen(chatId, message.id)
     }
 
+    override fun onLoadOlderMessages() = launchUnit { feedPaging.loadOlder() }
+
+    override fun onLoadNewerMessages() = launchUnit { feedPaging.loadNewer() }
+
+    override fun onShowNewestMessages() = launchUnit {
+        feedPaging.showNewest()
+        scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
+    }
+
     override fun onClearEdit() {
         messageInputState.update { it.copy(relation = InputMessageRelation.None, inputMessage = "") }
     }
@@ -527,7 +543,7 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { MessagePopUpSelection.reactionDetails(action.message.id) }
             }
 
-            is MessageAction.ReplyPreviewTap -> scrollToMessage(action.messageId)
+            is MessageAction.ReplyPreviewTap -> launchUnit { jumpToMessage(action.messageId) }
             is MessageAction.ViewEditHistory -> {
                 messagePopupSection.update { null }
                 showMessageHistory(action.message.id)
@@ -639,10 +655,12 @@ class ChatFeedViewModel @Inject constructor(
     private fun jumpToTargetMessageIfNeeded() {
         val messageId = payload.targetMessageId ?: return
 
-        launchUnit {
-            chatMessagesState.first { state -> state.dataOrNull?.messages.orEmpty().any { it.id == messageId } }
-            scrollToMessage(messageId)
-        }
+        launchUnit { jumpToMessage(messageId) }
+    }
+
+    private suspend fun jumpToMessage(messageId: ChatMessageId) {
+        feedPaging.awaitLoaded(messageId)
+        scrollToMessage(messageId)
     }
 
     private fun scrollToMessage(messageId: String) {

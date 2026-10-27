@@ -10,6 +10,8 @@ public extension ChatViewLayout {
         let scrollToReactionConfiguration: ScrollToReactionButtonConfiguration
         let sections: [Section]
         let footerConfiguration: (any HashableContentConfiguration)?
+        /// The state of each end of the window. A product-source room pages, other rooms hold every message.
+        public var paging: Paging = .complete
 
         public init(
             headerConfiguration: ChatHeaderConfiguration,
@@ -60,8 +62,8 @@ public extension ChatViewLayout.ViewModel {
 
 public extension ChatViewLayout {
     struct Section {
-        let identifier: String
-        let dateText: String
+        public let identifier: String
+        public let dateText: String
         public let messages: [IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType>]
 
         public init(

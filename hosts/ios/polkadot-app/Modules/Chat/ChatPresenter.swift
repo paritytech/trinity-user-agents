@@ -242,12 +242,13 @@ private extension ChatPresenter {
             }
         )
 
-        let viewModel = viewModelFactory.viewModel(
+        var viewModel = viewModelFactory.viewModel(
             model: listModel,
             metadata: metadata,
             actions: contextActions,
             footerConfiguration: footer
         )
+        viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
         view?.didReceive(viewModel: viewModel)
     }
 

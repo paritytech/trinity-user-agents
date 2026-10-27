@@ -123,6 +123,9 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onAcceptChatRequest = contract::onAcceptChatRequest,
         onDeclineChatRequest = contract::onDeclineChatRequest,
         onUnblockUserClick = contract::onUnblockUserClick,
+        onLoadOlderMessages = contract::onLoadOlderMessages,
+        onLoadNewerMessages = contract::onLoadNewerMessages,
+        onShowNewestMessages = contract::onShowNewestMessages,
         isActionMenuVisible = popupState is MessagePopUpUiState.ActionMenu,
         onMessageLongPress = { message, layoutInfo ->
             menuLayoutInfo = layoutInfo
@@ -189,6 +192,9 @@ private fun ChatFeedScreenInternal(
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
+    onLoadOlderMessages: () -> Unit,
+    onLoadNewerMessages: () -> Unit,
+    onShowNewestMessages: () -> Unit,
     isActionMenuVisible: Boolean,
     onMessageLongPress: (ChatMessageUiModel, MessageLayoutInfo) -> Unit
 ) {
@@ -246,6 +252,9 @@ private fun ChatFeedScreenInternal(
                             slideInNewMessages = customAppearance != null,
                             showNewMessagesSeparator = config.showNewMessagesSeparator,
                             dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                            onLoadOlderMessages = onLoadOlderMessages,
+                            onLoadNewerMessages = onLoadNewerMessages,
+                            onShowNewestMessages = onShowNewestMessages,
                         )
                     }
                 }
@@ -356,6 +365,9 @@ private fun ChatFeedPreview() {
                     onAcceptChatRequest = {},
                     onDeclineChatRequest = {},
                     onUnblockUserClick = {},
+                    onLoadOlderMessages = {},
+                    onLoadNewerMessages = {},
+                    onShowNewestMessages = {},
                     isActionMenuVisible = false,
                     onMessageLongPress = { _, _ -> }
                 )

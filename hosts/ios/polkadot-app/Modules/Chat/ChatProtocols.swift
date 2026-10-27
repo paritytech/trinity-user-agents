@@ -13,6 +13,8 @@ protocol ChatViewProtocol: ControllerBackedProtocol {
     func showReply(messageId: String, username: String, text: String)
     func showEdit(messageId: String, currentText: String)
     func showReactionDetails(viewModel: ReactionDetailsViewModel)
+    /// Scrolls to the message now, or when it arrives in the window.
+    func scrollToMessage(_ messageId: String)
 }
 
 @MainActor
@@ -32,6 +34,12 @@ protocol ChatPresenterProtocol: AnyObject {
     func onReply(for messageId: String)
     func onScrollToBottom()
     func onScrollToReaction()
+    /// The user scrolled near the oldest message of the window.
+    func loadOlderMessages()
+    /// The user scrolled near the newest message of the window.
+    func loadNewerMessages()
+    /// The user tapped a reply quote whose message is not in the window.
+    func jumpToMessage(_ messageId: String)
 }
 
 protocol ChatInteractorInputProtocol: AnyObject {
@@ -56,6 +64,12 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    /// Asks the message source for the page before the window.
+    func loadOlderMessages()
+    /// Asks the message source for the page after the window.
+    func loadNewerMessages()
+    /// Asks the message source for pages until the message is in the window.
+    func jump(to messageId: Chat.MessageId)
     /// The room screen shows the room: a product room holds its product.
     func openRoom()
     /// The room screen does not show the room anymore: a product room releases its product.
@@ -78,6 +92,9 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     /// The chat of the screen went away, for example because its product deleted the room.
     func didRemoveChat()
+
+    /// A jump ended. `found` is false when the room does not hold the message.
+    func didJump(to messageId: Chat.MessageId, found: Bool)
 }
 
 @MainActor
