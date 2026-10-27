@@ -195,6 +195,14 @@ duplicate names, sharded directories, symlinks, files whose recorded sizes disag
 MiB of archive, 128 MiB of files counted once per reference, 10 000 files, 50 000 blocks, 4 MiB per block, 32 directory
 levels and paths of 1 KiB. Loading also stops after a deadline.
 
+While a product loads, one thin line runs along the top of the app, in the app's accent and under a device's top inset.
+It moves without a percentage: the host knows the phase, not how much is done. The phase ("Looking up name…",
+"Loading…") is announced to assistive technology, and the app's frame is `aria-busy`. The sandbox loader shows nothing
+of its own, on the app's dark colour, so no white page and no address or CID show in the app; its steps are in the
+Product tab and the log. A product page with no background of its own is white, as in a browser, once it loads. When the
+loader fails, the app says **This app could not open** once, with **Details**, which opens the Product tab and its
+reason, and **Close**. Closing or leaving a product ends its loading.
+
 A failed lookup, or an address that cannot be opened, is shown in the address card and the Product tab and leaves the
 open product as it is. The product is closed once the lookup succeeds and it is being opened, so a failure while the
 archive is fetched, checked or unpacked is shown in the address card and the Product tab and leaves no product open.
@@ -1036,6 +1044,9 @@ opens, so the light client reaches no chain. It checks that:
   a root-relative script link in the product is answered from the archive;
 - a product's own requests reach the target, counted there, because the host does not gate them;
 - a URL product opens on its own origin, and the host refuses its own origin;
+- a name held at the gateway shows only the line at the app's top, under its circles, on a dark loader with no address
+  or CID, and the product when the gateway answers; a refused gateway shows the one failure with Details and Close; and
+  closing the product while it loads ends the loading;
 - opening, moving or hiding the developer tools, or resizing the product, does not reload it;
 - an entered product id is shown as entered;
 - the dock keeps Browse's product running while a host screen is in front, resumes it with its page state, and ends the

@@ -193,6 +193,9 @@ const productAddress = element<HTMLInputElement>("product-address");
 const productRecents = element<HTMLUListElement>("product-recents");
 const productIdSummary = element("product-id-summary");
 const productDot = element("product-dot");
+/** How the sandbox status of a product whose loader failed starts. */
+const SANDBOX_FAILED = "Sandbox failed:";
+const appProblem = element("app-problem");
 const productIdReset = element<HTMLButtonElement>("product-id-reset");
 const productIdEffective = element("product-id-effective");
 const openButton = element<HTMLButtonElement>("open");
@@ -740,6 +743,7 @@ function renderLoading(text: string | null): void {
   stageLoadingPill.hidden = text === null;
   stageLoadingText.textContent = text ?? "";
   document.body.dataset.loading = text === null ? "off" : "on";
+  productFrame.setAttribute("aria-busy", String(text !== null));
 }
 const loading = new StageLoading(renderLoading);
 
@@ -980,8 +984,16 @@ function renderProduct(): void {
   productStatus.textContent = product
     ? productStatusText(product, opened, sandboxStatus, window.isSecureContext)
     : "No product open.";
+  const failed = sandboxStatus.startsWith(SANDBOX_FAILED);
   productDot.dataset.state =
-    product === null ? "none" : sandboxStatus === "" ? "ready" : "starting";
+    product === null
+      ? "none"
+      : failed
+        ? "failed"
+        : sandboxStatus === ""
+          ? "ready"
+          : "starting";
+  appProblem.hidden = product === null || !failed;
   const details = product
     ? productDetailsText(product, opened, activeNetwork)
     : "";
@@ -1217,6 +1229,10 @@ function closeFront(): void {
 }
 
 appMinimize.addEventListener("click", () => void selectDestination(lastHost));
+element("app-problem-close").addEventListener("click", closeFront);
+element("app-problem-details").addEventListener("click", () =>
+  chrome.show("product"),
+);
 appClose.addEventListener("click", closeFront);
 appMore.addEventListener("click", () => setAppMenu(appMoreMenu.hidden));
 appMoreMenu.addEventListener("click", (event) => {
@@ -2016,7 +2032,7 @@ async function openTarget(
             log(`sandbox could not start the product: ${detail}`);
           }
           if (!inFront()) return;
-          sandboxStatus = `Sandbox: ${detail}`;
+          sandboxStatus = `${state === "error" ? SANDBOX_FAILED : "Sandbox:"} ${detail}`;
           renderProduct();
         },
       },

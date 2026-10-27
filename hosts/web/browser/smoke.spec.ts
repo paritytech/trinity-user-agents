@@ -9,6 +9,8 @@
  * sees them. A request is judged by whether it reached that server, never by
  * what the page says about it.
  */
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   afterAll,
   beforeAll,
@@ -482,6 +484,202 @@ describe("the loading indicator", () => {
       TEST_MS,
     );
   }
+});
+
+describe("a product loading", () => {
+  /** Hold the gateway's blocks until `release`, or refuse them. */
+  async function gateBlocks(
+    context: BrowserContext,
+    mode: "hold" | "refuse",
+  ): Promise<() => void> {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await context.route(`${PASEO_DOTNS.contentGateway}/**`, async (route) => {
+      if (new URL(route.request().url()).searchParams.get("format") !== "raw")
+        return route.fallback();
+      if (mode === "refuse") return route.abort();
+      await gate;
+      return route.fallback();
+    });
+    return release;
+  }
+
+  /** What the host itself shows over the app, without the product's own frame. */
+  const hostText = (page: Page) =>
+    page.locator("#product-frame").evaluate((frame) => {
+      const copy = frame.cloneNode(true) as HTMLElement;
+      copy
+        .querySelectorAll("iframe, .visually-hidden")
+        .forEach((node) => node.remove());
+      return copy.textContent ?? "";
+    });
+
+  test(
+    "shows one thin line at the top of the app, no address or CID, then the product",
+    async () => {
+      const context = await newContext({ width: 1280, height: 800 });
+      try {
+        const release = await gateBlocks(context, "hold");
+        const page = await openHost(context);
+        await signIn(page);
+        await closeMenu(page);
+        await openAddress(page, NAME);
+        // Past the name lookup: the loader runs, held at the gateway.
+        await page.waitForFunction(
+          () =>
+            document.getElementById("stage-loading-text")?.textContent ===
+            "Loading…",
+        );
+        await page.waitForFunction(() =>
+          [...document.querySelectorAll("#product-slot iframe")].some(
+            (frame) =>
+              (frame as HTMLIFrameElement).contentDocument?.getElementById(
+                "status",
+              ) != null,
+          ),
+        );
+
+        // One indicator: the line, inside the app, along its top edge.
+        const line = await page.locator("#stage-loading-pill").boundingBox();
+        const frame = await page.locator("#product-frame").boundingBox();
+        expect(line!.height).toBe(2);
+        expect([line!.x, line!.y, line!.width]).toEqual([
+          frame!.x,
+          frame!.y,
+          frame!.width,
+        ]);
+        expect(await page.getAttribute("#product-frame", "aria-busy")).toBe(
+          "true",
+        );
+        // The phase is for assistive technology; nothing technical shows.
+        expect(await page.locator("#stage-loading-text").textContent()).toBe(
+          "Loading…",
+        );
+        const shown = await hostText(page);
+        expect(shown).not.toContain(app.contentCid);
+        expect(shown).not.toContain("http");
+        const loader = page
+          .frames()
+          .find((frame) => frame.url().includes("/truapi-sandbox/"))!;
+        expect(
+          await loader.evaluate(() => ({
+            background: getComputedStyle(document.documentElement)
+              .backgroundColor,
+            // The loader's own line is for assistive technology only.
+            statusArea: (() => {
+              const box = document
+                .getElementById("status")!
+                .getBoundingClientRect();
+              return box.width * box.height;
+            })(),
+          })),
+        ).toEqual({ background: "rgb(11, 12, 15)", statusArea: 1 });
+        await page.screenshot({
+          path: join(
+            process.env.LOADING_SCREENSHOTS ?? tmpdir(),
+            "loading-stalled.png",
+          ),
+        });
+
+        release();
+        await productFrame(page, `${host.origin}/product/`);
+        await page.waitForFunction(
+          () => document.body.dataset.loading === "off",
+        );
+        expect(await page.locator("#stage-loading-pill").isHidden()).toBe(true);
+        expect(await page.getAttribute("#product-frame", "aria-busy")).toBe(
+          "false",
+        );
+        expect(await page.locator("#app-problem").isHidden()).toBe(true);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "a product that cannot load says so once, in the app, with Details and Close",
+    async () => {
+      const context = await newContext({ width: 1280, height: 800 });
+      try {
+        await gateBlocks(context, "refuse");
+        const page = await openHost(context);
+        await signIn(page);
+        await closeMenu(page);
+        await openAddress(page, NAME);
+        const problem = page.locator("#app-problem");
+        await problem.waitFor();
+        expect(await page.getAttribute("body", "data-loading")).toBe("off");
+        expect(await page.locator("#stage-loading-pill").isHidden()).toBe(true);
+        const shown = await hostText(page);
+        expect(shown).toContain("This app could not open");
+        expect(shown).not.toContain(app.contentCid);
+        expect(shown).not.toContain("http");
+        await page.screenshot({
+          path: join(
+            process.env.LOADING_SCREENSHOTS ?? tmpdir(),
+            "loading-failed.png",
+          ),
+        });
+
+        // The detail is kept for the developer.
+        await problem.getByRole("button", { name: "Details" }).click();
+        await page
+          .locator('body[data-devtools="open"][data-dev-view="product"]')
+          .waitFor({ state: "attached" });
+        expect(await page.locator("#product-status").innerText()).toContain(
+          "Sandbox failed:",
+        );
+        await closeMenu(page);
+
+        await problem.getByRole("button", { name: "Close" }).click();
+        await page.waitForFunction(
+          () => document.body.dataset.product === "closed",
+        );
+        expect(await problem.isHidden()).toBe(true);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "closing a product while it loads ends the loading",
+    async () => {
+      const context = await newContext({ width: 390, height: 844 });
+      // A held request must end with the test, or the browser keeps waiting on it.
+      let release = () => {};
+      try {
+        release = await gateBlocks(context, "hold");
+        const page = await openHost(context);
+        await signIn(page);
+        await closeMenu(page);
+        await openAddress(page, NAME);
+        await page.waitForFunction(
+          () => document.body.dataset.loading === "on",
+        );
+        await page.locator("#app-chrome").waitFor();
+        // The line runs under the app's circles, never over them.
+        const line = await page.locator("#stage-loading-pill").boundingBox();
+        const circle = await page.locator("#app-more").boundingBox();
+        expect(line!.y + line!.height).toBeLessThanOrEqual(circle!.y);
+        await page.click("#app-more");
+        await page.click('#app-more-menu [data-app-action="close"]');
+        await page.waitForFunction(
+          () =>
+            document.body.dataset.product === "closed" &&
+            document.body.dataset.loading === "off",
+        );
+        expect(await page.locator("#stage-loading-pill").isHidden()).toBe(true);
+      } finally {
+        release();
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
 });
 
 describe("the dock", () => {
