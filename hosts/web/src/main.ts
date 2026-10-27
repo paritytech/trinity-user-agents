@@ -1214,11 +1214,29 @@ function renderHostScreens(): void {
  */
 function renderAppChrome(shown: boolean): void {
   appChrome.hidden = !shown;
+  // The product's frame then ends below the circles' band (style.css).
+  productFrame.dataset.appChrome = String(shown);
+  renderAppArea();
   if (!shown) setAppMenu(false);
   const holds = isProductDestination(destination);
   appMinimize.hidden = !holds;
   appClose.hidden = holds;
 }
+
+const appArea = element("viewport-app-area");
+/** The Preview tab's line on what a product in front gets of the app. */
+function renderAppArea(): void {
+  if (productFrame.dataset.appChrome !== "true") {
+    appArea.textContent = "";
+    return;
+  }
+  const style = getComputedStyle(productSlot);
+  const top = Math.round(parseFloat(style.paddingTop));
+  const bottom = Math.round(parseFloat(style.paddingBottom));
+  const height = productSlot.clientHeight - top - bottom;
+  appArea.textContent = `Product frame ${productSlot.clientWidth} × ${height} · the host keeps ${top} px on top${bottom === 0 ? "" : ` and ${bottom} px below`}`;
+}
+new ResizeObserver(renderAppArea).observe(productSlot);
 
 function setAppMenu(open: boolean): void {
   appMoreMenu.hidden = !open;
