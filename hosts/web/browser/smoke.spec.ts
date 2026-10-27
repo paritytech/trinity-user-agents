@@ -1346,24 +1346,29 @@ describe("contacts", () => {
         // A wallet with no chat contacts still gets the picker, to find someone by username.
         await signInWith(page, EMPTY_MNEMONIC);
         await openAddress(page, PRODUCT);
-        // The product may load more than once as the session changes; ask the frame that stays.
-        let none: ReturnType<typeof pick> | null = null;
+        // The product may load more than once as the session changes, also
+        // after its picker showed; ask again from the frame that stays.
+        let none: Awaited<ReturnType<typeof pick>> | null = null;
         for (let previous = frame; none === null; ) {
           const current = await contactsFrame(page, previous);
-          const asked = pick(current);
+          const asked = pick(current).catch(() => null);
           const shown = await Promise.race([
             picker.waitFor().then(() => true),
-            asked.then(
-              () => true,
-              () => false,
-            ),
+            asked.then((answer) => answer !== null),
           ]);
-          if (shown) none = asked;
-          else previous = current;
+          // Each picker that shows, the stale frame's or this one's, is dismissed in turn.
+          for (let open = shown; open; ) {
+            expect(await picker.locator(".prompt-list button").count()).toBe(0);
+            await page.keyboard.press("Escape");
+            open = await Promise.race([
+              asked.then(() => false),
+              picker.waitFor().then(() => true),
+            ]);
+          }
+          none = shown ? await asked : null;
+          if (none === null) previous = current;
         }
-        expect(await picker.locator(".prompt-list button").count()).toBe(0);
-        await page.keyboard.press("Escape");
-        expect((await none!).outcome).toEqual({ tag: "Dismissed" });
+        expect(none.outcome).toEqual({ tag: "Dismissed" });
       } finally {
         await context.close();
       }
