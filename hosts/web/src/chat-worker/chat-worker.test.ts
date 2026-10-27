@@ -583,6 +583,18 @@ describe("the chat engine switch", () => {
     ).rejects.toThrow("did not answer");
   });
 
+  test("a worker that stops before it takes the offered history gets it when it connects again", async () => {
+    const { mode, signIn, ask } = setup();
+    signIn("w1");
+    mode.setMode("worker", { copyHistory: true });
+    await ask(NOVA_WORKER_PRODUCT);
+    mode.disconnect(NOVA_WORKER_PRODUCT);
+    const again = await ask(NOVA_WORKER_PRODUCT);
+    expect(await again.takeHistory()).toBe('{"contacts":[],"requests":[]}');
+    const third = await ask(NOVA_WORKER_PRODUCT);
+    expect(await third.takeHistory()).toBeNull();
+  });
+
   test("switching back, signing out or another wallet ends the lent identity", async () => {
     const { mode, signIn, ask } = setup();
     const alice = keysOf(ALICE);
