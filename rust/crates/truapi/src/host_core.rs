@@ -36,6 +36,7 @@ use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, v01};
 
 use crate::{
+	HostInitiatedRequestManager,
 	frame::ProtocolMessage,
 	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
@@ -1679,6 +1680,7 @@ async fn product_subtree_public_key(
 /// connection and handles byte-frame ingress, response/subscription egress, and
 /// in-flight dispatch cancellation on dispose.
 pub struct ProductRuntime {
+	host_requests: HostInitiatedRequestManager,
 	core: TrUApiCore,
 	admin: HostAdmin,
 	transport: Arc<SinkTransport>,
@@ -1893,6 +1895,7 @@ impl ProductRuntime {
 		});
 		let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
 		Self {
+			host_requests: HostInitiatedRequestManager::new(),
 			core: TrUApiCore::from_product_runtime(
 				admin.product_runtime.clone(),
 				services.spawner.clone(),
@@ -1928,6 +1931,9 @@ impl ProductRuntime {
 
 		let message = ProtocolMessage::decode(&mut frame.as_slice())
 			.map_err(|err| ProductRuntimeError::InvalidFrame { reason: err.to_string() })?;
+		let Some(message) = self.host_requests.handle_message(message) else {
+			return Ok(());
+		};
 		let Some(message) = self.host_subscriptions.handle_message(message) else {
 			return Ok(());
 		};
@@ -2036,7 +2042,7 @@ impl ProductRuntime {
 	/// Dispose this host core. Idempotent.
 	///
 	/// Disposal suppresses future outgoing frames, aborts in-flight dispatch
-	/// futures, and cancels active subscriptions.
+	/// futures, completes pending host requests, and cancels active subscriptions.
 	#[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
 	pub fn dispose(&self) {
 		// Aborting under the lock can wake code that re-enters disposal.
@@ -2057,6 +2063,7 @@ impl ProductRuntime {
 		connection.detach_chat();
 		connection.detach_renderer();
 		connection.release_open_operations();
+		self.host_requests.close();
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
 	}
@@ -3155,6 +3162,52 @@ mod tests {
 			sink.clone(),
 		);
 		(runtime, sink)
+	}
+
+	#[test]
+	fn host_request_replies_reach_the_waiter_before_subscription_routing() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_requests.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		let sent = sink.frames.lock().unwrap()[0].clone();
+		let mut response = ProtocolMessage::decode(&mut &sent[..]).unwrap();
+		response.payload.message_type = crate::frame::MESSAGE_TYPE_RESPONSE;
+		response.payload.value = Ok::<u32, truapi::CallError<String>>(7).encode();
+		futures::executor::block_on(runtime.receive_frame(response.encode())).unwrap();
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn disposing_the_runtime_finishes_its_host_requests() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_requests.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		runtime.dispose();
+		let closed = Err(truapi::CallError::HostFailure {
+			reason: "host-initiated requests are closed".into(),
+		});
+		let next =
+			runtime
+				.host_requests
+				.request::<u32, String>(ids, vec![10], runtime.transport.clone());
+		assert_eq!(
+			(
+				request.as_mut().now_or_never(),
+				next.now_or_never(),
+				sink.frames.lock().unwrap().len()
+			),
+			(Some(closed.clone()), Some(closed), 1),
+		);
 	}
 
 	/// Open one render for a Pocket card.

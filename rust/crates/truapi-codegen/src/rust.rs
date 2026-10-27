@@ -207,6 +207,34 @@ mod tests {
 			.collect()
 	}
 
+	#[test]
+	fn host_initiated_requests_return_one_typed_response() {
+		let mut method = make_request_method("answer", 7);
+		method.wire.host_initiated = true;
+		let api = ApiDefinition {
+			traits: vec![TraitDef {
+				name: "Example".into(),
+				module_path: Vec::new(),
+				wire_trait_id: Some(200),
+				methods: vec![method],
+				docs: None,
+			}],
+			public_trait_order: vec!["Example".into()],
+			types: versioned_request_test_types(),
+			framework_types: Vec::new(),
+		};
+		let source = generate_dispatcher(&api).unwrap();
+		assert!(source.contains("pub async fn example_answer("), "{source}");
+		assert!(source.contains("requests: &HostInitiatedRequestManager"), "{source}");
+		assert!(
+			source.contains(
+				"Result<versioned::example::RespWrapper, truapi::CallError<versioned::example::ErrWrapper>>"
+			),
+			"{source}"
+		);
+		assert!(!source.contains("dispatcher.on_request"), "{source}");
+	}
+
 	fn parse_entries(src: &str) -> Vec<(u8, String)> {
 		// Each method's id is emitted as a named const, e.g.
 		//   pub const PREIMAGE_SUBMIT: MethodIds = MethodIds {

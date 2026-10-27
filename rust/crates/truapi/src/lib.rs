@@ -756,6 +756,8 @@ mod host_internal;
 #[cfg(feature = "runtime")]
 pub mod host_logic;
 #[cfg(feature = "runtime")]
+mod host_requests;
+#[cfg(feature = "runtime")]
 mod host_rpc_client;
 #[cfg(feature = "runtime")]
 mod interrupt;
@@ -823,6 +825,9 @@ mod nft_purse;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
+
+#[cfg(feature = "runtime")]
+pub use host_requests::HostInitiatedRequestManager;
 
 #[cfg(feature = "runtime")]
 pub use host_core::{

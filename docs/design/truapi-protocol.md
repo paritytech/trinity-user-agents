@@ -109,6 +109,15 @@ A single byte channel carries every call in both directions at once, so the two 
 
 #### Requests
 
+Either the host or the product can initiate a request. A host-initiated Rust
+`async fn` declares `Result<Response, CallError<Error>>`; its generated product
+handler returns one typed result. Both directions use the same `Request`,
+`Response`, and `Cancel` legs and response encoding. A cancellation fires the
+receiver's per-call cancellation signal, and its eventual response is
+`CallError::Cancelled`. It does not reverse side effects or force a handler to
+stop. The caller owns deadlines and retry policy. See the
+[request cancellation contract](../rfcs/request-cancellation.md).
+
 Every request expects exactly one response. Each Host or Product MUST send a response message for every request it receives, and the request and its response MUST share the same `requestId` — so the caller can match a reply to the call it made even with many calls in flight.
 
 If a receiver has no handler for an incoming `(trait, method)` pair, it MUST send a protocol-error frame addressed to `(255, 255)` with the same `requestId`, `message_type` set to `MESSAGE_TYPE_RESPONSE`, and payload `V1(UnsupportedMessage { trait_id, method_id })` — encoded as the four bytes `[0, 0, unsupported_trait, unsupported_method]` — one byte cannot name a pair, so the error that describes the envelope grew with it. The sender maps this method-independent response to its own pending request or subscription and reports a generic unsupported error. A receiver MUST NOT answer a protocol-error frame with another protocol error.

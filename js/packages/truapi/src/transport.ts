@@ -164,6 +164,17 @@ export type HostInitiatedSubscriptionHandler<Request, Item, Reason = never> = (
 ) => (() => void) | void;
 
 /**
+ * One answer to a host request, with cooperative cancellation. Return an Err
+ * for a declared failure; throws and rejected promises become HostFailure.
+ * The signal aborts on cancellation or connection loss. A cancelled call
+ * answers Cancelled when its handler settles; cancellation cannot undo work.
+ */
+export type HostInitiatedRequestHandler<Request, Response, Failure> = (
+  request: Request,
+  context: { readonly signal: AbortSignal },
+) => Result<Response, Failure> | PromiseLike<Result<Response, Failure>>;
+
+/**
  * Wire discriminant pair addressing a method. One id addresses a method
  * regardless of shape (request/response, or a subscription's four phases):
  * which leg of the exchange a frame carries is the wire's own `messageType`
@@ -313,6 +324,35 @@ export interface RegisterHostInitiatedSubscriptionParams<
   bufferCapacity: number;
 }
 
+/** Product-side registration for one host-initiated request method. */
+export interface HostInitiatedRequestRegistration<Request, Response, Failure> {
+  /**
+   * Replace the handler for future requests. Unsubscribing removes only this
+   * registration; active calls keep their handler.
+   */
+  setHandler(
+    handler: HostInitiatedRequestHandler<Request, Response, Failure>,
+  ): { unsubscribe(): void };
+}
+
+/** Codecs and startup buffering for one host-initiated request method. */
+export interface RegisterHostInitiatedRequestParams<
+  Request,
+  Response,
+  Failure,
+> {
+  /** Wire discriminants for the request method. */
+  ids: MethodIds;
+  /** The one request wrapper version this handler accepts. */
+  requestVersion: number;
+  /** Decode the request's versioned payload. */
+  decodeRequest(payload: Uint8Array): Request;
+  /** Encode the terminal Result, preserving its response and error versions. */
+  encodeResponse(result: Result<Response, Failure>): Uint8Array;
+  /** Maximum requests retained before a handler is installed. */
+  bufferCapacity: number;
+}
+
 /**
  * Byte-level transport used by generated client stubs.
  **/
@@ -333,6 +373,11 @@ export interface TrUApiTransport {
   registerHostInitiatedSubscription<Request, Item, Reason>(
     params: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>,
   ): HostInitiatedSubscriptionRegistration<Request, Item, Reason>;
+
+  /** Register product-side handling for a host-initiated request. */
+  registerHostInitiatedRequest<Request, Response, Failure>(
+    params: RegisterHostInitiatedRequestParams<Request, Response, Failure>,
+  ): HostInitiatedRequestRegistration<Request, Response, Failure>;
 
   /**
    * Tear down the transport and release the listeners it registered on the

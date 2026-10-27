@@ -1,5 +1,7 @@
 export type {
   CallOptions,
+  HostInitiatedRequestHandler,
+  HostInitiatedRequestRegistration,
   HostInitiatedSubscriptionHandler,
   MethodIds,
   ObservableLike,
@@ -7,6 +9,7 @@ export type {
   Payload,
   ProtocolMessage,
   RequestParams,
+  RegisterHostInitiatedRequestParams,
   Subscription,
   SubscribeRawParams,
   TrUApiTransport,

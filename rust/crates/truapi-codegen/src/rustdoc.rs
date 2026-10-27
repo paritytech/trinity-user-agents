@@ -126,7 +126,7 @@ pub struct MethodDef {
 /// the outer wire's own `message_type` byte, not a separate id.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WireAttrs {
-	/// This subscription is started by the host and served by the product.
+	/// This method is called by the host and served by the product.
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
@@ -755,7 +755,7 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		.get("output")
 		.with_context(|| format!("Method `{name}` missing rustdoc return type"))?;
 	let wire = item.docs.as_deref().map(extract_wire_attrs).unwrap_or_default();
-	let output = if wire.host_initiated { raw_output } else { unwrap_future_output(raw_output) };
+	let output = unwrap_future_output(raw_output);
 
 	let (kind, return_type) = if is_result_subscription_return(output) {
 		bail!(
@@ -838,8 +838,11 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		);
 	}
 
-	if wire.host_initiated && !matches!(kind, MethodKind::Subscription) {
-		bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
+	if wire.host_initiated &&
+		let ReturnType::Result { err, .. } = &return_type &&
+		!matches!(err, TypeRef::Named { name, args } if name == "CallError" && args.len() == 1)
+	{
+		bail!("Host-initiated method `{name}` must declare its failure as CallError<E>");
 	}
 
 	Ok(Some(MethodDef {
@@ -1625,6 +1628,46 @@ mod tests {
 			format!("{err}").contains("older than the tested minimum"),
 			"unexpected error: {err}"
 		);
+	}
+
+	#[test]
+	fn host_initiated_requests_accept_async_result_and_require_call_error() {
+		let named = |name: &str, args: Vec<serde_json::Value>| {
+			serde_json::json!({
+				"resolved_path": {
+					"path": name,
+					"args": { "angle_bracketed": { "args": args.into_iter().map(|ty| serde_json::json!({"type": ty})).collect::<Vec<_>>(), "constraints": [] } }
+				}
+			})
+		};
+		let request = named("ProductAnswerRequest", vec![]);
+		let response = named("ProductAnswerResponse", vec![]);
+		let domain = named("ProductAnswerError", vec![]);
+		let call_error = named("CallError", vec![domain.clone()]);
+		let method = |error: serde_json::Value| {
+			let result = named("Result", vec![response.clone(), error]);
+			let future = serde_json::json!({ "dyn_trait": { "traits": [{ "trait": {
+				"path": "Future",
+				"args": { "angle_bracketed": { "args": [], "constraints": [{
+					"name": "Output", "binding": { "equality": { "type": result } }
+				}] } }
+			} }], "lifetime": "'async_trait" } });
+			Item {
+				name: Some("answer".into()),
+				docs: Some("@wire_host_initiated\n@wire_id=7".into()),
+				attrs: Vec::new(),
+				inner: serde_json::json!({ "function": { "sig": {
+					"output": named("Pin", vec![named("Box", vec![future])]),
+					"inputs": [["_cx", { "borrowed_ref": { "type": named("CallContext", vec![]), "is_mutable": false } }], ["request", request]]
+				} } }),
+			}
+		};
+		let extracted = extract_method("1", &method(call_error), &NameContext::default())
+			.unwrap()
+			.unwrap();
+		assert_eq!((extracted.kind, extracted.wire.host_initiated), (MethodKind::Request, true));
+		let error = extract_method("1", &method(domain), &NameContext::default()).unwrap_err();
+		assert!(error.to_string().contains("CallError<E>"), "{error}");
 	}
 
 	#[test]
