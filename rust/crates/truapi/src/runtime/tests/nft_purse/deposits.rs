@@ -152,6 +152,7 @@ fn a_cheque_deposited_twice_answers_operation_exists() {
 	assert_eq!(again, Err(deposit_refusal(v01::NftPurseDepositError::OperationExists)));
 }
 
+/// A deposit of nothing registers no operation a product could follow.
 #[test]
 fn a_cheque_of_no_items_answers_empty_cheque() {
 	let (purses, cheque) = ephemeral_cheque(1);
@@ -162,6 +163,7 @@ fn a_cheque_of_no_items_answers_empty_cheque() {
 	assert_eq!(refused, Err(deposit_refusal(v01::NftPurseDepositError::EmptyCheque)));
 }
 
+/// Items go only into a purse that exists.
 #[test]
 fn a_deposit_into_an_unknown_purse_answers_purse_not_found() {
 	let (purses, cheque) = ephemeral_cheque(1);

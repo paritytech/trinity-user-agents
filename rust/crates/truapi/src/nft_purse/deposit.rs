@@ -1,8 +1,8 @@
 //! Deposits: opening a received cheque and moving its items into a purse.
 
 use truapi::latest::{
-	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeRecipient, NftPurseIdempotencyKey,
-	NftPurseReceiveKey,
+	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
+	NftPurseIdempotencyKey, NftPurseReceiveKey,
 };
 
 use super::{
@@ -33,8 +33,13 @@ pub enum DepositRefusal {
 	#[error("receive key {} was not made here by the depositing product", hex::encode(.0.0))]
 	UnknownReceiveKey(NftPurseReceiveKey),
 	/// The cheque carries an id other than the one its receive key derives.
-	#[error("the cheque id does not derive from its receive key")]
-	ChequeIdMismatch,
+	#[error("cheque id {}, expected {} derived from its receive key", hex::encode(.id.0), hex::encode(.derived.0))]
+	ChequeIdMismatch {
+		/// The id the cheque carries.
+		id: NftPurseChequeId,
+		/// The id its receive key derives.
+		derived: NftPurseChequeId,
+	},
 	/// The receive key sends its cheques into another purse.
 	#[error("the receive key goes into purse {}, not {}", .receive_key_purse.0, .to.0)]
 	PurseMismatch {
@@ -71,18 +76,29 @@ impl NftPurses {
 		cheque: &NftPurseCheque,
 		to: PurseId,
 	) -> Result<(), DepositRefusal> {
+		self.validate_deposit(depositor, cheque, to).await?;
+		let secret = self.recipient_secret(&cheque.recipient).await?;
+		let keys = open_cheque(&secret, cheque)?;
+		let operation = operation_key(depositor, NftPurseIdempotencyKey(cheque.id.0));
+		self.ledger.start_imports(ImportRequest { operation, into: to, keys }).await?;
+		Ok(())
+	}
+
+	/// Checks that `cheque` lists items, that `to` exists, and that
+	/// `depositor` may deposit `cheque` into it.
+	async fn validate_deposit(
+		&self,
+		depositor: &ProductId,
+		cheque: &NftPurseCheque,
+		to: PurseId,
+	) -> Result<(), DepositRefusal> {
 		if cheque.items.is_empty() {
 			return Err(DepositRefusal::EmptyCheque);
 		}
 		if self.ledger.purse(to).await?.is_none() {
 			return Err(DepositRefusal::PurseNotFound(to));
 		}
-		self.validate_recipient(depositor, cheque, to).await?;
-		let secret = self.recipient_secret(&cheque.recipient).await?;
-		let keys = open_cheque(&secret, cheque)?;
-		let operation = operation_key(depositor, NftPurseIdempotencyKey(cheque.id.0));
-		self.ledger.start_imports(ImportRequest { operation, into: to, keys }).await?;
-		Ok(())
+		self.validate_recipient(depositor, cheque, to).await
 	}
 
 	/// Checks that `depositor` may deposit `cheque` into `to`: any product may
@@ -97,12 +113,16 @@ impl NftPurses {
 		let NftPurseChequeRecipient::Ephemeral(key) = cheque.recipient else {
 			return Ok(());
 		};
-		if cheque.id != cheque_id_for(&NftPurseChequeDestination::Ephemeral(key)) {
-			return Err(DepositRefusal::ChequeIdMismatch);
+		let derived = cheque_id_for(&NftPurseChequeDestination::Ephemeral(key));
+		if cheque.id != derived {
+			return Err(DepositRefusal::ChequeIdMismatch { id: cheque.id, derived });
 		}
-		let record = self.db.read(move |conn| dao::receive_key(conn, &key)).await?;
-		let record = record.filter(|record| record.creator == depositor.as_str());
-		let record = record.ok_or(DepositRefusal::UnknownReceiveKey(key))?;
+		let record = self
+			.db
+			.read(move |conn| dao::receive_key(conn, &key))
+			.await?
+			.filter(|record| record.creator == depositor.as_str())
+			.ok_or(DepositRefusal::UnknownReceiveKey(key))?;
 		if record.purse != to {
 			return Err(DepositRefusal::PurseMismatch { receive_key_purse: record.purse, to });
 		}

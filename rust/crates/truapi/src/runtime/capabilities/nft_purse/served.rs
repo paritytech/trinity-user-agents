@@ -114,7 +114,7 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseStaticReceiveKeyRequest,
 	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
 	{
-		version(request).exec(|_| self.static_nft_receive_key()).await
+		version(request).exec(|_| async { self.static_nft_receive_key() }).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]

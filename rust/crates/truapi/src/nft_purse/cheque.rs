@@ -136,8 +136,13 @@ pub enum CorruptedCheque {
 	#[error("the secret of item {} is not a secret key", hex::encode(.0.0))]
 	InvalidSecret(NftPurseItemKey),
 	/// A secret signs for a key other than the item listed at its position.
-	#[error("the secret listed for item {} signs for another key", hex::encode(.0.0))]
-	KeyMismatch(NftPurseItemKey),
+	#[error("the secret listed for item {} signs for {}", hex::encode(.listed.0), hex::encode(.signs_for.0))]
+	KeyMismatch {
+		/// The item listed at the secret's position.
+		listed: NftPurseItemKey,
+		/// The key the secret signs for.
+		signs_for: ItemKey,
+	},
 }
 
 /// Each item of `cheque` with its secret, opened with the recipient's X25519
@@ -191,7 +196,7 @@ fn imported_key_listed_as(
 	let imported =
 		ImportedItemKey::from_secret(secret).map_err(|_| CorruptedCheque::InvalidSecret(*item))?;
 	if imported.key().0 != item.0 {
-		return Err(CorruptedCheque::KeyMismatch(*item));
+		return Err(CorruptedCheque::KeyMismatch { listed: *item, signs_for: imported.key() });
 	}
 	Ok(imported)
 }
@@ -452,6 +457,8 @@ mod tests {
 		assert!(matches!(to_another_key, Err(CorruptedCheque::Seal(SealError::Decrypt))));
 	}
 
+	/// Only a list of 64-byte secrets can be moved from, so anything else that
+	/// decrypts is refused.
 	#[test]
 	fn a_cheque_whose_secrets_do_not_decode_is_corrupted() {
 		let (_dir, cheque, recipient) = sealed_test_cheque(1);
@@ -475,6 +482,8 @@ mod tests {
 		assert!(matches!(opened, Err(CorruptedCheque::SecretCount { secrets: 1, items: 2 })));
 	}
 
+	/// Bytes that are not a secret key could never sign a move, so the deposit
+	/// is refused before anything is registered.
 	#[test]
 	fn a_cheque_whose_secret_is_not_a_secret_key_is_corrupted() {
 		let (_dir, cheque, recipient) = sealed_test_cheque(1);
@@ -495,7 +504,7 @@ mod tests {
 		let opened = open_cheque(recipient.private_key(), &swapped);
 
 		assert!(
-			matches!(opened, Err(CorruptedCheque::KeyMismatch(item)) if item == swapped.items[0])
+			matches!(opened, Err(CorruptedCheque::KeyMismatch { listed, .. }) if listed == swapped.items[0])
 		);
 	}
 }

@@ -70,7 +70,7 @@ impl ProductRuntimeHost {
 
 	/// The key products publish for `Static` cheques. Every product gets the
 	/// same key, so nothing is asked.
-	pub async fn static_nft_receive_key(
+	pub fn static_nft_receive_key(
 		&self,
 	) -> Result<
 		latest::HostNftPurseStaticReceiveKeyResponse,
@@ -106,7 +106,7 @@ fn deposit_failure(refusal: DepositRefusal) -> CallError<latest::HostNftPurseDep
 		DepositRefusal::PurseNotFound(_) => latest::HostNftPurseDepositError::PurseNotFound,
 		DepositRefusal::PurseMismatch { .. } => latest::HostNftPurseDepositError::PurseMismatch,
 		DepositRefusal::UnknownReceiveKey(_) |
-		DepositRefusal::ChequeIdMismatch |
+		DepositRefusal::ChequeIdMismatch { .. } |
 		DepositRefusal::CorruptedCheque(_) => latest::HostNftPurseDepositError::CorruptedCheque,
 		DepositRefusal::ReceiveSecret(_) |
 		DepositRefusal::Start(StartImportError::StoreSecrets(_)) => {

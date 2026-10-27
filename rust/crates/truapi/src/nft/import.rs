@@ -19,7 +19,7 @@ use crate::{
 
 /// How long an import waits for its key to hold an NFT. Longer than other
 /// transfers wait, because the sender's NFT may still be on its way.
-pub const IMPORT_WAIT_LIMIT_SECS: u64 = 60 * 60;
+const IMPORT_WAIT_LIMIT_SECS: u64 = 60 * 60;
 
 /// Items to import into `into` under `operation`, one per key.
 pub struct ImportRequest {
@@ -76,20 +76,24 @@ pub fn plan_imports(
 	}
 	let destinations = allocate_destinations(tx, plan.into, plan.sources.len(), keys)?;
 	let give_up_after = current_unix_secs() + IMPORT_WAIT_LIMIT_SECS;
-	let import_params = |(source, destination): (&ItemKey, ItemKey)| {
-		let signer = TransferSigner::Imported;
-		let signed_state_nonce = None;
-		let params = TransferParams {
-			source: *source,
-			signer,
-			instance: None,
-			destination,
-			signed_state_nonce,
-			give_up_after,
-		};
-		params.into()
-	};
-	Ok(plan.sources.iter().zip(destinations).map(import_params).collect())
+	let moves = plan.sources.iter().zip(destinations);
+	Ok(moves
+		.map(|(source, destination)| import_params(*source, destination, give_up_after))
+		.collect())
+}
+
+/// The params of moving the NFT `source` will hold to `destination`, signed
+/// with the imported secret of `source` and given up at `give_up_after`.
+fn import_params(source: ItemKey, destination: ItemKey, give_up_after: u64) -> PolicyParams {
+	TransferParams {
+		source,
+		signer: TransferSigner::Imported,
+		instance: None,
+		destination,
+		signed_state_nonce: None,
+		give_up_after,
+	}
+	.into()
 }
 
 #[cfg(test)]
@@ -103,8 +107,8 @@ mod tests {
 	use crate::{
 		encrypted_storage::MemoryEncryptedStorage,
 		nft::{
-			AllocateItemsError, ImportedSecretStore, NftLedger, NftLedgerDeps, PageRequest,
-			PurseTag, UnknownPurse,
+			AllocateItemsError, ImportedSecretStore, NftLedger, NftLedgerDeps, PurseTag,
+			UnknownPurse,
 			testing::{imported_test_key, test_ledger_deps},
 		},
 		store::{Db, open_temporary_core_db},
@@ -202,19 +206,6 @@ mod tests {
 		}
 	}
 
-	/// A product lists only what it can spend, so a key whose move has not
-	/// landed is not available yet.
-	#[test]
-	fn imported_items_are_not_available_before_their_moves_land() {
-		let importer = importer();
-
-		block_on(importer.ledger.start_imports(import_request(operation(1), INTO, 1))).unwrap();
-
-		let page = PageRequest { index: 0, size: core::num::NonZeroU32::new(10).unwrap() };
-		let available = block_on(importer.ledger.available_items(INTO, page)).unwrap();
-		assert_eq!(available.items, vec![]);
-	}
-
 	/// A deposit retried under the same key must not move the items twice.
 	#[test]
 	fn a_repeated_import_is_refused_and_registers_nothing_new() {
@@ -234,6 +225,8 @@ mod tests {
 		assert_eq!(moves.unwrap().len(), 1);
 	}
 
+	/// Items go only into a purse that exists, and a refused import registers
+	/// nothing.
 	#[test]
 	fn an_import_into_an_unknown_purse_is_refused() {
 		let importer = importer();

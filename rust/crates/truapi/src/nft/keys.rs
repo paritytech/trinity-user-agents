@@ -88,7 +88,7 @@ impl<Signer: ItemSigner> ItemSigner for Weak<Signer> {
 pub struct ItemSecret(Zeroizing<[u8; 64]>);
 
 impl ItemSecret {
-	/// Wraps a secret received in a cheque.
+	/// Wraps the 64 bytes of a secret, as `as_bytes` returns them.
 	pub fn from_bytes(bytes: Zeroizing<[u8; 64]>) -> Self {
 		Self(bytes)
 	}
@@ -101,7 +101,9 @@ impl ItemSecret {
 
 /// Bytes that are not an sr25519 secret key.
 #[derive(Debug, thiserror::Error)]
-#[error("the bytes are not an sr25519 secret key")]
+#[error(
+	"the bytes are not an sr25519 secret key: expected a canonical scalar, then a 32-byte nonce"
+)]
 pub struct InvalidItemSecret;
 
 /// An item key the host did not derive, with the secret that signs for it.

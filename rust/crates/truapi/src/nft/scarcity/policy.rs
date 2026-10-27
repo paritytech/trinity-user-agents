@@ -11,7 +11,7 @@ use super::{
 	transfer::NftTransfer,
 };
 use crate::{
-	chain::ExtrinsicService,
+	chain::{ExtrinsicService, MortalExtrinsic},
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
@@ -230,22 +230,20 @@ impl ScarcityTransferPolicy {
 		view: TransferView,
 		build: &BatchBuild,
 	) -> Option<Preparation> {
-		let signed = match decide_from_chain(transfer, view) {
+		let nft_transfer = match decide_from_chain(transfer, view) {
 			TransferDecision::GiveUp => return Some(Preparation::GiveUp),
-			TransferDecision::Wait => SignedTransfer::Unavailable,
-			TransferDecision::Build(nft_transfer) => {
-				self.ready_to_submit(transfer, &nft_transfer, build).await
-			},
+			TransferDecision::Wait => return give_up_after_limit(transfer, build.now),
+			TransferDecision::Build(nft_transfer) => nft_transfer,
 		};
-		match signed {
+		match self.ready_to_submit(transfer, &nft_transfer, build).await {
 			SignedTransfer::Ready(ready) => Some(ready),
 			SignedTransfer::Unsignable => Some(Preparation::GiveUp),
 			SignedTransfer::Unavailable => give_up_after_limit(transfer, build.now),
 		}
 	}
 
-	/// `nft_transfer` signed for `transfer` and ready, with the instance and
-	/// revision it signed recorded in its params.
+	/// What signing `nft_transfer` for `transfer` came to: ready, with the
+	/// instance and revision it signed recorded in its params, or why not.
 	async fn ready_to_submit(
 		&self,
 		transfer: &PlannedTransfer,
@@ -257,16 +255,11 @@ impl ScarcityTransferPolicy {
 			Ok(None) => return SignedTransfer::Unsignable,
 			Err(error) => return transfer_not_signed(error),
 		};
-		let params = TransferParams {
-			instance: Some(nft_transfer.instance),
-			signed_state_nonce: Some(nft_transfer.state_nonce),
-			..transfer.params
-		};
 		build
 			.extrinsics
 			.sign_nft_transfer(self.deps.genesis, &signer, nft_transfer)
 			.await
-			.map(|extrinsic| Preparation::Ready { extrinsic, params: Some(params.into()) })
+			.map(|extrinsic| ready_preparation(transfer, nft_transfer, extrinsic))
 			.map_or_else(transfer_not_signed, SignedTransfer::Ready)
 	}
 
@@ -295,6 +288,21 @@ impl ScarcityTransferPolicy {
 			.transpose()
 			.map_err(policy_error)
 	}
+}
+
+/// `transfer` ready to submit as `extrinsic`, with the instance and revision
+/// `nft_transfer` signed recorded in its params.
+fn ready_preparation(
+	transfer: &PlannedTransfer,
+	nft_transfer: &NftTransfer,
+	extrinsic: MortalExtrinsic,
+) -> Preparation {
+	let params = TransferParams {
+		instance: Some(nft_transfer.instance),
+		signed_state_nonce: Some(nft_transfer.state_nonce),
+		..transfer.params
+	};
+	Preparation::Ready { extrinsic, params: Some(params.into()) }
 }
 
 /// [`SignedTransfer::Unavailable`], after logging the `error` that kept the
@@ -349,9 +357,9 @@ fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> Transfer
 		return TransferDecision::GiveUp;
 	}
 	let expected = transfer.params.instance;
-	let held = view
-		.source
-		.filter(|held| expected.is_none_or(|instance| held.instance == instance));
+	let is_expected =
+		|held: &ScarcityNft| expected.is_none_or(|instance| held.instance == instance);
+	let held = view.source.filter(is_expected);
 	let Some(held) = held else { return TransferDecision::Wait };
 	if view.locked {
 		return TransferDecision::Wait;

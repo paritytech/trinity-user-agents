@@ -121,7 +121,7 @@ impl ItemSigner for FixedEntropy {
 }
 
 /// The entropy a cheque's sender derives the keys of [`imported_test_key`] from.
-pub const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
+const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
 
 /// The key at `index` of the sender's purse 0, as a cheque hands it over.
 pub fn imported_test_key(index: u32) -> ImportedItemKey {

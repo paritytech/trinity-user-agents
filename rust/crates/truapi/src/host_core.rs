@@ -936,8 +936,9 @@ impl SigningHostRuntime {
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
-	/// [`Self::set_installation_provider`] and
-	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
+	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
+	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
+	/// the encrypted storage. A part whose inputs are missing
 	/// is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
@@ -953,34 +954,47 @@ impl SigningHostRuntime {
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable` and starts tracking
-	/// its holdings, when an installation provider and encrypted storage are
-	/// set.
+	/// Installs the NFT ledger over `db` and `durable`, with the static receive
+	/// secret NFT purses open cheques with, and starts tracking its holdings,
+	/// when an installation provider and encrypted storage are set.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
+		let Some(ledger) = self.nft_ledger(db, durable) else {
+			return;
+		};
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
+	}
+
+	/// The NFT ledger over `db` and `durable`, deriving item keys from the
+	/// signing host, or `None`, logged, without an installation provider or
+	/// encrypted storage.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) -> Option<crate::nft::NftLedger> {
 		let Some(installation) = self.services.installation_provider() else {
 			tracing::warn!("no installation provider set, NFT purses are off");
-			return;
+			return None;
 		};
 		let Some(encrypted) = self.services.encrypted_storage() else {
 			tracing::warn!("no encrypted storage set, NFT purses are off");
-			return;
+			return None;
 		};
-
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
 		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
-		let ledger = crate::nft::NftLedger::new(deps);
-		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
-		self.services.install_static_receive_secret(static_secret);
-		self.services.install_nft_ledger(ledger.clone());
-		start_holding_tracker(&self.services, ledger);
+		Some(crate::nft::NftLedger::new(deps))
 	}
 
 	/// Install the host observer told whether durable transactions are

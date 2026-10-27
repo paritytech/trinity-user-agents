@@ -13,8 +13,9 @@ use crate::encrypted_storage::EncryptedStorage;
 /// Prefix of the encrypted storage key that holds an imported item secret.
 const SECRET_KEY_PREFIX: &[u8] = b"nft/item-secret/";
 
-/// The secrets of imported item keys, kept in encrypted storage until every
-/// move that spends them is settled. Entries are never removed.
+/// The secrets of imported item keys, kept in encrypted storage so each move
+/// that spends one can be signed again after a restart. Entries are never
+/// removed.
 #[derive(Clone)]
 pub struct ImportedSecretStore {
 	encrypted: Arc<dyn EncryptedStorage>,

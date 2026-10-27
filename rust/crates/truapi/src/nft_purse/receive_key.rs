@@ -35,7 +35,8 @@ pub enum CreateReceiveKeyError {
 }
 
 /// The X25519 secret that opens `Static` cheques, the same for every product.
-/// It has one implementation, so the key it returns can change in one place.
+/// The signing host is its one production implementation, so the key it
+/// returns can change in one place.
 pub trait StaticReceiveSecret: Send + Sync {
 	/// The secret. Fails without a session.
 	fn static_receive_secret(&self) -> Result<X25519PrivateKey, AuthorityError>;
@@ -59,9 +60,17 @@ pub enum ReceiveSecretError {
 	/// The host storage failed.
 	#[error("reading the receive key secret failed: {}", .0.reason)]
 	Read(GenericError),
-	/// The key was recorded, but no 32-byte secret is stored for it.
+	/// The key was recorded, but no secret is stored for it.
 	#[error("no secret is stored for receive key {}", hex::encode(.0.0))]
 	Missing(NftPurseReceiveKey),
+	/// The stored secret is not 32 bytes.
+	#[error("the stored secret of receive key {} has {length} bytes, expected 32", hex::encode(.key.0))]
+	Malformed {
+		/// The receive key.
+		key: NftPurseReceiveKey,
+		/// The length of the stored value.
+		length: usize,
+	},
 }
 
 /// The encrypted storage key under which the secret of `key` is kept.
@@ -112,7 +121,35 @@ impl NftPurses {
 			.read_encrypted(&storage_key)
 			.await
 			.map_err(ReceiveSecretError::Read)?;
-		let secret = stored.and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
-		secret.map(X25519PrivateKey::from).ok_or(ReceiveSecretError::Missing(*key))
+		let stored = stored.ok_or(ReceiveSecretError::Missing(*key))?;
+		let secret = <[u8; 32]>::try_from(stored.as_slice())
+			.map_err(|_| ReceiveSecretError::Malformed { key: *key, length: stored.len() })?;
+		Ok(X25519PrivateKey::from(secret))
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use futures::executor::block_on;
+
+	use super::*;
+	use crate::{nft_purse::test_purses, store::open_temporary_core_db};
+
+	/// A deposit must not take a secret it cannot read for one that was never
+	/// stored, nor sign with a value that is not a secret.
+	#[test]
+	fn a_receive_key_secret_that_is_absent_or_malformed_is_an_error() {
+		let (_dir, db) = open_temporary_core_db();
+		let purses = test_purses(db);
+		let missing = NftPurseReceiveKey([0x01; 32]);
+		let malformed = NftPurseReceiveKey([0x02; 32]);
+		let storage_key = receive_secret_storage_key(&malformed);
+		block_on(purses.encrypted.write_encrypted(&storage_key, &[0x03; 16])).unwrap();
+
+		let absent = block_on(purses.receive_secret(&missing));
+		let short = block_on(purses.receive_secret(&malformed));
+
+		assert!(matches!(absent, Err(ReceiveSecretError::Missing(key)) if key == missing));
+		assert!(matches!(short, Err(ReceiveSecretError::Malformed { length: 16, .. })));
 	}
 }
