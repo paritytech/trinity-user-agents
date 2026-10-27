@@ -99,7 +99,7 @@ const productSize = (page: Page) =>
     height: (element as HTMLElement).offsetHeight,
   }));
 
-/** The panel's round buttons: each a 28 px circle, its icon inside it and centred. */
+/** The side switch's segments and Hide: their size, whether they sit inside their track, and their icon centred. */
 const roundButtons = (page: Page) =>
   page
     .locator(".devtools-side button:visible, #devtools-close:visible")
@@ -107,11 +107,20 @@ const roundButtons = (page: Page) =>
       buttons.map((button) => {
         const own = button.getBoundingClientRect();
         const icon = button.querySelector("svg")!.getBoundingClientRect();
+        const track = button.parentElement!.getBoundingClientRect();
         return {
           name: button.getAttribute("aria-label"),
           pressed: button.getAttribute("aria-pressed"),
           size: [own.width, own.height],
           round: getComputedStyle(button).borderRadius !== "0px",
+          // A segment keeps at least 2 px of its track around it, so the
+          // selected one never reaches the track's edge.
+          insideTrack: button.classList.contains("devtools-close")
+            ? true
+            : own.top - track.top >= 2 &&
+              track.bottom - own.bottom >= 2 &&
+              own.left - track.left >= 2 &&
+              track.right - own.right >= 2,
           iconCentred:
             Math.abs(icon.left - own.left - (own.right - icon.right)) <= 1 &&
             Math.abs(icon.top - own.top - (own.bottom - icon.bottom)) <= 1,
@@ -248,7 +257,7 @@ describe("the developer tools", () => {
   );
 
   test(
-    "the side switch and Hide are round buttons with their icons centred, on either side and in either colour scheme",
+    "the side switch is a segmented control and Hide a round button, icons centred, on either side and in either colour scheme",
     async () => {
       const { context, page } = await openHost({ width: 1280, height: 800 });
       try {
@@ -256,15 +265,17 @@ describe("the developer tools", () => {
           {
             name: "Dock on the right",
             pressed: String(right),
-            size: [28, 28],
+            size: [36, 26],
             round: true,
+            insideTrack: true,
             iconCentred: true,
           },
           {
             name: "Dock at the bottom",
             pressed: String(!right),
-            size: [28, 28],
+            size: [36, 26],
             round: true,
+            insideTrack: true,
             iconCentred: true,
           },
           {
@@ -272,6 +283,7 @@ describe("the developer tools", () => {
             pressed: null,
             size: [28, 28],
             round: true,
+            insideTrack: true,
             iconCentred: true,
           },
         ];
@@ -335,6 +347,7 @@ describe("the developer tools", () => {
             pressed: null,
             size: [28, 28],
             round: true,
+            insideTrack: true,
             iconCentred: true,
           },
         ]);
