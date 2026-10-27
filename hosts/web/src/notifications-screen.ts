@@ -8,35 +8,39 @@ import {
 } from "./notifications.js";
 
 /**
- * PROTOTYPE. The Notifications screen: requests that wait for the user's
- * answer, then the ones already answered or expired. A request opens in a
- * detail the host draws, with who sent it, through which product, what for,
- * and Accept and Decline. Opening a request marks it seen; only an answer or
- * its expiry ends it.
+ * PROTOTYPE. The Notifications screen: requests that products send the user,
+ * those that wait first, then earlier ones. The dock's Notifications entry
+ * opens it. There is no native list of these; the rows follow the native
+ * Chat Requests list, and each names the product it comes through.
  *
- * Only the local demo puts requests here, so the screen says so on every
- * view, and its answers go nowhere but this list.
+ * - A row is seen once it shows on screen, in a visible page, and only then.
+ * - A request that waits offers Dismiss, and Accept when the feature that
+ *   owns it can accept it. Dismiss takes it off this list only; it answers
+ *   nothing. Accept is the user's intent, handed to the request's owner; the
+ *   row shows Accepted only once the owner accepted it, and the owner decides
+ *   where, if anywhere, the user goes next.
+ * - A request with no action stays seen and waiting until it expires.
  */
 
-export interface NotificationsDemoControl {
-  /** Put the demo's requests in this wallet's list, in place of earlier ones. */
-  seed(): void;
-  /** Take the demo's requests out of this wallet's list. */
-  clear(): void;
+/** What the feature that owns some notifications does with them. */
+export interface NotificationActions {
+  /** Whether Accept applies to `item`. */
+  canAccept(item: HostNotification): boolean;
+  /** Hand the user's Accept to the owner. Resolves once it accepted; rejects, with a message for the user, when it did not. */
+  accept(item: HostNotification): Promise<void>;
+  /** The name of where an accepted `item` opens, or null when it opens nowhere. */
+  destination(item: HostNotification): string | null;
+  /** Ask the owner to show an accepted `item`. */
+  open(item: HostNotification): void;
 }
 
-const KIND_LABEL: Record<NotificationKind, string> = {
-  invitation: "Chat invitation",
-  sharing: "Profile sharing request",
-};
-
 const KIND_LINE: Record<NotificationKind, string> = {
-  invitation: "invites you to chat",
-  sharing: "asks to see your profile",
+  invitation: "Chat invitation",
+  sharing: "Profile request",
 };
 
 const STATUS_LABEL: Record<NotificationStatus, string> = {
-  pending: "Waiting for you",
+  pending: "Waiting",
   accepted: "Accepted",
   declined: "Declined",
   expired: "Expired",
@@ -46,6 +50,8 @@ const STATUS_LABEL: Record<NotificationStatus, string> = {
 const REFRESH_MS = 30_000;
 /** Longest delay `setTimeout` takes. */
 const MAX_DELAY_MS = 2 ** 31 - 1;
+/** How much of a row has to show for it to count as seen. */
+const SEEN_THRESHOLD = 0.6;
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -91,35 +97,41 @@ export function until(at: number, now: number): string {
   return days === 1 ? "in 1 day" : `in ${days} days`;
 }
 
-const when = (at: number): string =>
-  new Date(at).toLocaleString([], {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 export class NotificationsScreen {
-  private view: { kind: "list" } | { kind: "detail"; id: string } = {
-    kind: "list",
-  };
-  private problem: string | null = null;
   private visible = false;
+  private actions: NotificationActions | null = null;
+  /** Requests whose Accept is under way. */
+  private readonly accepting = new Set<string>();
+  /** Why the last Accept of a request failed, by id. */
+  private readonly problems = new Map<string, string>();
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
-  /** The row to give focus to when the list is drawn again. */
-  private returnTo: string | null = null;
+  private observer: IntersectionObserver | null = null;
+  /** Unseen rows that show on screen now. */
+  private readonly inView = new Set<string>();
 
   constructor(
     private readonly root: HTMLElement,
     private readonly store: NotificationStore,
     private readonly onBadge: (unseen: number) => void,
-    private readonly demo?: NotificationsDemoControl,
   ) {
     store.onChange(() => {
-      if (!store.scoped()) this.view = { kind: "list" };
+      if (!store.scoped()) {
+        this.accepting.clear();
+        this.problems.clear();
+      }
       this.render();
     });
+    document.addEventListener("visibilitychange", () => this.markShownSeen());
+    this.render();
+  }
+
+  /** Let the feature that owns some notifications act on them, or no one. */
+  setActions(actions: NotificationActions | null): void {
+    this.actions = actions;
     this.render();
   }
 
@@ -136,23 +148,64 @@ export class NotificationsScreen {
   private render(): void {
     this.onBadge(this.store.unseen());
     this.scheduleExpiry();
+    this.observer?.disconnect();
+    this.observer = null;
+    this.inView.clear();
     if (!this.visible) return;
-    const item =
-      this.view.kind === "detail" ? this.store.get(this.view.id) : undefined;
-    if (this.view.kind === "detail" && item === undefined)
-      this.view = { kind: "list" };
-    this.root.dataset.view = this.view.kind;
-    this.root.replaceChildren(
-      ...(item === undefined ? this.drawList() : this.drawDetail(item)),
-    );
-    if (item === undefined && this.returnTo !== null) {
+    const previous = this.root.querySelector<HTMLElement>(".chat-body");
+    const scrollTop = previous?.scrollTop ?? 0;
+    const focused = document.activeElement as HTMLElement | null;
+    const focusKey = this.root.contains(focused)
+      ? {
+          id: focused?.closest<HTMLElement>("[data-notification]")?.dataset
+            .notification,
+          action: focused?.dataset.action,
+        }
+      : null;
+
+    const [bar, body] = this.drawList();
+    this.root.replaceChildren(bar, body);
+    body.scrollTop = scrollTop;
+    if (focusKey?.id !== undefined && focusKey.action !== undefined)
       this.root
         .querySelector<HTMLElement>(
-          `[data-notification="${CSS.escape(this.returnTo)}"]`,
+          `[data-notification="${CSS.escape(focusKey.id)}"] [data-action="${CSS.escape(focusKey.action)}"]`,
         )
         ?.focus();
-      this.returnTo = null;
-    }
+    this.observe(body);
+  }
+
+  /** Watch the unseen rows, so each is marked seen once it shows. */
+  private observe(body: HTMLElement): void {
+    const unseen = body.querySelectorAll<HTMLElement>(
+      '.notification-row[data-seen="false"]',
+    );
+    if (unseen.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (observer !== this.observer) return;
+        for (const entry of entries) {
+          const id = (entry.target as HTMLElement).dataset.notification!;
+          if (entry.isIntersecting) this.inView.add(id);
+          else this.inView.delete(id);
+        }
+        this.markShownSeen();
+      },
+      { root: body, threshold: SEEN_THRESHOLD },
+    );
+    this.observer = observer;
+    for (const row of unseen) observer.observe(row);
+  }
+
+  /** Mark seen the unseen rows on screen, while the screen and the page show. */
+  private markShownSeen(): void {
+    if (
+      !this.visible ||
+      document.visibilityState !== "visible" ||
+      this.inView.size === 0
+    )
+      return;
+    this.store.markSeen(...this.inView);
   }
 
   /** Draw again when the next pending request expires, so it leaves pending on time. */
@@ -168,64 +221,19 @@ export class NotificationsScreen {
     this.expiryTimer = setTimeout(() => this.render(), delay);
   }
 
-  /** What the demo data is, and, on the list, the demo's own controls. */
-  private demoNote(controls: boolean): HTMLElement {
-    const note = el("section", "notification-demo");
-    note.append(
-      el(
-        "p",
-        "notification-demo-text",
-        "Demo data, made up by this host. Accepting or declining changes only this list: no request is sent, nothing is shared, and no permission or contact is created.",
-      ),
-    );
-    if (controls && this.demo !== undefined && this.store.scoped()) {
-      const demo = this.demo;
-      const actions = el("div", "notification-demo-actions");
-      const empty = this.store.list().length === 0;
-      actions.append(
-        button(
-          empty ? "chat-pill chat-pill-primary" : "chat-pill",
-          empty ? "Add demo notifications" : "Reset demo",
-          "notifications-demo-seed",
-          () => demo.seed(),
-        ),
-      );
-      if (!empty)
-        actions.append(
-          button("chat-pill", "Clear", "notifications-demo-clear", () =>
-            demo.clear(),
-          ),
-        );
-      note.append(actions);
-    }
-    return note;
-  }
-
-  private drawList(): HTMLElement[] {
+  private drawList(): [HTMLElement, HTMLElement] {
     const bar = el("header", "chat-bar");
     bar.append(el("h2", "chat-title", "Notifications"));
     const body = el("div", "chat-body");
     if (!this.store.scoped()) {
-      body.append(
-        this.empty(
-          "Sign in to see notifications",
-          "Requests sent to this wallet show here.",
-        ),
-      );
+      body.append(this.empty("Sign in to see notifications"));
       return [bar, body];
     }
-    body.append(this.demoNote(true));
     const now = this.store.now();
-    const items = this.store.list();
+    const items = this.store.listed();
     const waiting = items.filter((item) => statusOf(item, now) === "pending");
     const earlier = items.filter((item) => statusOf(item, now) !== "pending");
-    if (items.length === 0)
-      body.append(
-        this.empty(
-          "No notifications",
-          "Chat invitations and profile sharing requests show here.",
-        ),
-      );
+    if (items.length === 0) body.append(this.empty("No notifications"));
     for (const [title, group, name] of [
       ["Requests", waiting, "pending"],
       ["Earlier", earlier, "earlier"],
@@ -241,165 +249,113 @@ export class NotificationsScreen {
     return [bar, body];
   }
 
-  private empty(title: string, text: string): HTMLElement {
+  private empty(title: string): HTMLElement {
     const node = el("div", "chat-empty");
-    node.append(
-      el("p", "chat-empty-title", title),
-      el("p", "chat-empty-body", text),
-    );
+    node.append(el("p", "chat-empty-title", title));
     return node;
   }
 
   private row(item: HostNotification, now: number): HTMLElement {
     const status = statusOf(item, now);
-    const entry = el("li", "");
-    const row = el("button", "chat-row chat-row-button notification-row");
-    row.type = "button";
+    const seen = item.seenAt !== null;
+    const destination =
+      status === "accepted" ? (this.actions?.destination(item) ?? null) : null;
+    const row = el("li", "notification-row");
     row.dataset.notification = item.id;
     row.dataset.status = status;
-    row.dataset.seen = String(item.seenAt !== null);
-    const text = el("span", "chat-row-text");
-    const title = el("span", "chat-row-title notification-title");
-    title.append(
-      el("strong", "", item.sender.name),
-      ` ${KIND_LINE[item.kind]}`,
+    row.dataset.seen = String(seen);
+
+    const top = el("span", "notification-row-top");
+    top.append(
+      el("span", "chat-row-title", item.sender.name),
+      el("span", "notification-time", ago(item.receivedAt, now)),
     );
-    text.append(
-      title,
-      el("span", "chat-row-preview", item.purpose),
-      el(
-        "span",
-        "chat-row-preview notification-via",
-        `via ${item.product.name}${status === "pending" ? ` · expires ${until(item.expiresAt, now)}` : ""}`,
-      ),
-    );
-    const side = el("span", "chat-row-side");
-    side.append(el("span", "chat-row-time", ago(item.receivedAt, now)));
-    if (status !== "pending")
-      side.append(el("span", `notification-status`, STATUS_LABEL[status]));
-    if (item.seenAt === null) {
+    const message = el("span", "notification-message");
+    message.append(el("span", "notification-text", item.purpose));
+    if (!seen) {
       const dot = el("span", "notification-unseen");
       dot.setAttribute("aria-hidden", "true");
-      side.append(dot);
+      message.append(dot);
     }
-    row.setAttribute(
-      "aria-label",
-      `${item.seenAt === null ? "New. " : ""}${item.sender.name} ${KIND_LINE[item.kind]}, via ${item.product.name}. ${STATUS_LABEL[status]}.`,
+    const meta = el("span", "notification-meta");
+    const product = el("span", "notification-product", item.product.name);
+    product.title = item.product.id;
+    meta.append(`${KIND_LINE[item.kind]} · `, product);
+    meta.append(
+      status === "pending"
+        ? ` · Expires ${until(item.expiresAt, now)}`
+        : el("span", "notification-status", STATUS_LABEL[status]),
     );
-    row.append(
+    const text = el("span", "chat-row-text");
+    text.append(top, message, meta);
+    const content = [
       avatar({ icon: null, seed: item.sender.handle, title: item.sender.name }),
       text,
-      side,
-    );
-    row.addEventListener("click", () => this.open(item.id));
-    entry.append(row);
-    return entry;
+    ];
+    const label = `${seen ? "" : "New. "}${KIND_LINE[item.kind]} from ${item.sender.name}, via ${item.product.name}. ${STATUS_LABEL[status]}.`;
+
+    if (destination !== null) {
+      const open = el("button", "chat-row chat-row-button notification-main");
+      open.type = "button";
+      open.dataset.action = "notification-open";
+      open.setAttribute("aria-label", `${label} Open in ${destination}.`);
+      open.append(...content, el("span", "notification-chevron", "›"));
+      open.addEventListener("click", () => this.actions?.open(item));
+      row.append(open);
+    } else {
+      const main = el("div", "chat-row notification-main");
+      main.setAttribute("aria-label", label);
+      main.setAttribute("role", "group");
+      main.append(...content);
+      row.append(main);
+    }
+
+    if (status === "pending") row.append(this.drawActions(item));
+    const problem = this.problems.get(item.id);
+    if (problem !== undefined)
+      row.append(el("p", "chat-error notification-problem", problem));
+    return row;
   }
 
-  private open(id: string): void {
-    this.problem = null;
-    this.view = { kind: "detail", id };
-    // Marking it seen draws the screen again, showing the detail.
-    this.store.markSeen(id);
-    this.render();
-    this.root.querySelector<HTMLElement>(".notification-heading")?.focus();
-  }
-
-  private back(): void {
-    if (this.view.kind === "detail") this.returnTo = this.view.id;
-    this.view = { kind: "list" };
-    this.problem = null;
-    this.render();
-  }
-
-  private answer(id: string, accept: boolean): void {
-    const result = accept ? this.store.accept(id) : this.store.decline(id);
-    this.problem = result.ok ? null : result.reason;
-    this.render();
-  }
-
-  private drawDetail(item: HostNotification): HTMLElement[] {
-    const now = this.store.now();
-    const status = statusOf(item, now);
-    const bar = el("header", "chat-bar chat-bar-small");
-    const back = button("chat-icon-button", "‹", "notifications-back", () =>
-      this.back(),
+  private drawActions(item: HostNotification): HTMLElement {
+    const busy = this.accepting.has(item.id);
+    const actions = el("div", "notification-actions");
+    const dismiss = button("chat-pill", "Dismiss", "notification-dismiss", () =>
+      this.dismiss(item),
     );
-    back.setAttribute("aria-label", "Back to notifications");
-    const heading = el(
-      "h2",
-      "chat-title chat-title-small notification-heading",
-      KIND_LABEL[item.kind],
-    );
-    heading.tabIndex = -1;
-    bar.append(back, heading);
-
-    const body = el("div", "chat-body notification-detail");
-    body.dataset.notification = item.id;
-    body.dataset.status = status;
-    const who = el("section", "notification-who");
-    const names = el("div", "notification-names");
-    names.append(
-      el("p", "notification-sender", item.sender.name),
-      el("p", "notification-handle", item.sender.handle),
-    );
-    who.append(
-      avatar(
-        { icon: null, seed: item.sender.handle, title: item.sender.name },
-        "large",
-      ),
-      names,
-    );
-
-    const facts = el("dl", "notification-facts");
-    const fact = (term: string, value: string) =>
-      facts.append(el("dt", "", term), el("dd", "", value));
-    fact("Through", `${item.product.name} (${item.product.id})`);
-    fact("Purpose", item.purpose);
-    fact("Received", when(item.receivedAt));
-    if (status === "pending")
-      fact("Expires", `${when(item.expiresAt)}, ${until(item.expiresAt, now)}`);
-    else if (status === "expired") fact("Expired", when(item.expiresAt));
-    else if (item.state.tag !== "pending")
-      fact(STATUS_LABEL[status], when(item.state.at));
-
-    const outcome = el("section", "notification-outcome");
-    if (status === "pending") {
-      const actions = el("div", "chat-request-actions notification-actions");
-      actions.append(
-        button("chat-pill", "Decline", "notification-decline", () =>
-          this.answer(item.id, false),
-        ),
-        button(
-          "chat-pill chat-pill-primary",
-          "Accept",
-          "notification-accept",
-          () => this.answer(item.id, true),
-        ),
+    dismiss.disabled = busy;
+    actions.append(dismiss);
+    if (this.actions?.canAccept(item)) {
+      const accept = button(
+        "chat-pill chat-pill-primary",
+        busy ? "Accepting…" : "Accept",
+        "notification-accept",
+        () => void this.accept(item),
       );
-      outcome.append(actions);
-    } else
-      outcome.append(
-        el(
-          "p",
-          "notification-status notification-status-large",
-          STATUS_LABEL[status],
-        ),
-      );
-    if (this.problem !== null)
-      outcome.append(el("p", "chat-error", this.problem));
+      accept.disabled = busy;
+      actions.append(accept);
+    }
+    return actions;
+  }
 
-    body.append(
-      who,
-      facts,
-      outcome,
-      el(
-        "p",
-        "chat-identity-line notification-caveat",
-        "The sender's name comes from the request; this host has not checked it.",
-      ),
-      this.demoNote(false),
-    );
-    return [bar, body];
+  private dismiss(item: HostNotification): void {
+    this.problems.delete(item.id);
+    this.store.dismiss(item.id);
+  }
+
+  private async accept(item: HostNotification): Promise<void> {
+    const actions = this.actions;
+    if (actions === null || this.accepting.has(item.id)) return;
+    this.accepting.add(item.id);
+    this.problems.delete(item.id);
+    this.render();
+    try {
+      await actions.accept(item);
+    } catch (error) {
+      this.problems.set(item.id, errorText(error));
+    } finally {
+      this.accepting.delete(item.id);
+      this.render();
+    }
   }
 }

@@ -3,6 +3,7 @@ import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "./chat-v2/contract.js";
 import type { FrameTap } from "./frame-tap.js";
+import { isProductHello as isInvitationsHello } from "./invitations/contract.js";
 
 /** A product URL the host can embed: http or https only. */
 export function parseProductUrl(raw: string): URL {
@@ -99,6 +100,12 @@ export interface OpenProductOptions {
    * the product's origin, is heard; without this the hello is ignored.
    */
   onChatV2Port?(port: MessagePort): void;
+  /**
+   * Called with the port the frame hands over for invitations
+   * (`src/invitations/contract.ts`). Heard as {@link onChatV2Port} is;
+   * without this the port is closed unanswered.
+   */
+  onInvitationsPort?(port: MessagePort): void;
 }
 
 /**
@@ -129,6 +136,7 @@ export async function openProduct(
     mounted = false,
     executionKind = "App",
     onChatV2Port,
+    onInvitationsPort,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
     throw new Error(
@@ -182,12 +190,17 @@ export async function openProduct(
       onChatV2Port?.(event.ports[0]);
       return;
     }
+    if (isInvitationsHello(data, event.ports)) {
+      if (onInvitationsPort === undefined) event.ports[0].close();
+      else onInvitationsPort(event.ports[0]);
+      return;
+    }
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
       return;
     if (data.state === "loading" || data.state === "error")
       onSandboxStatus?.(data.state, data.detail);
   };
-  if (onSandboxStatus || onChatV2Port)
+  if (onSandboxStatus || onChatV2Port || onInvitationsPort)
     window.addEventListener("message", onWindowMessage);
   return {
     url,

@@ -1,6 +1,7 @@
 /**
  * Headless-browser test of the Notifications screen, a prototype the dev
- * server offers with made-up requests. It signs in with synthetic phrases,
+ * server offers with made-up requests, which have no owner to accept them.
+ * It signs in with synthetic phrases,
  * closes every socket and refuses every request outside this host, so no
  * chain, backend or peer is reached. It needs a Chromium: playwright-core
  * finds the one it installs, or set CHROMIUM_PATH.
@@ -30,18 +31,36 @@ afterAll(async () => {
   await host?.close();
 });
 
-async function open(viewport = { width: 1280, height: 800 }): Promise<{
+async function open(
+  viewport = { width: 1280, height: 800 },
+  /** A product served on loopback, saved as what Browse opens. */
+  browse?: string,
+): Promise<{
   context: BrowserContext;
   page: Page;
   outside: string[];
 }> {
   const context = await browser.newContext({ viewport });
+  if (browse !== undefined)
+    await context.addInitScript((address) => {
+      if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+        localStorage.setItem(
+          "truapi-web-signing-host:dock:v1",
+          JSON.stringify({ browse: address }),
+        );
+    }, browse);
   context.setDefaultTimeout(STEP_MS);
+  // From the first page on: a clock installed under a running light client breaks its timers.
+  await context.clock.install();
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   const outside: string[] = [];
   await context.route(/.*/, (route) => {
     const url = route.request().url();
-    if (url.startsWith(host.origin)) return route.fallback();
+    if (
+      url.startsWith(host.origin) ||
+      (browse !== undefined && url.startsWith(browse))
+    )
+      return route.fallback();
     outside.push(url);
     return route.abort();
   });
@@ -86,15 +105,57 @@ async function signIn(page: Page, phrase: string): Promise<void> {
   await setMenu(page, false);
 }
 
+/** Sample notifications come from the menu's Developer section. */
+async function seed(page: Page): Promise<void> {
+  await setMenu(page, true);
+  await page.click('[data-action="notifications-demo-seed"]');
+  await setMenu(page, false);
+}
+
 const tab = '#dock [data-destination="notifications"]';
-const badge = `${tab} [data-badge]`;
 const row = (id: string) => `[data-notification="${id}"].notification-row`;
 
-async function badgeCount(page: Page): Promise<number> {
-  return (await page.locator(badge).isHidden())
-    ? 0
-    : Number(await page.locator(badge).innerText());
+/** The dock's Notifications entry. */
+async function openNotifications(page: Page): Promise<void> {
+  await page.click(tab);
 }
+
+/** The count on the dock's Notifications entry, whichever screen shows. */
+const badgeCount = (page: Page): Promise<number> =>
+  page
+    .locator(`${tab} [data-badge]`)
+    .evaluate((node) =>
+      (node as HTMLElement).hidden ? 0 : Number(node.textContent),
+    );
+
+/** Read until `read` gives `want`, or fail with the last value. */
+async function eventually<T>(read: () => Promise<T>, want: T): Promise<void> {
+  const end = Date.now() + STEP_MS;
+  let last: T | undefined;
+  while (Date.now() < end) {
+    last = await read();
+    if (JSON.stringify(last) === JSON.stringify(want)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(last).toEqual(want);
+}
+
+const seenIds = (page: Page, seen: boolean) =>
+  page
+    .locator(`.notification-row[data-seen="${seen}"]`)
+    .evaluateAll((rows) =>
+      rows.map((node) => (node as HTMLElement).dataset.notification),
+    );
+
+/** Pretend the page is in a background tab, or bring it back. */
+const setPageVisible = (page: Page, visible: boolean) =>
+  page.evaluate((shown) => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => (shown ? "visible" : "hidden"),
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, visible);
 
 const groupIds = (page: Page, group: "pending" | "earlier") =>
   page
@@ -111,12 +172,15 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("the Notifications screen", () => {
   test(
-    "shows demo requests only when asked, marks one seen when opened, and keeps its answer",
+    "marks a row seen only once it shows in a visible page, and Dismiss takes it off the list without an answer",
     async () => {
-      const { context, page, outside } = await open();
+      const { context, page, outside } = await open({
+        width: 1280,
+        height: 600,
+      });
       try {
         // Signed out: the tab is there, with nothing in it and no badge.
-        await page.click(tab);
+        await openNotifications(page);
         await page
           .locator("#notifications-screen", {
             hasText: "Sign in to see notifications",
@@ -125,11 +189,6 @@ describe("the Notifications screen", () => {
         expect(await badgeCount(page)).toBe(0);
 
         await signIn(page, PHRASE_A);
-        await page.click(tab);
-        await page
-          .locator("#notifications-screen", { hasText: "No notifications" })
-          .waitFor();
-        // Nothing is stored for a wallet that has not asked for the demo.
         expect(
           await page.evaluate(() =>
             Object.keys(localStorage).filter((key) =>
@@ -138,124 +197,110 @@ describe("the Notifications screen", () => {
           ),
         ).toEqual([]);
 
-        await page.click('[data-action="notifications-demo-seed"]');
+        // Added while Chats is in front: four unseen, the badge counts them.
+        await page.click('#dock [data-destination="chat"]');
+        await seed(page);
+        expect(await badgeCount(page)).toBe(4);
+
+        // A page in a background tab marks nothing seen.
+        await setPageVisible(page, false);
+        await openNotifications(page);
         await page.locator(row("demo-invite-ada")).waitFor();
+        await page.waitForTimeout(300);
+        expect(await badgeCount(page)).toBe(4);
+
+        // Once the page shows, only the rows on screen are seen.
+        await setPageVisible(page, true);
+        await eventually(async () => (await badgeCount(page)) < 4, true);
+        const unseen = await seenIds(page, false);
+        expect(unseen.length).toBeGreaterThan(0);
+        expect(await badgeCount(page)).toBe(unseen.length);
+        expect(await seenIds(page, true)).toContain("demo-invite-ada");
+        await screenshot(page, "list");
+
+        // A jump to the end skips the rows between: those stay unseen.
+        await page
+          .locator("#notifications-screen .chat-body")
+          .evaluate((body) => (body.scrollTop = body.scrollHeight));
+        await page.waitForTimeout(300);
+        expect(await badgeCount(page)).toBeGreaterThan(0);
+        // Scrolled into view one by one, the rest are seen too.
+        for (const id of unseen)
+          await page
+            .locator(row(id!))
+            .evaluate((node) => node.scrollIntoView({ block: "center" }));
+        await eventually(() => badgeCount(page), 0);
+        expect(await seenIds(page, false)).toEqual([]);
+
+        // Seen is not answered: all four still wait.
         expect(await groupIds(page, "pending")).toEqual([
           "demo-invite-ada",
           "demo-share-grace",
           "demo-invite-soon",
           "demo-share-long",
         ]);
-        expect(await groupIds(page, "earlier")).toEqual([
-          "demo-invite-accepted",
-          "demo-share-declined",
-          "demo-invite-expired",
-        ]);
+        // Made-up requests have no owner to accept them: Dismiss only, and no row opens.
+        const ada = page.locator(row("demo-invite-ada"));
         expect(
-          await page.locator(".notification-demo").first().innerText(),
-        ).toContain("Demo data, made up by this host");
-        // The list shows them; it does not mark any seen.
-        expect(await badgeCount(page)).toBe(4);
-        await screenshot(page, "list");
-
-        // Opening one marks that one seen, and only that one.
-        await page.click(row("demo-invite-ada"));
-        const detail = page.locator(".notification-detail");
-        await detail.waitFor();
-        expect(await page.locator(".notification-heading").innerText()).toBe(
-          "Chat invitation",
-        );
-        const text = await detail.innerText();
-        expect(text).toContain("Ada");
-        expect(text).toContain("ada.example");
-        expect(text).toContain("Example Chat (chat.example)");
-        expect(text).toContain("Ada wants to start a chat with you.");
-        expect(text).toContain("no permission or contact is created");
-        expect(await badgeCount(page)).toBe(3);
-        expect(await detail.getAttribute("data-status")).toBe("pending");
-        await screenshot(page, "detail");
-
-        // Seen is not answered: back on the list it still waits, without its dot.
-        await page.click('[data-action="notifications-back"]');
-        await page.locator(row("demo-invite-ada")).waitFor();
+          await ada
+            .locator("[data-action]")
+            .evaluateAll((nodes) =>
+              nodes.map((node) => (node as HTMLElement).dataset.action),
+            ),
+        ).toEqual(["notification-dismiss"]);
         expect(
-          await page.locator(row("demo-invite-ada")).getAttribute("data-seen"),
-        ).toBe("true");
-        expect(await groupIds(page, "pending")).toContain("demo-invite-ada");
-        // Focus comes back to the row the detail was opened from.
-        expect(
-          await page.evaluate(
-            () =>
-              (document.activeElement as HTMLElement | null)?.dataset
-                .notification,
-          ),
-        ).toBe("demo-invite-ada");
-
-        // Accepting ends it once; it moves to Earlier, and its detail offers no answer again.
-        await page.click(row("demo-invite-ada"));
-        await page.click('[data-action="notification-accept"]');
-        await detail
-          .locator(".notification-status", { hasText: "Accepted" })
-          .waitFor();
-        expect(
-          await page.locator('[data-action="notification-accept"]').count(),
+          await page.locator('[data-action="notification-open"]').count(),
         ).toBe(0);
+        // The app screen carries no demo notes or developer controls.
         expect(
-          await page.locator('[data-action="notification-decline"]').count(),
+          await page
+            .locator(
+              "#notifications-screen [data-action^='notifications-demo']",
+            )
+            .count(),
         ).toBe(0);
-        expect(await badgeCount(page)).toBe(3);
-        await page.click('[data-action="notifications-back"]');
-        expect((await groupIds(page, "earlier"))[0]).toBe("demo-invite-ada");
 
-        // Declining another, opened from the keyboard.
-        await page.locator(row("demo-share-grace")).focus();
-        await page.keyboard.press("Enter");
-        await detail.waitFor();
-        await page.click('[data-action="notification-decline"]');
-        await detail
-          .locator(".notification-status", { hasText: "Declined" })
-          .waitFor();
-        await page.click('[data-action="notifications-back"]');
-        expect(await groupIds(page, "pending")).toEqual([
-          "demo-invite-soon",
-          "demo-share-long",
-        ]);
-        expect(await badgeCount(page)).toBe(2);
+        // Dismiss: off the list, kept in storage as it was, still waiting.
+        await ada.locator('[data-action="notification-dismiss"]').click();
+        await page
+          .locator(row("demo-invite-ada"))
+          .waitFor({ state: "detached" });
+        const stored = await page.evaluate(() => {
+          const key = Object.keys(localStorage).find((name) =>
+            name.includes(":notifications:"),
+          )!;
+          return (
+            JSON.parse(localStorage.getItem(key)!) as {
+              id: string;
+              state: { tag: string };
+              dismissedAt?: number;
+            }[]
+          ).find((item) => item.id === "demo-invite-ada");
+        });
+        expect(stored?.state.tag).toBe("pending");
+        expect(typeof stored?.dismissedAt).toBe("number");
 
-        // A reload keeps the waiting requests and the history, with what was seen.
+        // A reload keeps what was seen and dismissed.
         await page.reload();
         await ready(page);
-        // The tab signs its wallet back in by itself after a reload.
         await page
           .locator("#session")
           .filter({ hasNotText: "Signed out" })
           .waitFor();
-        await page.click(tab);
-        await page.locator(row("demo-invite-ada")).waitFor();
-        expect(await groupIds(page, "pending")).toEqual([
-          "demo-invite-soon",
-          "demo-share-long",
-        ]);
-        expect(await groupIds(page, "earlier")).toEqual([
-          "demo-invite-ada",
-          "demo-share-grace",
-          "demo-invite-accepted",
-          "demo-share-declined",
-          "demo-invite-expired",
-        ]);
-        expect(await badgeCount(page)).toBe(2);
+        await openNotifications(page);
+        await page.locator(row("demo-share-grace")).waitFor();
+        expect(await page.locator(row("demo-invite-ada")).count()).toBe(0);
+        expect(await badgeCount(page)).toBe(0);
 
         // Another wallet sees none of it; switching back shows it again.
         await signIn(page, PHRASE_B);
-        await page.click(tab);
+        await openNotifications(page);
         await page
           .locator("#notifications-screen", { hasText: "No notifications" })
           .waitFor();
-        expect(await badgeCount(page)).toBe(0);
         await signIn(page, PHRASE_A);
-        await page.click(tab);
-        await page.locator(row("demo-invite-soon")).waitFor();
-        expect(await badgeCount(page)).toBe(2);
+        await openNotifications(page);
+        await page.locator(row("demo-share-grace")).waitFor();
 
         // Signing out takes the list off the screen and the badge off the tab.
         await setMenu(page, true);
@@ -266,8 +311,6 @@ describe("the Notifications screen", () => {
           })
           .waitFor();
         expect(await badgeCount(page)).toBe(0);
-
-        // Nothing here reached outside this host.
         expect(outside).toEqual([]);
       } finally {
         await context.close();
@@ -277,37 +320,27 @@ describe("the Notifications screen", () => {
   );
 
   test(
-    "expires a request on time and offers no answer after, and Clear takes only the demo's requests",
+    "expires a request on time and offers no action after, and Clear takes only the demo's requests",
     async () => {
       const { context, page, outside } = await open();
       try {
-        await page.clock.install();
         await signIn(page, PHRASE_A);
-        await page.click(tab);
-        await page.click('[data-action="notifications-demo-seed"]');
-        await page.click(row("demo-invite-soon"));
-        const detail = page.locator(".notification-detail");
-        await detail.locator('[data-action="notification-accept"]').waitFor();
-        expect(await detail.innerText()).toContain("in 2 min");
+        await openNotifications(page);
+        await seed(page);
+        const soon = page.locator(row("demo-invite-soon"));
+        await soon.waitFor();
+        expect(await soon.innerText()).toContain("Expires in 2 min");
 
-        // Two minutes on, the open detail draws it as expired, with no answer to give.
-        await page.clock.fastForward("02:01");
-        await detail
-          .locator(".notification-status", { hasText: "Expired" })
-          .waitFor();
-        expect(
-          await page.locator('[data-action="notification-accept"]').count(),
-        ).toBe(0);
-        await page.click('[data-action="notifications-back"]');
+        // Two minutes on, it is expired, under Earlier, with no action left.
+        await context.clock.fastForward("02:01");
+        await eventually(() => soon.getAttribute("data-status"), "expired");
         expect(await groupIds(page, "earlier")).toContain("demo-invite-soon");
-        expect(
-          await page
-            .locator(row("demo-invite-soon"))
-            .getAttribute("data-status"),
-        ).toBe("expired");
+        expect(await soon.locator("[data-action]").count()).toBe(0);
 
         // Clear removes the demo's requests and the stored list with them.
+        await setMenu(page, true);
         await page.click('[data-action="notifications-demo-clear"]');
+        await setMenu(page, false);
         await page
           .locator("#notifications-screen", { hasText: "No notifications" })
           .waitFor();
@@ -328,7 +361,7 @@ describe("the Notifications screen", () => {
   );
 
   test(
-    "fits a phone: four dock entries, long names and purposes wrap, nothing scrolls sideways",
+    "fits a phone: four dock entries, long rows wrap, Dismiss is a full tap target, nothing scrolls sideways",
     async () => {
       const { context, page } = await open({ width: 360, height: 740 });
       try {
@@ -336,41 +369,16 @@ describe("the Notifications screen", () => {
         const dock = await page
           .locator("#dock button:not([hidden])")
           .evaluateAll((buttons) =>
-            buttons.map((button) => {
-              const box = button.getBoundingClientRect();
-              return {
-                width: Math.round(box.width),
-                text: button.querySelector("span:last-child")?.textContent,
-              };
-            }),
+            buttons.map(
+              (button) => button.querySelector("span:last-child")?.textContent,
+            ),
           );
-        expect(dock.map((entry) => entry.text)).toEqual([
-          "Chat",
-          "Browse",
-          "Pocket",
-          "Notifications",
-        ]);
-        expect(
-          await page.evaluate(() => {
-            const label = [
-              ...document.querySelectorAll("#dock button span"),
-            ].find((node) => node.textContent === "Notifications")!;
-            return label.scrollWidth <= label.clientWidth + 1;
-          }),
-        ).toBe(true);
-        // The new icon has its own size before the stylesheet applies.
-        expect(
-          await page
-            .locator(`${tab} svg`)
-            .evaluate((svg) => [
-              svg.getAttribute("width"),
-              svg.getAttribute("height"),
-            ]),
-        ).toEqual(["22", "22"]);
-
-        await page.click(tab);
-        await page.click('[data-action="notifications-demo-seed"]');
-        await page.locator(row("demo-share-long")).waitFor();
+        expect(dock).toEqual(["Chat", "Browse", "Pocket", "Notifications"]);
+        await openNotifications(page);
+        await seed(page);
+        const long = page.locator(row("demo-share-long"));
+        await long.waitFor();
+        expect(await long.innerText()).toContain("Maximiliana");
         const sideways = () =>
           page.evaluate(() => {
             const body = document.querySelector<HTMLElement>(
@@ -379,21 +387,13 @@ describe("the Notifications screen", () => {
             return body.scrollWidth - body.clientWidth;
           });
         expect(await sideways()).toBeLessThanOrEqual(0);
-        await screenshot(page, "phone-list");
-
-        await page.click(row("demo-share-long"));
-        const detail = page.locator(".notification-detail");
-        await detail.waitFor();
-        expect(await detail.innerText()).toContain(
-          "maximiliana-konstantinopoulou-abernathy.example",
-        );
-        expect(await sideways()).toBeLessThanOrEqual(0);
-        const accept = await page
-          .locator('[data-action="notification-accept"]')
+        const dismiss = await page
+          .locator(row("demo-invite-ada"))
+          .locator('[data-action="notification-dismiss"]')
           .boundingBox();
-        expect(accept!.x + accept!.width).toBeLessThanOrEqual(360);
-        expect(accept!.height).toBeGreaterThanOrEqual(44);
-        await screenshot(page, "phone-detail");
+        expect(dismiss!.x + dismiss!.width).toBeLessThanOrEqual(360);
+        expect(dismiss!.height).toBeGreaterThanOrEqual(40);
+        await screenshot(page, "phone-list");
       } finally {
         await context.close();
       }

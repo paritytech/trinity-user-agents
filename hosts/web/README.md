@@ -563,28 +563,103 @@ rooms (Ada, a group with Ada and Grace, and Lin) join the chat list.
 
 ### Notifications (prototype)
 
-**Prototype, with demo data only.** A **Notifications** entry in the dock lists requests that wait for the user's
-answer, the way a social app's notification list does: a persistent list, not a passing toast, and separate from the
-operating system's notification permission. It holds two kinds for now, chat invitations and profile sharing requests,
-not every chat message. Nothing delivers requests yet: no sharing, invitation or contact API feeds it, and an answer
-goes nowhere but this list.
+**Prototype.** A **Notifications** entry in the dock lists requests that products send and that wait for the user's
+answer: a persistent list, not a passing toast, and separate from the operating system's notification permission. It
+holds chat invitations and profile sharing requests, not every chat message. No sharing, invitation or contact API feeds
+it: its requests come from sample data or from [test users](#test-users-prototype).
 
 - **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the
-  [local demo](#local-demo); a build leaves it out with its dock entry. Sign in, then **Notifications** and **Add demo
-  notifications**. **Reset demo** puts the demo's requests back as new, and **Clear** removes them.
-- **The list.** Requests that wait come first, then **Earlier**: accepted, declined and expired ones. Each row names the
-  sender, what they ask, the product it comes through and when it expires. A dot marks a request not opened yet.
-- **The detail.** A request opens in a detail the host draws: the sender as the request names them (not checked), the
-  product, the purpose in the sender's words, when it came and when it expires, and **Accept** and **Decline**.
-- **Seen and answered are separate.** The dock badge counts requests not opened yet. Opening one marks that one seen,
-  and the list alone marks none. A request stays waiting until it is accepted, declined or expired. An answer is given
-  once: the same answer again changes nothing, and another is refused. A request expires on the clock and cannot be
-  accepted after; an expired request not opened yet still counts in the badge.
-- **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, written
-  only once the demo is used and removed when it is cleared. Waiting requests and history survive a reload. Signing out
-  or another wallet or network shows that session's list only. `src/notifications.ts` holds the list,
-  `src/notifications-screen.ts` the screen and `src/notifications-demo.ts` the made-up requests, from senders and
-  products ending in `.example`.
+  [local demo](#local-demo); a build leaves it out with its dock entry. The menu's **Dev server only** section → **Add
+  sample notifications** fills the list of the signed-in wallet or test user, and **Clear samples** removes them.
+- **The look.** The native apps have no such list, so this one is built from native parts: one list whose rows follow
+  the iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the
+  product it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
+- **Seen.** A row is seen once at least 60% of it shows on screen, while the screen and the page are visible. Opening
+  the screen does not mark rows below the fold, and a page in a background tab marks nothing. The dock badge counts
+  listed rows not seen yet, whatever their state.
+- **Actions.** A request that waits has **Dismiss**, and **Accept** when the feature that owns it can accept it. Sample
+  requests have no owner, so they have Dismiss only. Seen is not answered: a request with no action stays waiting until
+  it expires, and then it has no actions.
+  - **Dismiss** takes the request off this list on this device. It is not an answer: nothing is sent, the stored item
+    keeps its state and its `dismissedAt`, it still expires, and a repeat delivery does not bring it back.
+  - **Accept** is the user's intent, handed to the product that owns the request. The row shows **Accepting…** until the
+    product answers: it accepts, and the row shows Accepted, or it refuses, does not answer within 30 seconds, or is
+    closed, and the reason shows under the row with the request still waiting. The host shows the product only when the
+    product asks; tapping an accepted row asks the product again. For a test user's invitation the product is Example
+    Chat, which checks the setup data, accepts with its response and asks to be shown, at its **Accepted by you** list.
+    Accepted on the row means the recipient's product accepted; it is not the sender's connection. Example Chat has no
+    chat conversation, so no Chat request or conversation is opened.
+- **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, or per
+  network and test user. Written only once used and removed when empty. Waiting requests and history survive a reload.
+  `src/notifications.ts` holds the list, which does not know where a request came from, and
+  `src/notifications-screen.ts` the screen. The sample requests, from senders and products ending in `.example`, are in
+  `src/dev-tools/sample-notifications.ts`, which adds and removes them by id.
+
+### Test users (prototype)
+
+**Prototype, with FIXTURE IDENTITIES and LOCAL SIMULATED DELIVERY.** A tab can act as a made-up user, Alice, Bob or
+Carol, instead of a wallet, to try features that need more than one person. Open the host in one tab per user and choose
+a different test user in each. The core signs a test user in with a public BIP-39 test vector, so products get a real
+session: `contacts.pick` opens the host's own picker over that user's contacts and returns the core's handle. The first
+feature that uses two users is a just-in-time (JIT) chat invitation, after the "Establish Connection" design: the
+product makes the invitation and keeps its secrets, the host resolves an opaque contact reference, signs, seals and
+reposts it, the recipient's product replies on the sender's reply topic with a host proof, and the sender's product
+completes only after its host verified the proof and its own setup check passed. Nothing in it is an agreed API.
+
+- **Try it.** In one tab: the menu's **Dev server only** section → **Test user** → **Alice**. The tab reloads with
+  **Test user · Alice** in the app bar, "Signed in as Alice" in the menu and **Example Chat** in Browse. In a second tab
+  choose **Bob**.
+  - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
+  - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact reference.
+    **Invite** opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
+  - Bob's **Notifications** badge in the dock shows 1 until the row shows in his list. **Accept** hands the invitation
+    to Bob's Example Chat, which checks the setup data, accepts with its response, gets the host's sealed proof and
+    posts both on the reply topic. Alice's host verifies the proof, Alice's Example Chat checks the response, and only
+    then is it **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a waiting
+    invitation; otherwise it waits until it expires. The menu's Log shows each step.
+- **Developer controls.** **Restart Example Chat** opens the product again, which gets its state back from the host and
+  its own storage. **Reset Alice** removes that test user's lists on this network. **None** returns the tab to wallets.
+- **What a test user is.** A core session from a public test phrase, under its own storage scope, apart from every
+  wallet's. None of a wallet session's services start: no Nova chat, product worker, Pocket or registration, and the
+  host reads nothing on chain for it. The core still looks up the account's DotNS name on Asset Hub once, as it does at
+  every sign-in. Sign-in and sign-out are off. The choice is kept for the tab, so a reload keeps it. Choosing a test
+  user ends the tab's wallet session and leaves saved wallets and their data alone. Contacts are made up
+  (`src/dev-tools/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network and
+  test user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v1` (sent) and
+  `...:received:v1` (who sent each received invitation, and whether the product accepted it). Example Chat keeps its
+  secrets and replies in its own TrUAPI local storage.
+- **The provisional API** (`src/invitations/contract.ts`), over a `MessagePort` the product hands over. Each call has an
+  `id` and one `result`. Sender: `pickContact`, `send` (contact reference, purpose, expiry, and the product's request
+  id, challenge and setup data), `verify` (response and proof; a pass does not stop the reposts), `complete` (only for a
+  verified response; stops the reposts) and `cancel`. Recipient, only after the user chose Accept: `accept` (with the
+  exact response; answers the sealed proof), `refuse` and `open`. Statuses are `waiting`, `completed`, `cancelled` and
+  `expired`: there is no delivered, declined or accepted status for the sender.
+- **What is real here.** sr25519 signatures and X25519 + ChaCha20-Poly1305 sealing (`src/invitations/binding.ts`,
+  `sealing.ts`). The recipient's host checks the sender's signature, bound to both people's keys and the whole
+  invitation. The proof binds both people's keys, the whole invitation, the challenge, the product, the request id and
+  the exact response; it is sealed to the sender's host, so neither product reads it. Example Chat's own check is a toy
+  protocol (`src/dev-tools/example-chat/setup.ts`): an X25519 confirmation over the invitation.
+- **What is simulated, and not the design's answer.**
+  - The contact reference is `fixture-contact:` plus 16 bytes the dev tools mint per host, product and person. It stands
+    in for the `contacts.pick` handle: the core gives the host no way to resolve that handle outside a transaction, so
+    sending to it needs a host-only core operation (resolve or check a handle).
+  - People's keys are derived from their public test user ids (`fixtureHostKeys`), and the directory that says a key is
+    a person is the fixture. No identity credential, key lookup or authenticated inbox key exists here. The suite is
+    classical, with no PQ key, padding or size classes.
+  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage` under a route
+    derived from the recipient's inbox key, posts them again every minute while they wait, and lets each post lapse
+    after five minutes. These are dev choices. The recipient's host writes nothing back. The route is linkable and any
+    script of this origin can read or post.
+  - Topics (`src/dev-tools/statement-fixture.ts`) stand in for the Statement Store, which test users cannot reach: no
+    chat account signs a statement and no allowance is needed.
+- **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
+  `ports.ts` what the host needs from Contacts and delivery, `binding.ts` and `sealing.ts` what it signs, seals and
+  checks, `invitation-service.ts` one user's host side, and `outbox.ts` and `received.ts` what it keeps.
+  `src/dev-tools/` holds what only tests and the dev server use: fixture contacts and keys, the local delivery, the
+  statement store stand-in, the Developer section (`dev-tools.ts`), the test users, the sample notifications and Example
+  Chat. `src/dev-tools/invitation-flow.test.ts` runs two and three users end to end. Only a dev server on this machine
+  loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads the test user's contacts in place
+  of the chat contacts.
 
 ### Contacts
 
@@ -608,22 +683,23 @@ someone is the consent.
 - **Finding people by username.** What is typed is also looked up by username (`src/username-directory.ts`), once typing
   pauses. On a dev server on this machine it searches by prefix, a page of 20 at a time, through the dev server's
   [username search route](#run-it) for the tab's network. Elsewhere, as in a build, there is no index, and what is typed
-  is read on chain as a whole username (Asset Hub and People), so a person is found only by their exact username. People
-  found who are neither contacts nor blocked show under **Not in your contacts**, by username, with Show more for the
-  next page. Choosing one from the index checks first that the username names the same account on chain, since the index
-  is a listing and not a proof; if it does not, the sheet says so and nothing is picked. Then the pick answers `Picked`
-  as for a contact. The person is not saved anywhere and does not become a contact. Text that cannot be a username is
-  not sent, a newer query cancels the one in flight, closing the picker cancels it, and after the index asks to wait
-  nothing is sent until the wait is over. A failure says why and keeps what was found.
+  is read on chain as a whole username (Asset Hub and People), so a person is found only by their exact username. A test
+  user searches the other test users instead, so neither is asked. People found who are neither contacts nor blocked
+  show under **Not in your contacts**, by username, with Show more for the next page. Choosing one from the index checks
+  first that the username names the same account on chain, since the index is a listing and not a proof; if it does not,
+  the sheet says so and nothing is picked. Then the pick answers `Picked` as for a contact. The person is not saved
+  anywhere and does not become a contact. Text that cannot be a username is not sent, a newer query cancels the one in
+  flight, closing the picker cancels it, and after the index asks to wait nothing is sent until the wait is over. A
+  failure says why and keeps what was found.
 - **Resolving handles.** When a transaction names a handle, the core asks the host which contact it hashes to
   (BLAKE2b-256 keyed with the session's handle key over the account) and checks the answer itself. The host tells the
   core when a contact leaves, including when the session ends, so a handle it cached stops resolving. A person picked by
   username is remembered in this page only, so their handle keeps resolving after the core forgets its cache; it names
   nobody after a reload, a session change, or once the user blocks them, and a transaction naming it then fails with
   `UnknownContact` until the product asks for a pick again. A blocked person is never picked.
-- **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username, and
-  contacts from a worker's own chat. Paying a picked contact goes through the core's transaction path, which the browser
-  test does not reach.
+- **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username,
+  sending an invitation to a picked handle (test users use a fixture reference instead), and contacts from a worker's
+  own chat. Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
 
 ### Differences from the native hosts
 
@@ -961,7 +1037,9 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - `src/contacts.ts`: the contact picker and handle lookup.
 - `src/username-directory.ts`: finding people by username for the contact picker.
 - `src/username-search.ts`, `username-search-plugin.ts`: the dev server's username search route.
-- `src/notifications.ts`, `src/notifications-screen.ts`, `src/notifications-demo.ts`: the Notifications prototype.
+- `src/notifications.ts`, `src/notifications-screen.ts`: the Notifications prototype.
+- `src/invitations/`: invitations between users' hosts. `src/dev-tools/`: the menu's dev server controls, test users and
+  Example Chat, loaded only by a dev server.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
   `src/product-room-provider.ts`: the Nova and product room providers.
