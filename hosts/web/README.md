@@ -1077,6 +1077,14 @@ opens, so the light client reaches no chain. It checks that:
   incoming call connect through the product's own signaling, with the host's engine answering the other side's offer and
   making the offer when the user accepts; it makes no request outside this host; **Restart** gives a fresh product,
   **Stop** removes its worker frame and rooms, and signing out stops it and signing back in leaves it off;
+- the Nova chat worker, with a synthetic wallet whose host chat holds one made-up contact, every socket closed and every
+  request outside this host refused: the host's engine runs by default; switching to the worker with a history copy
+  removes the host's conversation, runs the worker through the dev server's archive, the loader and the core, asks once
+  for `StatementSubmit`, and shows the copied history in its room, named by the host while the worker declares the
+  person by account only; **New chat** offers the worker's people, Cancel changes nothing and choosing Ada opens her
+  room; a send reaches the core's statement store through `statement_store.submit` and fails there for want of peers;
+  the synthetic demo's worker asks for the identity and is refused; switching back stops the worker and shows the host's
+  conversation with its record unchanged;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
   when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the core's
@@ -1104,6 +1112,40 @@ and the Apps shelf's Inbox open the same list, the tab, the shelf, the dot on Ap
 together once its rows are seen, while Apps keeps counting open products; the shelf takes focus when it opens and gives
 it back to Apps on Escape, brings a product running behind to the front and closes it; and on a phone the four dock
 entries fit, long rows wrap, Dismiss is a full tap target, and nothing scrolls sideways.
+
+`browser/prompts.spec.ts` checks the host's prompts with a test user and a fixture product: in a phone preview the
+dialog covers the app's rectangle only, with a dark sheet inside it, the developer tools outside it and no page-wide
+backdrop; the picker names the product once and lists contacts by name only, with Cancel below; focus starts on the
+title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its detail and is denied; focus
+returns where it was; a scaled preview draws the sheet at the app's scale; and on a phone browser nothing scrolls
+sideways and the buttons are 44px or taller.
+
+`browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
+closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no
+Workers page or demo panel; a typed name survives hiding the developer tools, and an empty one is refused until edited;
+Start runs the demo as a worker the host added, with no Remove, and its rooms in Chat; opening and closing the developer
+tools restart no worker; Restart gives one new frame and Stop takes it and its rooms away; on a phone the sheet holds
+the section, keeps a typed name across Escape, and nothing scrolls sideways; and a test user tab runs no workers.
+
+`browser/invitations.spec.ts` checks test users in tabs of the normal host, with no wallet, Playwright's clock, every
+socket closed and every request outside this host refused: a test user tab is marked and signed in to the core as that
+user, with Example Chat in Browse and the Developer controls only in the developer tools; the host's Send invitation
+prompt offers the user's contacts and Cancel sends nothing; an invitation shows a badge of 1 in the chosen recipient's
+tab only, and showing in the list is seen, not answered; Accept reaches the sender's product, hands the recipient's
+product the same setup data and then opens it, and the accepted row opens it again; Dismiss sends no answer and the
+sender's invitation waits until it expires; a request expires on the clock on both sides, and its row loses its actions;
+replays and late or contrary answers change nothing; restarting Example Chat restores it; a reload keeps the test user
+and the lists; another network shows none of it. It also checks that a test user's session is not the saved wallet's and
+leaves the wallet and its notifications alone, and that on a phone nothing scrolls sideways and the banner's buttons
+fit.
+
+`browser/contacts-pick.spec.ts` checks `contacts.pick` for test users: the host's picker names the product and lists the
+user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and
+Escape give Dismissed; the product shows no name or account; a second product, opened by URL, gets the same handle for
+the same person; another test user gets another handle for the same contact; the username search finds a test user who
+is not a contact and shows them apart, lists a contact once, does not look up text that cannot be a username, gives the
+product a handle for the person found, the same each time and without making them a contact, and never asks the username
+index; and with no session the core refuses the pick with NotConnected and no picker is drawn.
 
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
