@@ -445,6 +445,18 @@ export async function reveal(page: Page, selector: string): Promise<void> {
   if (tab !== null) await openTools(page, tab as DevTab);
 }
 
+/**
+ * Start every tab of `context` on the Desktop preview, which fills the app's
+ * zone, for a test that measures the app at full scale. A new tab otherwise
+ * starts on Phone, drawn shrunk.
+ */
+export async function previewFill(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    if (sessionStorage.getItem("truapi-web-signing-host:tab-viewport") === null)
+      sessionStorage.setItem("truapi-web-signing-host:tab-viewport", "fill");
+  });
+}
+
 /** Choose a preview size in the developer tools' Preview tab. */
 export async function choosePreview(page: Page, label: string): Promise<void> {
   await openTools(page, "preview");

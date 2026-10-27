@@ -46,6 +46,7 @@ import {
   openTools,
   reveal,
   choosePreview,
+  previewFill,
   type DevTab,
 } from "./fixtures.js";
 import { PASEO_DOTNS } from "../src/dotns.js";
@@ -519,6 +520,7 @@ describe("a product loading", () => {
     async () => {
       const context = await newContext({ width: 1280, height: 800 });
       try {
+        await previewFill(context);
         const release = await gateBlocks(context, "hold");
         const page = await openHost(context);
         await signIn(page);

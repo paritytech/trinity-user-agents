@@ -80,6 +80,15 @@ export function draggedSize(
   };
 }
 
+/**
+ * The size choice a tab starts with: the one it saved, else Phone. A saved
+ * value that names no choice gives Phone too.
+ */
+export function initialViewport(saved: string | null): string {
+  const known = [AUTO, ...VIEWPORTS.map((viewport) => viewport.id), CUSTOM];
+  return saved !== null && known.includes(saved) ? saved : PHONE.id;
+}
+
 /** The custom size saved for this tab. Anything unreadable gives the default. */
 export function loadCustomSize(storage: Pick<Storage, "getItem">): Size {
   try {
@@ -168,10 +177,7 @@ export function bindViewport(elements: ViewportElements): void {
     ...VIEWPORTS.map((viewport) => new Option(viewport.label, viewport.id)),
     new Option(CUSTOM_LABEL, CUSTOM),
   );
-  select.value = FILL.id;
-  const saved = sessionStorage.getItem(STORAGE_KEY);
-  if (saved !== null && [...select.options].some((o) => o.value === saved))
-    select.value = saved;
+  select.value = initialViewport(sessionStorage.getItem(STORAGE_KEY));
   const savedFrame = sessionStorage.getItem(FRAME_STORAGE_KEY);
   let frameKind: FrameKind =
     FRAMES.find((kind) => kind === savedFrame) ?? "device";

@@ -894,8 +894,8 @@ of the window and the tools; a set size also has a caption under it. The app lay
 rectangle. On a phone size the device also draws the island and the home indicator over the screen. Host screens, the
 Docklet and a product's frame keep clear of the island. The size is the screen's: a product in front gets less, and a
 third line under the size controls says how much (`Product frame 393 × …`, and what the host keeps). No frame draws a
-clock or status icons. The size and frame are kept for the tab. On a narrow screen the app fills the screen and the tab
-holds only a note.
+clock or status icons. A new tab starts on **Phone** with the device frame; the size and frame chosen are kept for the
+tab. On a narrow screen the app fills the screen, whatever the choice, and the tab holds only a note.
 
 **Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
 the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
