@@ -8,8 +8,8 @@
 use super::*;
 
 use crate::{
-	platform::CoreStorage,
-	runtime::product_manifest::{CachedManifest, manifest_cache_key},
+	platform::{CoreStorage, CoreStorageKey},
+	runtime::product_manifest::CachedManifest,
 	test_support::account_id,
 	unix_time::current_unix_secs,
 };
@@ -26,15 +26,16 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
-	futures::executor::block_on(
-		platform.write_core_storage(manifest_cache_key(owner), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 
 fn dim2_account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: "dim2.paseo".to_string(),
+		dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }
@@ -69,8 +70,8 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner =
-		derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).expect("owner key derives");
+	let owner = derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
 	)
