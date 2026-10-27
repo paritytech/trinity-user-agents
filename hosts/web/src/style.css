@@ -3291,6 +3291,13 @@ body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
   box-shadow: none;
 }
 
+/* Round 28 px buttons: the panel's pill-button padding would leave the icon no room. */
+.devtools .devtools-side button,
+.devtools .devtools-close {
+  min-height: 0;
+  padding: 0;
+}
+
 .devtools .devtools-tabs button:not([aria-selected="true"]),
 .devtools .segmented button:not([aria-pressed="true"]),
 .devtools .devtools-side button:not([aria-pressed="true"]),
