@@ -10,16 +10,14 @@ import io.paritytech.polkadotapp.app.root.RealAppLifecycleObserver
 import io.paritytech.polkadotapp.app.root.data.debug.RealIssueReportApi
 import io.paritytech.polkadotapp.app.root.domain.debug.IssueReportApi
 import io.paritytech.polkadotapp.app.root.network.RemoteConfigIdentityBackendUrlProvider
-import io.paritytech.polkadotapp.app.telemetry.AndroidHostEventOriginProvider
-import io.paritytech.polkadotapp.app.telemetry.AndroidHostLaunchIdProvider
-import io.paritytech.polkadotapp.app.telemetry.AndroidHostMonotonicTimeProvider
-import io.paritytech.polkadotapp.app.telemetry.AndroidHostProcessTelemetryInitializer
-import io.paritytech.polkadotapp.app.telemetry.AndroidSentryEventCapture
-import io.paritytech.polkadotapp.app.telemetry.FeatureOptionHostTelemetryEnabledProvider
-import io.paritytech.polkadotapp.app.telemetry.HostLaunchIdProvider
+import io.paritytech.polkadotapp.app.telemetry.HostProcessTelemetryInitializer
 import io.paritytech.polkadotapp.app.telemetry.HostTelemetryEnabledProvider
+import io.paritytech.polkadotapp.app.telemetry.RealHostEventCapture
+import io.paritytech.polkadotapp.app.telemetry.RealHostEventOriginProvider
+import io.paritytech.polkadotapp.app.telemetry.RealHostMonotonicTimeProvider
+import io.paritytech.polkadotapp.app.telemetry.RealHostTelemetryEnabledProvider
+import io.paritytech.polkadotapp.app.telemetry.RealSentryEventCapture
 import io.paritytech.polkadotapp.app.telemetry.SentryEventCapture
-import io.paritytech.polkadotapp.app.telemetry.SentryHostEventCapture
 import io.paritytech.polkadotapp.common.data.network.IdentityBackendUrlProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
@@ -48,26 +46,22 @@ internal interface AppModule {
 
     @Binds
     @IntoSet
-    fun bindHostProcessTelemetryInitializer(impl: AndroidHostProcessTelemetryInitializer): AppInitializer
+    fun bindHostProcessTelemetryInitializer(impl: HostProcessTelemetryInitializer): AppInitializer
 
     @Binds
-    fun bindHostEventCapture(impl: SentryHostEventCapture): HostEventCapture
+    fun bindHostEventCapture(impl: RealHostEventCapture): HostEventCapture
 
     @Binds
-    fun bindSentryEventCapture(impl: AndroidSentryEventCapture): SentryEventCapture
+    fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture
 
     @Binds
     fun bindHostTelemetryEnabledProvider(
-        impl: FeatureOptionHostTelemetryEnabledProvider,
+        impl: RealHostTelemetryEnabledProvider,
     ): HostTelemetryEnabledProvider
 
     @Binds
-    fun bindHostEventOriginProvider(impl: AndroidHostEventOriginProvider): HostEventOriginProvider
+    fun bindHostEventOriginProvider(impl: RealHostEventOriginProvider): HostEventOriginProvider
 
     @Binds
-    fun bindHostMonotonicTimeProvider(impl: AndroidHostMonotonicTimeProvider): HostMonotonicTimeProvider
-
-    @Binds
-    @Singleton
-    fun bindHostLaunchIdProvider(impl: AndroidHostLaunchIdProvider): HostLaunchIdProvider
+    fun bindHostMonotonicTimeProvider(impl: RealHostMonotonicTimeProvider): HostMonotonicTimeProvider
 }

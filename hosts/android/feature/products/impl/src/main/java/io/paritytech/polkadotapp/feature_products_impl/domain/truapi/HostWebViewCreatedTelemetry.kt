@@ -5,6 +5,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.utils.logFailure
 import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
@@ -37,16 +39,9 @@ private fun HostEventOrigin.webViewCreated(
     monotonicMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
-    tags = mapOf(
-        "host.app_variant" to appVariant,
-        "host.app_flavor" to appFlavor,
-        "host.native_app_version" to nativeAppVersion,
-        "host.platform" to platform,
-        "truapi.host_version" to hostVersion,
-    ),
-    extras = mapOf(
+    tags = baseTags() + ("truapi.host_version" to hostVersion),
+    extras = baseExtras() + mapOf(
         "host.session_id" to sessionId,
-        "host.app_build" to appBuild,
         "event.monotonic_ms" to monotonicMs,
     ),
 )

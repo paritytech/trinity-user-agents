@@ -9,6 +9,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
@@ -19,21 +21,11 @@ import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
 
-internal fun interface HostLaunchIdProvider {
-    fun current(): UUID
-}
-
-internal class AndroidHostLaunchIdProvider @Inject constructor() : HostLaunchIdProvider {
-    private val launchId by lazy(UUID::randomUUID)
-
-    override fun current(): UUID = launchId
-}
-
 internal fun interface HostTelemetryEnabledProvider {
     fun isEnabled(): Boolean
 }
 
-internal class FeatureOptionHostTelemetryEnabledProvider @Inject constructor() : HostTelemetryEnabledProvider {
+internal class RealHostTelemetryEnabledProvider @Inject constructor() : HostTelemetryEnabledProvider {
     override fun isEnabled(): Boolean = FeatureOption.HOST_TELEMETRY.isEnabled
 }
 
@@ -41,13 +33,13 @@ internal fun interface SentryEventCapture {
     fun capture(event: SentryEvent)
 }
 
-internal class AndroidSentryEventCapture @Inject constructor() : SentryEventCapture {
+internal class RealSentryEventCapture @Inject constructor() : SentryEventCapture {
     override fun capture(event: SentryEvent) {
         Sentry.captureEvent(event)
     }
 }
 
-internal class SentryHostEventCapture @Inject constructor(
+internal class RealHostEventCapture @Inject constructor(
     private val enabledProvider: HostTelemetryEnabledProvider,
     private val sentryCapture: SentryEventCapture,
 ) : HostEventCapture {
@@ -58,11 +50,11 @@ internal class SentryHostEventCapture @Inject constructor(
     }
 }
 
-internal class AndroidHostMonotonicTimeProvider @Inject constructor() : HostMonotonicTimeProvider {
+internal class RealHostMonotonicTimeProvider @Inject constructor() : HostMonotonicTimeProvider {
     override fun nowMillis(): Long = SystemClock.elapsedRealtime()
 }
 
-internal class AndroidHostEventOriginProvider @Inject constructor() : HostEventOriginProvider {
+internal class RealHostEventOriginProvider @Inject constructor() : HostEventOriginProvider {
     override fun current() = HostEventOrigin(
         appVariant = BuildConfig.BUILD_TYPE,
         appFlavor = BuildConfig.FLAVOR,
@@ -73,17 +65,16 @@ internal class AndroidHostEventOriginProvider @Inject constructor() : HostEventO
     )
 }
 
-internal class AndroidHostProcessTelemetryInitializer @Inject constructor(
+internal class HostProcessTelemetryInitializer @Inject constructor(
     private val originProvider: HostEventOriginProvider,
     private val timeProvider: HostMonotonicTimeProvider,
-    private val launchIdProvider: HostLaunchIdProvider,
     private val capture: HostEventCapture,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
         capture.capture {
             originProvider.current().processStarted(
-                launchId = launchIdProvider.current(),
+                launchId = UUID.randomUUID(),
                 monotonicMs = timeProvider.nowMillis(),
             )
         }
@@ -92,17 +83,10 @@ internal class AndroidHostProcessTelemetryInitializer @Inject constructor(
 
 private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = HostEvent(
     name = "host.process.started",
-    tags = mapOf(
-        "host.platform" to platform,
-        "host.app_variant" to appVariant,
-        "host.app_flavor" to appFlavor,
-        "host.native_app_version" to nativeAppVersion,
-        "host.os_version" to osVersion,
-    ),
-    extras = mapOf(
+    tags = baseTags() + ("host.os_version" to osVersion),
+    extras = baseExtras() + mapOf(
         "app.launch_id" to launchId.toString(),
         "event.monotonic_ms" to monotonicMs,
-        "host.app_build" to appBuild,
     ),
 )
 

@@ -29,7 +29,6 @@ class HostProcessTelemetryTest {
         osVersion = "15",
         appBuild = 42L,
     )
-    private val launchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
     private val sentryCapture: SentryEventCapture = mock(SentryEventCapture::class.java)
 
     @Test
@@ -40,6 +39,9 @@ class HostProcessTelemetryTest {
         val result = with(computationalScope()) { initializer.initialize() }
 
         assertSuccess(result)
+        val event = checkNotNull(captured)
+        val launchId = event.extras["app.launch_id"] as String
+        assertEquals(launchId, UUID.fromString(launchId).toString())
         assertEquals(
             HostEvent(
                 name = "host.process.started",
@@ -51,12 +53,12 @@ class HostProcessTelemetryTest {
                     "host.os_version" to "15",
                 ),
                 extras = mapOf(
-                    "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
+                    "app.launch_id" to launchId,
                     "event.monotonic_ms" to 1_234L,
                     "host.app_build" to 42L,
                 ),
             ),
-            captured,
+            event,
         )
     }
 
@@ -64,8 +66,7 @@ class HostProcessTelemetryTest {
     fun `keeps process metadata lazy when capture is disabled`() {
         var originRead = false
         var timeRead = false
-        var launchIdRead = false
-        val initializer = AndroidHostProcessTelemetryInitializer(
+        val initializer = HostProcessTelemetryInitializer(
             originProvider = HostEventOriginProvider {
                 originRead = true
                 origin
@@ -73,10 +74,6 @@ class HostProcessTelemetryTest {
             timeProvider = HostMonotonicTimeProvider {
                 timeRead = true
                 1_234L
-            },
-            launchIdProvider = HostLaunchIdProvider {
-                launchIdRead = true
-                launchId
             },
             capture = HostEventCapture { },
         )
@@ -86,12 +83,11 @@ class HostProcessTelemetryTest {
         assertSuccess(result)
         assertFalse(originRead)
         assertFalse(timeRead)
-        assertFalse(launchIdRead)
     }
 
     @Test
     fun `does not create or capture an event when host telemetry is disabled`() {
-        val capture = SentryHostEventCapture(
+        val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { false },
             sentryCapture = sentryCapture,
         )
@@ -104,7 +100,7 @@ class HostProcessTelemetryTest {
     @Test
     fun `maps host event fields into one Sentry event when host telemetry is enabled`() {
         var sentryEvent: SentryEvent? = null
-        val capture = SentryHostEventCapture(
+        val capture = RealHostEventCapture(
             enabledProvider = HostTelemetryEnabledProvider { true },
             sentryCapture = SentryEventCapture { sentryEvent = it },
         )
@@ -134,10 +130,9 @@ class HostProcessTelemetryTest {
         assertSame(error, result.exceptionOrNull())
     }
 
-    private fun initializer(capture: HostEventCapture) = AndroidHostProcessTelemetryInitializer(
+    private fun initializer(capture: HostEventCapture) = HostProcessTelemetryInitializer(
         originProvider = HostEventOriginProvider { origin },
         timeProvider = HostMonotonicTimeProvider { 1_234L },
-        launchIdProvider = HostLaunchIdProvider { launchId },
         capture = capture,
     )
 

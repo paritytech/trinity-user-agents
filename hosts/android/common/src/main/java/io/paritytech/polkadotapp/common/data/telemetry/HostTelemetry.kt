@@ -15,6 +15,15 @@ data class HostEvent(
     val extras: Map<String, Any>,
 )
 
+fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
+    "host.platform" to platform,
+    "host.app_variant" to appVariant,
+    "host.app_flavor" to appFlavor,
+    "host.native_app_version" to nativeAppVersion,
+)
+
+fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to appBuild)
+
 fun interface HostEventOriginProvider {
     fun current(): HostEventOrigin
 }
