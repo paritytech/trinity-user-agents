@@ -80,7 +80,7 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 
 | Request | What the host does |
 | --- | --- |
-| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update and posted message |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update, posted message and query |
 | `setRoomConfig` | Keeps the configuration the product declared for a room across restarts. The core calls it for the product's `setRoomConfig` |
 | `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
@@ -168,6 +168,14 @@ names, icons, message bodies, URLs, and the action and media counts. Ids and
 names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.size_bytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
+
+The host asks a room that declares a handler in its configuration through three `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction` and `chatReactionsQuery`. Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages, 30 s for a sent message, 10 s for other user actions, and 5 s for the reactions of a message; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
+
+```kotlin
+val page = execution.chatMessagesQuery(
+    ProductChatMessagesQueryRequest(roomId, ChatPageAnchor.Before(null), 40u),
+)
+```
 
 `postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 

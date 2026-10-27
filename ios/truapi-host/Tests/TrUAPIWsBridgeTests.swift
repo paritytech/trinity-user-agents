@@ -122,7 +122,7 @@ struct TrUAPIWsBridgeTests {
     }
 }
 
-private extension TrUAPIWsBridgeTests {
+extension TrUAPIWsBridgeTests {
     static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
         try HostRuntimeConfig(
             hostName: "truapi-host-tests",
@@ -135,7 +135,9 @@ private extension TrUAPIWsBridgeTests {
             databaseDirectory: temporaryDatabaseDirectory()
         )
     }
+}
 
+private extension TrUAPIWsBridgeTests {
     // wire_table.rs: SYSTEM_FEATURE_SUPPORTED { trait_id: 1, method_id: 1 }.
     // Both bytes are load-bearing: a lone method byte is read as the trait and
     // routes into a different trait's method 0 rather than failing.

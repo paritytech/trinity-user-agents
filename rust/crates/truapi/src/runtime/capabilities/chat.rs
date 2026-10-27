@@ -38,7 +38,7 @@ use crate::{
 		validate_chat_feed_update, validate_chat_icon, validate_chat_message_content,
 		validate_chat_name, validate_chat_room_metadata, validate_chat_room_preview,
 	},
-	runtime::ProductRuntimeHost,
+	runtime::{ChatHandler, ProductRuntimeHost},
 	unix_time::current_unix_millis,
 };
 
@@ -347,6 +347,25 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 }
 
 impl ProductRuntimeHost {
+	/// Whether the declarations the host keeps for `room_id` declare
+	/// `handler`. The core asks a product a query only when they do.
+	pub async fn chat_handler_declared(
+		&self,
+		room_id: String,
+		handler: ChatHandler,
+	) -> Result<bool, String> {
+		let platform = self.connection.native_chat_platform().map_err(|error| error.to_string())?;
+		let declared = match handler {
+			ChatHandler::Config(declared) => declared,
+			ChatHandler::Undeclared => return Ok(true),
+		};
+		let config = platform
+			.read_chat_room_config(&self.connection.product, room_id.clone())
+			.await
+			.map_err(|error| error.reason)?;
+		Ok(declared(&config))
+	}
+
 	/// The normalized id of a room this product hosts, once the room passed
 	/// the call budget `limiter` holds it to.
 	///

@@ -3466,3 +3466,74 @@ fn screening_normalizes_and_trims() {
 	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
+
+#[derive(Default)]
+struct RecordingQueryObserver {
+	outcomes: Mutex<Vec<String>>,
+}
+
+impl NativeChatQueryObserver for RecordingQueryObserver {
+	fn on_answer(&self, answer: NativeChatQueryAnswer) {
+		self.outcomes.lock().unwrap().push(format!("answer {answer:?}"));
+	}
+
+	fn on_refusal(&self, refusal: NativeChatQueryRefusal) {
+		self.outcomes.lock().unwrap().push(format!("refusal {refusal:?}"));
+	}
+
+	fn on_complete(&self) {
+		self.outcomes.lock().unwrap().push("complete".to_string());
+	}
+}
+
+// A host waits for exactly one outcome per query, so the observer receives
+// exactly one: the answer, the refusal with its kind, or the end.
+#[test]
+fn a_native_chat_query_observer_receives_one_outcome() {
+	let observe = |items: Vec<
+		Result<
+			truapi::latest::ProductChatReactionsQueryItem,
+			truapi::CallError<truapi::latest::ProductChatQueryError>,
+		>,
+	>| {
+		let observer = Arc::new(RecordingQueryObserver::default());
+		let _query = super::chat_query::observe_chat_query(
+			truapi::Subscription::new(futures::stream::iter(items)),
+			observer.clone(),
+			crate::subscription::thread_per_subscription_spawner(),
+			|reactions| NativeChatQueryAnswer::Reactions { reactions },
+			|error| NativeChatQueryRefusal::Query { error },
+		);
+		crate::test_support::wait_until(
+			|| !observer.outcomes.lock().unwrap().is_empty(),
+			"the observer hears of the query",
+		);
+		std::thread::sleep(std::time::Duration::from_millis(20));
+		observer.outcomes.lock().unwrap().clone()
+	};
+	let reactions = truapi::latest::ProductChatReactionsQueryItem { reactions: vec![] };
+
+	assert_eq!(
+		observe(vec![Ok(reactions.clone()), Ok(reactions.clone())]),
+		[format!("answer {:?}", NativeChatQueryAnswer::Reactions { reactions })]
+	);
+	assert_eq!(
+		observe(vec![Err(truapi::CallError::Domain(
+			truapi::latest::ProductChatQueryError::NotAvailable
+		))]),
+		[format!(
+			"refusal {:?}",
+			NativeChatQueryRefusal::Query {
+				error: truapi::latest::ProductChatQueryError::NotAvailable
+			}
+		)]
+	);
+	assert_eq!(
+		observe(vec![Err(truapi::CallError::HostFailure { reason: "worker gone".to_string() })]),
+		[format!(
+			"refusal {:?}",
+			NativeChatQueryRefusal::Failed { reason: "worker gone".to_string() }
+		)]
+	);
+	assert_eq!(observe(vec![]), ["complete".to_string()]);
+}

@@ -1692,18 +1692,22 @@ pub struct ProductRuntime {
 /// product connection.
 #[derive(Clone)]
 pub struct ProductRuntimeControl {
-	connection: Arc<ProductConnection>,
+	runtime: Arc<ProductRuntimeHost>,
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
 	disposed: Arc<AtomicBool>,
 }
 
 impl ProductRuntimeControl {
-	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
+	fn runtime(&self) -> Result<&ProductRuntimeHost, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
 			return Err(ProductRuntimeError::Closed);
 		}
-		Ok(&self.connection)
+		Ok(&self.runtime)
+	}
+
+	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
+		Ok(self.runtime()?.connection())
 	}
 
 	/// Publish one host-authored Chat action into this connection's action
@@ -1743,7 +1747,7 @@ impl ProductRuntimeControl {
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
-		let reference = WorkerReference::acquire(self.connection.clone());
+		let reference = WorkerReference::acquire(self.runtime.connection().clone());
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -1770,6 +1774,187 @@ impl ProductRuntimeControl {
 			},
 		);
 		Ok(truapi::Subscription::new(stream))
+	}
+}
+
+impl ProductRuntimeControl {
+	/// Ask the product for one page of messages of a room it keeps. The
+	/// subscription yields at most one item and then ends; the core answers
+	/// `NotAvailable` itself for a room that does not set `product_source`.
+	pub fn chat_messages_query(
+		&self,
+		request: truapi::latest::ProductChatMessagesQueryRequest,
+	) -> Result<ChatQuery<truapi::latest::ProductChatMessagesQueryItem>, ProductRuntimeError> {
+		let page_size = request.page_size;
+		let request = crate::platform::validate_chat_messages_query(request);
+		self.chat_query(
+			request.as_ref().map(|request| request.room_id.clone()).map_err(Clone::clone),
+			crate::runtime::ChatHandler::Config(|config| config.product_source),
+			move |subscriptions, transport| {
+				Ok(crate::generated::dispatcher::chat_messages_query(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(request?),
+				))
+			},
+			move |page| crate::platform::validate_chat_messages_page(page, page_size),
+		)
+	}
+
+	/// Tell the product what the user did in a room it keeps, and take its
+	/// answer. The core refuses an action for a room that does not set
+	/// `product_source` without asking the product.
+	pub fn chat_user_action(
+		&self,
+		request: truapi::latest::ProductChatUserActionRequest,
+	) -> Result<
+		ChatQuery<
+			truapi::latest::ProductChatUserActionItem,
+			truapi::latest::ProductChatUserActionError,
+		>,
+		ProductRuntimeError,
+	> {
+		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
+		self.chat_query(
+			room_id.clone(),
+			crate::runtime::ChatHandler::Config(|config| config.product_source),
+			move |subscriptions, transport| {
+				let request = truapi::latest::ProductChatUserActionRequest {
+					room_id: room_id?,
+					action: crate::platform::validate_chat_user_action(request.action)?,
+				};
+				Ok(crate::generated::dispatcher::chat_user_action(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatUserActionRequest::V1(request),
+				))
+			},
+			|answer| match answer {
+				truapi::latest::ProductChatUserActionItem::MessageCreated(message) => {
+					crate::platform::validate_chat_message(message)
+						.map(truapi::latest::ProductChatUserActionItem::MessageCreated)
+				},
+				acknowledged => Ok(acknowledged),
+			},
+		)
+	}
+
+	/// Ask the product who reacted to one message. The core answers
+	/// `NotAvailable` itself for a room that does not set `reaction_details`.
+	pub fn chat_reactions_query(
+		&self,
+		request: truapi::latest::ProductChatReactionsQueryRequest,
+	) -> Result<ChatQuery<truapi::latest::ProductChatReactionsQueryItem>, ProductRuntimeError> {
+		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
+		self.chat_query(
+			room_id.clone(),
+			crate::runtime::ChatHandler::Config(|config| config.reaction_details),
+			move |subscriptions, transport| {
+				let request = truapi::latest::ProductChatReactionsQueryRequest {
+					room_id: room_id?,
+					..request
+				};
+				Ok(crate::generated::dispatcher::chat_reactions_query(
+					subscriptions,
+					transport,
+					truapi::versioned::chat::ProductChatReactionsQueryRequest::V1(request),
+				))
+			},
+			crate::platform::validate_chat_reactions_answer,
+		)
+	}
+
+	/// Run one chat query: check the room declares the handler, hold a worker
+	/// reference while the product answers, take the first item, screen it,
+	/// and stop the product's stream.
+	fn chat_query<Item, Error, Envelope, EnvelopeError>(
+		&self,
+		room_id: Result<String, crate::platform::ChatFieldError>,
+		handler: crate::runtime::ChatHandler,
+		start: impl FnOnce(
+			&HostInitiatedSubscriptionManager,
+			Arc<dyn Transport>,
+		) -> Result<
+			truapi::Subscription<Envelope, truapi::CallError<EnvelopeError>>,
+			crate::platform::ChatFieldError,
+		> + Send
+		+ 'static,
+		screen: impl FnOnce(Item) -> Result<Item, crate::platform::ChatFieldError> + Send + 'static,
+	) -> Result<ChatQuery<Item, Error>, ProductRuntimeError>
+	where
+		Item: Send + 'static,
+		Error: ChatQueryError + Send + 'static,
+		Envelope: truapi::versioned::IntoLatest<Latest = Item> + Send + 'static,
+		EnvelopeError: truapi::versioned::IntoLatest<Latest = Error> + Send + 'static,
+	{
+		self.connection()?.native_chat_platform()?;
+		let runtime = self.runtime.clone();
+		let subscriptions = self.host_subscriptions.clone();
+		let transport: Arc<dyn Transport> = self.transport.clone();
+		let answer = async move {
+			let failed = |reason: String| truapi::CallError::Domain(Error::unknown(reason));
+			let room_id = match room_id {
+				Ok(room_id) => room_id,
+				Err(error) => return Some(Err(failed(error.to_string()))),
+			};
+			match runtime.chat_handler_declared(room_id, handler).await {
+				Ok(true) => {},
+				Ok(false) => return Some(Err(truapi::CallError::Domain(Error::not_declared()))),
+				Err(reason) => return Some(Err(truapi::CallError::HostFailure { reason })),
+			}
+			// Held from the product's `Start` to its answer, and released
+			// when this future ends, whichever way it ends.
+			let _reference = WorkerReference::acquire(runtime.connection().clone());
+			let mut stream = match start(&subscriptions, transport) {
+				Ok(stream) => stream,
+				Err(error) => return Some(Err(failed(error.to_string()))),
+			};
+			let item = match stream.next().await? {
+				Ok(item) => item.into_latest(),
+				Err(interrupt) => {
+					return Some(Err(crate::interrupt::interrupt_into_latest(interrupt)));
+				},
+			};
+			match screen(item) {
+				Ok(item) => Some(Ok(item)),
+				Err(error) => Some(Err(failed(error.to_string()))),
+			}
+		};
+		Ok(truapi::Subscription::new(
+			futures::stream::once(answer).filter_map(futures::future::ready),
+		))
+	}
+}
+
+/// A chat query the host asks a product: at most one item, then the end.
+pub type ChatQuery<Item, Error = truapi::latest::ProductChatQueryError> =
+	truapi::Subscription<Item, truapi::CallError<Error>>;
+
+/// The domain errors the core answers a chat query with itself.
+pub trait ChatQueryError {
+	/// The answer for a room whose configuration does not declare the handler.
+	fn not_declared() -> Self;
+	/// The answer for a request or an item that did not pass the screen.
+	fn unknown(reason: String) -> Self;
+}
+
+impl ChatQueryError for truapi::latest::ProductChatQueryError {
+	fn not_declared() -> Self {
+		Self::NotAvailable
+	}
+
+	fn unknown(reason: String) -> Self {
+		Self::Unknown { reason }
+	}
+}
+
+impl ChatQueryError for truapi::latest::ProductChatUserActionError {
+	fn not_declared() -> Self {
+		Self::Unknown { reason: "the room does not keep its messages in the product".to_string() }
+	}
+
+	fn unknown(reason: String) -> Self {
+		Self::Unknown { reason }
 	}
 }
 
@@ -1968,7 +2153,7 @@ impl ProductRuntime {
 	/// Return a cloneable native control handle bound to this connection.
 	pub fn control(&self) -> ProductRuntimeControl {
 		ProductRuntimeControl {
-			connection: self.admin.product_runtime.connection().clone(),
+			runtime: self.admin.product_runtime.clone(),
 			transport: self.transport.clone(),
 			host_subscriptions: self.host_subscriptions.clone(),
 			disposed: self.disposed.clone(),
@@ -4215,5 +4400,333 @@ mod tests {
 			"a signing role with no Asset Hub refuses without touching the chain"
 		);
 		assert!(unconfigured.connects.is_empty(), "and does not dial any chain at all");
+	}
+
+	/// A chat host that reports one configuration for every room, or knows
+	/// no room at all when `config` is `None`.
+	#[derive(Default)]
+	struct ConfiguredChat {
+		config: Option<truapi::latest::ChatRoomConfig>,
+	}
+
+	#[crate::platform::async_trait]
+	impl ChatPlatform for ConfiguredChat {
+		async fn create_chat_room(
+			&self,
+			_product: &ProductContext,
+			_request: truapi::latest::HostChatCreateRoomRequest,
+		) -> Result<
+			truapi::latest::HostChatCreateRoomResponse,
+			truapi::latest::HostChatCreateRoomError,
+		> {
+			Ok(truapi::latest::HostChatCreateRoomResponse {
+				status: truapi::latest::ChatRoomRegistrationStatus::New,
+			})
+		}
+
+		async fn register_chat_bot(
+			&self,
+			_product: &ProductContext,
+			_request: truapi::latest::HostChatRegisterBotRequest,
+		) -> Result<
+			truapi::latest::HostChatRegisterBotResponse,
+			truapi::latest::HostChatRegisterBotError,
+		> {
+			Ok(truapi::latest::HostChatRegisterBotResponse {
+				status: truapi::latest::ChatBotRegistrationStatus::New,
+			})
+		}
+
+		async fn post_chat_message(
+			&self,
+			_product: &ProductContext,
+			_request: truapi::latest::HostChatPostMessageRequest,
+		) -> Result<
+			truapi::latest::HostChatPostMessageResponse,
+			truapi::latest::HostChatPostMessageError,
+		> {
+			Ok(truapi::latest::HostChatPostMessageResponse { message_id: "m1".to_string() })
+		}
+
+		async fn set_chat_room_footer(
+			&self,
+			_product: &ProductContext,
+			_request: truapi::latest::HostChatSetRoomFooterRequest,
+		) -> Result<(), v01::GenericError> {
+			Ok(())
+		}
+
+		fn subscribe_chat_rooms(
+			&self,
+			_product: &ProductContext,
+		) -> futures::stream::BoxStream<
+			'static,
+			Result<truapi::latest::HostChatListSubscribeItem, v01::GenericError>,
+		> {
+			futures::stream::empty().boxed()
+		}
+
+		async fn read_chat_room_config(
+			&self,
+			_product: &ProductContext,
+			room_id: String,
+		) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
+			self.config
+				.clone()
+				.ok_or_else(|| v01::GenericError { reason: format!("no chat room {room_id}") })
+		}
+	}
+
+	/// A signed-in Worker runtime whose host reports `config` for every room,
+	/// and the sink holding the frames its queries send.
+	fn chat_query_runtime(
+		config: truapi::latest::ChatRoomConfig,
+	) -> (ProductRuntime, Arc<RecordingSink>) {
+		chat_query_runtime_with(ConfiguredChat { config: Some(config) })
+	}
+
+	/// A signed-in Worker runtime whose host knows no room of the product.
+	fn roomless_chat_query_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
+		chat_query_runtime_with(ConfiguredChat { config: None })
+	}
+
+	fn chat_query_runtime_with(chat: ConfiguredChat) -> (ProductRuntime, Arc<RecordingSink>) {
+		let (host_config, _) = runtime_config("worker.dot");
+		let product = ProductContext::new_with_execution(
+			ProductId::for_test("worker.dot"),
+			crate::platform::ProductExecutionKind::Worker,
+		);
+		let sink = Arc::new(RecordingSink::default());
+		let platform = Arc::new(StubPlatform::default());
+		let runtime = ProductRuntime::from_platform_with_chat_platform(
+			platform.clone(),
+			host_config,
+			product,
+			test_spawner(),
+			sink.clone(),
+			Some(Arc::new(chat)),
+		);
+		// Chat needs a session, installed once the boot reconcile cleared the
+		// empty store, so that clear cannot land on top of it.
+		wait_until(
+			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
+			"the boot reconcile did not report the empty session store",
+		);
+		runtime
+			.admin
+			.product_runtime()
+			.test_session_state()
+			.set_session(crate::test_support::session_info());
+		(runtime, sink)
+	}
+
+	fn sent_frames(sink: &RecordingSink) -> Vec<ProtocolMessage> {
+		sink.frames
+			.lock()
+			.expect("recording sink mutex poisoned")
+			.iter()
+			.map(|frame| ProtocolMessage::decode(&mut frame.as_slice()).expect("a frame decodes"))
+			.collect()
+	}
+
+	fn deliver_chat_frame(runtime: &ProductRuntime, start: &ProtocolMessage, value: Vec<u8>) {
+		let frame = ProtocolMessage {
+			request_id: start.request_id.clone(),
+			payload: Payload {
+				trait_id: start.payload.trait_id,
+				method_id: start.payload.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_RECEIVE,
+				value,
+			},
+		}
+		.encode();
+		futures::executor::block_on(runtime.receive_frame(frame))
+			.expect("the product frame is well formed");
+	}
+
+	fn messages_request(page_size: u32) -> truapi::latest::ProductChatMessagesQueryRequest {
+		truapi::latest::ProductChatMessagesQueryRequest {
+			room_id: "support".to_string(),
+			anchor: truapi::latest::ChatPageAnchor::Before { cursor: None },
+			page_size,
+		}
+	}
+
+	fn text_message(message_id: &str) -> truapi::latest::ChatMessage {
+		truapi::latest::ChatMessage {
+			message_id: message_id.to_string(),
+			origin: truapi::latest::ChatMessageOrigin { participant_id: "product".to_string() },
+			timestamp: 1,
+			body: truapi::latest::ChatMessageBody::Text { text: "hi".to_string() },
+			status: truapi::latest::ChatMessageStatus::Sent,
+			reply_to: None,
+			reply_preview: None,
+			edited_at: None,
+			reactions: Vec::new(),
+			request: false,
+		}
+	}
+
+	// A room that does not declare a handler is answered by the core, so the
+	// product is never asked and its worker is never started for it.
+	#[test]
+	fn an_undeclared_chat_query_never_reaches_the_product() {
+		let (runtime, sink) = chat_query_runtime(Default::default());
+		let services = runtime.admin.product_runtime().connection().services().clone();
+
+		let mut query = runtime
+			.control()
+			.chat_reactions_query(truapi::latest::ProductChatReactionsQueryRequest {
+				room_id: "support".to_string(),
+				message_id: "m1".to_string(),
+			})
+			.expect("a Worker connection may be asked");
+
+		assert_eq!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatQueryError::NotAvailable
+			)))
+		);
+		assert_eq!(futures::executor::block_on(query.next()), None);
+		assert!(sent_frames(&sink).is_empty());
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+
+		let mut action = runtime
+			.control()
+			.chat_user_action(truapi::latest::ProductChatUserActionRequest {
+				room_id: "support".to_string(),
+				action: truapi::latest::ChatUserAction::Seen { message_id: "m1".to_string() },
+			})
+			.expect("a Worker connection may be asked");
+		assert!(matches!(
+			futures::executor::block_on(action.next()),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatUserActionError::Unknown { .. }
+			)))
+		));
+		assert!(sent_frames(&sink).is_empty());
+	}
+
+	// The product sends a new message under the id the host chose, so the id
+	// is screened like every message id before the product sees it.
+	#[test]
+	fn a_new_message_under_an_unsafe_id_does_not_reach_the_product() {
+		let (runtime, sink) = chat_query_runtime(truapi::latest::ChatRoomConfig {
+			product_source: true,
+			..Default::default()
+		});
+		let mut action = runtime
+			.control()
+			.chat_user_action(truapi::latest::ProductChatUserActionRequest {
+				room_id: "support".to_string(),
+				action: truapi::latest::ChatUserAction::NewMessage {
+					body: truapi::latest::ChatMessageBody::Text { text: "hi".to_string() },
+					reply_to: None,
+					message_id: Some("m\u{202e}1".to_string()),
+					timestamp: None,
+				},
+			})
+			.expect("may be asked");
+
+		assert!(matches!(
+			futures::executor::block_on(action.next()),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatUserActionError::Unknown { .. }
+			)))
+		));
+		assert!(sent_frames(&sink).is_empty());
+	}
+
+	// A declared query holds the worker while the product answers, takes the
+	// first item, and ends.
+	#[test]
+	fn a_declared_chat_query_takes_one_answer_from_the_product() {
+		let (runtime, sink) = chat_query_runtime(truapi::latest::ChatRoomConfig {
+			product_source: true,
+			..Default::default()
+		});
+		let services = runtime.admin.product_runtime().connection().services().clone();
+		let mut query = runtime
+			.control()
+			.chat_messages_query(messages_request(10))
+			.expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
+
+		let start = sent_frames(&sink).remove(0);
+		assert_eq!(start.payload.message_type, crate::frame::MESSAGE_TYPE_START);
+		assert_eq!(
+			truapi::versioned::chat::ProductChatMessagesQueryRequest::decode(
+				&mut start.payload.value.as_slice()
+			),
+			Ok(truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(messages_request(10)))
+		);
+		let page = truapi::latest::ProductChatMessagesQueryItem {
+			messages: vec![text_message("m1")],
+			next: Some("older".to_string()),
+		};
+		deliver_chat_frame(
+			&runtime,
+			&start,
+			truapi::versioned::chat::ProductChatMessagesQueryItem::V1(page.clone()).encode(),
+		);
+
+		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(page)));
+		assert_eq!(futures::executor::block_on(query.next()), None);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	}
+
+	// A product answers no more than the host asked for, and the core refuses
+	// an answer that does not pass the screen.
+	#[test]
+	fn a_chat_answer_is_screened_before_the_host_sees_it() {
+		let (runtime, sink) = chat_query_runtime(truapi::latest::ChatRoomConfig {
+			product_source: true,
+			..Default::default()
+		});
+		let mut query = runtime
+			.control()
+			.chat_messages_query(messages_request(1))
+			.expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+
+		let start = sent_frames(&sink).remove(0);
+		deliver_chat_frame(
+			&runtime,
+			&start,
+			truapi::versioned::chat::ProductChatMessagesQueryItem::V1(
+				truapi::latest::ProductChatMessagesQueryItem {
+					messages: vec![text_message("m1"), text_message("m2")],
+					next: None,
+				},
+			)
+			.encode(),
+		);
+
+		assert!(matches!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::Domain(
+				truapi::latest::ProductChatQueryError::Unknown { .. }
+			)))
+		));
+	}
+
+	// A room query needs the room: without its declarations the core refuses
+	// before the product is asked.
+	#[test]
+	fn a_messages_query_for_an_unknown_room_never_reaches_the_product() {
+		let (runtime, sink) = roomless_chat_query_runtime();
+		let mut query = runtime
+			.control()
+			.chat_messages_query(messages_request(20))
+			.expect("may be asked");
+		assert!(matches!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::HostFailure { .. }))
+		));
+		assert!(sent_frames(&sink).is_empty());
 	}
 }
