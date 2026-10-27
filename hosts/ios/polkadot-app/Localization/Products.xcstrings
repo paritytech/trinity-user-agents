@@ -1,28 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "action.preimage.body": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$(productId)@ wants to submit %2$(size)@ bytes of data to the Bulletin chain."
-          }
-        }
-      }
-    },
-    "action.preimage.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Submit Data"
-          }
-        }
-      }
-    },
     "action.productSubtree.body": {
       "extractionState": "manual",
       "localizations": {
@@ -184,6 +162,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Microphone"
+          }
+        }
+      }
+    },
+    "app.permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
           }
         }
       }
@@ -806,6 +795,17 @@
         }
       }
     },
+    "permission.capability.description.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion access lets the app respond to how you tilt and move your device."
+          }
+        }
+      }
+    },
     "permission.capability.description.nfc": {
       "extractionState": "manual",
       "localizations": {
@@ -857,6 +857,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "the microphone"
+          }
+        }
+      }
+    },
+    "permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
           }
         }
       }
@@ -1201,13 +1212,36 @@
         }
       }
     },
-    "product.tabs.accessibility.openApps": {
+    "product.tabs.accessibility.closeSearch": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open apps, %lld"
+            "value": "Close search"
+          }
+        }
+      }
+    },
+    "product.tabs.accessibility.openApps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open app, %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open apps, %lld"
+                }
+              }
+            }
           }
         }
       }
@@ -1219,6 +1253,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "QR scanner"
+          }
+        }
+      }
+    },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
           }
         }
       }

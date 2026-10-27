@@ -52,6 +52,7 @@ private val DeviceCapabilityType.icon: ImageVector
         DeviceCapabilityType.Clipboard -> NovaIcons.ContentCopy
         DeviceCapabilityType.Biometrics -> NovaIcons.Fingerprint
         DeviceCapabilityType.OpenUrl -> NovaIcons.Share
+        DeviceCapabilityType.Motion -> NovaIcons.Share
     }
 
 @Composable
@@ -86,6 +87,7 @@ private fun DeviceCapabilityType.title(productId: String): String {
         DeviceCapabilityType.Clipboard -> RCommon.string.product_permission_device_clipboard_title
         DeviceCapabilityType.Biometrics -> RCommon.string.product_permission_device_biometrics_title
         DeviceCapabilityType.OpenUrl -> RCommon.string.product_permission_device_open_url_title
+        DeviceCapabilityType.Motion -> RCommon.string.product_permission_device_motion_title
     }
     return stringResource(resId, productId)
 }
@@ -123,6 +125,7 @@ private fun DeviceCapabilityType.subtitle(manageLater: String): String {
         DeviceCapabilityType.Clipboard -> RCommon.string.product_permission_device_clipboard_subtitle
         DeviceCapabilityType.Biometrics -> RCommon.string.product_permission_device_biometrics_subtitle
         DeviceCapabilityType.OpenUrl -> RCommon.string.product_permission_device_open_url_subtitle
+        DeviceCapabilityType.Motion -> RCommon.string.product_permission_device_motion_subtitle
     }
     return stringResource(resId, manageLater)
 }

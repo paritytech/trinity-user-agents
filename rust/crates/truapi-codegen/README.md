@@ -18,6 +18,10 @@ Generated methods encode their payloads and pass complete wire frames to the tra
 
 The Rust client catalog targets `truapi-client`: request markers implement `RequestMethod`, product-initiated streams implement `SubscriptionMethod`, and product-served streams such as `Renderer::render` implement `HostSubscriptionMethod`. Both subscription traits declare their domain error through `Error`. All legs share `MethodIds`; the message type distinguishes the leg.
 
+Request and success wrappers select a common wire version; domain-error wrappers select their latest available version at or below it. Platform bridge signatures retain explicit API version paths and otherwise use the latest protocol type (including `ProductId`). Optional and vector codec payloads cross the bridge as SCALE, and explicit enum discriminants are preserved.
+
+Named fields of platform enums honor `#[codec(encoded_as = "...")]` when the adapter is a public platform struct or enum. This keeps private storage-key discriminants separate from public permission codecs; adapter types are collected transitively from rustdoc rather than hardcoded in TypeScript.
+
 ## Architecture
 
 The generator runs in three stages:

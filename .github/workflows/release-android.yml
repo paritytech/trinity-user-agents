@@ -68,8 +68,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
-      # The truapi runtime declares its generated modules unconditionally and they are
-      # gitignored, so the crate does not compile until codegen has run.
+      # The runtime feature enables generated modules that are gitignored, so
+      # codegen must run before the crate builds.
       - name: Generate the Rust codegen output
         run: |
           npm ci --ignore-scripts

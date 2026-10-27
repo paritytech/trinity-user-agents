@@ -30,6 +30,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.DerivationIndex
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.RemotePermissionRequest
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
@@ -48,6 +51,8 @@ class ProductPermissionRepositoryTest {
         val requests = listOf(
             PermissionAuthorizationRequest.ChatAuthority,
             PermissionAuthorizationRequest.ProfileDisclosure,
+            PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.BalanceAccess)),
+            PermissionAuthorizationRequest.Device(HostDevicePermissionRequest.MOTION),
             PermissionAuthorizationRequest.StatementStoreAllowance(null),
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(0u)),
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(UInt.MAX_VALUE)),
@@ -59,7 +64,7 @@ class ProductPermissionRepositoryTest {
             val restored = ProductPermission.fromLocal(permission.typeName, permission.key)
             assertEquals(permission, restored)
             assertEquals(permission.hashCode(), restored.hashCode())
-            assertEquals(permission, restored.canonicalRequest()!!.legacyPermission())
+            assertEquals(permission, restored.canonicalRequest().legacyPermission())
         }
         assertEquals(requests.dropLast(1), permissions.dropLast(1).map { it.canonicalRequest() })
         val raw = permissions.last().canonicalRequest() as PermissionAuthorizationRequest.StatementStoreAllowance
@@ -75,14 +80,16 @@ class ProductPermissionRepositoryTest {
         val permissions = listOf(
             ProductPermission.ChatAuthority,
             ProductPermission.ProfileDisclosure,
+            ProductPermission.BalanceAccess,
+            ProductPermission.DeviceCapability(DeviceCapabilityType.Motion),
             ProductPermission.StatementStoreAllowance(null),
             ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Index(0u)),
             ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Raw(ByteArray(32) { it.toByte() }.toDataByteArray())),
             ProductPermission.RemotePermission.StatementSubmitAccess,
         )
         permissions.forEach {
-            f.saved(product)[it.canonicalRequest()!!] = authorized
-            f.saved(other)[it.canonicalRequest()!!] = authorized
+            f.saved(product)[it.canonicalRequest()] = authorized
+            f.saved(other)[it.canonicalRequest()] = authorized
         }
         val interactor = ProductPermissionsInteractor(mockk(), f.repository)
         assertEquals(permissions, f.repository.getAllByProduct(product).map { it.permission })
@@ -115,24 +122,24 @@ class ProductPermissionRepositoryTest {
             ProductPermission.RemotePermission.StatementSubmitAccess,
             ProductPermission.RemotePermission.PreimageSubmitAccess,
         )
-        independent.forEach { f.saved(product)[it.canonicalRequest()!!] = authorized }
-        f.saved(other)[profile.canonicalRequest()!!] = authorized
+        independent.forEach { f.saved(product)[it.canonicalRequest()] = authorized }
+        f.saved(other)[profile.canonicalRequest()] = authorized
 
         assertFalse(f.repository.isGranted(product, profile))
         assertFalse(f.repository.isDenied(product, profile))
         assertTrue(f.repository.isGranted(other, profile))
-        f.saved(product)[profile.canonicalRequest()!!] = denied
+        f.saved(product)[profile.canonicalRequest()] = denied
         assertFalse(f.repository.isGranted(product, profile))
         assertTrue(f.repository.isDenied(product, profile))
         assertTrue(independent.all { f.repository.isGranted(product, it) })
     }
 
     @Test
-    fun `old native grants and legacy-only rows are visible and canonical deny wins migration`() = runTest {
+    fun `old native grants are visible and canonical deny wins migration`() = runTest {
         val f = Fixture()
         f.legacy.value = listOf(row(camera), row(microphone), row(ProductPermission.BalanceAccess))
-        f.saved(product)[camera.canonicalRequest()!!] = denied
-        f.saved(product)[ProductPermission.UserIdentityAccess.canonicalRequest()!!] = authorized
+        f.saved(product)[camera.canonicalRequest()] = denied
+        f.saved(product)[ProductPermission.UserIdentityAccess.canonicalRequest()] = authorized
 
         val permissions = f.repository.getAllByProduct(product).associate { it.permission to it.granted }
 
@@ -146,8 +153,8 @@ class ProductPermissionRepositoryTest {
     @Test
     fun `toggle writes canonical authority and keeps the other product unchanged`() = runTest {
         val f = Fixture()
-        f.saved(product)[camera.canonicalRequest()!!] = authorized
-        f.saved(other)[camera.canonicalRequest()!!] = authorized
+        f.saved(product)[camera.canonicalRequest()] = authorized
+        f.saved(other)[camera.canonicalRequest()] = authorized
 
         f.repository.revoke(product, camera)
         assertFalse(f.repository.isGranted(product, camera))
@@ -160,7 +167,7 @@ class ProductPermissionRepositoryTest {
     @Test
     fun `failed persistence is surfaced without claiming a successful revoke`() = runTest {
         val f = Fixture()
-        f.saved(product)[camera.canonicalRequest()!!] = authorized
+        f.saved(product)[camera.canonicalRequest()] = authorized
         coEvery { f.runtime.setPermissionAuthorizationStatus(product.value, any(), denied) } throws IllegalStateException("disk full")
 
         val result = runCatching { f.repository.revoke(product, camera) }
@@ -174,7 +181,7 @@ class ProductPermissionRepositoryTest {
         val f = Fixture()
         f.repository.grantOneTime(product, camera)
         f.repository.grantOneTime(other, camera)
-        f.saved(product)[camera.canonicalRequest()!!] = denied
+        f.saved(product)[camera.canonicalRequest()] = denied
         f.changes.changed(product.value)
 
         assertFalse(f.repository.consumeOneTimeGrant(product, camera))
@@ -189,7 +196,7 @@ class ProductPermissionRepositoryTest {
             val prompted = CompletableDeferred<Unit>()
             val answer = CompletableDeferred<Unit>()
             val request = async {
-                f.repository.withPermissionRequest(product, listOf(camera)) {
+                f.repository.withPermissionRequest(product) {
                     prompted.complete(Unit)
                     answer.await()
                     if (once) f.repository.grantOneTime(product, camera) else f.repository.grant(product, camera)
@@ -210,7 +217,7 @@ class ProductPermissionRepositoryTest {
     fun `core conditional rejection fences revoke that races the platform revision check`() = runTest {
         val f = Fixture()
         coEvery { f.runtime.setPermissionAuthorizationStatusIfCurrent(product.value, any(), authorized, any()) } returns false
-        assertFalse(f.repository.withPermissionRequest(product, listOf(camera)) {
+        assertFalse(f.repository.withPermissionRequest(product) {
             f.repository.grant(product, camera)
             true
         })
@@ -226,7 +233,7 @@ class ProductPermissionRepositoryTest {
         }
         testScheduler.runCurrent()
         assertEquals(listOf(false), snapshots)
-        f.saved(product)[camera.canonicalRequest()!!] = authorized
+        f.saved(product)[camera.canonicalRequest()] = authorized
         f.changes.changed(product.value)
         testScheduler.runCurrent()
         assertEquals(listOf(false, true), snapshots)
@@ -236,18 +243,18 @@ class ProductPermissionRepositoryTest {
     fun `bundle denial retains its request identity and does not deny singleton access`() = runTest {
         val f = Fixture()
         val bundle = ProductPermission.RemotePermission.NetworkAccessSet(listOf("a.example", "b.example"))
-        f.saved(product)[bundle.canonicalRequest()!!] = denied
+        f.saved(product)[bundle.canonicalRequest()] = denied
         assertEquals(bundle, f.repository.getAllByProduct(product).single().permission)
         assertFalse(f.repository.isDenied(product, ProductPermission.RemotePermission.NetworkAccess("a.example")))
         f.repository.grant(product, bundle)
-        assertEquals(authorized, f.saved(product)[bundle.canonicalRequest()!!])
+        assertEquals(authorized, f.saved(product)[bundle.canonicalRequest()])
     }
 
     @Test
     fun `reset tombstone is not treated as deny and legacy import cannot replace it`() = runTest {
         val f = Fixture()
         f.legacy.value = listOf(row(camera))
-        f.saved(product)[camera.canonicalRequest()!!] = PermissionAuthorizationStatus.NOT_DETERMINED
+        f.saved(product)[camera.canonicalRequest()] = PermissionAuthorizationStatus.NOT_DETERMINED
         assertFalse(f.repository.isDenied(product, camera))
         assertFalse(f.repository.isGranted(product, camera))
     }
@@ -264,7 +271,7 @@ class ProductPermissionRepositoryTest {
     @Test
     fun `JAM permission mapping preserves the full genesis and rejects short keys`() {
         val permission = ProductPermission.RemotePermission.JamPeersAccess("0x" + "ab".repeat(32))
-        assertEquals(permission, permission.canonicalRequest()!!.legacyPermission())
+        assertEquals(permission, permission.canonicalRequest().legacyPermission())
         assertTrue(runCatching {
             ProductPermission.RemotePermission.JamPeersAccess("0xab").canonicalRequest()
         }.isFailure)
@@ -280,17 +287,21 @@ class ProductPermissionRepositoryTest {
     }
 
     @Test
-    fun `legacy-only permission reads and prompts do not require native runtime bootstrap`() = runTest {
+    fun `balance access migrates to canonical authority and revocation overrides its legacy grant`() = runTest {
         val f = Fixture()
         val permission = ProductPermission.BalanceAccess
-        coEvery { f.dao.get(product.value, permission.typeName, permission.key) } returns row(permission)
+        f.legacy.value = listOf(row(permission))
         assertTrue(f.repository.isGranted(product, permission))
-        assertTrue(f.repository.withPermissionRequest(product, listOf(permission)) {
+        assertTrue(f.repository.withPermissionRequest(product) {
             f.repository.grantOneTime(product, permission)
             true
         })
         assertTrue(f.repository.consumeOneTimeGrant(product, permission))
-        coVerify(exactly = 0) { f.runtime.permissionAuthorizations(any()) }
+        f.repository.revoke(product, permission)
+        assertFalse(f.repository.isGranted(product, permission))
+        assertTrue(f.repository.isDenied(product, permission))
+        assertEquals(denied, f.saved(product)[permission.canonicalRequest()])
+        coVerify(exactly = 0) { f.dao.insert(any()) }
     }
 
     @Test
@@ -298,10 +309,10 @@ class ProductPermissionRepositoryTest {
         val f = Fixture()
         val bundle = ProductPermission.RemotePermission.NetworkAccessSet(listOf("a.example", "b.example"))
         val single = ProductPermission.RemotePermission.NetworkAccess("a.example")
-        f.saved(product)[bundle.canonicalRequest()!!] = authorized
+        f.saved(product)[bundle.canonicalRequest()] = authorized
         assertTrue(f.repository.isGranted(product, bundle))
         assertFalse(f.repository.isGranted(product, single))
-        f.saved(product)[single.canonicalRequest()!!] = denied
+        f.saved(product)[single.canonicalRequest()] = denied
         assertFalse(f.repository.isGranted(product, single))
         assertTrue(f.repository.isDenied(product, single))
     }

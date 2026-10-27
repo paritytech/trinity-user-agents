@@ -43,30 +43,30 @@ pub struct InvalidGenesis;
 /// `jamnp-s/1/<first 8 hex nibbles of the genesis header hash>`.
 /// This protocol selector is not a cryptographic chain-membership proof.
 pub fn alpn(genesis: &[u8; 32]) -> String {
-    let mut alpn = String::with_capacity(ALPN_PREFIX.len() + 8);
-    alpn.push_str(ALPN_PREFIX);
-    for byte in &genesis[..4] {
-        use fmt::Write as _;
-        write!(alpn, "{byte:02x}").expect("String never fails to write");
-    }
-    alpn
+	let mut alpn = String::with_capacity(ALPN_PREFIX.len() + 8);
+	alpn.push_str(ALPN_PREFIX);
+	for byte in &genesis[..4] {
+		use fmt::Write as _;
+		write!(alpn, "{byte:02x}").expect("String never fails to write");
+	}
+	alpn
 }
 
 /// Parse a genesis header hash: exactly 64 lowercase hex digits, with or
 /// without a `0x` prefix. Uppercase is refused so one hash has one spelling.
 pub fn parse_genesis(text: &str) -> Result<[u8; 32], InvalidGenesis> {
-    let hex = text.strip_prefix("0x").unwrap_or(text);
-    if hex.len() != 64 {
-        return Err(InvalidGenesis);
-    }
-    let mut genesis = [0u8; 32];
-    for (index, pair) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        let nibble = |byte: u8| match byte {
-            b'0'..=b'9' => Ok(byte - b'0'),
-            b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(InvalidGenesis),
-        };
-        genesis[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Ok(genesis)
+	let hex = text.strip_prefix("0x").unwrap_or(text);
+	if hex.len() != 64 {
+		return Err(InvalidGenesis);
+	}
+	let mut genesis = [0u8; 32];
+	for (index, pair) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+		let nibble = |byte: u8| match byte {
+			b'0'..=b'9' => Ok(byte - b'0'),
+			b'a'..=b'f' => Ok(byte - b'a' + 10),
+			_ => Err(InvalidGenesis),
+		};
+		genesis[index] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+	}
+	Ok(genesis)
 }

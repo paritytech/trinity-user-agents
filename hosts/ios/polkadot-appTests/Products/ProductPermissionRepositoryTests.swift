@@ -475,6 +475,9 @@ extension ProductPermissionRepositoryTests {
         #expect(grants.first { $0.permission == camera }?.granted == false)
         #expect(grants.first { $0.permission == microphone }?.granted == true)
         #expect(grants.first { $0.permission == .balanceAccess }?.granted == true)
+        #expect(try await authority.permissionAuthorizations(productId: "demo.paseo").contains {
+            $0.request == .remote(.init(permission: .balanceAccess)) && $0.status == .authorized
+        })
         #expect(grants.first { $0.permission == .userIdentityAccess }?.granted == true)
         try await sut.revoke(productId: "demo.paseo", permission: microphone)
         #expect(try await sut.getPermissionState(productId: "demo.paseo", permission: microphone) == .notDetermined)
@@ -536,6 +539,17 @@ extension ProductPermissionRepositoryTests {
         #expect(throws: ProductPermissionMappingError.self) {
             try ProductPermission.networkAccess(domain: "https://example.com/path").authorizationRequest()
         }
+    }
+
+    @Test("Motion and balance permissions round-trip through native authorization")
+    func incomingPermissionMapping() throws {
+        let motion = ProductPermission.deviceCapability(.motion)
+        #expect(try motion.authorizationRequest() == .device(.motion))
+        #expect(try ProductPermission.fromAuthorization(.device(.motion)) == [motion])
+        #expect(motion.permissionIconSystemName == "gyroscope")
+        let balance = PermissionAuthorizationRequest.remote(.init(permission: .balanceAccess))
+        #expect(try ProductPermission.balanceAccess.authorizationRequest() == balance)
+        #expect(try ProductPermission.fromAuthorization(balance) == [.balanceAccess])
     }
 
     @Test("JAM permission mapping preserves the full genesis and rejects short keys")

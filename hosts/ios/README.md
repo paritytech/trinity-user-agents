@@ -23,7 +23,6 @@ If you experience problems with any product or service that was built on or depl
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
-- **Personhood** — Upgrade your username to a higher allowance via Proof-of-Personhood by playing the DIM2 videocall gesture game. Game rewards and collectibles can be surfaced through dApps (behind a feature flag).
 - **Chat** — End-to-end p2p encrypted text messaging with media (images/video) and encrypted video/audio calls.
 - **Payments** — Send and receive payments by username or QR code, and directly in chat.
 - **Auto-conversion** — Top up your wallet and auto-convert it into the tokens you want.
@@ -77,6 +76,9 @@ cd polkadot-ios-community
 # Scaffold gitignored secret files from templates and generate build-time config.
 ./Runscripts/setup-secrets.sh
 
+# Block commits that add a hardcoded UI string.
+git config core.hooksPath Runscripts/hooks
+
 open polkadot-app.xcodeproj
 ```
 
@@ -125,7 +127,7 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 ### What it does
 
 1. **Keeps your keys on your device.** Your account is generated locally and protected by the device's secure enclave and Keychain. You choose how to back it up: an encrypted backup in your own iCloud or Google Drive, or no backup at all — keys stored only on the device.
-2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start. Prove personhood by playing the DIM2 videocall gesture game to raise that allowance.
+2. **Gives you an on-chain name.** You register a username on Polkadot's [People Chain](https://wiki.polkadot.com/learn/learn-system-chains/). Your phone proves it's a unique device, which earns you an allowance for free transactions — no tokens needed to start.
 3. **Lets you chat without a messaging server.** Messages are end-to-end encrypted and delivered through the People Chain statement store, so there is no company inbox holding your conversations. Voice and video calls are encrypted and go directly peer-to-peer over WebRTC.
 4. **Sends money to names, not addresses.** Pick a username (or scan a QR code, or pay right inside a chat) — the app resolves it to an account on-chain and sends the payment. Swaps and auto-conversion run on [Asset Hub](https://wiki.polkadot.com/learn/learn-assets/)'s liquidity pools.
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
@@ -140,7 +142,7 @@ Consent prompts and app settings share permission descriptions and icon metadata
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
 - It does **not** route your chats and calls through any 1st or 3rd party messaging servers — messages travel through the public chain, voice and video calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
-- Seity profile-disclosure consent has no native prompt yet. Its permission callback returns an error, leaving an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
+- Native Seity profile-disclosure consent uses the shared permission prompt. Missing presentation or cancellation leaves an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
 
 ### Under the hood
 

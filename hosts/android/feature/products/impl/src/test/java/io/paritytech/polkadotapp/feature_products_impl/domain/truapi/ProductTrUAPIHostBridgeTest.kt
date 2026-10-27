@@ -13,24 +13,35 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.Permis
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
+import io.mockk.every
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
 import io.parity.truapi.HostBridge
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
+import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.TrUAPIHostRuntime
+import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -38,41 +49,42 @@ import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
+import org.mockito.Mockito.mockConstruction
+import org.mockito.Mockito.mockStatic
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.WsBridgeEndpoint
 
 class ProductTrUAPIHostBridgeTest {
-    // The core refuses the open: an unavailable loopback port, or an execution config it rejects.
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
 
-    private val gameReminder = mock(ProductGameReminder::class.java)
+    private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
     private val game = ProductId.fromStoredValue("game.dot")
 
     private fun TestScope.bridge(
         launcher: TrUAPIConfirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
+        scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
     ) = ProductTrUAPIHostBridge(
-        hostApiInteractor = mock(HostApiInteractor::class.java),
+        hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = launcher,
-        appLifecycleObserver = mock(AppLifecycleObserver::class.java),
+        appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mock(PocketCardStore::class.java),
+        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         context = mock(Context::class.java),
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
         },
-        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        permissionRepository = Lazy { mockk { coEvery { getAllByProduct(any()) } returns emptyList() } },
         permissionChanges = PermissionAuthorizationChanges(),
         productGameReminder = gameReminder,
-        scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        scope = scope,
     )
 
-    // The callers launch attach into scopes with no handler, so a refusal from the core has to come
-    // back as the Result the signature promises rather than as a crash.
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
@@ -174,6 +186,53 @@ class ProductTrUAPIHostBridgeTest {
         }
     }
 
+    // The worker supervisor stops a worker by cancelling the scope it handed in.
+    // That must also release its execution, loopback registration and chain sockets.
+    @Test
+    fun `cancelling the owning scope closes the execution`() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = CoroutineScope(dispatcher)
+        Dispatchers.setMain(dispatcher)
+        mockkObject(LocalhostBridgeBootstrap)
+        try {
+            every { LocalhostBridgeBootstrap.script(any(), any()) } returns "bootstrap"
+            mockStatic(ContextCompat::class.java).use {
+                mockConstruction(IntentFilter::class.java).use {
+                    val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
+                        every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
+                    }
+                    val runtime = mockk<TrUAPIHostRuntime> {
+                        every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
+                    }
+                    val bridge = bridge(
+                        scope = scope,
+                        hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() },
+                    )
+
+                    val outcome = bridge.attach(
+                        runtime = runtime,
+                        productId = game,
+                        chains = EMPTY_CHAINS,
+                        navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
+                        kind = ProductExecutionKind.WORKER,
+                        onPermissionRevoked = {},
+                        onReadyToInject = {},
+                    )
+                    assertTrue(outcome.isSuccess)
+                    scope.cancel()
+                    advanceUntilIdle()
+
+                    verify(exactly = 1) { execution.stopWsBridge() }
+                    verify(exactly = 1) { execution.close() }
+                }
+            }
+        } finally {
+            scope.cancel()
+            unmockkObject(LocalhostBridgeBootstrap)
+            Dispatchers.resetMain()
+        }
+    }
+
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
         var opened: HostBridge? = null
         val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
@@ -224,8 +283,10 @@ class ProductTrUAPIHostBridgeTest {
         gameBridge.scheduleReminder(1_000u)
         gameBridge.cancelReminder()
 
-        verify(gameReminder).schedule(game, 1_000)
-        verify(gameReminder).cancel(game)
+        coVerify {
+            gameReminder.schedule(game, 1_000)
+            gameReminder.cancel(game)
+        }
     }
 
     @Test
@@ -238,7 +299,7 @@ class ProductTrUAPIHostBridgeTest {
         assertEquals("notifications are not allowed", (outcome.exceptionOrNull() as? HostRejection.Rejected)?.reason)
     }
 
-    private suspend fun withScheduleOutcome(outcome: Result<Unit>) {
-        whenever(gameReminder.schedule(game, 1_000)).thenReturn(outcome)
+    private fun withScheduleOutcome(outcome: Result<Unit>) {
+        coEvery { gameReminder.schedule(game, 1_000) } returns outcome
     }
 }

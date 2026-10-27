@@ -87,6 +87,17 @@ class RootViewModel @Inject constructor(
         !dismissed && onboarded && ringsOnScreen
     }.stateInBackground(initialValue = false)
 
+    private val paymentsSetupNoticeDismissed = MutableStateFlow(false)
+
+    // Registration starts only after onboarding, so a wait before it is not a delayed backup.
+    override val isPaymentsSetupNoticeVisible = combine(
+        rootInteractor.observePaymentsSetupPending(),
+        isOnboarded,
+        paymentsSetupNoticeDismissed,
+    ) { pending, onboarded, dismissed ->
+        pending && onboarded && !dismissed
+    }.stateInBackground(initialValue = false)
+
     private val servicesScope = ComputationalScope(viewModelScope + coroutineDispatchers.computation)
 
     init {
@@ -143,6 +154,10 @@ class RootViewModel @Inject constructor(
         if (networkStatusTooltipDismissed.value) return
         networkStatusTooltipDismissed.value = true
         rootInteractor.markNetworkStatusTooltipShown()
+    }
+
+    override fun dismissPaymentsSetupNotice() {
+        paymentsSetupNoticeDismissed.value = true
     }
 
     private suspend fun checkDevReset() {

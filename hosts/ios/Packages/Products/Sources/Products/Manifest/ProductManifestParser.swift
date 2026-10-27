@@ -49,8 +49,8 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("root: missing displayName")
         }
 
-        // Unused here, but required by the manifest format: a stricter Host must not see a
-        // different product than this one does.
+        // Required by the manifest format: a stricter Host must not see a different product than
+        // this one does.
         guard let description = dto.description else {
             return reject("root: missing description")
         }
@@ -234,7 +234,8 @@ private extension ProductManifestParser {
         return try PocketCardDefinition(
             id: screening.id(rawId),
             title: screening.title(title),
-            preview: .archive(path: preview)
+            preview: .archive(path: preview),
+            faceShown: dto.faceShown ?? true
         )
     }
 }

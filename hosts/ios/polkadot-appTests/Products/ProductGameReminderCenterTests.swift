@@ -4,6 +4,7 @@ import Testing
 import UIKit
 import Keystore_iOS
 import PolkadotUI
+import Products
 @testable import polkadot_app
 
 @MainActor
@@ -33,7 +34,7 @@ struct ProductGameReminderCenterTests {
         return (center, fakes)
     }
 
-    @Test("A schedule rings an alarm at the native lead time when AlarmKit is available")
+    @Test("A schedule rings an alarm at the start when AlarmKit is available")
     func scheduleRingsAlarm() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
 
@@ -247,9 +248,9 @@ private extension ProductGameReminderCenter {
     }
 }
 
-/// The reminder call the center makes for a product's start, at the native 20 s lead time.
+/// The reminder call the center makes for a product's start, which rings at the start itself.
 private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGameReminder.Call {
-    .init(gameDate: startsAt, target: .product(productId), timingSeconds: 20)
+    .init(gameDate: startsAt, productId: productId)
 }
 
 // MARK: - Fakes
@@ -310,15 +311,14 @@ extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, P
 private final class RecordingGameReminder: GameStartReminderServicing {
     struct Call: Equatable {
         let gameDate: Date
-        let target: GameReminderTarget
-        let timingSeconds: Int
+        let productId: ProductId
     }
 
     private(set) var scheduled: [Call] = []
     private(set) var cancelCount = 0
 
-    func scheduleReminder(gameDate: Date, target: GameReminderTarget, timingSeconds: Int) {
-        scheduled.append(Call(gameDate: gameDate, target: target, timingSeconds: timingSeconds))
+    func scheduleReminder(gameDate: Date, productId: ProductId) {
+        scheduled.append(Call(gameDate: gameDate, productId: productId))
     }
 
     func cancelReminder() {

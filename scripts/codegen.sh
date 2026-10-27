@@ -48,23 +48,24 @@ unset DYLD_LIBRARY_PATH
 
 RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings -Z unstable-options --output-format json"
 export RUSTDOCFLAGS
+DOC_DIR="${CARGO_TARGET_DIR:-target}/doc"
 
 cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi --no-deps --no-default-features --features host-api
-cp target/doc/truapi.json target/doc/truapi_protocol.json
+cp "$DOC_DIR/truapi.json" "$DOC_DIR/truapi_protocol.json"
 cargo run -p truapi-codegen -- \
-  --input target/doc/truapi_protocol.json \
+  --input "$DOC_DIR/truapi_protocol.json" \
   --output js/packages/truapi/src/generated \
   --rust-output rust/crates/truapi/src/generated
 cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi -p truapi-provider --no-deps
 cargo run -p truapi-codegen -- \
-  --input target/doc/truapi_protocol.json \
+  --input "$DOC_DIR/truapi_protocol.json" \
   --output js/packages/truapi/src/generated \
   --playground-output js/packages/truapi/src/playground \
   --client-examples-output playground/test/generated/examples \
   --rust-output rust/crates/truapi/src/generated \
   --rust-client-output rust/crates/truapi-client/src/generated.rs \
-  --platform-input target/doc/truapi.json \
-  --platform-input target/doc/truapi_provider.json \
+  --platform-input "$DOC_DIR/truapi.json" \
+  --platform-input "$DOC_DIR/truapi_provider.json" \
   --platform-ts-output js/packages/truapi-host/src/generated \
   --platform-wasm-adapter-output js/packages/truapi-host/src/generated \
   --platform-rust-output rust/crates/truapi/src/wasm \

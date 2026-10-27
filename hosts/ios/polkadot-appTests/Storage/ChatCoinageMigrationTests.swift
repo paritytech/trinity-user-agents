@@ -10,7 +10,9 @@ struct ChatCoinageMigrationTests {
         .version49Chat,
         .version52,
         .version53,
-        .version53Chat
+        .version53Chat,
+        .version54,
+        .version54Chat
     ])
     func preservesPaymentOwnershipAndLedger(from version: UserStorageVersion) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -29,8 +31,9 @@ struct ChatCoinageMigrationTests {
         )
         let owner = Data(repeating: 0x42, count: 32)
         let payload = Data([0x01, 0x02, 0x03])
-        let isChatStore = version == .version49Chat || version == .version53Chat
-        let hasPocketCards = version == .version53
+        let isChatStore = version == .version49Chat || version == .version53Chat || version == .version54Chat
+        let hasPocketCards = version == .version53 || version == .version54 || version == .version54Chat
+        let hasReleaseChatFields = version == .version54
         try withStore(model: source, url: storeURL) { context in
             let payment = NSEntityDescription.insertNewObject(forEntityName: "CDIncomingPayment", into: context)
             payment.setValue("group-1", forKey: "identifier")
@@ -52,6 +55,14 @@ struct ChatCoinageMigrationTests {
                 card.setValue("Saved card", forKey: "title")
                 card.setValue(payload, forKey: "face")
                 card.setValue(Date(timeIntervalSince1970: 100), forKey: "addedAt")
+            }
+            if hasReleaseChatFields {
+                let chat = NSEntityDescription.insertNewObject(forEntityName: "CDChat", into: context)
+                chat.setValue("chat-1", forKey: "identifier")
+                chat.setValue("Preview text", forKey: "footer")
+                let request = NSEntityDescription.insertNewObject(forEntityName: "CDChatRequest", into: context)
+                request.setValue("request-1", forKey: "identifier")
+                request.setValue(42, forKey: "anonymousDeliveryPeriod")
             }
             try context.save()
         }
@@ -92,6 +103,17 @@ struct ChatCoinageMigrationTests {
                 #expect(card.value(forKey: "addedAt") as? Date == Date(timeIntervalSince1970: 100))
             } else {
                 #expect(cards.isEmpty)
+            }
+            let chats = try context.fetch(NSFetchRequest<NSManagedObject>(entityName: "CDChat"))
+            let requests = try context.fetch(NSFetchRequest<NSManagedObject>(entityName: "CDChatRequest"))
+            if hasReleaseChatFields {
+                #expect(chats.count == 1)
+                #expect(chats.first?.value(forKey: "footer") as? String == "Preview text")
+                #expect(requests.count == 1)
+                #expect((requests.first?.value(forKey: "anonymousDeliveryPeriod") as? NSNumber)?.intValue == 42)
+            } else {
+                #expect(chats.isEmpty)
+                #expect(requests.isEmpty)
             }
         }
     }

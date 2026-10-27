@@ -38,20 +38,21 @@ final class HostTransactionSponsorFactory: TransactionSponsorMaking {
             operationManager: OperationManager(operationQueue: operationQueue)
         )
 
-        let bulletInTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.bulletInChain,
+        let peopleTimeProvider = ChainTimeProvider(
+            chainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
 
         let bulletInInfoProvider = BulletInSlotInfoProvider(
             bulletInChainId: AppConfig.Chains.bulletInChain,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             keyResolver: keyResolver,
             operationQueue: operationQueue,
-            chainTimeProvider: bulletInTimeProvider,
-            resourcesParameters: ResourcesParametersFacade.shared
+            chainTimeProvider: peopleTimeProvider,
+            resourcesParameters: ResourcesParametersFacade.shared,
+            networkSuffixProvider: DotNsTldProviderFacade.shared
         )
 
         return PreimageSubmitSponsor(
@@ -106,6 +107,7 @@ final class HostTransactionSponsorFactory: TransactionSponsorMaking {
             chainId: AppConfig.Chains.chatChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: DotNsTldProviderFacade.shared,
             resourcesParameters: ResourcesParametersFacade.shared,
             chainTimeProvider: timeProvider,
             originPersonProvider: originPersonProvider,

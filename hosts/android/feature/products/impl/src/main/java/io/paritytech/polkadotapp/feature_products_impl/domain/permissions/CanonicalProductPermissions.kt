@@ -15,8 +15,8 @@ import uniffi.truapi.RemotePermissionRequest
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Locale
 
-internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationRequest? = when (this) {
-    ProductPermission.BalanceAccess -> null
+internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationRequest = when (this) {
+    ProductPermission.BalanceAccess -> PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.BalanceAccess))
     ProductPermission.UserIdentityAccess -> PermissionAuthorizationRequest.IdentityDisclosure
     ProductPermission.ChatAuthority -> PermissionAuthorizationRequest.ChatAuthority
     ProductPermission.ProfileDisclosure -> PermissionAuthorizationRequest.ProfileDisclosure
@@ -67,6 +67,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
         is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(remote.genesis.toHexString(withPrefix = true))
+        RemotePermission.BalanceAccess -> ProductPermission.BalanceAccess
     }
 }
 
@@ -80,6 +81,7 @@ private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (t
     DeviceCapabilityType.Clipboard -> HostDevicePermissionRequest.CLIPBOARD
     DeviceCapabilityType.Biometrics -> HostDevicePermissionRequest.BIOMETRICS
     DeviceCapabilityType.OpenUrl -> HostDevicePermissionRequest.OPEN_URL
+    DeviceCapabilityType.Motion -> HostDevicePermissionRequest.MOTION
 }
 
 internal fun canonicalDomain(domain: String): String {

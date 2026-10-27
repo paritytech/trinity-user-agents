@@ -61,10 +61,6 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawRe
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
-  productSubtreePublicKey(
-    productId: string,
-    timeoutMs?: number,
-  ): Promise<Uint8Array | undefined>;
   clearProductState(productId: string): Promise<void>;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
@@ -85,6 +81,10 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
+  productSubtreePublicKey(
+    productId: string,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
@@ -99,6 +99,8 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+  /** Derived from the active session root, so it never waits. */
+  productSubtreePublicKey(productId: string): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /**
    * Activate and give the session a display name, which is what

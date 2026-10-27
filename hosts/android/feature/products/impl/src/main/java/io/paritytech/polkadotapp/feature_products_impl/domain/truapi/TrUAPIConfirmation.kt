@@ -68,12 +68,6 @@ sealed interface TrUAPIConfirmation {
         val resources: List<String>,
     ) : TrUAPIConfirmation.Prompt
 
-    /** Submit a preimage to the host-selected backend. */
-    class PreimageSubmit(
-        override val requesterProductId: String,
-        val sizeBytes: Long,
-    ) : TrUAPIConfirmation.Prompt
-
     /** Approve one exact payment from the user's main purse. */
     class MainPurseChatPayment(
         override val requesterProductId: String,

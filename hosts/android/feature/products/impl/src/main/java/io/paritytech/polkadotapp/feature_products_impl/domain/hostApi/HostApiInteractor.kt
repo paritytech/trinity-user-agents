@@ -55,7 +55,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ProductPaymentRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
-import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.spendableByProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.subscribeSpendableByProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
@@ -315,6 +315,10 @@ class HostApiInteractor @Inject constructor(
         permissionRequester.promptBatched(callingProductId, request.toDomainPermissions())
     }
 
+    suspend fun requestBalanceAccessDecision(callingProductId: ProductId): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.BalanceAccess)
+    }
+
     suspend fun allowWebRtcAccess(callingProductId: ProductId): Result<Boolean> {
         val permission = ProductPermission.RemotePermission.WebRtcAccess
         return Result.success(permissionGuard.consumePermission(callingProductId, permission))
@@ -391,10 +395,8 @@ class HostApiInteractor @Inject constructor(
             throw ProductPermissionDeniedException(permission)
         }
 
-        totalBalanceUseCase.subscribeTotalBalance()
-            .mapNotNull { it.getOrNull() }
-            // What a payment request may spend, so a product never sees an amount it cannot ask for.
-            .map { PaymentBalance(available = it.spendableByProducts()) }
+        totalBalanceUseCase.subscribeSpendableByProducts()
+            .map { PaymentBalance(available = it) }
     }
 
     suspend fun registerRingVrfKey(

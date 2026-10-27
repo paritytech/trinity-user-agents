@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
@@ -10,32 +9,40 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExte
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
+import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_api.model.toChatId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.extractProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.toChatId
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -49,11 +56,16 @@ import timber.log.Timber
  * the driving lease on dispose.
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
+ *
+ * A product the host placed ([ProductChatExtensionOrigin.PlacedByHost]) has its rooms pinned above
+ * the rest and offers no removal.
  */
 class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    imageResolver: ProductImageResolver,
+    val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -62,18 +74,33 @@ class ProductChatExtension(
     override val defaultRoomMetadata: DefaultRoomMetadata = DefaultRoomMetadata(product.name, icon = null)
 
     private val runningWorker = DeferredProductWorker()
-    private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker)
+    private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker, imageResolver)
+
+    private class Disposed : Exception("the product's chat extension was disposed")
 
     private var botScope: CoroutineScope? = null
 
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
+    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
+    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
+
+    override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
+        val room = chatId.productRoomId(id) ?: return flowOf(true)
+        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
+    }
+
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
         return listOf(messageRenderer)
     }
 
-    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer = ProductChatMenuRenderer(product, chatId)
+    private val chatPreviewDelegate = ProductChatPreviewDelegate(origin)
+
+    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
+        ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
+
+    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -89,7 +116,7 @@ class ProductChatExtension(
             chatExtensionContext.subscribeNewMessages(NewMessagesRoomFilter.AnyFromExtension(id))
                 .filter { it.origin !is ChatMessageOrigin.Extension }
                 .onEach { message -> routeMessage(message) }
-                .launchIn(chatExtensionContext.scope)
+                .launchIn(scope)
 
             // Enable chat messaging before the worker's started hook so an initial/welcome message
             // routes. The reference is released from the finally so a dispose that races boot never
@@ -97,11 +124,20 @@ class ProductChatExtension(
             val reference = workerRefCounter.acquire(product.id, "chat:${product.id.value}")
             try {
                 reference.enableModalityApi(WorkerModalityApi.Chat(messaging))
-                runningWorker.attach(reference.worker())
+                // A boot failure must surface as failed calls, not as a chat that waits forever.
+                runCatching { reference.worker() }.fold(
+                    onSuccess = runningWorker::attach,
+                    onFailure = { error ->
+                        if (error is CancellationException) throw error
+                        Timber.e(error, "No worker to drive the chat of ${product.id.value}")
+                        runningWorker.fail(error)
+                    },
+                )
                 awaitCancellation()
             } finally {
                 withContext(NonCancellable) { reference.release() }
-                runningWorker.attach(null)
+                // A cell still held by a surviving view model must fail, not wait.
+                runningWorker.fail(Disposed())
             }
         }
     }
@@ -109,7 +145,7 @@ class ProductChatExtension(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ProductChatExtension) return false
-        return product == other.product
+        return product == other.product && origin == other.origin
     }
 
     override fun hashCode(): Int = product.hashCode()
@@ -124,7 +160,7 @@ class ProductChatExtension(
 
     private suspend fun routeMessage(message: ChatMessage) {
         when (val content = message.content) {
-            is ChatMessage.Content.Text -> runningWorker.onUserMessage(content.text)
+            is ChatMessage.Content.Text -> runningWorker.onUserMessage(message.chatId.productRoomId(id), content.text)
             else -> {}
         }
     }
@@ -145,14 +181,17 @@ class ProductChatExtension(
             return Result.success(chatMessage.id)
         }
 
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+            roomsWithoutInput.update { rooms ->
+                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
+            }
+            return Result.success(Unit)
+        }
+
         override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
             return extensionContext.subscribeOwnRooms().map { chatIds ->
                 chatIds.mapNotNull { chatId ->
-                    val param = chatId.extractProductChatIdParameter(id)
-                        .logFailure("Unexpected state: subscribeOwnRooms returned corrupted chatId: ${chatId.value}")
-                        .getOrNull() ?: return@mapNotNull null
-
-                    ProductChatRoom(roomId = param.value, participatingAs = "RoomHost")
+                    chatId.productRoomId(id)?.let { ProductChatRoom(roomId = it.value, participatingAs = RoomParticipation.ROOM_HOST) }
                 }
             }
         }
@@ -160,7 +199,7 @@ class ProductChatExtension(
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)
             is ProductBotMessage.Custom -> {
-                val messageContent = ProductsMessageContent(messageType, data)
+                val messageContent = ProductsMessageContent(messageType, data, alt)
                 ChatMessage.Content.Custom(
                     rendererId = messageRenderer.id,
                     content = Result.success(messageContent)

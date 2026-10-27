@@ -63,15 +63,19 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      userConfirmation: {
-        confirmPermission: async (request) => {
-          reviews.push(request);
-          return decision;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmPermission: async (request) => {
+            reviews.push(request);
+            return decision;
+          },
         },
-      },
-    }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
     expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
       decision,
       reviews: [review],
@@ -529,12 +533,6 @@ describe("createWasmRawCallbacks", () => {
                 return (
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
-              case "PreimageSubmit":
-                calls.push([
-                  "confirmUserAction:PreimageSubmit",
-                  review.value.size,
-                ]);
-                return review.value.size === 42n;
               default:
                 return false;
             }
@@ -675,14 +673,6 @@ describe("createWasmRawCallbacks", () => {
         }),
       ),
     ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "PreimageSubmit",
-          value: { size: 42n },
-        }),
-      ),
-    ).toBe(true);
 
     await settle();
 
@@ -695,7 +685,6 @@ describe("createWasmRawCallbacks", () => {
       ],
       ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
       ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
-      ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 
     disposePreimages?.();

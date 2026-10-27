@@ -2,8 +2,9 @@ import Foundation
 import UIKitExt
 import PolkadotUI
 import ChainRegistry
+import Products
 
-protocol WalletMainViewProtocol: ControllerBackedProtocol {
+protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketCardOrigin {
     func didReceive(isCollectiblesAvailable: Bool)
     func didReceive(pocketCards: [PocketCardViewModel])
     func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel)
@@ -19,8 +20,8 @@ protocol WalletMainPresenterProtocol: AnyObject {
 
 @MainActor
 protocol WalletMainWireframeProtocol: AnyObject {
-    func showCollectibles(from view: WalletMainViewProtocol?, url: URL)
-    func showPocketCard(_ card: PocketCardViewModel)
+    func showProduct(page: ProductPage)
+    func showPocketCard(_ card: PocketCardViewModel, from view: WalletMainViewProtocol?)
     func confirmPocketCardRemoval(_ card: PocketCardViewModel, onConfirm: @escaping () -> Void)
 }
 
@@ -31,7 +32,7 @@ protocol WalletMainInteractorInputProtocol: AnyObject {
 
 @MainActor
 protocol WalletMainInteractorOutputProtocol: AnyObject {
-    func didReceiveCollectibles(url: URL?)
+    func didReceiveCollectibles(page: ProductPage)
     func didReceive(networkStatus: NetworkStatus)
     func didReceive(pocketCards: [PocketCardViewModel])
 }

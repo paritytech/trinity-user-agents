@@ -17,11 +17,14 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Two ownership bands. A **per-product-connection** band (byte frames → dispatcher → role-neutral product runtime) is
-minted once per host↔product connection by the role handle and lives for that product's whole session; a **shared
-per-host** band owns role-neutral infrastructure (`RuntimeServices`) and the role object (`PairingHost` or
-`SigningHost`), which is itself the `ProductAuthority`. Pure `host_logic` is a no-I/O library both bands call, not a
-stage in the frame path; the host's `Platform` impl is the syscall floor.
+Two ownership bands. A **per-product-connection** band (byte frames →
+dispatcher → role-neutral product runtime) is minted once per host↔product
+connection by the role handle and lives for that product's whole session; a
+**shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
+and the role object (`PairingHost` or `SigningHost`), which is itself the
+`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
+both bands call, not a stage in the frame path; the host's `Platform` impl is
+the syscall floor.
 
 ```text
    ┌───────────────────────────────────────────────────────┐
@@ -48,14 +51,16 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    └───────────────────────────────────────────────────────┘
                               │  wallet-authority tail :
                               │  sign · alias · entropy · alloc
-                              │  via  Arc<dyn ProductAuthority>
+                              │  via  ProductAccounts, the role
+                              │  bound to this product
                               ▼
 
  ══ shared per host app ( one per host, all connections ) ══════
      the PairingHostRuntime | SigningHostRuntime handle owns both:
    ┌─────────────────────────────┐   ┌────────────────────────┐
    │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │ PairingHost | SigningHost   │   │ platform · chain · RPC │
+   │          + HostSession      │   │ platform · chain · RPC │
+   │ PairingHost | SigningHost   │   │                        │
    └─────────────────────────────┘   └────────────────────────┘
               │
               │  PairingHost only : encrypted SSO channel
@@ -77,10 +82,15 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    └───────────────────────────────────────────────────────┘
 ```
 
-`ProductRuntimeHost` handles everything role-neutral (id normalization, permission gating, confirmation, soft
-product-key derivation), then delegates the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through an `Arc<dyn ProductAuthority>` handle with an
-`AuthoritySession` snapshot the role revalidates before touching key material.
+`ProductRuntimeHost` handles everything role-neutral (id normalization,
+permission gating, confirmation, soft product-key derivation), then delegates
+the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
+`create_proof`, `allocate_resources`, `derive_entropy`) through a
+`ProductAccounts` handle bound to its product, with an `AuthoritySession`
+snapshot the role revalidates before touching key material. Its
+per-connection state (adapters, permissions, action channels, open operations
+and its own chain connection) lives in a `ProductConnection`, and login, logout
+and connection state go through the role's `HostSession`.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters are grouped by surface under
 `runtime/capabilities/`; cross-capability fixtures and tests live in `runtime/tests.rs` and `runtime/tests/`.
@@ -90,10 +100,12 @@ product-key derivation), then delegates the wallet-authority tail (`sign_*`, `cr
 Permission grants are scoped by product id and typed request, so a grant for one product never authorizes another
 product or another permission class.
 
-Remote permissions carry one exception. A product whose label is listed in
-`truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` holds every `RemotePermission` without a prompt: while nothing is
-stored the lookup reports `Authorized` and writes nothing. A stored `Denied` still wins, so the admin surface revokes
-it. Device permissions, identity disclosure and account access always prompt.
+Trusted labels in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` receive
+default grants for generic remote permissions, identity disclosure and account
+access only when no stored decision exists. Explicit denial still wins. This is
+an intentional stricter integration policy than the upstream 0.26 blanket
+trusted-product bypass. Device permissions, JAM peer access, Chat authority,
+profile disclosure and Statement Store allowance retain their own consent.
 
 Statement Store allocation uses the durable `StatementStoreAllowance { derivation_index }` decision: `None` is the
 legacy allowance account; `Some(index)` is that exact product-account selector. Both approval and denial survive runtime
@@ -129,7 +141,8 @@ ProductRuntime
         v
 PermissionsService(storage, platform, product_id)
         |
-        +-- blessed product, non-device --> allow without storage or prompt
+        +-- trusted product --> allow without storage or prompt,
+        |                       unless the OS refuses a device capability
         |
         | builds storage key:
         |
@@ -178,8 +191,8 @@ A remote permission resolves in this order:
 1. `Remote { domains: [] }` is `Denied`. An empty bundle grants nothing, so failing closed outranks the whitelist.
 2. A stored decision wins — the exact slot for a non-domain variant, or the most specific matching
    `remote_domain_candidates` entry for a domain.
-3. Nothing stored and the product's label is trusted: `Authorized`, with no prompt and no write.
-4. Nothing stored and the label is untrusted: `NotDetermined`, so the lookup prompts and persists the answer.
+3. Nothing stored and the product's label is trusted: generic remote permissions are `Authorized`, with no prompt or write.
+4. Otherwise, including `JamPeers`: `NotDetermined`, so the lookup prompts and persists the answer.
 
 Because a trusted product's grant is never written, revoking its domain access means writing `Denied` for the `*`
 pattern; denying a single host leaves every other host granted.
@@ -217,12 +230,17 @@ touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
 a compile error, not a runtime `Unavailable`.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`, `paseo`, or `testnet`). The shell supplies it
-alongside the chain genesis hashes from the same network configuration used by wallet onboarding. It must match the
-People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive under `uid.<suffix>` and `peopl.<suffix>`,
-while the chain uses that suffix for proof contexts. Configuration keeps local activation and key derivation available
-offline. The core validates supported suffixes but does not automatically check that the configured suffix matches the
-chain.
+A local session's usernames come from the dotNS contracts on Asset Hub, read
+after activation. A name the host passes is shown until a record answers.
+
+`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
+`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
+from the same network configuration used by wallet onboarding. It must match
+the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
+under `uid.<suffix>` and `peopl.<suffix>`, while the chain uses that suffix for
+proof contexts. Configuration keeps local activation and key derivation
+available offline. The core validates supported suffixes but does not
+automatically check that the configured suffix matches the chain.
 
 `SigningHostConfig.coinage_instance_id` is trusted host/network configuration for instance-scoped Coinage runtimes. The
 constructor leaves it `None` for legacy ABI compatibility; an embedder sets `Some(instance_id)` before creating the
@@ -254,6 +272,13 @@ identity-only wallet loader is not another allocator; a single Host runtime may 
 responsibility for secure unlock.
 
 #### JAM peer transport
+
+The public permission codec keeps released `BalanceAccess` at index 5 and uses
+index 6 for `JamPeers`; trait 111 and its method IDs do not change. Obsolete
+explicit JAM permission frames (index 5 followed by a genesis hash) fail the
+dispatcher's full-payload decode. Private persisted permission keys retain the
+old JAM index 5 and use a separate stored index 6 for balance access, so existing
+JAM grants and denials neither disappear nor become balance permissions.
 
 Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
 111) themselves over JAMNP-S QUIC, with one endpoint per product connection.
@@ -319,25 +344,66 @@ it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
 and `core_database_status()` reports the SQLite version, schema version and
 path. Web hosts do not compile the store.
 
+### Durable transactions
+
+The `durable` module runs over the core database. A domain registers presigned
+mortal extrinsics (`DurableRequest::presigned`, then `execute` or
+`execute_with`, whose hook writes the domain's own rows in the same
+transaction); the engine broadcasts them once committed and follows each with
+a submission watch. Whatever no watch owns, including everything a previous
+process left live, is decided by recovery passes: the completion ladder over
+the shared chain capabilities and the domain's `CompletionOracle`. Every
+verdict is a compare-and-set against the status and attempt it was derived
+from, and rows are never deleted.
+
+A domain can also schedule transactions it cannot sign yet
+(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
+`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
+policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain, policy and group asks the
+policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
+and fails each `GiveUp`, backing off after rounds that decide nothing. A
+presigned submission may carry a plan as well. When a verdict proves a
+transaction with a policy failed, the verdict writer asks the policy's
+`can_retry`, and a yes sends the row back to be built instead of failing it.
+It is built again after a cooldown that grows with the attempts the row
+records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+recovery run.
+
+The engine reports whether work is pending, including rows waiting to be
+built, to `HostCallbacks::durable_work_changed`; the host then runs a
+background task awaiting `run_durable_recovery()`, which returns once nothing
+is live.
+
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its role-specific lifecycle, so no method exists
-on a role that can't mean it:
+Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
+traits; each owns its role-specific lifecycle, so no method exists on a role
+that can't mean it:
 
-- **`PairingHost`** (seedless): the user's keys live in an external wallet, so signing/aliases/entropy relay over an
-  encrypted SSO channel (statement store on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
-  v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and ChaCha20-Poly1305. It owns pairing/login state, persisted
-  auth-session reload, and remote signing-host liveness monitoring.
-- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy, no pairing flow.
-  `signing_host/local_activation.rs` establishes a session from host-held secret material. Its public identity is the
-  RFC-0022 `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
-  product-owned registry entries; aliases, proofs, direct signatures, and internal personhood flows use the requested or
-  user-selected registered key without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values against the
-  chain's `Members` pallet and pins membership, ring pages, exponent, and revision reads to one finalized block before
-  creating a proof. Extrinsic-payload signing and v4 transaction construction work from pre-encoded payload fields, so
-  no chain metadata is needed; statement-store and Bulletin allowance allocation are native-only (wasm builds report
-  them as unavailable) and do need metadata, which they take from the `RuntimeServices`-owned per-chain cache rather
-  than re-reading it per call.
+- **`PairingHost`** (seedless): the user's keys live in an external wallet, so
+  signing/aliases/entropy relay over an encrypted SSO channel (statement store
+  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
+  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  pairing and login state, persisted auth-session reload, remote signing-host
+  liveness monitoring and the request channel, and reports session changes to
+  `PairingHost` through `PairedSessionOwner`.
+- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
+  no pairing flow. `signing_host/local_activation.rs` establishes a session
+  from host-held secret material. Its public identity is the RFC-0022
+  `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
+  product-owned registry entries; aliases, proofs, direct signatures, and
+  internal personhood flows use the requested or user-selected registered key
+  without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values
+  against the chain's `Members` pallet and pins membership, ring pages,
+  exponent, and revision reads to one finalized block before creating a proof.
+  Extrinsic-payload signing and v4 transaction construction work from
+  pre-encoded payload fields, so no chain metadata is needed;
+  statement-store and Bulletin allowance allocation are native-only (wasm
+  builds report them as unavailable) and do need metadata, which they take from
+  the `RuntimeServices`-owned per-chain cache rather than re-reading it per
+  call.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs, session/SSO crypto, key derivation, and
 permission policy, while all I/O (statement-store RPC, storage, prompts, chain RPC) stays in the layers above.
@@ -351,13 +417,17 @@ level to the page.
 
 ### Inter-host SSO
 
-`PairingHost::call(request)` sends typed requests to [`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs).
-Handlers own consent and business logic; `sso_responder.rs` owns the transport loop and shared allowance helpers.
-Resource consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate
-pending approval before allocation or key return. Allocation failure details stay in local transcripts. Allocation
-requests use the canonical `truapi::latest::AllocatableResource` type. Signing uses canonical request and result types.
-Product-scoped VRF requests use `ProductRequest<P>` to attach the caller to a canonical payload. Both product and SSO
-signing encode `with_signed_transaction` with the one-byte `OptionBool` codec.
+`SsoRequestService::call(request)` sends typed requests to
+[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
+consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
+owns the transport loop: it answers pairing, serves the session and drops
+duplicate requests. Resource consent is bound to the request's signing session:
+account changes, disconnects, and reactivation invalidate pending approval before
+allocation or key return. Allocation failure details stay in local transcripts.
+Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
+Signing uses canonical request and result types. Product-scoped VRF requests use
+`ProductRequest<P>` to attach the caller to a canonical payload. Both product and
+SSO signing encode `with_signed_transaction` with the one-byte `OptionBool` codec.
 
 A pairing host that stops waiting because its caller withdrew the request sends
 a `Cancel` naming it, when that request is still the newest on the session's
@@ -367,9 +437,11 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed once through
-`SigningHostRuntime::set_device_pairing_observer`, and on a native host to `HostCallbacks::device_paired`. It carries
-the `PairedSsoPeer` that pairing produced, which is also what `resume_pairing` and `disconnect_paired_host` take.
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
+once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
+host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
+pairing produced, which is also what `resume_pairing` and
+`disconnect_paired_host` take.
 
 A native host reaches the responder through `NativeTrUApiHostRuntime`: `notify_pairing_allowance_allocation` and
 `notify_pairing_failed` for the two notices a peer gets before the answer, `establish_pairing` for the answer itself,
@@ -420,25 +492,29 @@ are exposed through the trait signatures below. `ProductContext` and
 `ProductExecutionKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
-`parity-scale-codec`; `ProductContext` decodes through its validating
-constructor, so a context off the wire carries a normalized product id.
+`parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
+parsing, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-`normalize_product_identifier` is the single chokepoint that turns a host- or
-wire-supplied product id into the canonical form derivation, product storage and
-permission scopes are keyed by; `is_product_identifier` is its boolean form.
+Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
+that turns a host- or wire-supplied product id into the canonical form
+derivation, product storage and permission scopes are keyed by. Nothing else
+builds a `ProductId`, so holding one means the id is normalized. Code that reads
+an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
+and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
+`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-prompt only for device permissions. The runtime grants
+permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
-AutoSigning without approval. Legacy-account signing still asks the user.
+AutoSigning without approval. Legacy-account signing still asks the user, except
+for raw bytes signed inside the `<Bytes>` watermark.
 
 ### Host Callback Traits
 
@@ -453,8 +529,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Defined in `truapi_provider::platform` so the provider implements them
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
-- `UserConfirmation`: confirm signing, transaction, resource, alias, and
-  preimage actions before the core asks the paired wallet.
+- `UserConfirmation`: confirm signing, transaction, resource and alias
+  actions before the core asks the paired wallet. `preimage.submit` raises
+  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
+  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
+  Allocating or renewing the Bulletin allowance may still ask the paired
+  wallet.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
@@ -482,6 +562,66 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   decrypts and renders each reference; nothing returns to the product but
   acceptance. Naming the contact is optional and presents the reference alone
   by default; drawing avatars is optional and draws nothing by default.
+- `FundingPlatform`: show the native funding overlay for a session, with its
+  direction and amount and the product that opened it, and report whether the
+  user started or dismissed it. Installed with `set_funding_platform`; the
+  Balance card opens sessions with `open_funding`. The core owns the sessions,
+  persists them, expires them, and answers Funding calls `Unsupported` while no
+  overlay is installed.
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `open_funding`,
+  `funding_session`, `funding_sessions`, `funding_history`,
+  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  The host owns the funding history. A session is stored only once the user
+  starts it in the overlay. `funding_sessions` lists sessions in flight first,
+  then ended ones the host has not recorded, each newest first. An ended
+  session is handed to the host through `funding_session_changed` each time
+  funding resumes until the host calls `acknowledge_funding_session`, so the
+  host's history writes every outcome once. After that the core keeps the
+  newest 64 recorded sessions per product in full and compacts older ones
+  into the session pack (intent, owner, direction, amounts, outcome and
+  times), which it never trims, so a product watching a compacted session
+  still gets its terminal item. It keeps the 200 newest ended sessions the
+  host has not recorded in full too, and compacts older ones the same way.
+  `funding_history` lists every ended session the host recorded or the core
+  compacted, as a summary newest first, so a host that lost its history
+  rebuilds it from there. A product opens a session with
+  `request({ id, direction, amount? })` and watches it with
+  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
+  product, so a product that reloads under the overlay still finds it, and a
+  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
+  so a request that goes away cannot leave the session presenting; one the
+  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
+  the pack are versioned blobs: a corrupt one is set aside under
+  `FundingSessionsUnreadable`, and one in a newer format is left untouched
+  while funding answers a host failure. Products see a session in flight as
+  `InProgress`.
+- `BalancePlatform`: stream what a payment request can spend right now, the
+  current value first and then each change. Installed with
+  `set_balance_platform`; native hosts use `set_balance_callbacks` with
+  `notify_balance`. The core requires a session and the product's
+  `BalanceAccess` remote permission, asking for it on the first subscription
+  and answering `PermissionDenied` when the user refuses. The balance is the
+  user's, per purse: one `notify_balance` reaches every product following the
+  purse, and the core checks each product's permission again before passing a
+  balance on, so a revoked grant ends that product's stream with
+  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
+  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
+  answers `Unsupported`.
+- `PaymentPlatform`: pay from the user's balance to an account once the user
+  approves, and stream each payment's status by its caller-chosen id.
+  Installed with `set_payment_platform`; native hosts use
+  `set_payment_callbacks` with `notify_payment_status`. The core requires a
+  session and hands the host each id hashed with the product. Without it,
+  `request` and `statusSubscribe` answer `Unsupported`.
+- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
+  stream each top-up's status. Installed with `set_top_up_platform`; native
+  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  requires a session, checks the source keys, passes a `ProductAccount`
+  source through for the host to derive, and hands the host each id hashed
+  with the product. The host owns claiming, retries, partial claims and
+  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
+  `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
@@ -494,19 +634,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   one and delivers a notification otherwise, may add a calendar event, and
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
+- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
+  it the core refuses an invalid request, a Worker the user has not tapped in
+  the last 5 seconds, and a second open scan. After, it refuses a code the
+  request does not accept and any pairing request. The trait's docs list what
+  the host must do.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform`, `ProfilePlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
-host supplies each only when it can serve it. `ExpandedCardHost` is in neither,
-because it travels per connection rather than with the platform. Codegen reads
-`OptionalPlatform` to emit each listed capability as an optional group on the
-host-callback surface.
+`PocketPlatform`, `ProfilePlatform`, `GamePlatform` and `ScannerPlatform`, which
+`OptionalPlatform` lists instead: a host supplies each only when it can serve it.
+`ExpandedCardHost` travels per connection rather than with the platform.
+`BalancePlatform`, `PaymentPlatform` and `TopUpPlatform` are installed separately
+with `set_balance_platform`, `set_payment_platform` and `set_top_up_platform`
+or native `set_*_callbacks`. The host-callback bridge cannot yet carry their
+typed errors or two-argument status streams. Codegen reads `OptionalPlatform`
+to emit each listed capability as an optional host-callback group.
 
-Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform`, `ProfilePlatform` or `GamePlatform`
-does the same for Contacts, Pocket, Profile or Game calls. A connection without
-an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls `Unsupported`.
+Omitting an optional platform makes its calls answer `Unsupported`. A connection
+without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
+`Unsupported`. The retained native Chat custody and SSO top-up path remain
+separate from the released payment platform adapters.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

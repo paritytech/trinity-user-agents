@@ -27,6 +27,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.TextUnit
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
@@ -86,8 +87,8 @@ internal fun EnterAmountInput(
             val measuredAmount = remember(input) { input.ifEmpty { "0" } }
             val tickerSuffix = remember(ticker) { " $ticker" }
             val lockup = remember(fiatSymbol, measuredAmount, tickerSuffix) { fiatSymbol + measuredAmount + tickerSuffix }
-                .withCurrencyTickerStyle(maxStyle)
-            val heightKeeper = remember(tickerSuffix) { "0$tickerSuffix" }.withCurrencyTickerStyle(maxStyle)
+                .withCurrencyTickerStyle(maxStyle, TickerWordmark.SmallCaps)
+            val heightKeeper = remember(tickerSuffix) { "0$tickerSuffix" }.withCurrencyTickerStyle(maxStyle, TickerWordmark.SmallCaps)
 
             val fitted = remember(textMeasurer, lockup, maxStyle, minFontSize, boxWidth) {
                 textMeasurer.fitOnOneLine(lockup, maxStyle, minFontSize, maxLockupWidth(boxWidth))
@@ -158,7 +159,7 @@ internal fun EnterAmountInput(
 
                 NovaText(
                     modifier = Modifier.alignByBaseline(),
-                    text = tickerSuffix.withCurrencyTickerStyle(style),
+                    text = tickerSuffix.withCurrencyTickerStyle(style, TickerWordmark.SmallCaps),
                     style = style,
                     color = PolkadotTheme.colors.fg.secondary,
                     maxLines = 1,

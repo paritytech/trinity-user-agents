@@ -1,8 +1,7 @@
-use super::playground::split_playground_docs;
-use super::*;
+use super::{playground::split_playground_docs, *};
 
 fn ts_example_file_stem(name: &str) -> String {
-    name.to_case(Case::Kebab)
+	name.to_case(Case::Kebab)
 }
 
 /// Prelude injected at the top of every generated example. Declares the
@@ -71,45 +70,45 @@ export {};
 /// the playground's CI can typecheck them against the published types and
 /// the rxjs operators its examples use.
 pub fn generate_client_examples(
-    api: &ApiDefinition,
-    output_dir: &str,
-    target_version: u32,
+	api: &ApiDefinition,
+	output_dir: &str,
+	target_version: u32,
 ) -> Result<()> {
-    let output_path = Path::new(output_dir);
-    if output_path.exists() {
-        fs::remove_dir_all(output_path)?;
-    }
-    fs::create_dir_all(output_path)?;
-    fs::write(output_path.join("__ambient.d.ts"), EXAMPLE_AMBIENT_DTS)?;
-    validate_versioned_wrapper_shapes(api)?;
+	let output_path = Path::new(output_dir);
+	if output_path.exists() {
+		fs::remove_dir_all(output_path)?;
+	}
+	fs::create_dir_all(output_path)?;
+	fs::write(output_path.join("__ambient.d.ts"), EXAMPLE_AMBIENT_DTS)?;
+	validate_versioned_wrapper_shapes(api)?;
 
-    let wrappers = collect_versioned_wrappers(api);
-    let services = public_services(api)?;
+	let wrappers = collect_versioned_wrappers(api);
+	let services = public_services(api)?;
 
-    for service in services {
-        let trait_def = service.trait_def;
-        let mut methods = included_methods(trait_def, &wrappers, target_version)?;
-        methods.sort_by_key(|method| (method_wire_sort_id(method), method.name.as_str()));
+	for service in services {
+		let trait_def = service.trait_def;
+		let mut methods = included_methods(trait_def, &wrappers, target_version)?;
+		methods.sort_by_key(|method| (method_wire_sort_id(method), method.name.as_str()));
 
-        for method in methods {
-            let docs = split_playground_docs(method.docs.as_deref())?;
-            let Some(client_example) = docs.client_example else {
-                continue;
-            };
-            let filename = format!(
-                "{}-{}.ts",
-                ts_example_file_stem(&trait_def.name),
-                ts_example_file_stem(&method.name)
-            );
-            let code = format!(
-                "{EXAMPLE_PRELUDE}\
+		for method in methods {
+			let docs = split_playground_docs(method.docs.as_deref())?;
+			let Some(client_example) = docs.client_example else {
+				continue;
+			};
+			let filename = format!(
+				"{}-{}.ts",
+				ts_example_file_stem(&trait_def.name),
+				ts_example_file_stem(&method.name)
+			);
+			let code = format!(
+				"{EXAMPLE_PRELUDE}\
                  {client_example}\n\
                  \n\
                  export {{}};\n"
-            );
-            fs::write(output_path.join(filename), code)?;
-        }
-    }
+			);
+			fs::write(output_path.join(filename), code)?;
+		}
+	}
 
-    Ok(())
+	Ok(())
 }

@@ -1,28 +1,29 @@
 import Foundation
 import Testing
+import DesignSystem
 import ChainRegistry
 import Products
 import SubstrateSdk
 import Keystore_iOS
+import StructuredConcurrency
 import TrUAPIHost
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
 import UIKitExt
+import StructuredConcurrencyTestSupport
 @testable import polkadot_app
 
 // MARK: - Helpers
 
 private let testProduct = ProductExecutionConfig(productId: "test.product", executionKind: .app)
 
-private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPIChainConnectionPool {
-    TrUAPIChainConnectionPool(
-        engineResolver: { genesisHash in
-            chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                chainRegistry.getConnection(for: chain.chainId)
-            }
-        },
+private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPIV2SpecConnectionPool {
+    TrUAPIV2SpecConnectionPool(
+        chainRegistry: chainRegistry,
+        applicationHandler: MockApplicationHandler(),
+        dateProvider: MockDateProvider(),
         logger: Logger.shared
     )
 }
@@ -85,9 +86,12 @@ private func makeBridge(
     confirmationPresenter: any TrUAPIConfirmationPresenting = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    themeManager: MockThemeManager = MockThemeManager(),
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -111,8 +115,9 @@ private func makeBridge(
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
+        themeManager: themeManager,
         logger: Logger.shared
-    ))
+    ), cardFace: cardFace)
 }
 
 // MARK: - Tests
@@ -121,6 +126,25 @@ private func makeBridge(
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// The core hands over a Pocket link as `polkadotapp://pocket/...`, which names
+    /// no product. Opened as a product page it would go nowhere, so it has to
+    /// reach the router's app-link path, which takes it to the Pocket.
+    @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+        let link = "polkadotapp://pocket/add?product=game.dot&card=loyalty"
+
+        try await bridge.navigateTo(url: link)
+
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == URL(string: link))
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to
@@ -178,6 +202,7 @@ struct RustRuntimeBridgeTests {
         (.location, .notDetermined),
         (.clipboard, .notApplicable),
         (.biometrics, .notApplicable),
+        (.motion, .notApplicable),
     ])
     func devicePermissionStatusWithoutOSQuery(
         request: HostDevicePermissionRequest,
@@ -256,6 +281,22 @@ struct RustRuntimeBridgeTests {
             }
         #expect(result == expected)
         #expect(guard_.requestedBatchedPermissions == [.networkAccess(domain: "a.io")])
+    }
+
+    @Test func remotePermissionKeepsDomainBundleIdentity() async throws {
+        let guard_ = MockPermissionGuard()
+        let bridge = makeBridge(permissionGuard: guard_)
+        _ = try await bridge.remotePermission(
+            product: testProduct, request: .remote(domains: ["a.io", "b.io"])
+        )
+        #expect(guard_.requestedBatchedPermissions == [.networkAccessBundle(domains: ["a.io", "b.io"])])
+    }
+
+    @Test func remotePermissionBalanceAccess() async throws {
+        let guard_ = MockPermissionGuard()
+        let bridge = makeBridge(permissionGuard: guard_)
+        _ = try await bridge.remotePermission(product: testProduct, request: .balanceAccess)
+        #expect(guard_.requestedBatchedPermissions == [.balanceAccess])
     }
 
     @Test func remotePermissionWebRTC() async throws {
@@ -582,21 +623,21 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        for review in [
-            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
-            .productSubtree(ProductSubtreeReview(productId: "test.product"))
-        ] {
-            #expect(await presenter.confirm(review: review, from: "test.product") == false)
-        }
+        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: "test.product"))
+        #expect(await presenter.confirm(review: review, from: "test.product") == false)
     }
 
-    // MARK: currentTheme
+    // MARK: setExpandedCardFaceShown
 
-    @Test func currentThemeReturnsDark() throws {
-        let bridge = makeBridge()
-        let theme = try bridge.currentTheme()
-        #expect(theme.name == .default)
-        #expect(theme.variant == .dark)
+    /// The page's request reaches the card's face and its answer comes back.
+    /// Called through `HostBridge` because the core does: an override whose
+    /// signature drifts would lose to the default and answer `.unsupported`.
+    @Test func expandedCardFaceReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
+        #expect(face.requests == [false])
     }
 
     // MARK: attach
@@ -648,6 +689,7 @@ struct RustRuntimeBridgeTests {
             chatFiles: UnavailableNativeChatFiles(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
+            themeManager: MockThemeManager(),
             logger: Logger.shared
         ))
 
@@ -672,6 +714,46 @@ struct RustRuntimeBridgeTests {
         #expect(execution.chainResponses.first?.0 == 7)
         #expect(execution.chainResponses.first?.1 == "{\"ok\":true}")
         #expect(execution.chainClosed == [7])
+    }
+
+    @Test func currentThemeBeforeAttachIsDefaultDark() throws {
+        let bridge = makeBridge()
+
+        let current = try bridge.currentTheme()
+        #expect(current == HostThemeSubscribeItem(name: ThemeName.default, variant: ThemeVariant.dark))
+    }
+
+    @Test func attachReportsManagerThemeAndNotifiesExecution() async throws {
+        let themeManager = MockThemeManager(selection: .berlinDay)
+        let bridge = makeBridge(themeManager: themeManager)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        let expected = HostThemeSubscribeItem(
+            name: ThemeName.custom(themeManager.theme.id),
+            variant: ThemeVariant.light
+        )
+        let current = try bridge.currentTheme()
+        #expect(current == expected)
+        #expect(execution.themeChanges == [expected])
+    }
+
+    @Test func themeChangeNotifiesAttachedExecution() async throws {
+        let themeManager = MockThemeManager(selection: .berlinNight)
+        let bridge = makeBridge(themeManager: themeManager)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        themeManager.select(.app(.berlinDay))
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        let current = try bridge.currentTheme()
+        #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])
+        #expect(execution.themeChanges.last?.name == ThemeName.custom(themeManager.theme.id))
+        #expect(current.variant == ThemeVariant.light)
     }
 
     /// Core storage keys (`Data`) are hex-encoded for the underlying store;

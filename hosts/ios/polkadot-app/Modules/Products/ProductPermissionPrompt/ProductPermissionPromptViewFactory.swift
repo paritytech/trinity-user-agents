@@ -156,8 +156,10 @@ private extension ProductPermissionPromptViewFactory {
         case .clipboard: String(localized: .Products.permissionCapabilityClipboard)
         case .openUrl: String(localized: .Products.permissionCapabilityOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityBiometrics)
+        case .motion: String(localized: .Products.permissionCapabilityMotion)
         }
     }
+
 
     static func makeIcon(systemName: String) -> UIImage? {
         let config = UIImage.SymbolConfiguration(pointSize: 60, weight: .regular)

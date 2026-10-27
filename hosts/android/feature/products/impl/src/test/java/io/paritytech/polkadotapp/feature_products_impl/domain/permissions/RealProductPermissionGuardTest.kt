@@ -44,8 +44,8 @@ class RealProductPermissionGuardTest {
 
     @Before
     fun setUp() {
-        coEvery { repository.withPermissionRequest(any(), any(), any()) } coAnswers {
-            thirdArg<suspend () -> Boolean>().invoke()
+        coEvery { repository.withPermissionRequest(any(), any()) } coAnswers {
+            secondArg<suspend () -> Boolean>().invoke()
         }
         guard = guardWith(remoteHandler, requester)
     }

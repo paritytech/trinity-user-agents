@@ -95,7 +95,7 @@ jobs:
           TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN_ANDROID }}
           GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
           REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
           FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}

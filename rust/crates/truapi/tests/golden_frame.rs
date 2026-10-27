@@ -17,17 +17,17 @@
 //!   messageType = Request
 //!   payload   = account_get_account,
 //!               inner = HostAccountGetRequest::V1(ProductAccountId {
-//!                   dot_ns_identifier: "foo",
+//!                   dot_ns_identifier: "foo.dot",
 //!                   derivation_index: DerivationIndex::Index(0),
 //!               })
 //!
-//! On the wire (17 bytes):
+//! On the wire (21 bytes):
 //!   [0c 70 3a 31]                      requestId = compact-len(3) + "p:1"
 //!   [02]                               trait discriminant 2 = account
 //!   [01]                               method discriminant 1 = get_account
 //!   [00]                               messageType: Request
 //!   [00]                               request wrapper version V1
-//!   [0c 66 6f 6f]                      compact-len(3) + "foo"
+//!   [1c 66 6f 6f 2e 64 6f 74]          compact-len(7) + "foo.dot"
 //!   [00]                               DerivationIndex variant Index
 //!   [00 00 00 00]                      u32 = 0
 //!
@@ -37,64 +37,66 @@
 //! older `@parity/truapi`.
 
 use parity_scale_codec::{Decode, Encode};
-use truapi::frame::{MESSAGE_TYPE_REQUEST, Payload, ProtocolMessage};
-use truapi::generated::wire_table;
-use truapi::v01;
-use truapi::versioned::account::HostAccountGetRequest;
+use truapi::{
+	frame::{MESSAGE_TYPE_REQUEST, Payload, ProtocolMessage},
+	generated::wire_table,
+	v01,
+	versioned::account::HostAccountGetRequest,
+};
 
 const GOLDEN: &[u8] = include_bytes!("snapshots/golden-account-get.bin");
 
 /// Payload byte count of the golden frame: the request wrapper's own version
-/// tag, a compact-length-prefixed 3-byte identifier, one `DerivationIndex`
+/// tag, a compact-length-prefixed 7-byte identifier, one `DerivationIndex`
 /// variant byte, and a `u32`. Spelled out term by term rather than measured
 /// from the codec, so a layout change has to move this number by hand.
-const GOLDEN_PAYLOAD_LEN: usize = 1 + 1 + 3 + 1 + 4;
+const GOLDEN_PAYLOAD_LEN: usize = 1 + 1 + 7 + 1 + 4;
 
 fn expected_request() -> HostAccountGetRequest {
-    HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-        product_account_id: v01::ProductAccountId {
-            dot_ns_identifier: "foo".to_string(),
-            derivation_index: v01::DerivationIndex::Index(0),
-        },
-    })
+	HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: "foo.dot".parse().expect("valid product id"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	})
 }
 
 #[test]
 fn golden_account_get_frame_decodes_to_expected_message() {
-    let decoded = ProtocolMessage::decode(&mut &GOLDEN[..])
-        .expect("golden frame must decode with the current wire codec");
+	let decoded = ProtocolMessage::decode(&mut &GOLDEN[..])
+		.expect("golden frame must decode with the current wire codec");
 
-    let expected = ProtocolMessage {
-        request_id: "p:1".to_string(),
-        payload: Payload {
-            trait_id: wire_table::ACCOUNT_GET_ACCOUNT.trait_id,
-            method_id: wire_table::ACCOUNT_GET_ACCOUNT.method_id,
-            message_type: MESSAGE_TYPE_REQUEST,
-            value: expected_request().encode(),
-        },
-    };
-    assert_eq!(decoded, expected);
+	let expected = ProtocolMessage {
+		request_id: "p:1".to_string(),
+		payload: Payload {
+			trait_id: wire_table::ACCOUNT_GET_ACCOUNT.trait_id,
+			method_id: wire_table::ACCOUNT_GET_ACCOUNT.method_id,
+			message_type: MESSAGE_TYPE_REQUEST,
+			value: expected_request().encode(),
+		},
+	};
+	assert_eq!(decoded, expected);
 }
 
 #[test]
 fn golden_account_get_payload_decodes_as_the_typed_request() {
-    let decoded = ProtocolMessage::decode(&mut &GOLDEN[..]).expect("decode");
-    assert_eq!(decoded.payload.message_type, MESSAGE_TYPE_REQUEST);
-    assert_eq!(
-        decoded.payload.value.len(),
-        GOLDEN_PAYLOAD_LEN,
-        "account_get_account request payload changed length; every product \
+	let decoded = ProtocolMessage::decode(&mut &GOLDEN[..]).expect("decode");
+	assert_eq!(decoded.payload.message_type, MESSAGE_TYPE_REQUEST);
+	assert_eq!(
+		decoded.payload.value.len(),
+		GOLDEN_PAYLOAD_LEN,
+		"account_get_account request payload changed length; every product \
          built against an older @parity/truapi now fails to decode"
-    );
+	);
 
-    let request = HostAccountGetRequest::decode(&mut &decoded.payload.value[..])
-        .expect("golden payload must decode as the typed request wrapper");
-    assert_eq!(request, expected_request());
+	let request = HostAccountGetRequest::decode(&mut &decoded.payload.value[..])
+		.expect("golden payload must decode as the typed request wrapper");
+	assert_eq!(request, expected_request());
 }
 
 #[test]
 fn golden_account_get_frame_round_trips() {
-    // Encoding the in-memory shape must reproduce the on-disk bytes exactly.
-    let decoded = ProtocolMessage::decode(&mut &GOLDEN[..]).expect("decode");
-    assert_eq!(decoded.encode(), GOLDEN);
+	// Encoding the in-memory shape must reproduce the on-disk bytes exactly.
+	let decoded = ProtocolMessage::decode(&mut &GOLDEN[..]).expect("decode");
+	assert_eq!(decoded.encode(), GOLDEN);
 }

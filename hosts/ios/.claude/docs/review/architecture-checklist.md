@@ -107,17 +107,6 @@ Walk through each applicable section. For each rule violated, note the severity 
 
 **Ref:** architecture/data-transport.md
 
-## Game
-
-- [ ] Game peer engines use one context/lifecycle owner for setup, reconnect, ordered signaling events, offer tracking, state publication, and teardown
-- [ ] Game peer engine async APIs await the context directly; no hidden unstructured bridge tasks inside the engine
-- [ ] Any one-shot tasks in `VideoGameConnectionManager` only bridge the synchronous manager API to async peer lifecycle calls
-- [ ] Game reconnect is driven by game signaling/session state, not by lower-level WebRTC creators
-- [ ] Disposed game peer engines/contexts are terminal; re-added peers get fresh engines
-- [ ] Game video teardown is one-shot and reachable from both explicit interactor throttle and interactor deinit; peer engines may finish async close after service/manager deinit
-
-**Ref:** architecture/game.md
-
 ## Device Sync
 
 - [ ] Device sync owns exactly one peer engine per supported remote device; membership removal disposes it and re-addition creates a fresh engine
@@ -146,6 +135,7 @@ Walk through each applicable section. For each rule violated, note the severity 
 - [ ] All user-visible strings localized
 - [ ] Build config guards (Sentry not running in tests/previews)
 - [ ] Build phase scripts exclude Debug configuration
+- [ ] Removing a compile flag: the kept branch is correct for Release, which may never have defined it; after rebasing onto main, grep again for the flag.
 - [ ] File size reasonable (<500 lines per file)
 - [ ] Type aliases used for domain concepts (ProductId, not String)
 - [ ] API boundary params parsed into typed models immediately

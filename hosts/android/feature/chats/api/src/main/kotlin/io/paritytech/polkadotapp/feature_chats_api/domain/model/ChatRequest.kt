@@ -4,7 +4,8 @@ data class ChatRequest(
     val welcomeMessageId: ChatMessageId,
     val timestamp: Long,
     val direction: Direction,
-    val status: Status
+    val status: Status,
+    val delivery: Delivery,
 ) {
     val id: ChatRequestId = welcomeMessageId
 
@@ -17,6 +18,20 @@ data class ChatRequest(
         PENDING,
         ACCEPTED,
         DECLINED
+    }
+
+    sealed interface Delivery {
+        /** Recorded locally, not yet on the statement store. */
+        data object Undelivered : Delivery
+
+        /** Can never be delivered, e.g. too large for any statement account. */
+        data object Failed : Delivery
+
+        /** On the statement store, signed by an account linkable to us (incoming and legacy requests too). */
+        data object Delivered : Delivery
+
+        /** On the statement store, signed by the per-[period] notification account; needs renewal each period. */
+        data class DeliveredAnonymously(val period: UInt) : Delivery
     }
 }
 

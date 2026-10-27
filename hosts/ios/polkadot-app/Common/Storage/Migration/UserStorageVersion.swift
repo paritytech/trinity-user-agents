@@ -20,6 +20,10 @@ enum UserStorageVersion: String, CaseIterable {
     case version53 = "UserDataModel53"
     case version53Chat = "UserDataModel53Chat"
     case version54 = "UserDataModel54"
+    // The release and feature integration defined different version-54 schemas.
+    // Retain both source models; only version 55 combines their additions.
+    case version54Chat = "UserDataModel54Chat"
+    case version55 = "UserDataModel55"
 
     // swiftlint:disable:next cyclomatic_complexity
     func nextVersion() -> UserStorageVersion? {
@@ -50,9 +54,9 @@ enum UserStorageVersion: String, CaseIterable {
             .version52
         case .version52:
             .version53
-        case .version53, .version53Chat:
-            .version54
-        case .version54:
+        case .version53, .version53Chat, .version54, .version54Chat:
+            .version55
+        case .version55:
             nil
         }
     }

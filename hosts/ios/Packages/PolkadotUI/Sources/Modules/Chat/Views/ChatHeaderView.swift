@@ -6,15 +6,19 @@ internal import UIKit_iOS
 
 public struct ChatHeaderConfiguration: HashableContentConfiguration {
     public let avatarViewModel: AvatarViewModel
+    /// Loaded over ``avatarViewModel``, which shows until it arrives.
+    public let icon: (any ImageViewModelProtocol)?
     public let username: String
     public let additionalInfo: String?
 
     public init(
         avatarViewModel: AvatarViewModel,
+        icon: (any ImageViewModelProtocol)? = nil,
         username: String,
         additionalInfo: String? = nil
     ) {
         self.avatarViewModel = avatarViewModel
+        self.icon = icon
         self.username = username
         self.additionalInfo = additionalInfo
     }
@@ -27,6 +31,18 @@ public struct ChatHeaderConfiguration: HashableContentConfiguration {
 
     static func empty() -> Self {
         .init(avatarViewModel: .colored(text: "", colorSeed: ""), username: "")
+    }
+
+    public static func == (lhs: ChatHeaderConfiguration, rhs: ChatHeaderConfiguration) -> Bool {
+        lhs.avatarViewModel == rhs.avatarViewModel &&
+            lhs.username == rhs.username &&
+            lhs.additionalInfo == rhs.additionalInfo
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(avatarViewModel)
+        hasher.combine(username)
+        hasher.combine(additionalInfo)
     }
 }
 
@@ -86,6 +102,7 @@ private extension ChatHeaderView {
         appliedConfiguration = configuration
 
         avatarView.viewModel = configuration.avatarViewModel
+        avatarView.icon = configuration.icon
         titleLabel.text = configuration.username
     }
 }

@@ -76,7 +76,7 @@ class RealProductPermissionGuard @Inject constructor(
             val stillNotGranted = notYetGranted.filterNot { check(productId, it) }
             if (stillNotGranted.isEmpty()) return@withLock true
 
-            repository.withPermissionRequest(productId, stillNotGranted) {
+            repository.withPermissionRequest(productId) {
                 if (stillNotGranted.any { repository.isDenied(productId, it) }) return@withPermissionRequest false
                 when (requester.promptBatched(productId, stillNotGranted)) {
                     PermissionDecision.AllowAlways -> {
@@ -143,7 +143,7 @@ class RealProductPermissionGuard @Inject constructor(
         // A concurrent request may have granted this while we waited for the lock
         if (check(productId, permission)) return true
 
-        return repository.withPermissionRequest(productId, listOf(permission)) {
+        return repository.withPermissionRequest(productId) {
             if (repository.isDenied(productId, permission)) return@withPermissionRequest false
             when (permission) {
                 is RemotePermission -> remotePermissionHandler.request(productId, permission)

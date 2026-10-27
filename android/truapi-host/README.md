@@ -75,6 +75,7 @@ The public surface lives in
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
 - `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
+- `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It asks `topUpStatus` or `paymentStatus` once for an operation's current status and expects each later one through `notifyTopUpStatus` or `notifyPaymentStatus` until a terminal one; `notifyBalance` pushes each balance change. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
 
 Pass an existing native wallet as `nativeWallet` when constructing `TrUAPIHostRuntime`. The separate `NativeCoinageHost`
 interface contains only `nativeCoinage(request)`; it is not part of `HostBridge` or product callbacks. Omitting this
@@ -88,14 +89,14 @@ together when updating it.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)
-and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
@@ -103,23 +104,25 @@ import uniffi.truapi.HostRejection
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override fun createRoom(roomId: String, name: String, icon: String) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String) =
         if (store.putRoom(roomId, name, icon)) ChatRoomRegistrationStatus.NEW
         else ChatRoomRegistrationStatus.EXISTS
 
-    override fun registerBot(botId: String, name: String, icon: String) =
+    override suspend fun registerBot(botId: String, name: String, icon: String) =
         if (store.putBot(botId, name, icon)) ChatBotRegistrationStatus.NEW
         else ChatBotRegistrationStatus.EXISTS
 
-    override fun postMessage(roomId: String, content: ChatMessageContent): String {
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (content is ChatMessageContent.File) {
             // Declining a variant is how a host opts out of rendering one.
             throw HostRejection.Rejected("this host cannot render file cards")
         }
-        return store.append(roomId, content)
+        return store.append(roomId, content, alt)
     }
 
-    override fun listRooms(): List<ChatRoom> = store.rooms()
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
+
+    override suspend fun listRooms(): List<ChatRoom> = store.rooms()
 }
 
 val runtime = TrUAPIHostRuntime(
@@ -155,9 +158,7 @@ action and media counts. Ids and names are also normalized; a message body is bo
 byte-for-byte, and `ChatFile.size_bytes` is product-asserted and unverified. Contextual output escaping is the host's
 job.
 
-`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it
-returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the
-host stores it.
+`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 
 The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation` and `notifyPairingFailed` are the
 two notices a peer gets before the answer, `establishPairing` is the answer, `resumePairing` serves the session for its
@@ -191,13 +192,9 @@ resumed pairing reports nothing, so the host keeps its own record of which devic
 the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a
 host that answers no pairing.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes),
-`notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render
-context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the
-session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's
-behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two
-rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest
-`includes`, and publish a renderer action only from the current tree of an open render stream.
+`durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
+
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -241,6 +238,12 @@ The core's `Permissions` platform trait has two methods, and so does the bridge:
 
 Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. `TrUAPIProductExecution.permissionAuthorizationStatus` resolves the current execution's authorization (including the OS gate); settings instead use the process-wide `TrUAPIHostRuntime.permissionAuthorizations(productId)` and suspending `setPermissionAuthorizationStatus(productId, request, status)`. Settings work without opening an execution and preserve product+request, account-neutral authority.
 
+The merged 0.26 surface retains process-owned permission administration and revocation,
+Chat and profile authority reviews, JAM peer grants and receiving callbacks alongside
+the release's balance-access prompt, payment/scanner adapters and durable recovery.
+Worker attachment carries both its Chat bridge and the permission-revocation callback;
+a revoked worker releases its WebView and execution rather than continuing with stale authority.
+
 The browser container checks product consent before opening WebSockets or requesting camera and microphone access. After
 installing it, the WebChromeClient media callback should check only the Android OS permission, so it does not consume
 product consent twice.
@@ -259,7 +262,7 @@ signing and other single-action reviews continue to use that Boolean callback.
 
 Implement `HostCoreStorage.keys()` by enumerating the existing core namespace in the real persistent backend, not a separate grant index. The default throws unsupported. Implement `HostBridge.permissionAuthorizationsChanged(productId)` on the process bridge and notify settings observers; every core write, including decisions from native prompts, reaches this callback. After invalidation, check `execution.isClosed()` and dispose that execution's WebView/media resources without automatic renderer recovery. A socket disconnect alone does not stop capture.
 
-The Android application's permission repository imports Room rows through `importPermissionAuthorizations` before opening an execution or reading settings. Import only fills absent canonical decisions; a stored deny or reset tombstone cannot be resurrected by an old Room grant. Supported legacy reads and both settings toggle directions use canonical records. Legacy-only balance access stays in Room. Historical multi-domain records retain their bundle identity rather than turning a bundle denial into per-domain denials. Malformed or unmappable supported records fail visibly instead of disappearing from settings.
+The Android application's permission repository imports Room rows through `importPermissionAuthorizations` before opening an execution or reading settings. Import only fills absent canonical decisions; a stored deny or reset tombstone cannot be resurrected by an old Room grant. Legacy reads and both settings toggle directions use canonical records, including balance access through `RemotePermission.BalanceAccess`. Historical multi-domain records retain their bundle identity rather than turning a bundle denial into per-domain denials. Malformed or unmappable records fail visibly instead of disappearing from settings.
 
 Legacy prompts capture `permissionAuthorizationRevision` before waiting for the user and persist through `setPermissionAuthorizationStatusIfCurrent`; a false result rejects a late answer. One-use legacy grants are invalidated on process notifications. Revocation errors propagate to settings and leave the displayed persistent decision unchanged; there is no optimistic success. These are native host administration APIs, not new guest wire methods.
 
@@ -477,7 +480,7 @@ class MyBridge(private val webView: WebView) : HostBridge {
     }
 
     // Switch on the action review variant (SignPayload / SignRaw / CreateTransaction /
-    // ResourceAllocation / PreimageSubmit / ...) to render the prompt with its
+    // ResourceAllocation / AccountAccess / ...) to render the prompt with its
     // typed fields.
     override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean {
         return withContext(Dispatchers.Main) { /* show prompt; */ false }

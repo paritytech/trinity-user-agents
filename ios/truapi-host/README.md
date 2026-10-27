@@ -191,14 +191,18 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         store.putBot(botId, name: name, icon: icon) ? .new : .exists
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) throws -> String {
         if case .file = content {
             // Declining a variant is how a host opts out of rendering one.
             // Throw `HostRejection.Rejected` (or a `LocalizedError`) so the
             // product receives your reason rather than a bare type name.
             throw HostRejection.Rejected(reason: "this host cannot render file cards")
         }
-        return store.append(roomId, content: content)
+        return store.append(roomId, content: content, alt: alt)
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) throws {
+        store.setFooter(roomId, footer: footer)
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
@@ -231,9 +235,14 @@ action and media counts. Ids and names are also normalized; a message body is bo
 byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and unverified. Contextual output escaping is the host's
 job.
 
-The id `postMessage` returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message
-for as long as the host stores it. Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and untrusted:
-they may name a message in another room, or one that never existed.
+The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
+carries back, so it must name that message for as long as the host stores it.
+`alt` is the product's one-line description of the message, already trimmed
+and screened. Show it where the message is listed rather than drawn, such as a
+chat list preview of a custom card. Only a custom message carries one, since
+every other kind previews from its own content.
+Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
+untrusted: they may name a message in another room, or one that never existed.
 
 ## Pocket
 
@@ -317,6 +326,14 @@ resumed pairing reports nothing, so the host keeps its own record of which devic
 the thread answering the handshake, so hand the device off rather than announcing it inline. Defaults to a no-op for a
 host that answers no pairing.
 
+`durableWorkChanged(pending:)` on the runtime bridge reports whether the core
+has durable transactions still awaiting a verdict, starting with the state it
+finds at launch. While it is `true`, schedule a background task (a
+`BGProcessingTask` requiring network connectivity) that awaits
+`runDurableRecovery()`, which returns once nothing is live and throws when
+recovery stopped early, so the task is retried. Defaults to a no-op for a host
+that runs no durable work.
+
 ## Game
 
 A host that can hold reminders implements `GameHostBridge`, passed as `game:`
@@ -354,6 +371,35 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Payments
+
+A host with a wallet serves top-ups, payments and the spendable balance by
+installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
+on the runtime, before any product opens. A runtime without one answers the
+matching calls `Unsupported`.
+
+```swift
+runtime.setTopUp(wallet)
+runtime.setPayments(wallet)
+runtime.setBalance(wallet)
+
+// Later, from the wallet's own status and balance streams:
+runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
+runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
+runtime.notifyBalance(purse: nil, available: "1500000000")
+```
+
+The core checks the session, the source keys, a positive amount and the
+product's balance access, so the host never prompts for balance access. A
+payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
+which the core turns into `Rejected` for a product without balance access. The
+balance is what a payment can spend now, as a decimal string of CASH units.
+
+`topUpStatus` and `paymentStatus` answer the current status of an id inline,
+or `nil` when the host holds none. Every later status goes through
+`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
+core relays each to the products following that id.
+
 ## Architecture
 
 ```text
@@ -384,7 +430,7 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
+Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`, whose async mutation closes affected executions and fences stale consent.
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override
 it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`;
@@ -395,6 +441,8 @@ consume temporary grants. The shared container authorizes each `getUserMedia` ca
 `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a
 later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable
 until stopped; another capture requires new authorization.
+
+Motion has no container gate: WebKit consults its `requestDeviceOrientationAndMotionPermissionFor` delegate only during the product's user gesture, which a round trip through the container would lose. The embedder's delegate answers it with `TrUAPIProductExecution.authorizeDevicePermission(.motion)`, which resolves the saved decision, consumes a one-use grant, or prompts. WebKit caches the answer per origin in the web view's data store and offers no API to clear it, so within one app launch a product's first motion answer also applies to later requests.
 
 The container enforces product consent, while native media delegates resolve OS permission without consuming product
 consent again. An OS grant does not establish product consent. This boundary requires the container to run before
@@ -416,6 +464,15 @@ In the iOS app, Chat and Pocket share a worker rather than owning separate engin
 
 The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Scope remains the existing product/request scope (including bare product labels for account-access decisions), not an account-specific grant.
 
+### iOS store upgrade
+
+The application retains the released `UserDataModel54` and the feature integration's
+`UserDataModel54Chat` unchanged for store detection. Both migrate to `UserDataModel55`,
+which combines Chat payment ownership and durable records with the release's chat footer
+and anonymous-delivery period. Earlier version-53 stores migrate directly to the combined
+model so no intermediate schema drops feature data. Qualify both source schemas with
+`ChatCoinageMigrationTests` on an Apple simulator before distributing the application.
+
 ## SSO session handling
 
 `TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires
@@ -431,8 +488,8 @@ session and routes it through the Rust core. The returned `SsoRequestOutcome` is
 mirror):
 
 - `.response(message:)` — SCALE-encoded reply; post it back over the same session.
-- `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
-- `.ignored` — the message was not a request; nothing to post.
+- `.disconnected`: the peer ended the session; tear down its transport and records.
+- `.ignored`: nothing to post.
 
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take
 arbitrarily long. Always call it from a `Task`, never the main thread.

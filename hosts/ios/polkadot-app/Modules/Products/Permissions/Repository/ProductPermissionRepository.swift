@@ -384,9 +384,7 @@ extension ProductPermission {
             return .profileDisclosure
         case let .statementStoreAllowance(derivationIndex):
             return .statementStoreAllowance(derivationIndex: try derivationIndex.map(Self.authorizationSelector))
-        case .balanceAccess:
-            return nil
-        case .networkAccess, .networkAccessBundle, .webRtcAccess,
+        case .networkAccess, .networkAccessBundle, .webRtcAccess, .balanceAccess,
              .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess, .jamPeersAccess:
             return try permission.remoteAuthorizationRequest()
         }
@@ -412,6 +410,8 @@ extension ProductPermission {
             return .remote(.init(permission: .remote(domains: domains)))
         case .webRtcAccess:
             return .remote(.init(permission: .webRtc))
+        case .balanceAccess:
+            return .remote(.init(permission: .balanceAccess))
         case .chainSubmitAccess:
             return .remote(.init(permission: .chainSubmit))
         case .preimageSubmitAccess:
@@ -434,10 +434,7 @@ extension ProductPermission {
         case let .device(device):
             return [.deviceCapability(device.deviceCapabilityType)]
         case let .remote(remote):
-            if case let .remote(domains) = remote.permission, domains.count != 1 {
-                return [try ProductPermission.networkAccessBundle(domains: domains).canonicalPermission()]
-            }
-            return try remote.permission.toDomainRequest().toDomainPermissions().map { try $0.canonicalPermission() }
+            return try remote.permission.toDomainPermissions().map { try $0.canonicalPermission() }
         case .identityDisclosure:
             return [.userIdentityAccess]
         case .chatAuthority:
@@ -483,6 +480,7 @@ private extension DeviceCapabilityType {
         case .clipboard: .clipboard
         case .openUrl: .openUrl
         case .biometrics: .biometrics
+        case .motion: .motion
         }
     }
 }

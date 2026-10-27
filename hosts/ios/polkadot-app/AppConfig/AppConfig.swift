@@ -11,14 +11,6 @@ enum AppConfig {
 
     static let timestampRefreshInterval: TimeInterval = 60
 
-    #if TESTNET_FEATURE
-        // Debug-only DIM2 game dashboard. Gated by TESTNET_FEATURE
-        // so Release builds never reach this endpoint.
-        static var gameDashboardBaseURL: URL {
-            AppConfigProvider.shared.getRemoteConfig()!.gameDashboardUrl!
-        }
-    #endif
-
     enum Assets {
         #if UNSTABLE
             static let mainAsset: ChainAssetId = SupportedAssets.dDollar
@@ -64,7 +56,7 @@ enum AppConfig {
             #endif
         }
 
-        static var usernameChain: ChainModel.Id {
+        static var peopleChain: ChainModel.Id {
             #if UNSTABLE
                 KnownChainId.previewNetPeople
             #elseif NIGHTLY || SAFETYNET
