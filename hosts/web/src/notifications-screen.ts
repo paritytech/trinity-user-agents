@@ -8,9 +8,9 @@ import {
 } from "./notifications.js";
 
 /**
- * PROTOTYPE. The Notifications screen: requests that products send the user,
- * those that wait first, then earlier ones. The dock's Notifications entry
- * opens it. There is no native list of these; the rows follow the native
+ * PROTOTYPE. The Inbox: requests that products send the user, those that wait
+ * first, then earlier ones. It shows under Chat's Inbox tab; the Apps shelf
+ * opens the same view. There is no native Inbox; the rows follow the native
  * Chat Requests list, and each names the product it comes through.
  *
  * - A row is seen once it shows on screen, in a visible page, and only then.
@@ -117,6 +117,8 @@ export class NotificationsScreen {
     private readonly root: HTMLElement,
     private readonly store: NotificationStore,
     private readonly onBadge: (unseen: number) => void,
+    /** Drawn under the title, such as the tabs back to Chats. */
+    private readonly header?: HTMLElement,
   ) {
     store.onChange(() => {
       if (!store.scoped()) {
@@ -155,6 +157,8 @@ export class NotificationsScreen {
     const previous = this.root.querySelector<HTMLElement>(".chat-body");
     const scrollTop = previous?.scrollTop ?? 0;
     const focused = document.activeElement as HTMLElement | null;
+    const headerFocus =
+      focused !== null && this.header?.contains(focused) ? focused : null;
     const focusKey = this.root.contains(focused)
       ? {
           id: focused?.closest<HTMLElement>("[data-notification]")?.dataset
@@ -164,8 +168,11 @@ export class NotificationsScreen {
       : null;
 
     const [bar, body] = this.drawList();
-    this.root.replaceChildren(bar, body);
+    this.root.replaceChildren(
+      ...(this.header === undefined ? [bar, body] : [bar, this.header, body]),
+    );
     body.scrollTop = scrollTop;
+    headerFocus?.focus();
     if (focusKey?.id !== undefined && focusKey.action !== undefined)
       this.root
         .querySelector<HTMLElement>(
@@ -223,17 +230,17 @@ export class NotificationsScreen {
 
   private drawList(): [HTMLElement, HTMLElement] {
     const bar = el("header", "chat-bar");
-    bar.append(el("h2", "chat-title", "Notifications"));
+    bar.append(el("h2", "chat-title", "Inbox"));
     const body = el("div", "chat-body");
     if (!this.store.scoped()) {
-      body.append(this.empty("Sign in to see notifications"));
+      body.append(this.empty("Sign in to see your Inbox"));
       return [bar, body];
     }
     const now = this.store.now();
     const items = this.store.listed();
     const waiting = items.filter((item) => statusOf(item, now) === "pending");
     const earlier = items.filter((item) => statusOf(item, now) !== "pending");
-    if (items.length === 0) body.append(this.empty("No notifications"));
+    if (items.length === 0) body.append(this.empty("Your Inbox is empty"));
     for (const [title, group, name] of [
       ["Requests", waiting, "pending"],
       ["Earlier", earlier, "earlier"],

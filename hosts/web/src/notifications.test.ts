@@ -274,6 +274,29 @@ describe("host notifications", () => {
     expect(store.unseen()).toBe(1);
   });
 
+  // The Apps shelf badges each product from the same items as the Inbox, so
+  // the per-product counts add up to the Inbox count and clear with it.
+  test("unseen counts per product come from the same items as the total", () => {
+    const { store } = setup();
+    signIn(store);
+    const other = { id: "notes.example", name: "Example Notes" };
+    addAll(store, [
+      one(),
+      one({ id: "n2" }),
+      one({ id: "n3", product: other }),
+      one({ id: "n4", product: other, dismissedAt: START }),
+    ]);
+    const counts = () => [
+      store.unseen(),
+      store.unseen("chat.example"),
+      store.unseen(other.id),
+      store.unseen("missing.example"),
+    ];
+    expect(counts()).toEqual([3, 2, 1, 0]);
+    store.markSeen("n1", "n3");
+    expect(counts()).toEqual([1, 1, 0, 0]);
+  });
+
   test("times read as a list shows them", () => {
     expect(ago(START, START)).toBe("now");
     expect(ago(START - 4 * MINUTE, START)).toBe("4 min");

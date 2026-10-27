@@ -94,6 +94,8 @@ import { ChatScreen } from "./chat-screen.js";
 import { bindWorkersMenu } from "./workers-menu.js";
 import { NotificationStore, notificationsKey } from "./notifications.js";
 import { NotificationsScreen } from "./notifications-screen.js";
+import { ChatTabs, type ChatTab } from "./chat-tabs.js";
+import { AppsShelf, type ShelfApp } from "./apps-shelf.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
 import { HostNames } from "./host-names.js";
@@ -127,6 +129,7 @@ import { HostStorage, localStorageChanges } from "./storage.js";
 import { SerialQueue } from "./serial-queue.js";
 import { versionSections, type VersionRow } from "./versions.js";
 import { bindViewport } from "./viewport.js";
+import { SearchCard } from "./search-card.js";
 import {
   WalletPublicInfoStore,
   sessionUsernameFrom,
@@ -185,6 +188,11 @@ const recentsList = element<HTMLUListElement>("address-recents");
 const resetDataButton = element<HTMLButtonElement>("reset-data");
 const addressGo = element<HTMLButtonElement>("address-go");
 const productIdInput = element<HTMLInputElement>("product-id");
+/** The Product tab's own address field. It mirrors the Pill card's. */
+const productAddress = element<HTMLInputElement>("product-address");
+const productRecents = element<HTMLUListElement>("product-recents");
+const productIdSummary = element("product-id-summary");
+const productDot = element("product-dot");
 const productIdReset = element<HTMLButtonElement>("product-id-reset");
 const productIdEffective = element("product-id-effective");
 const openButton = element<HTMLButtonElement>("open");
@@ -196,6 +204,13 @@ const productFrame = element("product-frame");
 // Prompts are drawn over the app, as the phone app draws its sheets.
 setPromptArea(productFrame);
 const productSlot = element("product-slot");
+/** The host screen a minimized product goes back to: the last one shown. */
+let lastHost: "chat" | "pocket" = "chat";
+const appChrome = element("app-chrome");
+const appMinimize = element<HTMLButtonElement>("app-minimize");
+const appClose = element<HTMLButtonElement>("app-close");
+const appMore = element<HTMLButtonElement>("app-more");
+const appMoreMenu = element("app-more-menu");
 const pocketScreen = element("pocket-screen");
 /** What Pocket says about a card it could not open. */
 const pocketStatus = document.createElement("p");
@@ -350,6 +365,33 @@ const chatInbox = new ChatInbox({
           },
         },
 });
+/** Which of Chat's tabs shows: the conversations or the Inbox. */
+let chatTab: ChatTab = "chats";
+/**
+ * The Inbox, a prototype the dev server offers on this machine only: Chat's
+ * Inbox tab and the Apps shelf's Inbox open this one screen over this one
+ * store. A build reads `import.meta.env.DEV` as false and leaves it out, with
+ * both entries.
+ */
+const chatTabs =
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
+    ? new ChatTabs(showChatTab)
+    : null;
+const notifications =
+  chatTabs === null
+    ? null
+    : (() => {
+        const store = new NotificationStore(localStorage);
+        // Attached from the start, so its count reads the same on any screen.
+        element("chat-screen").append(chatTabs.root);
+        const screen = new NotificationsScreen(
+          element("notifications-screen"),
+          store,
+          (unseen) => chatTabs.render(chatTab, unseen),
+          chatTabs.root,
+        );
+        return { store, screen };
+      })();
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
@@ -365,6 +407,7 @@ const chatScreen = new ChatScreen(
     if (person !== null) hostNames.remember(person.account, person.name);
     return person;
   },
+  chatTabs?.root,
 );
 bindWorkersMenu({
   form: element<HTMLFormElement>("worker-form"),
@@ -379,30 +422,6 @@ bindWorkersMenu({
       if (change.type === "session") listener();
     }),
 });
-/**
- * The Notifications screen, a prototype the dev server offers on this machine
- * only. A build reads `import.meta.env.DEV` as false and leaves it out, with
- * its dock entry.
- */
-const notifications =
-  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
-    ? (() => {
-        const store = new NotificationStore(localStorage);
-        const badge = document.querySelector<HTMLElement>(
-          '#dock [data-destination="notifications"] [data-badge]',
-        );
-        const screen = new NotificationsScreen(
-          element("notifications-screen"),
-          store,
-          (unseen) => {
-            if (badge === null) return;
-            badge.hidden = unseen === 0;
-            badge.textContent = String(unseen);
-          },
-        );
-        return { store, screen };
-      })()
-    : null;
 /**
  * The menu's Developer section: test users and sample data. Only a dev server
  * on this machine loads it, so a build has none of its code.
@@ -530,21 +549,47 @@ const dockButtons = DESTINATIONS.map((destination) => ({
     `#dock [data-destination="${destination}"]`,
   )!,
 }));
+/** Whether the core runs, for the Apps shelf. The menu says it in full. */
+let coreState: "starting" | "ready" | "failed" = "starting";
+const appsShelf = new AppsShelf(
+  element<HTMLButtonElement>("apps-toggle"),
+  element("apps-shelf"),
+  {
+    inbox: openInbox,
+    settings() {
+      chrome.show("account");
+      element("dev-account").focus();
+    },
+    open(key) {
+      const back = DESTINATIONS.find((known) => known === key) ?? null;
+      if (isProductDestination(back)) void selectDestination(back);
+    },
+    close: closeApp,
+  },
+);
+notifications?.store.onChange(renderShelf);
 const stageEmptyTitle = element("stage-empty-title");
 const stageEmptyNote = element("stage-empty-note");
 const stageLoadingPill = element("stage-loading-pill");
 const stageLoadingText = element("stage-loading-text");
 
 const chrome = bindChrome({
-  appbar: document.querySelector<HTMLElement>(".appbar")!,
   stage: element("stage"),
   scrim: element("scrim"),
-  panels: { menu: element("menu"), inspector: element("inspector") },
-  toggles: {
-    menu: element<HTMLButtonElement>("menu-toggle"),
-    inspector: element<HTMLButtonElement>("inspector-toggle"),
-  },
+  panel: element("devtools"),
+  focus: element<HTMLButtonElement>("dev-toggle"),
+  close: element<HTMLButtonElement>("devtools-close"),
 });
+/** The Pill's card, which holds the address field. */
+const searchCard = new SearchCard(
+  element<HTMLButtonElement>("pill"),
+  element("search-card"),
+  addressInput,
+  element<HTMLButtonElement>("search-close"),
+);
+element("pill").addEventListener("click", () => appsShelf.close(false));
+element("apps-toggle").addEventListener("click", () => searchCard.close(false));
+const searchStatus = element("search-status");
 
 const inspector = createInAppDebugger();
 const inspectorMount = element("inspector-mount");
@@ -578,11 +623,7 @@ for (const button of inspectorViewButtons)
       button.dataset.inspectorView === "chat" ? "chat" : "wire",
     ),
   );
-bindDockResize(
-  element("inspector-resize"),
-  element("inspector"),
-  document.querySelector<HTMLElement>(".appbar")!,
-);
+bindDockResize(element("devtools-resize"), element("devtools"));
 
 bindViewport({
   select: element<HTMLSelectElement>("viewport"),
@@ -596,6 +637,19 @@ bindViewport({
     height: element<HTMLInputElement>("viewport-height"),
   },
   handle: element("viewport-handle"),
+  note: element("viewport-note"),
+  caption: element("viewport-caption"),
+  presets: [
+    ...document.querySelectorAll<HTMLButtonElement>(
+      "#dev-preview [data-viewport]",
+    ),
+  ],
+  frames: [
+    ...document.querySelectorAll<HTMLButtonElement>(
+      "#dev-preview [data-frame]",
+    ),
+  ],
+  frameGroup: element("viewport-frames"),
 });
 
 const versionsList = element("versions");
@@ -837,6 +891,8 @@ function renderAddress(): void {
       : "";
   addressHintTyped.textContent = suffix === "" ? "" : addressInput.value;
   addressHintSuffix.textContent = suffix;
+  if (document.activeElement !== productAddress)
+    productAddress.value = addressInput.value;
   renderEffectiveId();
 }
 
@@ -878,6 +934,34 @@ function renderEffectiveId(): void {
   productIdEffective.textContent = text;
   productIdEffective.dataset.state = state;
   productIdEffective.dataset.source = source;
+  const entered = productIdInput.value.trim();
+  productIdSummary.textContent =
+    entered === ""
+      ? "Product id: from the address"
+      : `Product id: ${entered} (entered)`;
+}
+
+/** The recent products as chips under the Product tab's field, newest first. */
+function renderProductRecents(): void {
+  const entries = recents.list(recentScope(), activeNetwork.id).slice(0, 5);
+  productRecents.replaceChildren(
+    ...entries.map((entry) => {
+      const item = document.createElement("li");
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.textContent = displayAddress(entry.address, activeNetwork);
+      chip.title = entry.entered ? `as ${entry.productId}` : entry.productId;
+      chip.addEventListener("click", () => {
+        addressInput.value = displayAddress(entry.address, activeNetwork);
+        productIdInput.value = entry.entered ? entry.productId : "";
+        renderAddress();
+        openAddress();
+      });
+      item.append(chip);
+      return item;
+    }),
+  );
+  productRecents.hidden = entries.length === 0;
 }
 
 /** A message for an error thrown here, without the `Error:` prefix. */
@@ -896,6 +980,8 @@ function renderProduct(): void {
   productStatus.textContent = product
     ? productStatusText(product, opened, sandboxStatus, window.isSecureContext)
     : "No product open.";
+  productDot.dataset.state =
+    product === null ? "none" : sandboxStatus === "" ? "ready" : "starting";
   const details = product
     ? productDetailsText(product, opened, activeNetwork)
     : "";
@@ -914,13 +1000,12 @@ function renderDock(): void {
     button.disabled = !ready;
     if (!isProductDestination(id)) {
       button.dataset.live = "false";
-      button.hidden = id === "notifications" && notifications === null;
       button.title =
         id === "chat"
-          ? "Chat: this wallet's conversations, kept by the host"
-          : id === "notifications"
-            ? "Notifications: requests that wait for your answer (prototype, demo data)"
-            : "Pocket: this wallet's identity and balance";
+          ? notifications === null
+            ? "Chat: this wallet's conversations, kept by the host"
+            : "Chat: this wallet's conversations, and the Inbox of requests from products"
+          : "Pocket: this wallet's identity and balance";
       continue;
     }
     button.dataset.live = String(
@@ -928,7 +1013,7 @@ function renderDock(): void {
     );
     button.title =
       dockAddresses[id] === ""
-        ? `${DESTINATION_LABELS[id]}: no product yet. Enter one in the address bar.`
+        ? `${DESTINATION_LABELS[id]}: no product yet. Open one with the search button.`
         : `${DESTINATION_LABELS[id]}: ${dockAddresses[id]}`;
   }
   const bare =
@@ -943,8 +1028,114 @@ function renderDock(): void {
       : `${DESTINATION_LABELS[bare]} has no product yet`;
   stageEmptyNote.textContent =
     bare === null
-      ? "Pick Chat, Browse or Pocket, or enter an address above."
-      : "Enter a name or URL above. The host remembers it for this tab.";
+      ? "Pick Chat, Pocket or Browse, or open a product with the search button."
+      : "Open a name or URL with the search button. The host remembers it for this tab.";
+  renderShelf();
+}
+
+/** The products open in this tab: the one in front, then those running behind. */
+function openApps(): ShelfApp[] {
+  const app = (
+    key: string,
+    open: OpenProduct,
+    how: Opened | null,
+    front: boolean,
+  ): ShelfApp => ({
+    key,
+    // A name reads as itself; a URL product by its id, such as its host.
+    name:
+      how?.via === "name"
+        ? displayAddress(how.address, activeNetwork)
+        : open.productId,
+    productId: open.productId,
+    front,
+  });
+  return [
+    ...(product === null ? [] : [app("front", product, opened, true)]),
+    ...[...held].map(([key, entry]) =>
+      app(key, entry.product, entry.opened, false),
+    ),
+  ];
+}
+
+const focusCapsule = element<HTMLButtonElement>("dev-toggle");
+/** The Focus capsule's colour: the core's state, and whether a session is signed in. */
+function renderCoreDot(): void {
+  const state =
+    coreState !== "ready"
+      ? coreState
+      : lastAuthState.tag === "Connected"
+        ? "ready"
+        : "signed-out";
+  focusCapsule.dataset.state = state;
+  element("core-dot").dataset.state = state;
+  const signed =
+    lastAuthState.tag === "Connected" ? sessionLine.textContent : "Signed out";
+  focusCapsule.setAttribute(
+    "aria-label",
+    `Developer tools. ${coreStatus.textContent ?? ""}. ${signed ?? ""}.`,
+  );
+}
+
+function renderShelf(): void {
+  renderCoreDot();
+  const store = notifications?.store ?? null;
+  appsShelf.render({
+    apps: openApps(),
+    inbox:
+      store === null
+        ? null
+        : {
+            unseen: store.unseen(),
+            unseenFor: (productId) => store.unseen(productId),
+          },
+    core: {
+      network: activeNetwork.displayName,
+      state: coreState,
+      detail: coreStatus.textContent ?? "",
+    },
+  });
+}
+
+/** Close a product from the Apps shelf: the one in front, or one running behind. */
+function closeApp(key: string): void {
+  void serial(async () => {
+    if (key === "front") {
+      if (product === null) return;
+      const name = product.productId;
+      closeProduct();
+      sessionStorage.removeItem(tabProductKey(activeNetwork.id));
+      log(`closed ${name}`);
+      return;
+    }
+    const back = DESTINATIONS.find((known) => known === key) ?? null;
+    const entry = isProductDestination(back) ? held.get(back) : undefined;
+    if (!isProductDestination(back) || entry === undefined) return;
+    entry.product.dispose();
+    held.delete(back);
+    log(
+      `closed ${entry.product.productId}, which ran behind ${DESTINATION_LABELS[back]}`,
+    );
+    renderProduct();
+  });
+}
+
+/** Chat's tab bar: show the conversations or the Inbox, in place. */
+function showChatTab(tab: ChatTab): void {
+  chatTab = tab;
+  chatTabs?.render(chatTab, notifications?.store.unseen() ?? 0);
+  renderHostScreens();
+  chatTabs?.focus(tab);
+}
+
+/** The Apps shelf's Inbox: Chat, at its Inbox tab. */
+function openInbox(): void {
+  if (notifications === null) return;
+  chatTab = "inbox";
+  void selectDestination("chat").then(() => {
+    if (destination !== "chat") return;
+    showChatTab("inbox");
+  });
 }
 
 /**
@@ -953,13 +1144,15 @@ function renderDock(): void {
  */
 function renderHostScreens(): void {
   const surface =
-    destination === "pocket" ||
-    destination === "chat" ||
-    (destination === "notifications" && notifications !== null)
-      ? destination
-      : testUser !== null && product === null
-        ? "test-product"
-        : "product";
+    destination === "chat"
+      ? chatTab === "inbox" && notifications !== null
+        ? "inbox"
+        : "chat"
+      : destination === "pocket"
+        ? destination
+        : testUser !== null && product === null
+          ? "test-product"
+          : "product";
   document.body.dataset.surface = surface;
   pocketScreen.hidden = surface !== "pocket";
   if (surface === "pocket" && pocketScreen.childElementCount === 0)
@@ -987,9 +1180,74 @@ function renderHostScreens(): void {
     );
   pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
-  notifications?.screen.show(surface === "notifications");
+  notifications?.screen.show(surface === "inbox");
   devSession?.showProduct(surface === "test-product");
+  if (destination === "chat" || destination === "pocket")
+    lastHost = destination;
+  renderAppChrome(surface === "product" && product !== null);
 }
+
+/**
+ * The circles over a product in front: Minimize when the product can run
+ * behind (it belongs to Browse), else Close, and More. Minimize sends it
+ * behind, as choosing another destination does; the Apps shelf and Browse
+ * bring it back.
+ */
+function renderAppChrome(shown: boolean): void {
+  appChrome.hidden = !shown;
+  if (!shown) setAppMenu(false);
+  const holds = isProductDestination(destination);
+  appMinimize.hidden = !holds;
+  appClose.hidden = holds;
+}
+
+function setAppMenu(open: boolean): void {
+  appMoreMenu.hidden = !open;
+  appMore.setAttribute("aria-expanded", String(open));
+  if (open) appMoreMenu.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+/** Close the product in front, as the Product tab's Close does. */
+function closeFront(): void {
+  void serial(async () => {
+    closeProduct();
+    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
+    log("closed the product");
+  });
+}
+
+appMinimize.addEventListener("click", () => void selectDestination(lastHost));
+appClose.addEventListener("click", closeFront);
+appMore.addEventListener("click", () => setAppMenu(appMoreMenu.hidden));
+appMoreMenu.addEventListener("click", (event) => {
+  const action = (event.target as HTMLElement).closest<HTMLElement>(
+    "[data-app-action]",
+  )?.dataset.appAction;
+  if (action === undefined) return;
+  setAppMenu(false);
+  if (action === "close") closeFront();
+  else chrome.show("product");
+});
+appMoreMenu.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.stopPropagation();
+  setAppMenu(false);
+  appMore.focus();
+});
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    const target = event.target as Node | null;
+    if (
+      !appMoreMenu.hidden &&
+      target !== null &&
+      !appMoreMenu.contains(target) &&
+      !appMore.contains(target)
+    )
+      setAppMenu(false);
+  },
+  true,
+);
 
 /** Give the Chat screen the signed-in wallet's session, or none. */
 function syncChatSession(): void {
@@ -1434,6 +1692,8 @@ function renderSession(state: AuthState): void {
     default:
       sessionLine.textContent = state.tag;
   }
+  renderCoreDot();
+  renderProductRecents();
 }
 
 /**
@@ -1784,6 +2044,7 @@ async function openTarget(
         activeNetwork.id,
       );
       recentsMenu.refresh();
+      renderProductRecents();
       rememberFront();
       if (isProductDestination(destination))
         dockAddresses = saveAddress(
@@ -1946,10 +2207,12 @@ function openAddress(): void {
   try {
     address = parseTypedAddress(addressInput.value, activeNetwork);
   } catch (error) {
-    productStatus.textContent = errorText(error);
+    productStatus.textContent = searchStatus.textContent = errorText(error);
     log(productStatus.textContent);
     return;
   }
+  searchStatus.textContent = "";
+  searchCard.close(false);
   const back = destinationOf(addressInput.value, dockAddresses, activeNetwork);
   if (back !== null && back !== destination && held.has(back)) {
     void selectDestination(back);
@@ -1963,10 +2226,16 @@ function openAddress(): void {
   const entered = source === "entered";
   if (entered && overrideOrigin !== null && overrideOrigin !== scopeOf(address))
     log(`product id ${productId} now applies to ${scopeOf(address)}`);
-  void serial((runtime) => {
+  void serial(async (runtime) => {
     // An address typed over a host screen opens as a product of its own.
     if (!isProductDestination(destination)) destination = null;
-    return openResolved(runtime, address, productId, entered);
+    const before = opened;
+    await openResolved(runtime, address, productId, entered);
+    // It did not open: say why where the address was typed.
+    if (opened === null || opened === before) {
+      searchStatus.textContent = productStatus.textContent;
+      searchCard.open();
+    }
   });
   chrome.dismissCovering();
 }
@@ -2069,12 +2338,18 @@ productForm.addEventListener("submit", (event) => {
 });
 
 addressInput.addEventListener("input", renderAddress);
+productAddress.addEventListener("input", () => {
+  addressInput.value = productAddress.value;
+  renderAddress();
+});
 addressInput.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  event.stopPropagation();
   if (recentsMenu.close()) return;
   addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
+  searchStatus.textContent = "";
   renderAddress();
-  addressInput.blur();
+  searchCard.close(true);
 });
 
 productIdInput.addEventListener("input", renderEffectiveId);
@@ -2087,13 +2362,7 @@ productIdReset.addEventListener("click", () => {
 for (const { destination: id, button } of dockButtons)
   button.addEventListener("click", () => void selectDestination(id));
 
-closeButton.addEventListener("click", () => {
-  void serial(async () => {
-    closeProduct();
-    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
-    log("closed the product");
-  });
-});
+closeButton.addEventListener("click", closeFront);
 
 async function boot(): Promise<void> {
   const connection = await connectNetwork(activeNetwork);
@@ -2130,6 +2399,8 @@ async function boot(): Promise<void> {
     },
   });
   coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
+  coreState = "ready";
+  renderShelf();
   log("core ready");
   productWorkers.resume();
   renderVersions(runtime.coreWireSchemaHash);
@@ -2209,7 +2480,10 @@ function readTabProduct(): {
 renderWallets();
 renderProduct();
 renderAccountStatus();
+renderProductRecents();
 boot().catch((error: unknown) => {
   coreStatus.textContent = `The core failed to start: ${String(error)}`;
+  coreState = "failed";
+  renderShelf();
   log(coreStatus.textContent);
 });

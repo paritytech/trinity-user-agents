@@ -184,10 +184,13 @@ export class NotificationStore {
     return this.items.find((item) => item.id === id);
   }
 
-  /** Listed items the user has not seen, whatever their state. */
-  unseen(): number {
+  /** Listed items the user has not seen, whatever their state, of one product or of all. */
+  unseen(productId?: string): number {
     return this.items.filter(
-      (item) => item.seenAt === null && !isDismissed(item),
+      (item) =>
+        item.seenAt === null &&
+        !isDismissed(item) &&
+        (productId === undefined || item.product.id === productId),
     ).length;
   }
 
