@@ -187,6 +187,9 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
+The core requests product worker transitions through `requestWorkerTransition`
+(`request_worker_transition` in Rust). `Start` requires the worker to run;
+`Stop` permits it to stop when no references remain.
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or
@@ -414,7 +417,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures.
+host failures. Android hosts with Sentry enabled report the reminder lifecycle
+through `host.reminder.*` Sentry events without changing reminder delivery or
+cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
@@ -547,12 +552,22 @@ crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
-it fails here rather than at the next version bump. Every push to main runs the
-jobs below. A pull request touching the app, or the crates its bindings come
-from, always runs `test`; `build` and `preview` are macOS time no test needs, so
-they run once it is labelled `ios-simulator-build`. CI's
-`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates. The first time a
+it fails here rather than at the next version bump. CI's `iOS app` job,
+`ios-app.yml`, is part of `CI Status` and runs `build` and `test` on every pull
+request touching the app or the crates its bindings come from;
+`.github/hosts.json` names those inputs. A pull request that changes only those
+crates skips both when main already passed the tests against the same bindings.
+Pull requests from forks and from Dependabot skip it, since the Macs are shared
+and Dependabot runs get no secrets, and so does the merge queue. A push to main
+that touches those inputs runs the same suite through `ios-main.yml`, outside
+`CI Status`, and publishes the core pull requests reuse. `preview` is
+macOS time no check needs, so `on-label.yml` builds it once the pull request is
+labelled `ios-simulator-build`. The same workflow's
+`TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
+TrUAPIProvider packages against the core the app jobs share, on a pull request
+touching their inputs, which the `swift` package in `.github/hosts.json` names,
+and runs their network permission tests. Like the rest of the iOS app it skips
+fork and Dependabot pull requests and the merge queue. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ios-simulator-build`, `ios-device-build` and
 `android-device-build`.
@@ -805,6 +820,10 @@ use a different state directory while debugging.
 - **v0.1**: initial protocol version.
 - **v0.2**: See [`docs/design/releases/v0.2.md`](docs/design/releases/v0.2.md) for the rationale behind each change.
 - **v0.3**: current protocol version.
+
+If a product sends a request in a newer version than the host knows, the
+call fails with `Unsupported`. See
+[Request versions](docs/design/truapi-protocol.md#request-versions).
 
 ## Deploy
 
