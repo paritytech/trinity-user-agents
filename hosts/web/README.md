@@ -840,14 +840,16 @@ picks no one. The field shows a dashed outline and a go button while it holds an
 - **Apps.** The recent products that match. Enter with no suggestion chosen, the go button, or **Open** in the Product
   tab opens what is typed as a product, as before. When people show too, the Apps group starts with **Open** and the
   name or URL Enter would open, so a name that could be either reads as two choices.
-- **People** (`src/search-people.ts`), only while a wallet's chat can start a conversation (not for a test user, and not
-  signed out), and only for text that can be a username, so a URL looks no one up. First the session's contacts whose
-  names match, then people found by username in the contact picker's own directory: the dev server's username index on
-  this machine, else the chain by exact username. Blocked people are never listed. A person found by username is checked
-  on chain first, as in the picker; until the check passes nothing is chosen, and typing again lets it go.
+- **People** (`src/search-people.ts`), while a wallet is signed in (not for a test user, and not signed out), and only
+  for text that can be a username, so a URL looks no one up. First the session's contacts whose names match, then people
+  found by username in the contact picker's own directory: the dev server's username index on this machine, else the
+  chain by exact username. Blocked people are never listed. A person found by username is checked on chain first, as in
+  the picker; until the check passes nothing is chosen, and typing again lets it go.
 - **Choosing a person** opens Chat as New chat does (`ChatScreen.startWith`): a contact's conversation, or a request to
   someone new that the provider sends only on **Send request**, with focus in the message field. Nothing is given to a
-  product. A choice made before the session changed is dropped.
+  product. A choice made before the session changed is dropped. When Chat cannot start a conversation, such as for the
+  public development phrase, people are still listed, and choosing one shows why under them instead, with no check on
+  chain.
 
 `Escape` closes the suggestions, then restores the address that is open and closes the card. When an address typed there
 does not open, the card opens again with the reason. The chip inside the field shows the product id the open page runs
@@ -1166,8 +1168,9 @@ a loopback product refused: the field reads **Find a person or app** with no sca
 and the name) apart from **People** (found by username, marked as not a contact), and typing opens and picks nothing;
 the list stays inside the app above the field; a person found by username is checked first and, offline, is not chosen;
 a contact chosen with the keyboard opens their chat with focus in the composer; `Escape` gives focus back to the Pill; a
-URL looks no one up and Enter opens it; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks
-that a person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
+URL looks no one up and Enter opens it; with the public development phrase, whose chat stays off, people are still
+listed and choosing one says why; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks that a
+person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
 
 `browser/open-apps.spec.ts` checks the products open in a tab, with three names served from one synthetic archive on a
 fake Asset Hub and every socket closed: Browse's product opens another with `navigateTo`, and the shelf lists both with
