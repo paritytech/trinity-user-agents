@@ -6,11 +6,22 @@ import AsyncExtensions
 /// The chat calls a product's bot can make. All the rust chat bridge needs from
 /// the native surface: `ChatHostBridge`'s fourth callback, `registerBot`, is
 /// rejected outright.
+///
+/// A call about a room that the product did not create throws `ChatRoomError.unknownRoom`.
 protocol ProductChatMessaging: Sendable {
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String
     func createRoom(_ request: CreateRoomRequest) async throws -> CreateRoomResult
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]>
+    /// Chat Extension v2 `set_room_preview`, as Swift domain values. The rust bridge calls it when the
+    /// bindings give it the request.
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws
+    /// Chat Extension v2 `set_room_metadata`: the name of the room. The native chat draws no description.
+    func setRoomMetadata(roomId: String, name: String) async throws
+    /// What the product declared for a room. The core reads the configuration before each feed update.
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
+    /// Chat Extension v2 `set_room_config`.
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -72,6 +83,26 @@ extension BoundProductChatMessaging {
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {
         let (context, bot) = try requireMessaging()
         return await context.subscribeRooms(for: bot)
+    }
+
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomPreview(for: bot, roomId: roomId, preview: preview)
+    }
+
+    func setRoomMetadata(roomId: String, name: String) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: name)
+    }
+
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomDeclarations(for: bot, roomId: roomId)
+    }
+
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
     }
 }
 

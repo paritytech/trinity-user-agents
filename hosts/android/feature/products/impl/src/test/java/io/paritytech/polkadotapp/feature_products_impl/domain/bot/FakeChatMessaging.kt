@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -34,6 +38,19 @@ class FakeChatMessaging(
     }
 
     override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> = rooms
+
+    override suspend fun roomDeclarations(chatIdParameter: ProductChatIdParameter): Result<ChatRoomDeclarations?> =
+        Result.success(null)
+
+    override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel) = notStubbed<Result<Unit>>()
+
+    override suspend fun setRoomMetadata(chatIdParameter: ProductChatIdParameter, name: String, metadata: ChatRoomMetadataModel) =
+        notStubbed<Result<Unit>>()
+
+    override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel) =
+        notStubbed<Result<Unit>>()
+
+    override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter) = notStubbed<Result<Unit>>()
 }
 
 private fun <T> notStubbed(): T = error("not stubbed by this test")

@@ -5,7 +5,7 @@ import AsyncExtensions
 import AsyncAlgorithms
 import Products
 
-protocol ChatExtensionDiscoverContextProtocol {
+protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring {
     @discardableResult
     func sendNewMessage(
         from chatBot: ChatExtensionBotProtocol,
@@ -39,6 +39,16 @@ protocol ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         footer: Chat.RoomFooter
+    ) async throws
+
+    /// Replaces the name of a room. The native chat draws no description.
+    func setRoomMetadata(for chatBot: ChatExtensionBotProtocol, roomId: String, name: String) async throws
+
+    /// Replaces the chat-list preview of a room and leaves the rest of the room alone.
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
     ) async throws
 
     func subscribeRooms(
@@ -390,6 +400,20 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
 
         let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
         try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+
+    func setRoomMetadata(for chatBot: ChatExtensionBotProtocol, roomId: String, name: String) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomNameUpdate(chatId: chatId, name: name))
+    }
+
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
+    ) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomPreviewUpdate(chatId: chatId, preview: preview))
     }
 
     func subscribeRooms(

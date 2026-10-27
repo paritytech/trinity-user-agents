@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
@@ -14,6 +15,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -198,6 +203,24 @@ class ProductChatExtension(
                 }
             }
         }
+
+        override suspend fun roomDeclarations(chatIdParameter: ProductChatIdParameter): Result<ChatRoomDeclarations?> =
+            runCancellableCatching { extensionContext.roomDeclarations(chatIdParameter.toChatId(id)) }
+
+        override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel): Result<Unit> =
+            extensionContext.setRoomConfig(chatIdParameter.toChatId(id), config)
+
+        override suspend fun setRoomMetadata(
+            chatIdParameter: ProductChatIdParameter,
+            name: String,
+            metadata: ChatRoomMetadataModel,
+        ): Result<Unit> = extensionContext.setRoomMetadata(chatIdParameter.toChatId(id), name, metadata)
+
+        override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit> =
+            extensionContext.setRoomPreview(chatIdParameter.toChatId(id), preview)
+
+        override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
+            runCancellableCatching { extensionContext.deleteRoom(chatIdParameter.toChatId(id)) }
 
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)

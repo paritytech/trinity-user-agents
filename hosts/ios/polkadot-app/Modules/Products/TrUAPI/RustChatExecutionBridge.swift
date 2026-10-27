@@ -92,6 +92,39 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
         return []
     }
+
+    // MARK: - Chat Extension v2
+
+    // The core checked that the product hosts each room and screened every value. A room that is gone by now
+    // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomConfig \(roomId)")
+        try await chatMessaging.setRoomConfig(roomId: requireRoomId(roomId), config: Chat.RoomConfig(config))
+    }
+
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
+        try await chatMessaging.setRoomMetadata(roomId: requireRoomId(roomId), name: metadata.name)
+    }
+
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+        try await chatMessaging.setRoomPreview(roomId: requireRoomId(roomId), preview: Chat.RoomPreview(preview))
+    }
+}
+
+private extension RustChatExecutionBridge {
+    /// The core never sends an empty room id. The check keeps a broken call away from the chat store.
+    func requireRoomId(_ roomId: String) throws -> String {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a chat room needs an id")
+        }
+        return roomId
+    }
 }
 
 extension RoomInfo {

@@ -4,6 +4,10 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -34,6 +38,22 @@ interface ChatExtensionContext {
     suspend fun markMessageProcessed(chatId: ChatId, messageId: ChatMessageId)
 
     fun subscribeOwnRooms(): Flow<List<ChatId>>
+
+    // Chat Extension v2. Each call below fails with `UnknownChatRoomException` when the extension owns no such room.
+
+    /** What the extension declared for the room. Null when it declared nothing. */
+    suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations?
+
+    /**
+     * Replaces the configuration of the room and starts a new configuration generation, also for the same
+     * configuration. A change of [ChatRoomConfigModel.productSource] discards the stored messages of the room.
+     */
+    suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit>
+
+    /** Replaces the name and the description of the room. The v1 icon of the room stays. */
+    suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
+
+    suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

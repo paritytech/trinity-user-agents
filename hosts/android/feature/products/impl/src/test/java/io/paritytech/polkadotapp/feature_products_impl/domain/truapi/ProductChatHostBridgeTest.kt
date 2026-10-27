@@ -1,12 +1,24 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
@@ -19,9 +31,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCustomMessage
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatPreviewReaction
 import uniffi.truapi.ChatReaction
+import uniffi.truapi.ChatRoomBadge
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomParticipation
+import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
 
@@ -164,6 +180,82 @@ class ProductChatHostBridgeTest {
             listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
             api.footers,
         )
+    }
+
+    @Test
+    fun `a room without declarations answers the host default config`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns Result.success(null)
+
+        assertEquals(HOST_DEFAULT_CHAT_ROOM_CONFIG, ProductChatHostBridge(productId, messaging).roomConfig(ROOM))
+    }
+
+    @Test
+    fun `a declared config is answered as declared`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)
+        coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
+            Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
+
+        val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
+
+        assertTrue(config.reportSeen)
+        assertFalse(config.productSource)
+    }
+
+    @Test
+    fun `each declaration reaches the chat binding as a model`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        val room = ProductChatIdParameter(ROOM)
+        coEvery { messaging.setRoomConfig(any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomMetadata(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.deleteRoom(any()) } returns Result.success(Unit)
+        val bridge = ProductChatHostBridge(productId, messaging)
+
+        bridge.setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reportSeen = true))
+        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here"))
+        bridge.setRoomPreview(
+            ROOM,
+            ChatRoomPreview(5uL, ChatRoomBadge.UnreadCount(2u), null, ChatPreviewReaction("👍", byUser = false, message = null, removed = true), 3u),
+        )
+        bridge.deleteRoom(ROOM)
+
+        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)) }
+        coVerify { messaging.setRoomMetadata(room, "Lobby", ChatRoomMetadataModel("Play here")) }
+        coVerify {
+            messaging.setRoomPreview(
+                room,
+                ChatRoomPreviewModel(5, ChatRoomBadgeModel.Count(2), null, ChatPreviewReactionModel("👍", byUser = false, message = null, removed = true), 3),
+            )
+        }
+        coVerify { messaging.deleteRoom(room) }
+    }
+
+    // The room screen reads the host store only, so a room whose product keeps the messages would show nothing.
+    @Test
+    fun `a room whose product keeps the messages is refused`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+
+        val thrown = runCatching {
+            ProductChatHostBridge(productId, messaging).setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
+        }.exceptionOrNull()
+
+        assertTrue(thrown is HostRejection)
+        coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
+    }
+
+    @Test
+    fun `a declaration for an unknown room is rejected`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.failure(UnknownChatRoomException())
+
+        val thrown = runCatching {
+            ProductChatHostBridge(productId, messaging).setRoomPreview(ROOM, ChatRoomPreview(null, null, null, null, 0u))
+        }.exceptionOrNull()
+
+        assertTrue(thrown is HostRejection)
+        assertTrue(thrown!!.message!!.contains("no such chat room"))
     }
 
     private fun bridge(api: FakeChatMessaging) = ProductChatHostBridge(productId, api)

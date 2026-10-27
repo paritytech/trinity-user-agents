@@ -1,6 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -43,12 +47,32 @@ class BindableProductsBotApi(
         )
     }
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
-        return chatSlot.tryUse().fold(
-            onSuccess = { it.setRoomFooter(chatIdParameter, showsTextInput) },
+    override suspend fun roomDeclarations(chatIdParameter: ProductChatIdParameter): Result<ChatRoomDeclarations?> =
+        withChat { it.roomDeclarations(chatIdParameter) }
+
+    override suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel): Result<Unit> =
+        withChat { it.setRoomConfig(chatIdParameter, config) }
+
+    override suspend fun setRoomMetadata(
+        chatIdParameter: ProductChatIdParameter,
+        name: String,
+        metadata: ChatRoomMetadataModel,
+    ): Result<Unit> = withChat { it.setRoomMetadata(chatIdParameter, name, metadata) }
+
+    override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit> =
+        withChat { it.setRoomPreview(chatIdParameter, preview) }
+
+    override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
+        withChat { it.deleteRoom(chatIdParameter) }
+
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> =
+        withChat { it.setRoomFooter(chatIdParameter, showsTextInput) }
+
+    private suspend fun <T> withChat(call: suspend (ProductChatMessaging) -> Result<T>): Result<T> =
+        chatSlot.tryUse().fold(
+            onSuccess = { call(it) },
             onFailure = { messagingNotSupported() },
         )
-    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
