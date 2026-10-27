@@ -5,4 +5,4 @@
 Descriptors can name a `web-gateway`, the gateway that serves the sites of the stack's dotNS names, and an
 `evm-explorer`, a block explorer for the chain `eth-rpc` serves. A `web-gateway` URL may carry a query, such as
 `https://testnet.li/?network=previewnet`. A name's site is at that URL with its label prepended to the host, or, for a
-name of several labels, with the name resolved against the path.
+name of several labels, with the name resolved against the path. `webUrl(descriptor, name)` builds that URL.

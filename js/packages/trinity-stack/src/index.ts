@@ -103,6 +103,17 @@ export function checkSpec(spec: SpecFile, bytes: Uint8Array): void {
   wasm.checkSpec(spec, bytes);
 }
 
+/**
+ * The URL a dotNS name opens at on the stack's `web-gateway`, or `undefined` when the stack names
+ * none. The name may end in the stack's `tld`.
+ */
+export function webUrl(
+  descriptor: Descriptor,
+  name: string,
+): string | undefined {
+  return wasm.webUrl(descriptor, name);
+}
+
 /** The genesis hash a light spec implies, to compare with its chain's `genesisHash`. */
 export function lightSpecGenesis(bytes: Uint8Array): string {
   return wasm.lightSpecGenesis(bytes);

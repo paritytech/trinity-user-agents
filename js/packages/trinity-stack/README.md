@@ -9,7 +9,7 @@ compiled to WebAssembly, so this package and the host core accept and refuse the
 ## Reading a stack
 
 ```ts
-import { decodeLink, memoryStore, read } from "@parity/trinity-stack";
+import { decodeLink, memoryStore, read, webUrl } from "@parity/trinity-stack";
 
 const pointer = decodeLink("polkadotapp://stack?key=0x3b6a…&url=https%3A%2F%2F…");
 const store = memoryStore(); // or your own: get/set bytes by stack
@@ -19,6 +19,7 @@ stack.descriptor.chains; // checked against the pointer's key
 stack.status; // updated | unchanged | conflict | rollback | unreachable | refused
 stack.newGeneration; // the chains restarted: drop cached chain data
 stack.stale; // past validUntil
+webUrl(stack.descriptor, "my-app"); // https://my-app.testnet.li/?network=previewnet, from its web-gateway
 ```
 
 `read` fetches and stores; `accept(pointer, stored, fetched, now)` is the same decision with no I/O. A reader with no

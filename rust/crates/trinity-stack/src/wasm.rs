@@ -165,6 +165,15 @@ pub fn check_spec(spec: Ts<SpecFile>, bytes: &[u8]) -> Result<(), JsValue> {
 	spec.check(bytes).map_err(to_js_error)
 }
 
+/// The URL a dotNS name opens at on the stack's `web-gateway`, or `undefined` when it names none.
+#[wasm_bindgen(js_name = webUrl)]
+pub fn web_url(descriptor: Ts<Descriptor>, name: &str) -> Result<Option<String>, JsValue> {
+	let descriptor = descriptor
+		.to_rust()
+		.map_err(|_| type_error("a descriptor must be one parse, open or read returned"))?;
+	descriptor.web_url(name).map_err(to_js_error)
+}
+
 /// The 0x-prefixed genesis hash a light spec implies.
 #[wasm_bindgen(js_name = lightSpecGenesis)]
 pub fn light_spec_genesis(bytes: &[u8]) -> Result<String, JsValue> {
