@@ -14,7 +14,7 @@ expects.
 | `paseo-next-v2-metadata.scale` | Paseo Next v2 | V14 | | | `AsResources`, three-field allowance info |
 | `paseo-next-v2-metadata-v16.scale` | Paseo Next v2 | V16 | 3000000 | 2026-09-03 | `AsResources`, four-field allowance info; `Resources` slot budgets as view functions |
 | `paseo-next-asset-hub-metadata.scale` | Paseo Asset Hub Next | V16 | 3000000 | 2026-09-03 | `AsPgas`, `Pgas`, `MembersSubscriber` incl. `CurrentGeneration` |
-| `paseo-next-asset-hub-3004000-metadata.scale` | Paseo Asset Hub Next | V14 | 3004000 | 2026-10-21 | `Scarcity`, whose `Nft` has `moves` |
+| `paseo-next-asset-hub-3004000-metadata.scale` | Paseo Asset Hub Next | V16 | 3004000 | 2026-10-22 | `Scarcity`, whose `Nft` has `moves`; extension pipeline version 1 with `VerifyMultiSignature` and `AsScarcity` |
 | `bulletin_paseo_metadata.scale` | Polkadot Bulletin (Paseo) | V14 | 1000020 | | preimage and storage calls |
 
 The two paseo-next-v2 fixtures deliberately disagree about arity: V14 predates the

@@ -428,13 +428,19 @@ fn golden_host_callbacks_ts() {
 	);
 	let mut generated_names = quoted_strings_in_const_array(&worker_actual, "CALLBACK_NAMES");
 	generated_names.extend(quoted_strings_in_const_array(&worker_actual, "SUBSCRIPTION_NAMES"));
+	// rustfmt wraps a binding whose callback name is long and adds a trailing
+	// comma, so compare without whitespace and up to the name.
+	let wasm_bridge_compact: String = wasm_bridge_actual
+		.chars()
+		.filter(|character| !character.is_whitespace())
+		.collect();
 	for name in generated_names {
 		// Callbacks of an optional capability bind through the optional getter;
 		// either way the bridge must name every callback the worker proxies.
 		assert!(
-			wasm_bridge_actual.contains(&format!("get_function(callbacks, \"{name}\")?")) ||
-				wasm_bridge_actual
-					.contains(&format!("get_optional_function(callbacks, \"{name}\")?")),
+			wasm_bridge_compact.contains(&format!("get_function(callbacks,\"{name}\"")) ||
+				wasm_bridge_compact
+					.contains(&format!("get_optional_function(callbacks,\"{name}\"")),
 			"generated wasm bridge must bind worker callback `{name}`"
 		);
 	}
