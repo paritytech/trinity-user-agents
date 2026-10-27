@@ -238,14 +238,9 @@ where
 
 /// Inputs for one attestation run.
 pub struct AttestConfig {
-	/// Identity backend base URL including `/api/v1`.
-	pub backend_base: String,
-	/// The network whose Asset Hub serves the reservation timestamp and the
-	/// dotNS username poll.
+	/// The network whose identity backend takes the registration and whose
+	/// Asset Hub serves the reservation timestamp and the dotNS username poll.
 	pub network: NetworkConfig,
-	/// The network's dotNS TLD without the dot (`paseo`, `testnet`); the
-	/// registered person is `uid.<suffix>` / `peopl.<suffix>`.
-	pub network_suffix: String,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Requested lite username base (6+ lowercase letters, no digits).
@@ -295,6 +290,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig) -> Result<String> {
+	let backend_base = config.network.identity_backend()?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
 	let mut reader = AssetHubReader::connect(&config.network).await?;
@@ -322,10 +318,10 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let verifier = fetch_verifier(&client, &config.backend_base).await?;
+	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
-		&config.network_suffix,
+		config.network.network_suffix,
 		verifier,
 		&config.username_base,
 		config.reserved_username.as_deref(),
@@ -554,14 +550,14 @@ async fn fetch_verifier(client: &reqwest::Client, backend_base: &str) -> Result<
 }
 
 /// `POST /usernames` for `reg`, authenticated as the candidate account the
-/// registration was built for (`config.entropy` on `config.network_suffix`).
+/// registration was built for (`config.entropy` on `config.network`).
 async fn submit_registration(
 	client: &reqwest::Client,
 	config: &AttestConfig,
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {
-	let backend_base = config.backend_base.as_str();
+	let backend_base = config.network.identity_backend()?;
 	let url = format!("{backend_base}/usernames");
 	let mut dotns = json!({
 		"signature": hex0x(&reg.dotns_signature),
@@ -584,7 +580,7 @@ async fn submit_registration(
 		client,
 		backend_base,
 		&config.entropy,
-		&config.network_suffix,
+		config.network.network_suffix,
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -714,10 +710,10 @@ mod tests {
 		let registration =
 			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123)?;
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+		let mut network = crate::network::Network::default().config();
+		network.identity_backend_base = Some(Box::leak(backend_base.into_boxed_str()));
 		let config = AttestConfig {
-			backend_base: backend_base.clone(),
-			network: crate::network::Network::default().config(),
-			network_suffix: "paseo".to_string(),
+			network,
 			entropy: entropy.to_vec(),
 			username_base: "testing".to_string(),
 			reserved_username: None,

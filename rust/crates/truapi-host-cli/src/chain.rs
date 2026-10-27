@@ -34,10 +34,9 @@ impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 }
 
 /// How the CLI reaches the chains.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ChainBackend {
 	/// WebSocket JSON-RPC to the network's nodes.
-	#[default]
 	Rpc,
 	/// The embedded smoldot light client, which needs no RPC node. A chain's
 	/// first request waits for it to sync.
@@ -96,20 +95,18 @@ impl CliChainProvider {
 		Ok(RpcClient::new(HostRpcClient::new(Arc::from(connection), crate::tokio_spawner())))
 	}
 
-	/// The chain that answers `genesis_hash`: its own when routed, People
-	/// otherwise.
+	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
+	/// People's, and none when People is not routed either.
 	///
 	/// Only routed hashes reach the provider. Asked for any other, it would look
 	/// the hash up in its bundled catalog and start the light client, whichever
 	/// backend was selected.
-	fn chain_for(&self, genesis_hash: [u8; 32]) -> [u8; 32] {
-		if routed_endpoints(&self.network, self.live_chain_routing)
-			.any(|endpoint| endpoint.genesis == genesis_hash)
-		{
-			genesis_hash
-		} else {
-			self.network.people_genesis
-		}
+	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
+		let routed = |genesis| {
+			routed_endpoints(&self.network, self.live_chain_routing)
+				.find(move |endpoint| endpoint.genesis == genesis)
+		};
+		routed(genesis_hash).or_else(|| routed(self.network.people_genesis))
 	}
 
 	/// Whether a genesis is routed to its own chain rather than to People.
@@ -119,7 +116,8 @@ impl CliChainProvider {
 	/// resolved URL cannot tell a routed People from a dropped one.
 	#[cfg(test)]
 	fn routes(&self, genesis_hash: &[u8; 32]) -> bool {
-		self.chain_for(*genesis_hash) == *genesis_hash
+		self.chain_for(*genesis_hash)
+			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
 	}
 
 	/// The RPC URL a genesis routes to. Test-only, so a routing override can be
@@ -127,11 +125,7 @@ impl CliChainProvider {
 	/// compiles, changes nothing, and is invisible in timings.
 	#[cfg(test)]
 	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &'static str {
-		let chain = self.chain_for(*genesis_hash);
-		routed_endpoints(&self.network, self.live_chain_routing)
-			.find(|endpoint| endpoint.genesis == chain)
-			.map(|endpoint| endpoint.ws)
-			.expect("People is routed")
+		self.chain_for(*genesis_hash).expect("People is routed").ws
 	}
 }
 
@@ -155,7 +149,10 @@ impl ChainProvider for CliChainProvider {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		let chain = self.chain_for(genesis_hash);
+		let chain = self
+			.chain_for(genesis_hash)
+			.ok_or(ProviderError::UnknownGenesis { genesis: genesis_hash })?
+			.genesis;
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
@@ -277,6 +274,23 @@ mod tests {
 				.await
 				.expect("the loopback server answers at once");
 		assert_eq!(first.as_deref(), Some("open"));
+	}
+
+	/// Without a People route there is nothing to fall back to. Passing People's
+	/// unregistered genesis on would start the light client from the catalog.
+	#[tokio::test]
+	async fn a_network_without_a_people_route_refuses_the_sentinel() {
+		let mut network = Network::default().config();
+		network.live_chain_endpoints = &[];
+		let provider = CliChainProvider::with_live_chain_routing(&network, false);
+
+		let Err(error) = provider.connect([0; 32]).await else {
+			panic!("nothing is routed, so nothing may connect");
+		};
+		assert_eq!(
+			error.to_string(),
+			format!("no chain registered for genesis 0x{}", "00".repeat(32))
+		);
 	}
 
 	/// A chain dropped between uses would sync again from its checkpoint and

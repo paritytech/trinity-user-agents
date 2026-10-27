@@ -28,8 +28,10 @@ pub fn client_config() -> Arc<ClientConfig> {
 mod tests {
 	use tokio_rustls::rustls::crypto::CryptoProvider;
 
-	/// Taking the process default would install `ring` as the host's default on
-	/// first use, and panic in a build that enables a second provider.
+	/// The light client's tunnel uses this config directly, without jsonrpsee
+	/// installing a default first. Taking the process default there panics in a
+	/// build with two crypto providers and none installed. With one, it installs
+	/// that one, which is what this detects.
 	#[test]
 	fn building_the_config_leaves_the_process_default_alone() {
 		super::client_config();

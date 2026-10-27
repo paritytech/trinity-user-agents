@@ -1824,14 +1824,16 @@ cannot be combined with the `HOST_CLI_*_WS` overrides or
 and keeps one idle connection per chain, since smoldot stops a chain when its
 last connection closes. A chain's first request waits for it to sync.
 
-`wss://` certificates are verified with the root certificates built into the
-binary, on both backends. Certificate authorities added to the operating system
-are not used.
+Connections through the provider verify `wss://` certificates with the root
+certificates built into the binary, on both backends, not with certificate
+authorities added to the operating system. The direct connections below use the
+operating system's store.
 
 These still dial the preset's RPC nodes on either backend: the ring-membership
 poll during account setup, the genesis check of a rerouted endpoint (§14.1), and
-`register-name`, `alloc-check` and `pgas-check`, which build their extrinsics on
-the selected backend but read the chains and submit over RPC.
+the chain reads and submissions of `register-name`, `alloc-check` and
+`pgas-check`. Those three build their extrinsics on the selected backend, and
+`register-name` reads dotNS on it too.
 
 ## 15. TrUAPI capability surface
 

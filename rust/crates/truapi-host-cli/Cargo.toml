@@ -69,3 +69,4 @@ zeroize = { workspace = true, features = ["alloc", "derive"] }
 
 [dev-dependencies]
 truapi = { path = "../truapi", features = ["mock"] }
+tokio = { workspace = true, features = ["test-util"] }

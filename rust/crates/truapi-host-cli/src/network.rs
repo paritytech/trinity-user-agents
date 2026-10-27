@@ -752,9 +752,9 @@ mod tests {
 	/// connection distinguishes that, so this asks each endpoint for its own
 	/// genesis.
 	///
-	/// A drifted hash does not fail loudly on its own: `url_for` answers an
-	/// unrecognised genesis with `people_ws`, so every role still resolves to
-	/// some working URL, and products read the advertised hash back out of
+	/// A drifted hash does not fail loudly on its own: `CliChainProvider` answers
+	/// an unrecognised genesis with People, so every role still resolves to some
+	/// working chain, and products read the advertised hash back out of
 	/// `get_chain_info` and sign `CheckGenesis` over it.
 	///
 	/// A genesis alone does not prove the role is right: pointing People at the

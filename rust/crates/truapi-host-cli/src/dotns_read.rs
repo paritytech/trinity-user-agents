@@ -6,9 +6,11 @@
 //! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
 //! resolve identically.
 
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde_json::Value;
-use subxt_rpcs::client::{RpcClient, rpc_params};
+use subxt_rpcs::client::{RpcClient, RpcParams, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
 		DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
@@ -30,6 +32,10 @@ use crate::{chain::CliChainProvider, network::NetworkConfig};
 /// and previewnet; the polkadot preset carries its own from its deployment
 /// manifest. `DEPLOYMENTS.md` in paritytech/dotns is the authority per network.
 pub const DOTNS_POP_CONTROLLER_ENV: &str = "HOST_CLI_DOTNS_POP_CONTROLLER";
+
+/// How long one read waits for its answer. Provider connections carry no
+/// request timeout, and keepalive pings hold open a node that never answers.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// One Asset Hub RPC connection for a batch of dotNS reads.
 pub struct AssetHubReader {
@@ -144,16 +150,13 @@ impl AssetHubReader {
 	/// regardless of the queried account's revive mapping.
 	async fn raw_view(&self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
 		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
-		let output: Value = self
-			.rpc
+		let output = self
 			.request(
 				"state_call",
 				rpc_params!["ReviveApi_call", format!("0x{}", hex::encode(args))],
 			)
 			.await
-			.map_err(|err| {
-				DotnsViewError::Failed(format!("rpc state_call ReviveApi_call: {err}"))
-			})?;
+			.map_err(|err| DotnsViewError::Failed(format!("ReviveApi_call: {err:#}")))?;
 		let Some(output) = output.as_str() else {
 			return Err(DotnsViewError::Failed(
 				"state_call returned a non-string response".to_string(),
@@ -167,11 +170,9 @@ impl AssetHubReader {
 
 	/// One `state_getStorage` read at the best block.
 	async fn raw_storage(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-		let value: Value = self
-			.rpc
+		let value = self
 			.request("state_getStorage", rpc_params![format!("0x{}", hex::encode(key))])
-			.await
-			.context("rpc state_getStorage")?;
+			.await?;
 		value
 			.as_str()
 			.map(|hex_value| {
@@ -179,6 +180,15 @@ impl AssetHubReader {
 					.context("storage value is not valid hex")
 			})
 			.transpose()
+	}
+
+	async fn request(&self, method: &str, params: RpcParams) -> Result<Value> {
+		tokio::time::timeout(REQUEST_TIMEOUT, self.rpc.request(method, params))
+			.await
+			.map_err(|_| {
+				anyhow::anyhow!("rpc {method}: no answer within {}s", REQUEST_TIMEOUT.as_secs())
+			})?
+			.with_context(|| format!("rpc {method}"))
 	}
 }
 
@@ -205,5 +215,49 @@ impl DotnsTransport for AssetHubReader {
 
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
 		self.raw_view(dest, input).await
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RawValue, RpcClientT};
+
+	use super::*;
+
+	/// A node that holds every request open, as one that lost the request does.
+	struct NeverAnswers;
+
+	impl RpcClientT for NeverAnswers {
+		fn request_raw<'a>(
+			&'a self,
+			_method: &'a str,
+			_params: Option<Box<RawValue>>,
+		) -> RawRpcFuture<'a, Box<RawValue>> {
+			Box::pin(futures::future::pending())
+		}
+
+		fn subscribe_raw<'a>(
+			&'a self,
+			_sub: &'a str,
+			_params: Option<Box<RawValue>>,
+			_unsub: &'a str,
+		) -> RawRpcFuture<'a, RawRpcSubscription> {
+			Box::pin(futures::future::pending())
+		}
+	}
+
+	/// Keepalive pings hold such a connection open, so without a request timeout
+	/// a username lookup would wait forever rather than fail.
+	#[tokio::test(start_paused = true)]
+	async fn a_read_the_node_never_answers_fails() {
+		let reader = AssetHubReader {
+			rpc: RpcClient::new(NeverAnswers),
+			pop_controller: None,
+			pop_controller_fallback: None,
+		};
+		let read = tokio::time::timeout(REQUEST_TIMEOUT * 2, reader.raw_storage(&[0; 32]))
+			.await
+			.expect("the read gives up on its own");
+		assert_eq!(read.unwrap_err().to_string(), "rpc state_getStorage: no answer within 60s");
 	}
 }
