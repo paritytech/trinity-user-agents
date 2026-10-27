@@ -83,7 +83,8 @@ export function gatewayBlocks(
   };
 }
 
-async function readCapped(
+/** A response body, refused once it passes `maxBytes`. */
+export async function readCapped(
   response: Response,
   maxBytes: number,
 ): Promise<Uint8Array> {
