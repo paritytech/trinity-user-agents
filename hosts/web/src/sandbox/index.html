@@ -3,19 +3,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="referrer" content="no-referrer" />
 <title>Loading product</title>
+<!--
+  The loader shows nothing of its own: the host draws the progress and any
+  failure over the app, in the app's colours, and keeps the detail for the
+  developer tools. The line stays for assistive technology.
+-->
 <style>
-  body {
-    font:
-      14px system-ui,
-      sans-serif;
-    margin: 0;
-    padding: 24px;
-    color: #444;
-    background: #fafafa;
+  :root {
+    color-scheme: dark;
+    background: #0b0c0f;
   }
-  #status[data-state="error"] {
-    color: #b00020;
+  body {
+    margin: 0;
+  }
+  #status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 </style>
-<p id="status" data-state="loading">Loading…</p>
+<p id="status" role="status" data-state="loading">Loading…</p>
 <script src="./page.js"></script>
