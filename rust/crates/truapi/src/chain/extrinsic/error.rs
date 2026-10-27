@@ -73,6 +73,12 @@ pub enum ExtrinsicBuildError {
 		/// The extension name.
 		extension: String,
 	},
+	/// The caller supplied `CheckMortality`, whose era the builder sets so
+	/// the extrinsic's mortality is the one it signed.
+	#[error(
+		"CheckMortality was supplied, expected the era to be set through with_mortality_period"
+	)]
+	SuppliedMortality,
 	/// An extension the pipeline requires has no value and no default.
 	#[error(
 		"extension {extension} has no value, expected the caller to supply it because its type is neither empty nor an Option"

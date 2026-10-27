@@ -19,6 +19,9 @@ use crate::chain::Mortality;
 /// The V5 signature extension's name in metadata.
 pub const VERIFY_MULTI_SIGNATURE: &str = "VerifyMultiSignature";
 
+/// The era extension's name in metadata.
+pub const CHECK_MORTALITY: &str = "CheckMortality";
+
 /// What the build knows when it fills well-known extensions.
 #[derive(Clone, Copy, Debug)]
 pub struct ChainValues {
@@ -98,7 +101,7 @@ pub struct MortalityEra(pub Era);
 pub fn check_mortality(mortality: Mortality) -> ConstantExtension<H256, MortalityEra> {
 	let birth = mortality.birth();
 	let era = MortalityEra(Era::mortal(mortality.period(), birth.number));
-	ConstantExtension { name: "CheckMortality", implicit: birth.hash, explicit: era }
+	ConstantExtension { name: CHECK_MORTALITY, implicit: birth.hash, explicit: era }
 }
 
 /// `CheckNonce`: the sender's nonce.
@@ -153,7 +156,7 @@ pub fn well_known_extension(name: &str, chain: &ChainValues) -> Option<SuppliedE
 		"CheckSpecVersion" => Box::new(check_spec_version(chain.spec_version)),
 		"CheckTxVersion" => Box::new(check_tx_version(chain.transaction_version)),
 		"CheckGenesis" => Box::new(check_genesis(chain.genesis)),
-		"CheckMortality" => Box::new(check_mortality(chain.mortality)),
+		CHECK_MORTALITY => Box::new(check_mortality(chain.mortality)),
 		"CheckNonce" => Box::new(check_nonce(chain.nonce)),
 		"ChargeAssetTxPayment" => Box::new(charge_asset_tx_payment()),
 		"ChargeTransactionPayment" => Box::new(charge_transaction_payment()),
