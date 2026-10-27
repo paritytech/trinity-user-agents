@@ -4,6 +4,7 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -14,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductC
 import kotlinx.coroutines.flow.firstOrNull
 import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomConfig
@@ -22,6 +24,7 @@ import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeChatFeedRejection
 
 /**
  * Answers the core's chat callbacks for one product against its chat binding. The core has checked
@@ -87,15 +90,43 @@ class ProductChatHostBridge(
         chatMessaging.deleteRoom(requireRoom(roomId)).orReject()
     }
 
+    /**
+     * The core sets [persist] for a room that the host stores. For a room that the product keeps, only the
+     * screens that show the room take the update.
+     */
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+        if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
+        val room = ProductChatIdParameter(roomId)
+        val model = update.toModel()
+
+        if (!persist) {
+            if (!chatMessaging.deliverLiveFeedUpdate(room, model)) Timber.d("truapi.chat.updateFeed for %s: no open room", roomId)
+            return
+        }
+
+        chatMessaging.applyFeedUpdate(room, model).getOrElse { throw it.toFeedRejection() }
+    }
+
     private fun requireRoom(roomId: String): ProductChatIdParameter {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         return ProductChatIdParameter(roomId)
     }
 
+    private fun Throwable.toFeedRejection(): NativeChatFeedRejection = when (this) {
+        is ProductFeedRejection.UnknownMessage -> NativeChatFeedRejection.UnknownMessage()
+        is ProductFeedRejection.DuplicateMessage -> NativeChatFeedRejection.DuplicateMessage()
+        is ProductFeedRejection.NotOwner -> NativeChatFeedRejection.NotOwner()
+        is ProductFeedRejection.UnknownRoom -> NativeChatFeedRejection.Rejected("no such chat room")
+        else -> NativeChatFeedRejection.Rejected(message ?: toString())
+    }
+
     private fun <T> Result<T>.orReject(): T = getOrElse { failure ->
         when (failure) {
             is HostRejection -> throw failure
-            is UnknownChatRoomException -> throw HostRejection.Rejected("no such chat room")
+            is UnknownChatRoomException,
+            is ProductFeedRejection.UnknownRoom,
+            -> throw HostRejection.Rejected("no such chat room")
+            is ProductFeedRejection -> throw HostRejection.Rejected(failure.message ?: failure.toString())
         }
         Timber.w(failure, "truapi.chat refused for %s", productId.value)
         throw HostRejection.Rejected(failure.message ?: failure.toString())

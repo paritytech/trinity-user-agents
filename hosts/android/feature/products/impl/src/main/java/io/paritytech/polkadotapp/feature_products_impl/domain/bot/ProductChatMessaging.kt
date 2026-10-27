@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -39,4 +40,10 @@ interface ProductChatMessaging {
 
     /** Removes the room with everything the host keeps for it. A room that is gone already is not an error. */
     suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit>
+
+    /** Stores a feed update of a room that the host keeps. A refusal is a `ProductFeedRejection`. */
+    suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit>
+
+    /** Gives a feed update of a room that the product keeps to the screens that show it. False when none does. */
+    suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean
 }

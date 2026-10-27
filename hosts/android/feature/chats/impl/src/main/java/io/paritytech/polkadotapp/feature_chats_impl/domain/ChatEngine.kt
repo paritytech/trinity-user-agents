@@ -53,6 +53,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
@@ -78,6 +79,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatSummaryOrd
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductFeedApplier
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomDeclarer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -117,6 +119,7 @@ class ChatEngine @Inject constructor(
     private val chatRoomRepository: ChatRoomRepository,
     private val deleteRoomUseCase: DeleteRoomUseCase,
     private val productRoomDeclarer: ProductRoomDeclarer,
+    private val productFeedApplier: ProductFeedApplier,
 ) : ChatMessageSender {
     private val savedMessagesFlow = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64)
 
@@ -795,6 +798,9 @@ class ChatEngine @Inject constructor(
 
         override suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit> =
             productRoomDeclarer.setPreview(extensionId, chatId, preview)
+
+        override suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit> =
+            productFeedApplier.apply(extensionId, chatId, update, getCustomContentDecoder(chatId)) { saveMessage(it) }
     }
 }
 

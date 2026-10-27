@@ -19,6 +19,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -73,6 +75,7 @@ class ProductChatExtension(
     private val workerRefCounter: ProductWorkerRefCounter,
     imageResolver: ProductImageResolver,
     resolveProduct: ResolveProductUseCase,
+    private val feedListeners: ProductFeedListeners,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -195,6 +198,12 @@ class ProductChatExtension(
             }
             return Result.success(Unit)
         }
+
+        override suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit> =
+            extensionContext.applyFeedUpdate(chatIdParameter.toChatId(id), update)
+
+        override suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean =
+            feedListeners.deliver(chatIdParameter.toChatId(id), update)
 
         override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
             return extensionContext.subscribeOwnRooms().map { chatIds ->

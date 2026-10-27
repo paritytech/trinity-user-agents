@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import kotlinx.coroutines.flow.Flow
 import kotlin.reflect.KClass
 
@@ -54,6 +55,12 @@ interface ChatExtensionContext {
     suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
 
     suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit>
+
+    /**
+     * Stores one change that the extension pushes to a room whose messages the host keeps. Message ids are the
+     * ids of the extension. A refusal is a `ProductFeedRejection`.
+     */
+    suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

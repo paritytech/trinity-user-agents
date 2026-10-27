@@ -70,6 +70,15 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         roomConfigs.append((roomId, config))
     }
 
+    var feedError: Error?
+    private(set) var feedUpdates: [(roomId: String, update: Chat.ProductFeedUpdate)] = []
+
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
+        try requireRoom(roomId)
+        if let feedError { throw feedError }
+        feedUpdates.append((roomId, update))
+    }
+
     private func requireRoom(_ roomId: String) throws {
         if unknownRooms.contains(roomId) { throw ChatRoomError.unknownRoom(roomId) }
     }

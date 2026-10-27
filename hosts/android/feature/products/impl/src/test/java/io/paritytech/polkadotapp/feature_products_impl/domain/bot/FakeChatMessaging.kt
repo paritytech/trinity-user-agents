@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
@@ -51,6 +52,11 @@ class FakeChatMessaging(
         notStubbed<Result<Unit>>()
 
     override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter) = notStubbed<Result<Unit>>()
+
+    override suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel) =
+        notStubbed<Result<Unit>>()
+
+    override suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean = false
 }
 
 private fun <T> notStubbed(): T = error("not stubbed by this test")

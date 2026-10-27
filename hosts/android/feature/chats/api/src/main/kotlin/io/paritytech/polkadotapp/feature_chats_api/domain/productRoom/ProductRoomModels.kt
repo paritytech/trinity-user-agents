@@ -40,3 +40,32 @@ data class ProductReplyPreviewModel(val participantId: String, val content: Chat
 
 /** The room does not exist, or another extension owns it. */
 class UnknownChatRoomException : Exception("the chat room does not exist")
+
+/** One change that a product pushes to the messages of a room (`ChatFeedUpdate`). Ids are product ids. */
+sealed interface ProductFeedUpdateModel {
+    data class New(val message: ProductRoomMessage) : ProductFeedUpdateModel
+
+    data class Edited(val messageId: String, val content: ChatMessage.Content, val editedAt: Long) : ProductFeedUpdateModel
+
+    /** The message changed for a reason that is not an edit. It is not marked edited. */
+    data class Replaced(val message: ProductRoomMessage) : ProductFeedUpdateModel
+
+    data class ReactionPlaced(val messageId: String, val participantId: String, val emoji: String) : ProductFeedUpdateModel
+
+    data class ReactionRemoved(val messageId: String, val participantId: String, val emoji: String) : ProductFeedUpdateModel
+
+    data class StatusChanged(val messageId: String, val status: ProductMessageStatusModel) : ProductFeedUpdateModel
+}
+
+/** Why the host refuses a feed update for a room that it stores (`NativeChatFeedRejection`). */
+sealed class ProductFeedRejection(message: String) : Exception(message) {
+    class UnknownRoom : ProductFeedRejection("the room does not exist")
+
+    class UnknownMessage : ProductFeedRejection("the room has no such message")
+
+    /** A `New` whose id the room has already. */
+    class DuplicateMessage : ProductFeedRejection("the room has a message with this id already")
+
+    /** The product tried to write as the user, or to edit a message that it did not write. */
+    class NotOwner : ProductFeedRejection("the product does not own this message")
+}
