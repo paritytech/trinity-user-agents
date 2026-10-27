@@ -67,11 +67,9 @@ class DeviceReadingsInitializer @Inject constructor(
         metrics.gauge("device.storage.total", storage.totalBytes.toDouble(), MetricsUnit.Information.BYTE)
         metrics.gauge("device.thermal.state", powerManager.currentThermalStatus.toDouble())
         thermalHeadroom()?.let { metrics.gauge("device.thermal.headroom", it.toDouble()) }
-        metrics.gauge(
-            "device.battery.level",
-            batteryService.currentBatteryLevel().inPercents.toDouble(),
-            MetricsUnit.Fraction.PERCENT
-        )
+        batteryService.currentBatteryLevel()?.let {
+            metrics.gauge("device.battery.level", it.inPercents.toDouble(), MetricsUnit.Fraction.PERCENT)
+        }
         metrics.gauge("device.battery.charging", if (batteryService.isCharging()) 1.0 else 0.0)
     }
 

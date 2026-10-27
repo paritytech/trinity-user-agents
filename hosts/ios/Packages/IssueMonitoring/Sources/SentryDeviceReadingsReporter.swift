@@ -13,20 +13,24 @@
             let center = NotificationCenter.default
             observers = [
                 center.addObserver(
-                    forName: UIApplication.didBecomeActiveNotification,
+                    forName: UIApplication.willEnterForegroundNotification,
                     object: nil,
                     queue: .main
                 ) { [weak self] _ in
                     self?.resume()
                 },
                 center.addObserver(
-                    forName: UIApplication.willResignActiveNotification,
+                    forName: UIApplication.didEnterBackgroundNotification,
                     object: nil,
                     queue: .main
                 ) { [weak self] _ in
-                    self?.loop?.cancel()
+                    self?.pause()
                 }
             ]
+
+            if UIApplication.shared.applicationState != .background {
+                resume()
+            }
         }
     }
 
@@ -51,7 +55,8 @@
         }
 
         func resume() {
-            loop?.cancel()
+            guard loop == nil else { return }
+
             loop = Task {
                 await enableBatteryMonitoring()
                 var previousCPUSample: CPUSample?
@@ -64,6 +69,11 @@
                     try? await Task.sleep(for: .seconds(60))
                 }
             }
+        }
+
+        func pause() {
+            loop?.cancel()
+            loop = nil
         }
 
         func report(processCPUUsage: Double?) async {

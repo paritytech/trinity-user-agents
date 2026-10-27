@@ -9,7 +9,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 interface BatteryService {
-    fun currentBatteryLevel(): Fraction
+    fun currentBatteryLevel(): Fraction?
 
     fun isCharging(): Boolean
 }
@@ -20,8 +20,10 @@ internal class RealBatteryService @Inject constructor(
 ) : BatteryService {
     private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
 
-    override fun currentBatteryLevel(): Fraction {
-        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).percents
+    override fun currentBatteryLevel(): Fraction? {
+        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            .takeIf { it in 0..100 }
+            ?.percents
     }
 
     override fun isCharging(): Boolean = batteryManager.isCharging
