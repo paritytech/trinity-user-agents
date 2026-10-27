@@ -1,5 +1,6 @@
 import Foundation_iOS
 import PolkadotUI
+import Products
 import UIKit
 import UIKitExt
 

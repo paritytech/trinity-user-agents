@@ -439,7 +439,6 @@ impl BulletinRpc {
 		let mut allowance_rejection_started = None;
 		loop {
 			self.enter_phase(SubmissionPhase::Build);
-			let at_block = block.at().await?;
 			let built = build_signed_store_transaction(
 				&self.extrinsics,
 				H256(self.genesis_hash),
@@ -448,9 +447,12 @@ impl BulletinRpc {
 			)
 			.await
 			.map_err(BulletinSubmitError::Build)?;
-			let signed = at_block.tx().from_bytes(built.extrinsic.bytes().to_vec());
 
 			self.enter_phase(SubmissionPhase::DryRun);
+			let birth = built.mortality.birth().number;
+			block = best_block_from(best_blocks, block, birth, SubmissionPhase::DryRun).await?;
+			let at_block = block.at().await?;
+			let signed = at_block.tx().from_bytes(built.extrinsic.bytes().to_vec());
 			let validity = signed.validate().await?;
 			match Self::classify_dry_run_validity(validity)? {
 				DryRunStatus::Valid => return Ok(signed),
@@ -562,8 +564,20 @@ async fn initial_best_block(
 			() = replay_deadline => break,
 		}
 	}
-	while block.number() < finalized_number {
-		block = next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
+	best_block_from(blocks, block, finalized_number, SubmissionPhase::Connect).await
+}
+
+/// `block`, or the first best block after it numbered at least `number`. A
+/// transaction validated at a block before its birth block names a birth the
+/// node does not know.
+async fn best_block_from(
+	blocks: &mut Blocks<SubstrateConfig>,
+	mut block: Block<SubstrateConfig>,
+	number: u64,
+	phase: SubmissionPhase,
+) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
+	while block.number() < number {
+		block = next_best_block(blocks, INITIALIZATION_TIMEOUT, phase).await?;
 	}
 	Ok(block)
 }
@@ -976,6 +990,7 @@ mod tests {
 			stall_headers: bool,
 			replayed_finalized_blocks: usize,
 			replay_header_delay: Option<Duration>,
+			legacy_finalized_block: Option<usize>,
 			last_transaction: Option<String>,
 			omit_transaction_from_next_body: bool,
 		}
@@ -1010,6 +1025,7 @@ mod tests {
 						stall_headers,
 						replayed_finalized_blocks: 0,
 						replay_header_delay: None,
+						legacy_finalized_block: None,
 						last_transaction: None,
 						omit_transaction_from_next_body: false,
 					})),
@@ -1038,6 +1054,20 @@ mod tests {
 					state.replayed_finalized_blocks = count;
 					state.replay_header_delay = Some(delay);
 					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
+			/// The build reads block `count` as finalized while the best-block
+			/// stream still stands on the first block: the `count` blocks it
+			/// announces have headers that answer only after `delay`.
+			fn with_finalized_ahead_of_best(self, count: usize, delay: Duration) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+					state.replay_header_delay = Some(delay);
+					state.legacy_finalized_block = Some(count);
 				}
 				self
 			}
@@ -1431,6 +1461,9 @@ mod tests {
 
 		/// The newest finalized block the follow subscription announces.
 		fn legacy_finalized_hash(state: &ScriptedState) -> String {
+			if let Some(block) = state.legacy_finalized_block {
+				return scripted_block_hash(block);
+			}
 			match state.replayed_finalized_blocks {
 				0 => BLOCK_HASH.to_string(),
 				newest => scripted_block_hash(newest),
@@ -1610,6 +1643,32 @@ mod tests {
 			assert_eq!(
 				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
 				vec![finalized_hash]
+			);
+		}
+
+		/// A transaction validated at a block before its birth block names a
+		/// birth the node does not know, so the dry run waits for the best
+		/// block to reach it.
+		#[test]
+		fn submit_preimage_dry_runs_no_earlier_than_the_birth_block() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included])
+					.with_finalized_ahead_of_best(2, Duration::from_millis(50)),
+			);
+			let birth_hash: H256 = scripted_block_hash(2).parse().unwrap();
+			let value = b"finalized ahead of best";
+
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(5),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![birth_hash]
 			);
 		}
 

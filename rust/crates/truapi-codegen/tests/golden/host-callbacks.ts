@@ -19,7 +19,6 @@ import {
   HostSignRawRequest,
   HostSignRawWithLegacyAccountRequest,
   LegacyAccountTxPayload,
-  NftPurseChequeRecipient,
   NftPurseOwner,
   ProductAccountId,
   ProductAccountTxPayload,
@@ -512,7 +511,7 @@ export type NftPurseDrainDestination =
   /**
    * A cheque the product delivers to its recipient.
    */
-  | { tag: "Cheque"; value: { recipient: NftPurseChequeRecipient } };
+  | { tag: "Cheque"; value?: undefined };
 
 /**
  * Review shown before a product moves items out of an NFT purse it does
@@ -1166,9 +1165,7 @@ export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
       S.TaggedUnion({
         Purse: S.Struct({ purse: S.u32 }) as S.Codec<{ purse: number }>,
         ExternalKey: S.Struct({ key: Bytes32 }) as S.Codec<{ key: Bytes32 }>,
-        Cheque: S.Struct({ recipient: NftPurseChequeRecipient }) as S.Codec<{
-          recipient: NftPurseChequeRecipient;
-        }>,
+        Cheque: S._void,
       }),
   );
 
@@ -2001,7 +1998,8 @@ export interface PocketPlatform {
  */
 export interface PreimageHost {
   /**
-   * Emits current value/miss immediately, then future updates.
+   * Emits current value/miss immediately, then future updates. `key` is
+   * the blake2b-256 digest of the preimage.
    */
   lookupPreimage(
     key: Uint8Array,

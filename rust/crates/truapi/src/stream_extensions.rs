@@ -26,6 +26,7 @@ pub trait StreamExtensions: Stream + Sized + Send + 'static {
 
 	/// The items without each `Ok` value equal to the last `Ok` value passed
 	/// on. Every `Err` passes on, and does not count as a value.
+	#[cfg(not(target_arch = "wasm32"))]
 	fn distinct_until_changed<T, E>(self) -> BoxStream<'static, Result<T, E>>
 	where
 		Self: Stream<Item = Result<T, E>>,

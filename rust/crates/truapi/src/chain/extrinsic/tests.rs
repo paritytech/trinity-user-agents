@@ -136,12 +136,6 @@ impl TransactionExtension for FixedBytesExtension {
 	}
 }
 
-/// `CheckMortality` as the allowance assembler writes it: immortal, with the
-/// genesis hash as its implicit.
-fn immortal() -> FixedBytesExtension {
-	FixedBytesExtension { name: "CheckMortality", explicit: vec![0x00], implicit: GENESIS.to_vec() }
-}
-
 /// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the People
 /// `AsResources` value, whose variant indices are 3 and 1.
 fn long_term_storage_claim_value() -> Vec<u8> {
@@ -175,10 +169,10 @@ impl TransactionExtension for RecordingExtension {
 	}
 }
 
-/// Blake2-256 of the 822-byte authorized extrinsic the People runtime accepts
-/// for this call and `AsResources` value with an immortal era.
+/// Blake2-256 of the authorized extrinsic for this call and `AsResources`
+/// value, born at [`BIRTH`] with the default period.
 const AUTHORIZED_EXTRINSIC_HASH: &str =
-	"98c8c0ea429d862856c9de737268cef03340fb77c3a4f0c39fb56e7125e494e2";
+	"19abbb484e939308c893ae401cfb57347d6da84c3c7938002b4833dd0ff46788";
 
 /// The proof-authorized layout the People runtime accepts: preamble,
 /// extension order, the authorizer's value in its place, then the call.
@@ -191,7 +185,6 @@ fn an_authorized_extrinsic_has_the_reference_bytes() {
 		.start_build()
 		.with_call(remark())
 		.with_extension(FixedBytesExtension::explicit_only("AsResources", extra))
-		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
 	let built = build_offline(builder).unwrap();
 
@@ -201,10 +194,10 @@ fn an_authorized_extrinsic_has_the_reference_bytes() {
 /// A ring proof covers exactly the extensions after its authorizer; one more
 /// or one fewer and the node rejects the proof.
 ///
-/// The hash is the reference implication for this call after `AsResources`.
+/// The hash is the implication for this call after `AsResources`.
 #[test]
 fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
-	let expected = "d0b6630d1e1764486b2080946470856f3b00d9408d71d23ab48c40d3eaf2f043";
+	let expected = "c229cd61e5d859c084764fe1e3dc826880f5bf5bd8478bb90bb5b0026d504495";
 	let seen = Arc::new(Mutex::new(None));
 
 	let source = people();
@@ -216,7 +209,6 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 			explicit: vec![0x00],
 			seen: seen.clone(),
 		})
-		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
 	build_offline(builder).unwrap();
 
@@ -458,6 +450,21 @@ fn an_extension_supplied_twice_is_refused() {
 
 /// A value that does not decode as its type would sign one thing and send
 /// another; it fails here with the bytes, not at the node.
+/// The builder reports the era it signed, so a caller cannot sign another.
+#[test]
+fn a_supplied_era_is_refused() {
+	let signer = test_signer();
+	let error = build_error(PEOPLE, Some(&signer), |builder| {
+		builder.with_extension(FixedBytesExtension {
+			name: "CheckMortality",
+			explicit: vec![0x00],
+			implicit: GENESIS.to_vec(),
+		})
+	});
+
+	assert!(matches!(error, ExtrinsicBuildError::SuppliedMortality));
+}
+
 #[test]
 fn a_value_that_does_not_match_its_type_is_refused() {
 	let signer = test_signer();
@@ -514,23 +521,18 @@ fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails
 
 /// A V5 signature covers the extensions after `VerifyMultiSignature`, as the
 /// node recomputes them; signing anything else is a `BadProof`. The hash is
-/// the reference implication after `VerifyMultiSignature` for this call.
+/// the implication after `VerifyMultiSignature` for this call.
 #[test]
 fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 	let expected: [u8; 32] =
-		hex::decode("3cc30056f7aa6877d1486175e40187e291176e2034f267db36efcb5e95f63c3d")
+		hex::decode("ca6c57e219f83af09cc9415326fa2cf3f120d0497c4e172c44da0c289ba3b042")
 			.unwrap()
 			.try_into()
 			.unwrap();
 	let signer = test_signer();
 
 	let source = people().with_host_extension_version(Some(0));
-	let builder = source
-		.start_build()
-		.with_call(remark())
-		.with_signer(&signer)
-		.with_nonce(0)
-		.with_extension(immortal());
+	let builder = source.start_build().with_call(remark()).with_signer(&signer).with_nonce(0);
 	let built = build_offline(builder).unwrap();
 	let metadata = Metadata::decode_from(PEOPLE).unwrap();
 

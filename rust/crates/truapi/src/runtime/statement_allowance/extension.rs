@@ -23,15 +23,8 @@ use super::{
 	view_cache::{MetadataViewCache, ViewFunctionDef},
 };
 
-/// Signed-extension identifier that carries the `AsPgas` authorization on Asset Hub.
-pub const AS_PGAS: &str = "AsPgas";
-
 /// Signed-extension identifier that carries the `AsResources` authorization.
 pub const AS_RESOURCES: &str = "AsResources";
-
-/// Signed-extension identifier that carries the `AsDotnsGateway`
-/// authorization on Asset Hub.
-pub const AS_DOTNS_GATEWAY: &str = "AsDotnsGateway";
 
 /// Error while decoding runtime metadata or resolving allowance-specific
 /// metadata entries.
@@ -69,47 +62,6 @@ pub enum MetadataError {
 		/// Call name.
 		call: String,
 	},
-	/// Named transaction extension is absent from metadata.
-	#[error("{identifier} extension not found in metadata")]
-	MissingExtension {
-		/// Extension identifier.
-		identifier: String,
-	},
-	/// Extension's extra type did not contain the expected `Option`.
-	#[error("{identifier} extra is not an Option")]
-	ExtensionExtraNotOption {
-		/// Extension whose extra was inspected.
-		identifier: String,
-	},
-	/// Named authorization variant was not found on the extension's info enum.
-	#[error("{identifier} info variant {variant} not found in metadata")]
-	MissingExtensionVariant {
-		/// Extension whose info enum was inspected.
-		identifier: String,
-		/// Variant name.
-		variant: String,
-	},
-	/// `AsDotnsGatewayInfo::RegisterFullName` did not have the expected field shape.
-	#[error(
-		"AsDotnsGatewayInfo::RegisterFullName fields are [{actual}], expected \
-         [proof, ring_index, revision, signature]; the runtime shape drifted"
-	)]
-	RegisterFullNameShapeDrift {
-		/// Actual comma-separated field names.
-		actual: String,
-	},
-	/// Info variant carried no enum field holding the requested variant.
-	#[error(
-		"{identifier} info variant {variant} carries no field enum with a {field_variant} variant"
-	)]
-	MissingExtensionFieldVariant {
-		/// Extension whose info enum was inspected.
-		identifier: String,
-		/// Info variant inspected.
-		variant: String,
-		/// Nested variant that was not found.
-		field_variant: String,
-	},
 	/// Type id did not resolve in the portable registry.
 	#[error("unknown type id {type_id}")]
 	UnknownTypeId {
@@ -121,20 +73,6 @@ pub enum MetadataError {
 	TypeNotEnum {
 		/// Type id.
 		type_id: u32,
-	},
-	/// Type id did not resolve to a composite.
-	#[error("type {type_id} is not a composite")]
-	TypeNotComposite {
-		/// Type id.
-		type_id: u32,
-	},
-	/// Composite type had the wrong field count.
-	#[error("type {type_id} has {actual} fields, expected 1")]
-	CompositeFieldCount {
-		/// Type id.
-		type_id: u32,
-		/// Actual field count.
-		actual: usize,
 	},
 	/// Storage value type was missing from metadata.
 	#[error("{pallet}.{entry} type not in metadata")]
