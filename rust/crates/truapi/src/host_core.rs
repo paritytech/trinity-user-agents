@@ -954,7 +954,8 @@ impl SigningHostRuntime {
 	}
 
 	/// Installs the NFT ledger over `db` and `durable` and starts tracking
-	/// its holdings, when an installation provider is set.
+	/// its holdings, when an installation provider and encrypted storage are
+	/// set.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
@@ -965,11 +966,16 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
+		let Some(encrypted) = self.services.encrypted_storage() else {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+			return;
+		};
 
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets };
+		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
 		let ledger = crate::nft::NftLedger::new(deps);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
@@ -1335,17 +1341,22 @@ fn durable_engine(
 }
 
 /// The domains and policies the durable engine serves: NFT transfers, on the
-/// Asset Hub that runs the Scarcity pallet.
+/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
+/// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
 	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> crate::durable::DurableRegistry {
-	use crate::nft::{ScarcityTransfersDeps, with_scarcity_transfers};
+	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
 	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
 		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
+		return registry;
+	};
+	let Some(encrypted) = services.encrypted_storage() else {
+		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
 	};
 	let chain = Arc::new(services.chain.clone());
@@ -1354,6 +1365,7 @@ fn durable_registry(
 		heads: chain,
 		genesis: genesis.into(),
 		signer,
+		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
 	};
 	with_scarcity_transfers(registry, deps)

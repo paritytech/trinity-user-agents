@@ -7,6 +7,8 @@
 mod dao;
 mod handoff;
 mod holding;
+mod import;
+mod imported_secrets;
 mod item;
 mod keys;
 mod ledger;
@@ -21,10 +23,13 @@ mod testing;
 
 pub use handoff::{HandoffError, HandoffRequest, HandoffTag};
 pub use holding::HeldItem;
+pub use import::{ImportRequest, StartImportError};
+pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
-	ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot, item_keys_from_entropy,
-	item_secrets_from_entropy, item_signer_from_entropy,
+	ImportedItemKey, InvalidItemSecret, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets,
+	ItemSigner, ItemSlot, item_keys_from_entropy, item_secrets_from_entropy,
+	item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{

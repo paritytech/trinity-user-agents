@@ -6,12 +6,14 @@ use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
+	imported_secrets::ImportedSecretStore,
 	keys::{
-		ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot,
-		item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
+		ImportedItemKey, ItemIndex, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner,
+		ItemSlot, item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
 	},
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
+	purse::PurseId,
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
@@ -20,6 +22,7 @@ use crate::{
 		PolicyParams, Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable,
 		VerdictFailureKind, engine_on,
 	},
+	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
 	installation::{InstallationId, InstallationIdProvider},
 	platform::async_trait,
@@ -48,6 +51,7 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
 		durable: unbuilt_transfers_engine(db),
 		secrets: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 	}
 }
 
@@ -114,6 +118,17 @@ impl ItemSigner for FixedEntropy {
 		item_signer_from_entropy(&self.0, slot)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
+}
+
+/// The entropy a cheque's sender derives the keys of [`imported_test_key`] from.
+pub const SENDER_ENTROPY: [u8; 16] = [0x77; 16];
+
+/// The key at `index` of the sender's purse 0, as a cheque hands it over.
+pub fn imported_test_key(index: u32) -> ImportedItemKey {
+	let slot =
+		ItemSlot { purse: PurseId(0), installation: TEST_INSTALLATION, index: ItemIndex(index) };
+	let secret = item_secrets_from_entropy(&SENDER_ENTROPY, &[slot]).unwrap().remove(0);
+	ImportedItemKey::from_secret(secret).expect("a derived secret is valid")
 }
 
 /// Records `key` at `index` of purse 0 under [`TEST_INSTALLATION`], as an

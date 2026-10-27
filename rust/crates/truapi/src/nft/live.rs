@@ -20,8 +20,8 @@ use subxt::{
 };
 
 use super::{
-	ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId, PurseTag,
-	ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
+	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId,
+	PurseTag, ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
 	scarcity::ASSET_HUB_PIPELINE,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
@@ -133,6 +133,7 @@ struct LivePurses {
 fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let (dir, db) = open_temporary_core_db();
 	let keys = Arc::new(FixedEntropy(rand::random::<[u8; 16]>().to_vec()));
+	let imported = ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default()));
 	let storage: Arc<dyn WatchedStorage> = Arc::new(chain.clone());
 	let heads = Arc::new(chain.clone());
 	let versions = Arc::new(FixedExtensionVersions::one_chain(genesis, ASSET_HUB_PIPELINE));
@@ -141,13 +142,15 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 		heads,
 		genesis,
 		signer: keys.clone(),
+		imported: imported.clone(),
 		extrinsics: Arc::new(ExtrinsicService::over_chain(chain.clone(), versions)),
 	};
 	let engine =
 		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
 	let secrets = keys.clone();
-	let deps = NftLedgerDeps { db: db.clone(), installation, keys, durable: engine, secrets };
+	let deps =
+		NftLedgerDeps { db: db.clone(), installation, keys, durable: engine, secrets, imported };
 	let ledger = NftLedger::new(deps);
 	let tracking = super::HoldingTrackerDeps {
 		ledger: ledger.clone(),

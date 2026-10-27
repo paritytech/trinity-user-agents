@@ -9,6 +9,8 @@ use super::{
 	dao,
 	handoff::{HandoffError, HandoffRequest, record_handoff, validate_handoff},
 	holding::{HeldItem, record_holdings},
+	import::{ImportPlan, ImportRequest, StartImportError, plan_imports},
+	imported_secrets::ImportedSecretStore,
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
@@ -36,6 +38,8 @@ pub struct NftLedgerDeps {
 	pub durable: Arc<DurableTxEngine>,
 	/// Exports the secrets of items handed off.
 	pub secrets: Arc<dyn ItemSecrets>,
+	/// Keeps the secrets of imported keys.
+	pub imported: ImportedSecretStore,
 }
 
 /// Layer 1's store of purses and their items.
@@ -46,13 +50,14 @@ pub struct NftLedger {
 	keys: Arc<dyn ItemKeyDeriver>,
 	durable: Arc<DurableTxEngine>,
 	secrets: Arc<dyn ItemSecrets>,
+	imported: ImportedSecretStore,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable, secrets } = deps;
-		Self { db, installation, keys, durable, secrets }
+		let NftLedgerDeps { db, installation, keys, durable, secrets, imported } = deps;
+		Self { db, installation, keys, durable, secrets, imported }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
@@ -158,6 +163,37 @@ impl NftLedger {
 			plan_transfers(tx, &request, keys)
 		};
 		DurableRequest::scheduled_in(nft_domain(), group, PolicyId::new(TRANSFER_POLICY), plan)
+	}
+
+	/// Stores the secret of every key of `request`, then registers one move per
+	/// key into a fresh key of `request.into`, in one write that checks the
+	/// operation is new. Each move waits for its key to hold an NFT for up to
+	/// an hour from now. Returns once the moves are registered.
+	pub async fn start_imports(&self, request: ImportRequest) -> Result<(), StartImportError> {
+		self.imported
+			.store(&request.keys)
+			.await
+			.map_err(StartImportError::StoreSecrets)?;
+		let installation = self.current_installation().await?;
+		let planned = self.planned_imports(request.plan(), installation);
+		self.durable.execute_with(planned, |_, _| Ok(())).await?;
+		Ok(())
+	}
+
+	/// `plan` as a durable request whose moves are planned in its write.
+	fn planned_imports(
+		&self,
+		plan: ImportPlan,
+		installation: InstallationId,
+	) -> DurableRequest<StartOperationError> {
+		let group = Some(plan.operation.group().clone());
+		let deriver = self.keys.clone();
+		let plan_in_write = move |tx: &rusqlite::Transaction<'_>| {
+			let keys = DestinationKeys { installation, deriver: deriver.as_ref() };
+			plan_imports(tx, &plan, keys)
+		};
+		let policy = PolicyId::new(TRANSFER_POLICY);
+		DurableRequest::scheduled_in(nft_domain(), group, policy, plan_in_write)
 	}
 
 	/// Every transfer of `operation`, in registration order, now and after every

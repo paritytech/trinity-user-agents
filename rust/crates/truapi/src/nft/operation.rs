@@ -14,7 +14,7 @@ use super::{
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
@@ -136,8 +136,8 @@ pub fn plan_transfers(
 			let signed_state_nonce = None;
 			TransferParams {
 				source,
-				slot,
-				instance,
+				signer: TransferSigner::Derived(slot),
+				instance: Some(instance),
 				destination,
 				signed_state_nonce,
 				give_up_after,
@@ -148,7 +148,7 @@ pub fn plan_transfers(
 }
 
 /// `item_count` fresh keys in `purse`.
-fn allocate_destinations(
+pub fn allocate_destinations(
 	tx: &Transaction<'_>,
 	purse: PurseId,
 	item_count: usize,

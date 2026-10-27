@@ -88,9 +88,46 @@ impl<Signer: ItemSigner> ItemSigner for Weak<Signer> {
 pub struct ItemSecret(Zeroizing<[u8; 64]>);
 
 impl ItemSecret {
+	/// Wraps a secret received in a cheque.
+	pub fn from_bytes(bytes: Zeroizing<[u8; 64]>) -> Self {
+		Self(bytes)
+	}
+
 	/// The secret's bytes, as `schnorrkel::SecretKey::from_bytes` reads them.
 	pub fn as_bytes(&self) -> &[u8; 64] {
 		&self.0
+	}
+}
+
+/// Bytes that are not an sr25519 secret key.
+#[derive(Debug, thiserror::Error)]
+#[error("the bytes are not an sr25519 secret key")]
+pub struct InvalidItemSecret;
+
+/// An item key the host did not derive, with the secret that signs for it.
+pub struct ImportedItemKey {
+	key: ItemKey,
+	secret: ItemSecret,
+}
+
+impl ImportedItemKey {
+	/// The key `secret` signs for, with that secret. Fails on bytes that are
+	/// not a secret key.
+	pub fn from_secret(secret: ItemSecret) -> Result<Self, InvalidItemSecret> {
+		let parsed =
+			schnorrkel::SecretKey::from_bytes(secret.as_bytes()).map_err(|_| InvalidItemSecret)?;
+		let key = ItemKey(parsed.to_public().to_bytes());
+		Ok(Self { key, secret })
+	}
+
+	/// The public key.
+	pub fn key(&self) -> ItemKey {
+		self.key
+	}
+
+	/// The secret that signs for it.
+	pub fn secret(&self) -> &ItemSecret {
+		&self.secret
 	}
 }
 

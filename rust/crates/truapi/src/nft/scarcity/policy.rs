@@ -11,12 +11,13 @@ use super::{
 	transfer::NftTransfer,
 };
 use crate::{
-	chain::{ExtrinsicService, MortalExtrinsic},
+	chain::ExtrinsicService,
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
 	},
-	nft::{ItemKey, ItemSigner, ItemSlot},
+	host_internal::extrinsic::Sr25519Signer,
+	nft::{ImportedSecretStore, ItemKey, ItemSigner, ItemSlot},
 	unix_time::current_unix_secs,
 };
 
@@ -31,6 +32,15 @@ const MAX_ATTEMPTS: u32 = 5;
 /// end before it is given up, so its item never stays in use for good.
 pub const TRANSFER_WAIT_LIMIT_SECS: u64 = 30 * 60;
 
+/// Who signs a transfer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub enum TransferSigner {
+	/// A key the host derives, at this slot.
+	Derived(ItemSlot),
+	/// A key whose secret is in the imported secret store.
+	Imported,
+}
+
 /// What the policy stores with each transfer: the key it spends and where
 /// that key sits, the instance it transfers, the key it goes to, and when it
 /// stops waiting. Everything a build needs, so it reads no table.
@@ -38,10 +48,11 @@ pub const TRANSFER_WAIT_LIMIT_SECS: u64 = 30 * 60;
 pub struct TransferParams {
 	/// The key the NFT leaves, which signs the transfer.
 	pub source: ItemKey,
-	/// Where `source` sits in the derivation tree.
-	pub slot: ItemSlot,
-	/// The instance the source key holds when the transfer is registered.
-	pub instance: u64,
+	/// How the secret of `source` is found.
+	pub signer: TransferSigner,
+	/// The instance the transfer moves. `None` for an import until its source
+	/// is first seen holding one; set when an attempt is built.
+	pub instance: Option<u64>,
 	/// The key it goes to.
 	pub destination: ItemKey,
 	/// The `state_nonce` the live attempt signed over, which the oracle
@@ -71,8 +82,10 @@ impl TryFrom<&PolicyParams> for TransferParams {
 pub struct ScarcityTransferPolicyDeps {
 	/// Scarcity storage, read fresh for every batch.
 	pub chain: Arc<dyn ScarcityChain>,
-	/// Signs with the key each transfer spends.
+	/// Signs with the derived keys transfers spend.
 	pub signer: Arc<dyn ItemSigner>,
+	/// Holds the secrets of the imported keys transfers spend.
+	pub imported: ImportedSecretStore,
 	/// Builds each transfer.
 	pub extrinsics: Arc<ExtrinsicService>,
 	/// Genesis of the chain that runs the pallet.
@@ -141,8 +154,20 @@ enum TransferDecision {
 	/// Its NFT is not at the source, or the source is locked. It waits and
 	/// is asked about again.
 	Wait,
-	/// Build it, signing over this revision of the instance.
-	Build { state_nonce: u64 },
+	/// Build this transfer of the instance the source holds, at its revision now.
+	Build(NftTransfer),
+}
+
+/// What signing a planned transfer came to.
+enum SignedTransfer {
+	/// Ready to submit.
+	Ready(Preparation),
+	/// The signer is unavailable for now, as when signed out or when a store
+	/// read failed. The transfer waits.
+	Unavailable,
+	/// The transfer can never be signed, because no imported secret is stored
+	/// for its source. It is given up.
+	Unsignable,
 }
 
 #[async_trait::async_trait]
@@ -205,48 +230,78 @@ impl ScarcityTransferPolicy {
 		view: TransferView,
 		build: &BatchBuild,
 	) -> Option<Preparation> {
-		let ready = match decide_from_chain(transfer, view) {
+		let signed = match decide_from_chain(transfer, view) {
 			TransferDecision::GiveUp => return Some(Preparation::GiveUp),
-			TransferDecision::Wait => None,
-			TransferDecision::Build { state_nonce } => {
-				self.ready_to_submit(transfer, state_nonce, build).await
+			TransferDecision::Wait => SignedTransfer::Unavailable,
+			TransferDecision::Build(nft_transfer) => {
+				self.ready_to_submit(transfer, &nft_transfer, build).await
 			},
 		};
-		ready.or_else(|| give_up_after_limit(transfer, build.now))
+		match signed {
+			SignedTransfer::Ready(ready) => Some(ready),
+			SignedTransfer::Unsignable => Some(Preparation::GiveUp),
+			SignedTransfer::Unavailable => give_up_after_limit(transfer, build.now),
+		}
 	}
 
-	/// `transfer` signed over `state_nonce` and ready, with that revision
-	/// recorded in its params, or `None` when it could not be signed.
+	/// `nft_transfer` signed for `transfer` and ready, with the instance and
+	/// revision it signed recorded in its params.
 	async fn ready_to_submit(
 		&self,
 		transfer: &PlannedTransfer,
-		state_nonce: u64,
+		nft_transfer: &NftTransfer,
 		build: &BatchBuild,
-	) -> Option<Preparation> {
-		let params = TransferParams { signed_state_nonce: Some(state_nonce), ..transfer.params };
-		self.sign_planned_transfer(transfer, state_nonce, build)
-			.await
-			.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"))
-			.ok()
-			.map(|extrinsic| Preparation::Ready { extrinsic, params: Some(params.into()) })
-	}
-
-	/// `transfer` signed by its source key. Fails without a session.
-	async fn sign_planned_transfer(
-		&self,
-		transfer: &PlannedTransfer,
-		state_nonce: u64,
-		build: &BatchBuild,
-	) -> Result<MortalExtrinsic, PolicyError> {
-		let signer = self.deps.signer.item_signer(transfer.params.slot).map_err(policy_error)?;
-		let TransferParams { instance, destination, .. } = transfer.params;
-		let nft_transfer = NftTransfer { instance, state_nonce, destination };
+	) -> SignedTransfer {
+		let signer = match self.signer_for(&transfer.params).await {
+			Ok(Some(signer)) => signer,
+			Ok(None) => return SignedTransfer::Unsignable,
+			Err(error) => return transfer_not_signed(error),
+		};
+		let params = TransferParams {
+			instance: Some(nft_transfer.instance),
+			signed_state_nonce: Some(nft_transfer.state_nonce),
+			..transfer.params
+		};
 		build
 			.extrinsics
-			.sign_nft_transfer(self.deps.genesis, &signer, &nft_transfer)
+			.sign_nft_transfer(self.deps.genesis, &signer, nft_transfer)
 			.await
+			.map(|extrinsic| Preparation::Ready { extrinsic, params: Some(params.into()) })
+			.map_or_else(transfer_not_signed, SignedTransfer::Ready)
+	}
+
+	/// The signer of the source key of `params`, or `None` when it is an
+	/// imported key whose secret is not stored. Fails without a session or
+	/// when the store cannot be read.
+	async fn signer_for(
+		&self,
+		params: &TransferParams,
+	) -> Result<Option<Sr25519Signer>, PolicyError> {
+		let TransferSigner::Derived(slot) = params.signer else {
+			return self.imported_signer(&params.source).await;
+		};
+		self.deps.signer.item_signer(slot).map(Some).map_err(policy_error)
+	}
+
+	/// The signer of the imported key `source`, or `None` when its secret is
+	/// not stored.
+	async fn imported_signer(
+		&self,
+		source: &ItemKey,
+	) -> Result<Option<Sr25519Signer>, PolicyError> {
+		let secret = self.deps.imported.secret_of(source).await.map_err(policy_error)?;
+		secret
+			.map(|secret| Sr25519Signer::from_secret_bytes(secret.as_bytes()))
+			.transpose()
 			.map_err(policy_error)
 	}
+}
+
+/// [`SignedTransfer::Unavailable`], after logging the `error` that kept the
+/// transfer from being signed.
+fn transfer_not_signed(error: impl core::fmt::Display) -> SignedTransfer {
+	tracing::warn!(%error, "NFT transfer not signed");
+	SignedTransfer::Unavailable
 }
 
 /// The transfers of `batch` whose params decode. Only registration writes
@@ -286,18 +341,24 @@ fn give_up_after_limit(transfer: &PlannedTransfer, now: u64) -> Option<Preparati
 }
 
 /// What the chain says about `transfer`. A source that does not hold the
-/// instance waits, since a reorg can put it back. An occupied destination
+/// instance waits, since a reorg can put it back, and a transfer that names no
+/// instance yet waits for its source to hold any. An occupied destination
 /// fails at once.
 fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> TransferDecision {
 	if transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() {
 		return TransferDecision::GiveUp;
 	}
-	let held = view.source.filter(|held| held.instance == transfer.params.instance);
+	let expected = transfer.params.instance;
+	let held = view
+		.source
+		.filter(|held| expected.is_none_or(|instance| held.instance == instance));
 	let Some(held) = held else { return TransferDecision::Wait };
 	if view.locked {
 		return TransferDecision::Wait;
 	}
-	TransferDecision::Build { state_nonce: held.state_nonce }
+	let ScarcityNft { instance, state_nonce, .. } = held;
+	let destination = transfer.params.destination;
+	TransferDecision::Build(NftTransfer { instance, state_nonce, destination })
 }
 
 fn policy_error(error: impl core::fmt::Display) -> PolicyError {
@@ -308,6 +369,7 @@ fn policy_error(error: impl core::fmt::Display) -> PolicyError {
 mod tests {
 	use futures::executor::block_on;
 	use subxt::{ext::frame_decode::extrinsics::decode_extrinsic, utils::H256};
+	use truapi::latest::GenericError;
 
 	use super::*;
 	use crate::{
@@ -316,6 +378,7 @@ mod tests {
 			extrinsic_service_serving,
 		},
 		durable::{DomainId, SubmissionPlan},
+		encrypted_storage::{EncryptedStorage, MemoryEncryptedStorage},
 		nft::{
 			PurseId, item_keys_from_entropy,
 			keys::ItemIndex,
@@ -323,7 +386,7 @@ mod tests {
 				chain::TransferContext,
 				testing::{ASSET_HUB_METADATA_BYTES, ASSET_HUB_PIPELINE, asset_hub_metadata},
 			},
-			testing::{FixedEntropy, TEST_ENTROPY, TEST_INSTALLATION},
+			testing::{FixedEntropy, TEST_ENTROPY, TEST_INSTALLATION, imported_test_key},
 		},
 		runtime::AuthorityError,
 		unix_time::current_unix_secs,
@@ -407,12 +470,31 @@ mod tests {
 		let source = item_keys_from_entropy(&TEST_ENTROPY, &[slot]).unwrap()[0];
 		let params = TransferParams {
 			source,
-			slot,
-			instance: INSTANCE,
+			signer: TransferSigner::Derived(slot),
+			instance: Some(INSTANCE),
 			destination: DESTINATION,
 			signed_state_nonce: None,
 			give_up_after,
 		};
+		scheduled_transfer(params, attempts)
+	}
+
+	/// A scheduled import of [`imported_test_key`] 0 to [`DESTINATION`], as the
+	/// ledger registers it, that stops waiting at unix time `give_up_after`.
+	fn registered_import_until(give_up_after: u64) -> RegisteredTransfer {
+		let params = TransferParams {
+			source: imported_test_key(0).key(),
+			signer: TransferSigner::Imported,
+			instance: None,
+			destination: DESTINATION,
+			signed_state_nonce: None,
+			give_up_after,
+		};
+		scheduled_transfer(params, 0)
+	}
+
+	fn scheduled_transfer(params: TransferParams, attempts: u32) -> RegisteredTransfer {
+		let source = params.source;
 		let plan = SubmissionPlan { policy: PolicyId::new(TRANSFER_POLICY), params: params.into() };
 		let id = DurableTxId(1);
 		let scheduled =
@@ -421,12 +503,39 @@ mod tests {
 	}
 
 	fn policy(chain: ScriptedScarcity) -> ScarcityTransferPolicy {
+		policy_importing_from(chain, Arc::new(MemoryEncryptedStorage::default()))
+	}
+
+	/// A policy that reads imported secrets from `encrypted`.
+	fn policy_importing_from(
+		chain: ScriptedScarcity,
+		encrypted: Arc<dyn EncryptedStorage>,
+	) -> ScarcityTransferPolicy {
 		ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
 			chain: Arc::new(chain),
 			signer: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+			imported: ImportedSecretStore::new(encrypted),
 			extrinsics: transfer_extrinsics(),
 			genesis: GENESIS,
 		})
+	}
+
+	/// Encrypted storage holding the secret of [`imported_test_key`] 0.
+	fn storage_with_imported_secret() -> Arc<dyn EncryptedStorage> {
+		let encrypted = Arc::new(MemoryEncryptedStorage::default());
+		let store = ImportedSecretStore::new(encrypted.clone());
+		block_on(store.store(&[imported_test_key(0)])).unwrap();
+		encrypted
+	}
+
+	fn prepare_import(
+		registered: &RegisteredTransfer,
+		chain: ScriptedScarcity,
+		encrypted: Arc<dyn EncryptedStorage>,
+	) -> Option<Preparation> {
+		let batch = [registered.scheduled.clone()];
+		let policy = policy_importing_from(chain, encrypted);
+		block_on(policy.prepare(&batch)).unwrap().remove(&registered.scheduled.id)
 	}
 
 	fn holding(registered: &RegisteredTransfer, nft: ScarcityNft) -> ScriptedScarcity {
@@ -581,6 +690,7 @@ mod tests {
 			ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
 				chain: Arc::new(holding(registered, held_nft())),
 				signer: Arc::new(SignedOut),
+				imported: ImportedSecretStore::new(Arc::new(MemoryEncryptedStorage::default())),
 				extrinsics: transfer_extrinsics(),
 				genesis: GENESIS,
 			})
@@ -594,6 +704,99 @@ mod tests {
 
 		assert_eq!(prepare(&waiting), None);
 		assert_eq!(prepare(&expired), Some(Preparation::GiveUp));
+	}
+
+	/// A cheque's sender may still be minting or moving the NFT, so an import
+	/// waits for its key to hold one, takes whichever instance it finds, and
+	/// records it so the oracle can prove the landing.
+	#[test]
+	fn an_import_waits_for_its_key_to_fill_and_records_the_instance_it_signed() {
+		let import = registered_import_until(current_unix_secs() + 60);
+
+		let empty =
+			prepare_import(&import, ScriptedScarcity::default(), storage_with_imported_secret());
+		let filled =
+			prepare_import(&import, holding(&import, held_nft()), storage_with_imported_secret());
+
+		assert_eq!(empty, None);
+		let Some(Preparation::Ready { params: Some(params), .. }) = filled else {
+			panic!("built without params: {filled:?}")
+		};
+		let registered = TransferParams::try_from(&import.scheduled.plan.params).unwrap();
+		let expected = TransferParams {
+			instance: Some(INSTANCE),
+			signed_state_nonce: Some(held_nft().state_nonce),
+			..registered
+		};
+		assert_eq!(TransferParams::try_from(&params).unwrap(), expected);
+	}
+
+	/// The chain only accepts a transfer signed by the key that holds the NFT,
+	/// so an import signs with the stored secret of its source key.
+	#[test]
+	fn an_import_is_signed_with_the_stored_secret_of_its_key() {
+		let import = registered_import_until(current_unix_secs() + 60);
+		let metadata = asset_hub_metadata();
+
+		let prepared =
+			prepare_import(&import, holding(&import, held_nft()), storage_with_imported_secret());
+
+		let Some(Preparation::Ready { extrinsic: signed, .. }) = prepared else {
+			panic!("built: {prepared:?}")
+		};
+		let bytes = signed.extrinsic.bytes();
+		let decoded = decode_extrinsic(&mut &bytes[..], &*metadata, metadata.types()).unwrap();
+		let extensions = decoded.transaction_extension_payload().unwrap();
+		let verify = extensions
+			.iter()
+			.find(|extension| extension.name() == "VerifyMultiSignature")
+			.unwrap();
+		assert!(bytes[verify.range()].ends_with(&import.source.0));
+	}
+
+	/// A secret that is not stored never will be, so waiting for it would only
+	/// hold the operation open for an hour.
+	#[test]
+	fn an_import_without_a_stored_secret_is_given_up() {
+		let import = registered_import_until(current_unix_secs() + 60);
+		let nothing_stored = Arc::new(MemoryEncryptedStorage::default());
+
+		let prepared = prepare_import(&import, holding(&import, held_nft()), nothing_stored);
+
+		assert_eq!(prepared, Some(Preparation::GiveUp));
+	}
+
+	/// A store that failed to answer may answer next time, so the import
+	/// waits, and its wait limit still ends it.
+	#[test]
+	fn an_import_whose_secret_cannot_be_read_waits_until_its_limit() {
+		let waiting = registered_import_until(current_unix_secs() + 60);
+		let expired = registered_import_until(current_unix_secs() - 1);
+
+		let before_limit =
+			prepare_import(&waiting, holding(&waiting, held_nft()), Arc::new(UnreadableStorage));
+		let after_limit =
+			prepare_import(&expired, holding(&expired, held_nft()), Arc::new(UnreadableStorage));
+
+		assert_eq!(before_limit, None);
+		assert_eq!(after_limit, Some(Preparation::GiveUp));
+	}
+
+	/// Encrypted storage that fails every read.
+	struct UnreadableStorage;
+
+	#[async_trait::async_trait]
+	impl EncryptedStorage for UnreadableStorage {
+		async fn read_encrypted(
+			&self,
+			_: &[u8],
+		) -> Result<Option<zeroize::Zeroizing<Vec<u8>>>, GenericError> {
+			Err(GenericError { reason: "the store is locked".into() })
+		}
+
+		async fn write_encrypted(&self, _: &[u8], _: &[u8]) -> Result<(), GenericError> {
+			Err(GenericError { reason: "the store is locked".into() })
+		}
 	}
 
 	/// A signer with no session.
