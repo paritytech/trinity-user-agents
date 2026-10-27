@@ -238,6 +238,12 @@ export type CoreStorageKey =
    */
   | { tag: "FundingSessions"; value?: undefined }
   /**
+   * A person's public profile as last resolved from their dotNS name: what the
+   * record held and when it was read, honoured for a bounded lifetime so a
+   * change or a takedown reaches hosts without a chain read on every refresh.
+   */
+  | { tag: "PublicProfile"; value: { label: string } }
+  /**
    * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
    * raw blobs, newest last, so a stored session is never overwritten
    * unread and a later bad blob does not replace an earlier one. Kept for
@@ -907,6 +913,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
       ] as const,
       FundingSessions: [13, S._void] as const,
+      PublicProfile: [
+        14,
+        S.Struct({ label: S.str }) as S.Codec<{ label: string }>,
+      ] as const,
       FundingSessionsUnreadable: [17, S._void] as const,
       FundingSessionPack: [18, S._void] as const,
     }),
