@@ -332,8 +332,13 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 #[test]
 fn payment_request_reports_unsupported_without_a_host_engine() {
 	let core = make_core();
-	let request =
-		v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32], id: [7; 32] };
+	let request = v01::HostPaymentRequest {
+		from: None,
+		amount: 1,
+		destination: [0u8; 32],
+		id: [7; 32],
+		funding: None,
+	};
 	let ids = request_ids("payment_request").expect("known request method");
 	let frame = ProtocolMessage {
 		request_id: "p:payment".into(),
@@ -693,6 +698,7 @@ fn top_up_reports_unsupported_without_a_host_engine() {
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		id: [7; 32],
+		funding: None,
 	};
 	let ids = request_ids("payment_top_up").expect("known request method");
 	let frame = ProtocolMessage {

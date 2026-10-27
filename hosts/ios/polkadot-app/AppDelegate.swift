@@ -36,6 +36,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         UserNotificationService.shared.startGatheringNotifications()
 
         LegacyGameAlarmCleanup.run()
+        LegacyOnrampStateCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()
