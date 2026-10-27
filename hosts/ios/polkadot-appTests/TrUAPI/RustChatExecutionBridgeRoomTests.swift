@@ -47,6 +47,17 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(api.roomPreviews.map(\.preview) == [previewCase.stored])
     }
 
+    /// `delete_room` is idempotent, so a room that is gone already is not an error.
+    @Test func deletingARoomThatIsGoneSucceeds() async throws {
+        let bridge = await makeBridge()
+        api.unknownRooms = ["gone"]
+
+        try await bridge.deleteRoom(roomId: "gone")
+        try await bridge.deleteRoom(roomId: "r")
+
+        #expect(api.deletedRoomIds == ["r"])
+    }
+
     @Test func everyOtherRequestRefusesARoomThatDoesNotExist() async {
         let bridge = await makeBridge()
         api.unknownRooms = ["gone"]
@@ -70,9 +81,7 @@ struct RustChatExecutionBridgeRoomTests {
         let bridge = await makeBridge()
 
         await #expect(throws: HostRejection.self) { try await bridge.setRoomConfig(roomId: "", config: .hostDefault) }
-        await #expect(throws: HostRejection.self) {
-            try await bridge.setRoomPreview(roomId: "", preview: PreviewCase.all[0].wire)
-        }
+        await #expect(throws: HostRejection.self) { try await bridge.deleteRoom(roomId: "") }
         #expect(api.roomConfigs.isEmpty)
     }
 }

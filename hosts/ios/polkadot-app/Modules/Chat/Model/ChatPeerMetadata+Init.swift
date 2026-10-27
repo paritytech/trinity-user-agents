@@ -10,11 +10,12 @@ extension Chat.LocalModel {
             // wait for the bot still shows the product; input and actions need the bot.
             let listMetadata = peerListMetadata(using: registry)
             let botMetadata = registry.getChatExtensionBot(for: extId)?.peerMetadata ?? .unknown
+            let policy = roomPolicy ?? ChatRoomPolicy(footer: roomFooter, declarations: nil)
 
             return Chat.PeerMetadata(
                 name: listMetadata.name,
                 icon: listMetadata.icon,
-                input: roomFooter == .empty ? .empty : botMetadata.input,
+                input: policy.footer.showsInput ? botMetadata.input : .empty,
                 moreActions: botMetadata.moreActions
             )
         }
@@ -42,7 +43,7 @@ extension Chat.LocalModel {
     func chatMetadata(using registry: ChatExtensionsRegistering) -> ChatMetadata {
         let peerMetadata = peerMetadata(using: registry)
 
-        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created)
+        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created, roomPolicy: roomPolicy)
     }
 }
 

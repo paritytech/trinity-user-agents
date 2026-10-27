@@ -22,6 +22,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     }
 
     private(set) var roomMetadata: [RoomMetadataCall] = []
+    private(set) var deletedRoomIds: [String] = []
 
     /// Rooms that every room call refuses with `ChatRoomError.unknownRoom`.
     var unknownRooms: Set<String> = []
@@ -42,6 +43,11 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws {
         roomFooters.append((roomId, footer))
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        try requireRoom(roomId)
+        deletedRoomIds.append(roomId)
     }
 
     func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {

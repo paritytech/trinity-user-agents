@@ -9,4 +9,6 @@ struct ChatMetadata: Equatable {
     let chatId: Chat.Id
     let peerMetadata: Chat.PeerMetadata
     let state: State
+    /// What a product room offers. Nil for a person chat.
+    var roomPolicy: ChatRoomPolicy?
 }

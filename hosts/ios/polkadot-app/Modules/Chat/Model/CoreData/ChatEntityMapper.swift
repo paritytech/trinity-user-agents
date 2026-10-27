@@ -66,16 +66,25 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 roomMetadata: roomMetadata
             )
         case let .chatExtension(extId, roomId):
-            let unreadCount = Self.nonReactionUnreadCount(for: entity)
+            let declarations = entity.roomMetadata.map { Chat.RoomDeclarations(entity: $0) }
+            let preview = declarations?.preview ?? .hostDefault
+            // A product that counts the unread messages of its room gives the count of the chat list.
+            let unreadCount =
+                switch preview.badge {
+                case .hostDefault: Self.nonReactionUnreadCount(for: entity)
+                case .none: 0
+                case let .unreadCount(count): Int(max(count, 0))
+                }
 
             return DataProviderModel(
                 peer: .chatExtension(extId, roomId: roomId),
-                message: lastDisplayMessage,
+                message: preview.lastMessage?.localMessage(chatId: chatId) ?? lastDisplayMessage,
                 unreadDisplayMessageCount: unreadCount,
-                hasIncomingReaction: hasIncomingReaction,
+                hasIncomingReaction: hasIncomingReaction || preview.unseenReaction,
                 createdAt: entity.createdAt,
                 roomMetadata: roomMetadata,
-                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:))
+                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:)),
+                roomDeclarations: declarations
             )
         }
     }
