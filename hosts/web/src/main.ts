@@ -86,7 +86,6 @@ import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
 import { NotificationStore, notificationsKey } from "./notifications.js";
-import { demoNotifications } from "./notifications-demo.js";
 import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
@@ -276,54 +275,6 @@ const chatInbox = new ChatInbox({
   log,
   chatV2,
 });
-/** The account `username` names on this network's chains, or null. */
-async function usernameOwner(username: string): Promise<HexString | null> {
-  const access = chainAccess;
-  if (access === null) throw new Error("the chain is not connected");
-  const owner = await lookupOwner(
-    chainDirectory(access.chain, access.genesis),
-    username,
-  );
-  return owner === null ? null : (bytesToHex(owner) as HexString);
-}
-/**
- * Where the contact picker finds people by username: this network's username
- * index, through the dev server's route on this machine; else, as in a
- * build, the chain by exact username.
- */
-const usernameDirectory =
-  import.meta.env.DEV &&
-  demoAllowed(true, window.location.hostname) &&
-  activeNetwork.identityBackend !== null
-    ? routeDirectory({
-        base: BASE,
-        network: activeNetwork.id,
-        owner: usernameOwner,
-      })
-    : exactUsernameDirectory(usernameOwner);
-/**
- * The contact picker, over the session's chat contacts: the one products
- * open with `contacts.pick` and Chat's New chat opens.
- */
-const hostContacts = new HostContacts({
-  list: () => chatInbox.contacts(),
-  onChange: (listener) => chatInbox.onChange(listener),
-  choose: (asker, contacts, blocked) =>
-    chooseContact(asker, contacts, usernameDirectory, blocked),
-  // A Nova conversation's id is the person's account.
-  blocked: () =>
-    chatInbox
-      .providers()
-      .flatMap((provider) => provider.blocked?.() ?? [])
-      .map((conversation) => conversation.id)
-      .filter((id): id is HexString => /^0x[0-9a-fA-F]{64}$/.test(id)),
-  onSessionChange: (listener) =>
-    chatInbox.onChange((change) => {
-      if (change.type === "session") listener();
-    }),
-  removed: () => runtime?.notifyContactsChanged(),
-  log,
-});
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
@@ -350,8 +301,8 @@ const chatScreen = new ChatScreen(
 );
 /**
  * The Notifications screen, a prototype the dev server offers on this machine
- * only, with the local demo's made-up requests. A build reads
- * `import.meta.env.DEV` as false and leaves it out, with its dock entry.
+ * only. A build reads `import.meta.env.DEV` as false and leaves it out, with
+ * its dock entry.
  */
 const notifications =
   import.meta.env.DEV && demoAllowed(true, window.location.hostname)
@@ -368,14 +319,92 @@ const notifications =
             badge.hidden = unseen === 0;
             badge.textContent = String(unseen);
           },
-          {
-            seed: () => store.seedDemo(demoNotifications(store.now())),
-            clear: () => store.clearDemo(),
-          },
         );
         return { store, screen };
       })()
     : null;
+/**
+ * The menu's Developer section: test users and sample data. Only a dev server
+ * on this machine loads it, so a build has none of its code.
+ */
+const devSession =
+  notifications === null
+    ? null
+    : (await import("./dev-tools/dev-tools.js")).startDevTools({
+        network: activeNetwork,
+        base: BASE,
+        notifications: notifications.store,
+        section: element("developer"),
+        marker: element("test-user-marker"),
+        stage: element("product-slot"),
+        leaveWalletSession: () => {
+          sessionStorage.removeItem(tabWalletKey(activeNetwork.id));
+          sessionStorage.removeItem(tabProductKey(activeNetwork.id));
+        },
+        useStorage: (scope) => storage.useWallet(scope, activeNetwork.id),
+        tap: (productId) =>
+          runtime === null
+            ? undefined
+            : createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
+        showProduct: () => void selectDestination("browse"),
+        pickContact: (asker): Promise<{ account: string } | null> =>
+          hostContacts.choose(asker),
+        log,
+      });
+notifications?.screen.setActions(devSession?.notificationActions ?? null);
+/** The made-up user this tab acts as instead of a wallet, if any. */
+const testUser = devSession?.testUser ?? null;
+/** The account `username` names on this network's chains, or null. */
+async function usernameOwner(username: string): Promise<HexString | null> {
+  const access = chainAccess;
+  if (access === null) throw new Error("the chain is not connected");
+  const owner = await lookupOwner(
+    chainDirectory(access.chain, access.genesis),
+    username,
+  );
+  return owner === null ? null : (bytesToHex(owner) as HexString);
+}
+/**
+ * Where the contact picker finds people by username: the other test users for
+ * a test user; else this network's username index, through the dev server's
+ * route on this machine; else, as in a build, the chain by exact username.
+ */
+const usernameDirectory =
+  devSession?.usernames ??
+  (import.meta.env.DEV &&
+  demoAllowed(true, window.location.hostname) &&
+  activeNetwork.identityBackend !== null
+    ? routeDirectory({
+        base: BASE,
+        network: activeNetwork.id,
+        owner: usernameOwner,
+      })
+    : exactUsernameDirectory(usernameOwner));
+/**
+ * The contact picker, over the session's chat contacts or the test user's:
+ * the one products open with `contacts.pick` and Chat's New chat opens.
+ */
+const hostContacts = new HostContacts({
+  list: () => devSession?.contacts ?? chatInbox.contacts(),
+  onChange: (listener) => chatInbox.onChange(listener),
+  choose: (asker, contacts, blocked) =>
+    chooseContact(asker, contacts, usernameDirectory, blocked),
+  // A Nova conversation's id is the person's account.
+  blocked: () =>
+    devSession !== null
+      ? []
+      : chatInbox
+          .providers()
+          .flatMap((provider) => provider.blocked?.() ?? [])
+          .map((conversation) => conversation.id)
+          .filter((id): id is HexString => /^0x[0-9a-fA-F]{64}$/.test(id)),
+  onSessionChange: (listener) =>
+    chatInbox.onChange((change) => {
+      if (change.type === "session") listener();
+    }),
+  removed: () => runtime?.notifyContactsChanged(),
+  log,
+});
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
   button: document.querySelector<HTMLButtonElement>(
@@ -561,7 +590,7 @@ let sandboxStatus = "";
  * a link opened. Choosing a destination sends the one in front behind it
  * instead of ending it, so Chat keeps running while Browse is open.
  */
-let destination: Destination | null = null;
+let destination: Destination | null = testUser === null ? null : "browse";
 let dockAddresses: DockAddresses = loadAddresses(
   localStorage,
   activeNetwork.id,
@@ -655,10 +684,11 @@ function renderWallets(): void {
 
 function renderControls(): void {
   const ready = runtime !== null && !queue.busy;
-  signInButton.disabled = !ready || walletSelect.value === activeWallet?.id;
+  signInButton.disabled =
+    !ready || walletSelect.value === activeWallet?.id || testUser !== null;
   signOutButton.disabled = !ready || activeWallet === null;
   forgetButton.disabled = !ready || !wallets.has(walletSelect.value);
-  addWalletButton.disabled = !ready;
+  addWalletButton.disabled = !ready || testUser !== null;
   openButton.disabled = !ready;
   addressGo.disabled = !ready;
   closeButton.disabled = !ready || product === null;
@@ -808,7 +838,9 @@ function renderHostScreens(): void {
     destination === "chat" ||
     (destination === "notifications" && notifications !== null)
       ? destination
-      : "product";
+      : testUser !== null && product === null
+        ? "test-product"
+        : "product";
   document.body.dataset.surface = surface;
   pocketScreen.hidden = surface !== "pocket";
   if (surface === "pocket" && pocketScreen.childElementCount === 0)
@@ -837,6 +869,7 @@ function renderHostScreens(): void {
   pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
   notifications?.screen.show(surface === "notifications");
+  devSession?.showProduct(surface === "test-product");
 }
 
 /** Give the Chat screen the signed-in wallet's session, or none. */
@@ -847,7 +880,7 @@ function syncChatSession(): void {
     pocketFaces.setSession(null);
     productWorkers.setSession(null);
     productChat.setScope(null);
-    notifications?.store.setScope(null);
+    notifications?.store.setScope(devSession?.notificationsScope ?? null);
     localChatDemo?.stop();
     if (chatV2Scope !== null) chatV2.reset();
     chatV2Scope = null;
@@ -1195,7 +1228,11 @@ async function syncSessionUsername(): Promise<void> {
 
 /** Forget the chain state when the account changes, and read it again for the new one. */
 function trackChainAccount(state: AuthState): void {
-  const key = state.tag === "Connected" ? state.value.publicKey : null;
+  // A test user signs in with a public test phrase; the host reads nothing on chain for it.
+  const key =
+    state.tag === "Connected" && testUser === null
+      ? state.value.publicKey
+      : null;
   if (key === chainFor) return;
   chainFor = key;
   chainRun += 1;
@@ -1237,7 +1274,11 @@ function renderSession(state: AuthState): void {
       const { publicKey, identityAccountId, fullUsername, liteUsername } =
         state.value;
       const name =
-        fullUsername ?? liteUsername ?? activeWallet?.name ?? "wallet";
+        fullUsername ??
+        liteUsername ??
+        activeWallet?.name ??
+        testUser?.name ??
+        "wallet";
       sessionLine.textContent = `Signed in as ${name} · ${abbreviate(publicKey)}`;
       sessionLine.title = `Root key ${publicKey}${identityAccountId ? `\nIdentity account ${identityAccountId}` : ""}`;
       break;
@@ -1402,7 +1443,7 @@ function selectDestination(next: Destination): Promise<void> {
       return;
     if (destination !== next) leaveFront();
     destination = next;
-    if (!isProductDestination(next)) {
+    if (!isProductDestination(next) || testUser !== null) {
       // The address bar names a product, and a host screen is not one.
       addressInput.value = "";
       renderAddress();
@@ -1957,13 +1998,17 @@ async function boot(): Promise<void> {
     );
   renderWallets();
 
-  const tabWallet = wallets.find(
-    sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "",
-  );
+  const tabWallet =
+    testUser === null
+      ? wallets.find(
+          sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "",
+        )
+      : undefined;
   if (tabWallet) {
     walletSelect.value = tabWallet.id;
     await signIn(tabWallet);
   }
+  await serial((current) => devSession?.start(current) ?? Promise.resolve());
 
   // Prefill only. The product id decides what the core trusts the page as,
   // so a link must not be able to open a product under one without the
@@ -1975,7 +2020,7 @@ async function boot(): Promise<void> {
 
   // The product this tab opened itself before a reload comes back with the
   // wallet. A link's `product` parameter never does.
-  const last = readTabProduct();
+  const last = testUser === null ? readTabProduct() : null;
   if (last && !params.has("product")) {
     addressInput.value = displayAddress(last.address, activeNetwork);
     const derived = effectiveProductIdFor(last.parsed, "").id;

@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { demoNotifications } from "./notifications-demo.js";
 import {
   NotificationStore,
   notificationsKey,
@@ -26,7 +25,6 @@ const signIn = (store: NotificationStore, wallet = "w1", network = "paseo") =>
 
 const one = (overrides: Partial<HostNotification> = {}): HostNotification => ({
   id: "n1",
-  origin: "demo",
   kind: "invitation",
   sender: { name: "Ada", handle: "ada.example" },
   product: { id: "chat.example", name: "Example Chat" },
@@ -38,11 +36,16 @@ const one = (overrides: Partial<HostNotification> = {}): HostNotification => ({
   ...overrides,
 });
 
+/** Add each item, as any feature does. */
+const addAll = (store: NotificationStore, items: HostNotification[]) => {
+  for (const item of items) store.add(item);
+};
+
 describe("host notifications", () => {
   test("seeing an item and answering it are separate steps", () => {
     const { store } = setup();
     signIn(store);
-    store.seedDemo([one(), one({ id: "n2" })]);
+    addAll(store, [one(), one({ id: "n2" })]);
     expect(store.unseen()).toBe(2);
     expect(statusOf(store.get("n1")!, START)).toBe("pending");
 
@@ -64,7 +67,7 @@ describe("host notifications", () => {
   test("an answer is given once: the same again changes nothing, another is refused", () => {
     const { store, changes } = setup();
     signIn(store);
-    store.seedDemo([one()]);
+    addAll(store, [one()]);
     store.markSeen("n1");
     store.markSeen("n1");
     expect(store.accept("n1")).toEqual({ ok: true, changed: true });
@@ -85,10 +88,7 @@ describe("host notifications", () => {
   test("a request expires on the clock, cannot be answered after, and the badge still counts it until opened", () => {
     const { clock, store } = setup();
     signIn(store);
-    store.seedDemo([
-      one(),
-      one({ id: "late", expiresAt: START + 60 * MINUTE }),
-    ]);
+    addAll(store, [one(), one({ id: "late", expiresAt: START + 60 * MINUTE })]);
     expect(store.nextExpiry()).toBe(START + 10 * MINUTE);
     clock.at = START + 10 * MINUTE - 1;
     expect(statusOf(store.get("n1")!, clock.at)).toBe("pending");
@@ -117,7 +117,7 @@ describe("host notifications", () => {
   test("pending requests and history survive a reload, and read the same", () => {
     const { clock, storage, store } = setup();
     signIn(store);
-    store.seedDemo([one(), one({ id: "n2" }), one({ id: "n3" })]);
+    addAll(store, [one(), one({ id: "n2" }), one({ id: "n3" })]);
     store.markSeen("n1");
     store.accept("n1");
     store.decline("n2");
@@ -137,7 +137,7 @@ describe("host notifications", () => {
   test("each wallet and network has its own list, and signing out shows none", () => {
     const { storage, store } = setup();
     signIn(store, "w1", "paseo");
-    store.seedDemo([one()]);
+    addAll(store, [one()]);
     signIn(store, "w2", "paseo");
     expect(store.list()).toEqual([]);
     expect(store.unseen()).toBe(0);
@@ -147,20 +147,20 @@ describe("host notifications", () => {
     expect(store.scoped()).toBe(false);
     expect(store.list()).toEqual([]);
     // Signed out, nothing is added or written.
-    store.seedDemo([one({ id: "ghost" })]);
+    expect(store.add(one({ id: "ghost" }))).toBeNull();
     expect(store.list()).toEqual([]);
     signIn(store, "w1", "paseo");
     expect(store.list().map((item) => item.id)).toEqual(["n1"]);
     expect(storage.keys()).toEqual([notificationsKey("paseo", "w1")]);
   });
 
-  test("a wallet that never used the demo gets no stored list", () => {
+  test("a list is stored only while it holds something", () => {
     const { storage, store } = setup();
     signIn(store);
     expect(store.unseen()).toBe(0);
     expect(storage.keys()).toEqual([]);
-    store.seedDemo([one()]);
-    store.clearDemo();
+    addAll(store, [one(), one({ id: "n2" })]);
+    store.remove(["n1", "n2", "unknown"]);
     expect(store.list()).toEqual([]);
     expect(storage.keys()).toEqual([]);
   });
@@ -172,45 +172,109 @@ describe("host notifications", () => {
     expect(store.list()).toEqual([]);
     storage.setItem(
       notificationsKey("paseo", "w2"),
-      JSON.stringify([one(), { ...one({ id: "odd" }), origin: "network" }, 3]),
+      JSON.stringify([
+        one(),
+        { ...one({ id: "odd" }), state: { tag: "maybe" } },
+        3,
+      ]),
     );
     signIn(store, "w2");
     expect(store.list().map((item) => item.id)).toEqual(["n1"]);
   });
 
-  test("the demo's requests: four waiting, one soon to expire, and three earlier ones", () => {
-    const items = demoNotifications(START);
-    const statuses = items.map((item) => statusOf(item, START));
-    expect(statuses.filter((status) => status === "pending")).toHaveLength(4);
-    expect(statuses.filter((status) => status !== "pending").sort()).toEqual([
-      "accepted",
-      "declined",
-      "expired",
-    ]);
-    expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
-    expect(items.every((item) => item.origin === "demo")).toBe(true);
-    expect(items.every((item) => item.product.id.endsWith(".example"))).toBe(
-      true,
-    );
-    expect(items.filter((item) => item.seenAt === null)).toHaveLength(4);
-    expect(
-      Math.min(
-        ...items
-          .filter((item) => statusOf(item, START) === "pending")
-          .map((item) => item.expiresAt),
-      ),
-    ).toBe(START + 2 * MINUTE);
-    // Seeding twice gives one set, fresh.
+  test("an item is added once; a repeat keeps the first, and each answer that changes it is reported once", () => {
     const { store } = setup();
     signIn(store);
-    store.seedDemo(items);
-    store.markSeen(items[0].id);
-    store.seedDemo(items);
-    expect(store.list()).toHaveLength(items.length);
-    expect(store.unseen()).toBe(4);
+    const answers: string[] = [];
+    store.onAnswer((item) => answers.push(`${item.id}:${item.state.tag}`));
+    expect(store.add(one())?.added).toBe(true);
+    store.markSeen("n1");
+    const again = store.add(one({ purpose: "changed" }));
+    expect(again?.added).toBe(false);
+    expect(again?.item.purpose).toBe(one().purpose);
+    expect(again?.item.seenAt).toBe(START);
+    store.accept("n1");
+    store.accept("n1");
+    store.decline("n1");
+    expect(answers).toEqual(["n1:accepted"]);
+    // Removing one leaves the others.
+    store.add(one({ id: "n2" }));
+    store.remove(["n2"]);
+    expect(store.list().map((item) => item.id)).toEqual(["n1"]);
   });
 
-  test("times read as a list and a detail show them", () => {
+  test("a list saved by an earlier version loads, and keeps the fields this one does not read", () => {
+    const { storage, store } = setup();
+    const key = notificationsKey("paseo", "w1");
+    storage.setItem(
+      key,
+      JSON.stringify([
+        { ...one(), origin: "demo" },
+        {
+          ...one({ id: "n2" }),
+          origin: "local-delivery",
+          delivery: { from: "ada", network: "paseo", payload: "0xab" },
+        },
+      ]),
+    );
+    signIn(store);
+    expect(store.list().map((item) => item.id)).toEqual(["n1", "n2"]);
+    store.accept("n1");
+    const saved = JSON.parse(storage.getItem(key)!) as Record<
+      string,
+      unknown
+    >[];
+    expect(saved.map((item) => item.origin)).toEqual([
+      "demo",
+      "local-delivery",
+    ]);
+    expect(saved[1]!.delivery).toEqual({
+      from: "ada",
+      network: "paseo",
+      payload: "0xab",
+    });
+  });
+
+  test("dismissing takes an item off the list only: no answer, its state kept, and it still expires", () => {
+    const { clock, storage, store } = setup();
+    signIn(store);
+    const answers: string[] = [];
+    store.onAnswer((item) => answers.push(item.id));
+    addAll(store, [one(), one({ id: "n2" })]);
+    store.dismiss("n1");
+    store.dismiss("n1");
+    expect(answers).toEqual([]);
+    expect(store.listed().map((item) => item.id)).toEqual(["n2"]);
+    expect(store.list().map((item) => item.id)).toEqual(["n1", "n2"]);
+    // A dismissed item is not counted as unseen, and is still pending.
+    expect(store.unseen()).toBe(1);
+    expect(store.get("n1")!.state).toEqual({ tag: "pending" });
+    expect(store.get("n1")!.dismissedAt).toBe(START);
+    clock.at = START + 10 * MINUTE;
+    expect(statusOf(store.get("n1")!, clock.at)).toBe("expired");
+    // It survives a reload as dismissed, and a repeat delivery does not bring it back.
+    const again = new NotificationStore(storage, () => clock.at);
+    signIn(again);
+    expect(again.listed().map((item) => item.id)).toEqual(["n2"]);
+    expect(again.add(one())?.added).toBe(false);
+    expect(again.listed().map((item) => item.id)).toEqual(["n2"]);
+  });
+
+  test("several items are marked seen at once, each only the first time", () => {
+    const { clock, store, changes } = setup();
+    signIn(store);
+    addAll(store, [one(), one({ id: "n2" }), one({ id: "n3" })]);
+    const before = changes.length;
+    store.markSeen("n1", "n2");
+    expect(changes.length).toBe(before + 1);
+    clock.at = START + MINUTE;
+    store.markSeen("n1", "n2", "missing");
+    expect(changes.length).toBe(before + 1);
+    expect(store.get("n1")!.seenAt).toBe(START);
+    expect(store.unseen()).toBe(1);
+  });
+
+  test("times read as a list shows them", () => {
     expect(ago(START, START)).toBe("now");
     expect(ago(START - 4 * MINUTE, START)).toBe("4 min");
     expect(ago(START - 6 * 60 * MINUTE, START)).toBe("6 h");

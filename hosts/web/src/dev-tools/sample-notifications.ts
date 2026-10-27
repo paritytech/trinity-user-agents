@@ -1,22 +1,21 @@
-import type { HostNotification } from "./notifications.js";
+import type { HostNotification, NotificationStore } from "../notifications.js";
 
 /**
- * DEV ONLY. Made-up notifications for the local demo of the Notifications
- * screen. The people and products are invented and reach nothing; their
- * product ids end in `.example` so they read as no published name.
+ * DEV ONLY. Made-up notifications for the Notifications screen. The people
+ * and products are invented and reach nothing; their product ids end in
+ * `.example` so they read as no published name.
  *
  * Times are relative to `now`: four requests wait, one of them expiring two
  * minutes from now, and three are history, one accepted, one declined and
  * one expired.
  */
-export function demoNotifications(now: number): HostNotification[] {
+export function sampleNotifications(now: number): HostNotification[] {
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
   const chat = { id: "chat.example", name: "Example Chat" };
   const profiles = { id: "profiles.example", name: "Example Profiles" };
   const base = {
-    origin: "demo" as const,
     seenAt: null,
     state: { tag: "pending" as const },
   };
@@ -102,4 +101,17 @@ export function demoNotifications(now: number): HostNotification[] {
       seenAt: now - 5 * day + hour,
     },
   ];
+}
+
+const SAMPLE_IDS = sampleNotifications(0).map((item) => item.id);
+
+/** Put the samples in `store`, fresh, in place of any added before. */
+export function addSamples(store: NotificationStore): void {
+  store.remove(SAMPLE_IDS);
+  for (const item of sampleNotifications(store.now())) store.add(item);
+}
+
+/** Take the samples out of `store`, and nothing else. */
+export function clearSamples(store: NotificationStore): void {
+  store.remove(SAMPLE_IDS);
 }
