@@ -41,7 +41,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      # Without it the issues API leaves pull requests out of a label's count,
+      # and the plan can merge in the opposite direction from the apply.
       issues: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

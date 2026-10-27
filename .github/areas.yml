@@ -8,7 +8,8 @@
 # other.
 #
 # Globs: `**` matches across directories, `*` within one. A glob with no slash,
-# like `*.md`, matches at the repository root only.
+# like `*.md`, matches at the repository root only. A glob starting with `!` takes
+# the paths it matches out of that area.
 #
 # Keep it flat: a quoted label, then one quoted glob per line. issue-areas.yml
 # reads it without a YAML parser.
@@ -19,6 +20,7 @@
 "area:docs":
   - "docs/**"
   - "*.md"
+  - "!docs/rfcs/**"
 
 "area:ci":
   - ".github/workflows/**"

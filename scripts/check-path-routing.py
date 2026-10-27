@@ -8,7 +8,9 @@ other, so they are two files. Two files drift.
 
 This compares the roots each one names. A path that has an area but is owned
 by nobody in particular, or owned but in no area, is reported. It does not compare
-glob semantics, only that both files know about the same places.
+glob semantics, only that both files know about the same places. It also checks
+that every area is a label `.github/labels.yml` defines, since issue-areas.yml
+would otherwise create a misspelt one on GitHub.
 """
 
 import pathlib
@@ -19,6 +21,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 AREAS = ROOT / ".github" / "areas.yml"
+LABELS = ROOT / ".github" / "labels.yml"
 CODEOWNERS = ROOT / ".github" / "CODEOWNERS"
 
 # Areas described by file suffix or by a directory that CODEOWNERS
@@ -41,7 +44,8 @@ def area_roots() -> set[str]:
     roots = set()
     for globs in data.values():
         for glob in globs:
-            if glob in EXEMPT:
+            # An exclusion narrows an area inside a root it already names.
+            if glob in EXEMPT or glob.startswith("!"):
                 continue
             root = root_of(glob)
             if root:
@@ -62,7 +66,16 @@ def codeowner_roots() -> set[str]:
     return roots
 
 
+def undefined_areas() -> list[str]:
+    defined = {label["name"] for label in yaml.safe_load(LABELS.read_text())["labels"]}
+    return sorted(set(yaml.safe_load(AREAS.read_text())) - defined)
+
+
 def main() -> int:
+    undefined = undefined_areas()
+    for area in undefined:
+        print(f"::error::{area} is an area in areas.yml but is not defined in labels.yml")
+
     labelled = area_roots()
     owned = codeowner_roots()
 
@@ -77,6 +90,7 @@ def main() -> int:
     if unowned or unlabelled:
         print("\nBoth files answer which paths belong to which area. "
               "Add the path to the other, or add it to EXEMPT here with a reason.")
+    if undefined or unowned or unlabelled:
         return 1
 
     print(f"areas and ownership agree on {len(labelled)} paths")

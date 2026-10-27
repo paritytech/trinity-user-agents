@@ -38,10 +38,10 @@ A pull request usually carries a size and a status, and nothing else.
 | `area:android` | `hosts/android/`, `android/` |
 | `area:js` | `js/`, `playground/`, `explorer/` |
 | `area:ci` | `.github/workflows/`, `.github/actions/` |
-| `area:docs` | `docs/`, any `*.md` at the root |
+| `area:docs` | `docs/` except `docs/rfcs/`, any `*.md` at the root |
 | `area:rfc` | `docs/rfcs/` |
 
-An RFC is also under `docs/`, so a pull request changing one gives its issue both `area:rfc` and `area:docs`.
+An RFC is under `docs/` but is only `area:rfc`, so filtering on `area:docs` leaves RFCs out.
 
 The same paths decide who is asked to review in `.github/CODEOWNERS`, and `scripts/check-path-routing.py` keeps the two files in step.
 

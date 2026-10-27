@@ -245,3 +245,7 @@ pending:
     reason: "A target date, a field or a label, still to decide"
   - name: host-work
     reason: "An area for both hosts, or retired"
+  - name: python
+    reason: "A language label: merge into an area as rust and javascript were, or retire"
+  - name: Stability
+    reason: "A theme that crosses areas, so not an area; a family or retired"
