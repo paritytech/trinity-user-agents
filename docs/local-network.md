@@ -50,10 +50,10 @@ For Previewnet select `previewnet` in both places and use `myapp.testnet`. Ports
 illustrative: use the endpoints of the local nodes you started. The complete local
 configuration takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`.
 
-The variable cannot be combined with `TRUAPI_LIGHT_CLIENT=1`: the embedded light client
-finds each chain by genesis hash in its bundled catalog, which holds no local network.
-With both set, every command that resolves a network (and `local-network-check`) exits
-with an error naming both variables instead of starting.
+The variable cannot be combined with `--chain-backend light-client`: the embedded light
+client finds each chain by genesis hash in its bundled catalog, which holds no local
+network. With both set, every command that resolves a network (and `local-network-check`)
+exits with an error naming both instead of starting.
 
 It cannot be combined with `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS` or
 `HOST_CLI_BULLETIN_WS` either. Those point a preset at a fork that keeps the preset's

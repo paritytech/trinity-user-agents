@@ -78,6 +78,7 @@ use truapi::{
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
+	chain::ChainBackend,
 	network::{Network, NetworkConfig},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -122,6 +123,16 @@ struct Cli {
 	/// `pairing-host`, `dev` and `signing-host` read this.
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
+	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
+	/// `light-client` syncs the chains with the embedded light client instead,
+	/// which needs no node. Only `paseo-next-v2` and `previewnet` have light-client
+	/// specs, and neither the chain URL overrides nor a local network can be
+	/// combined with it. The host's chain traffic, dotNS username reads and
+	/// Bulletin preimage lookups honour it; account setup's ring-membership poll,
+	/// `register-name`'s People and Asset Hub transactions, `alloc-check` and
+	/// `pgas-check` still dial the RPC nodes directly.
+	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
+	chain_backend: ChainBackend,
 	#[command(subcommand)]
 	command: Command,
 }
@@ -597,7 +608,8 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	let outcome = dispatch(cli.command, log_filter, log_controller, debugger).await;
+	let outcome =
+		dispatch(cli.command, log_filter, log_controller, debugger, cli.chain_backend).await;
 
 	if let Some(check) = check {
 		update::finish_background_check(check).await;
@@ -614,6 +626,7 @@ async fn dispatch(
 	log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	// The switch is global but resolved per command, by the three arms that build
 	// a frame server and still before they bind a port. `update`,
@@ -629,7 +642,7 @@ async fn dispatch(
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config().await?;
+			let config = network.cli_config(chain_backend).await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -645,17 +658,19 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::PairingHost(args) => {
-			run_pairing_host(args, log_filter, log_controller, debugger).await
+			run_pairing_host(args, log_filter, log_controller, debugger, chain_backend).await
 		},
-		Command::Dev(args) => run_dev(args, log_filter, log_controller, debugger).await,
+		Command::Dev(args) => {
+			run_dev(args, log_filter, log_controller, debugger, chain_backend).await
+		},
 		Command::SigningHost(args) => {
-			run_signing_host(args, log_filter, log_controller, None, debugger).await
+			run_signing_host(args, log_filter, log_controller, None, debugger, chain_backend).await
 		},
 		Command::IdentityCheck { mnemonic, network } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config().await?, &entropy).await
+			attestation::check_identity(network.cli_config(chain_backend).await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -671,7 +686,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config().await?,
+				network: network.cli_config(chain_backend).await?,
 				entropy,
 				label,
 				link_lite,
@@ -680,15 +695,32 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_alloc_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_pgas_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::Attest { mnemonic, network, username } => {
-			let attested =
-				accounts::attest_mnemonic(network.cli_config().await?, &mnemonic, &username)
-					.await?;
+			let attested = accounts::attest_mnemonic(
+				network.cli_config(chain_backend).await?,
+				&mnemonic,
+				&username,
+			)
+			.await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -1243,6 +1275,7 @@ async fn run_pairing_host(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	let script_projects = script_project_directory(args.base_path.clone());
 	let interactive = args.script.is_none();
@@ -1251,7 +1284,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
@@ -1351,6 +1384,7 @@ async fn run_signing_host(
 	log_controller: LogController,
 	dev_command: Option<Vec<String>>,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	if let Err(error) = validate_signing_args(&args) {
 		invalid_invocation(error);
@@ -1371,7 +1405,7 @@ async fn run_signing_host(
 		args.execution_kind.context(),
 	)?;
 	let product_id = product.current();
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -2123,6 +2157,7 @@ async fn run_dev(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
@@ -2141,7 +2176,8 @@ async fn run_dev(
 		..Default::default()
 	};
 	let command = (!args.command.is_empty()).then_some(args.command);
-	run_signing_host(signing, initial_log_filter, log_controller, command, debugger).await
+	run_signing_host(signing, initial_log_filter, log_controller, command, debugger, chain_backend)
+		.await
 }
 
 /// Run the wrapped development command, returning the code to exit with.

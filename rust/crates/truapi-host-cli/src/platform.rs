@@ -41,7 +41,7 @@ use truapi::{
 
 use crate::{
 	bulletin_lookup::{BitswapRpc, BulletinLookup},
-	chain::WsChainProvider,
+	chain::CliChainProvider,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
 };
 
@@ -167,7 +167,7 @@ impl CliStoragePaths {
 
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
-	chain: WsChainProvider,
+	chain: Arc<CliChainProvider>,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
@@ -252,8 +252,10 @@ impl CliPlatform {
 		let device_storage =
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
+		let chain = Arc::new(CliChainProvider::new(&network));
+		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.bulletin_genesis);
 		Arc::new(Self {
-			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
+			chain,
 			chains: network.host_chain_set(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
@@ -263,7 +265,7 @@ impl CliPlatform {
 			device_storage_path,
 			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
 			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+			bulletin: Arc::new(BulletinLookup::new(bitswap)),
 			next_notification_id: AtomicU32::new(1),
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),

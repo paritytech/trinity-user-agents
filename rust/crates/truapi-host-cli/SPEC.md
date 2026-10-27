@@ -274,7 +274,7 @@ when it points inside the version store.
 ## 4. Top-level command line
 
 ```text
-truapi-host [--log-level <level>] [--debugger <url>] <command>
+truapi-host [--log-level <level>] [--debugger <url>] [--chain-backend <backend>] <command>
 ```
 
 Commands:
@@ -331,6 +331,14 @@ and the switch clap read it from, or `Wire debugger off`.
 
 Each accepted connection gets its own channel id, `<product-id>#<n>`, so
 concurrent peers under one host do not share a trace key.
+
+### 4.3 Global chain-backend option
+
+`--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
+default. `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
+explicit flag over it. The option is global, and every command that resolves a
+network applies it while resolving (§14.3), so a combination the light client
+cannot serve fails before the command starts.
 
 ## 5. `pairing-host`
 
@@ -1744,7 +1752,7 @@ below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to
 preset carries without serving them as a role, of which no preset has any.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
-route map fall back to the People RPC.
+route map fall back to People, on either chain backend (§14.3).
 
 A rustls ring crypto provider is installed at process startup for `wss://`
 connections.
@@ -1794,17 +1802,41 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 ### 14.3 Chain JSON-RPC
 
-Every chain connection opens a fresh WebSocket through `truapi-provider`'s
-WebSocket backend. [`ws.rs`](../truapi-provider/src/ws.rs) sets the limits and
-timeouts. `wss://` certificates are verified with the root certificates built
-into the binary. Certificate authorities added to the operating system are not
-used.
+The host runtime's chain connections, dotNS username reads and Bulletin preimage
+lookups all connect through one `ChainProvider` (`src/chain.rs`) over
+`truapi-provider`, on the backend `--chain-backend` selects (§4.3). Routing
+(§14.1) is the same on both backends. Only a routed genesis is passed to the
+provider, because the provider resolves any other hash from its bundled catalog
+on the light client.
 
-The connection sends a ping after the keepalive interval without an outgoing
-request, and is treated as dead if nothing arrives within the read timeout. The
-response stream ends when the socket closes or dies, a send fails, the queue
-fills, a message exceeds the size limit, or `close()` is called. The core's
-chain runtime then opens a new connection on its next call for that chain.
+With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
+connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
+the limits and timeouts. The connection sends a ping after the keepalive
+interval without an outgoing request, and is treated as dead if nothing arrives
+within the read timeout. The response stream ends when the socket closes or
+dies, a send fails, the queue fills, a message exceeds the size limit, or
+`close()` is called. The core's chain runtime then opens a new connection on its
+next call for that chain.
+
+With `light-client`, the embedded smoldot light client syncs the network's chains
+from the specs `truapi-provider` bundles, so no RPC node is needed. Only
+`paseo-next-v2` and `previewnet` are bundled, so `polkadot` is refused. The
+`HOST_CLI_*_WS` overrides and `HOST_CLI_LOCAL_NETWORK_CONFIG` are refused too,
+because the light client finds chains by genesis hash and would sync the live
+chains instead. One light client per network serves the whole process. It keeps
+one idle connection open per chain, because smoldot stops a chain once its last
+connection closes and consumers connect once per use. A chain's first request
+waits for the chain to sync, and a connection's response stream ends only when
+the connection is closed.
+
+On both backends, `wss://` certificates, for RPC nodes and light-client
+bootnodes alike, are verified with the root certificates built into the binary.
+Certificate authorities added to the operating system are not used.
+
+These paths still dial the preset's RPC nodes directly, whichever backend is
+selected: the ring-membership poll during account setup, `register-name`'s
+People and Asset Hub transactions, the genesis check of a rerouted endpoint
+(§14.1), `alloc-check` and `pgas-check`.
 
 ## 15. TrUAPI capability surface
 
@@ -2240,6 +2272,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | --- | --- |
 | `TRUAPI_HOST_LOG` | Per-process `--log-level` override. |
 | `TRUAPI_DEBUGGER_URL` | Default `--debugger` dial. |
+| `TRUAPI_CHAIN_BACKEND` | Default `--chain-backend`: `rpc` or `light-client` (§14.3). |
 | `RUST_LOG` | Full startup tracing filter. |
 | `TRUAPI_HOST_BASE_PATH` | Default `--base-path`. |
 | `TRUAPI_HOST_NO_UPDATE` | Any value disables the self-update check. |
@@ -2249,8 +2282,8 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. |
-| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps, and each overridden endpoint must report that genesis before a command runs. A test preset is also refused when a route carries a real-identity preset's genesis (§14.1). Blank keeps the preset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `TRUAPI_LIGHT_CLIENT=1`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints with their own genesis hashes, keeping the preset's product namespace; see `docs/local-network.md`. Takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`. Unset or blank, the presets are unchanged; an invalid file is an error, and so is setting it together with `TRUAPI_LIGHT_CLIENT=1` or with a `HOST_CLI_*_WS` chain override. `truapi-host local-network-check` validates it without contacting a chain. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps, and each overridden endpoint must report that genesis before a command runs. A test preset is also refused when a route carries a real-identity preset's genesis (§14.1). Blank keeps the preset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints with their own genesis hashes, keeping the preset's product namespace; see `docs/local-network.md`. Takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`. Unset or blank, the presets are unchanged; an invalid file is an error, and so is setting it together with `--chain-backend light-client` or with a `HOST_CLI_*_WS` chain override. `truapi-host local-network-check` validates it without contacting a chain. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; the polkadot preset carries its own (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
@@ -2282,7 +2315,7 @@ These are part of the as-built specification:
 - corrupt core storage is treated as empty after a warning;
 - non-loopback product listeners can bind but reject every TCP frame peer;
 - product text WebSocket frames are accepted as protocol bytes;
-- product-frame and chain outbound queues are unbounded;
+- product-frame outbound queues are unbounded;
 - unknown chain genesis hashes fall back to People;
 - interactive child ANSI styling is stripped rather than parsed; and
 - pairing and signing state are local plaintext test state.

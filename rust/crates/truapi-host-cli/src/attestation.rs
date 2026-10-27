@@ -240,9 +240,9 @@ where
 pub struct AttestConfig {
 	/// Identity backend base URL including `/api/v1`.
 	pub backend_base: String,
-	/// Asset Hub WebSocket URL for the reservation timestamp and the dotNS
-	/// username poll.
-	pub asset_hub_ws: String,
+	/// The network whose Asset Hub serves the reservation timestamp and the
+	/// dotNS username poll.
+	pub network: NetworkConfig,
 	/// The network's dotNS TLD without the dot (`paseo`, `testnet`); the
 	/// registered person is `uid.<suffix>` / `peopl.<suffix>`.
 	pub network_suffix: String,
@@ -297,7 +297,7 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 pub async fn attest(config: &AttestConfig) -> Result<String> {
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
-	let mut reader = AssetHubReader::connect(&config.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::connect(&config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
 	// gateway rejects values ahead of the chain.
 	let signed_at = reader.timestamp_secs().await.context("read Asset Hub Timestamp.Now")?;
@@ -716,7 +716,7 @@ mod tests {
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 		let config = AttestConfig {
 			backend_base: backend_base.clone(),
-			asset_hub_ws: String::new(),
+			network: crate::network::Network::default().config(),
 			network_suffix: "paseo".to_string(),
 			entropy: entropy.to_vec(),
 			username_base: "testing".to_string(),

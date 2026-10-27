@@ -27,8 +27,9 @@ correctness = "warn"
 [dependencies]
 truapi = { path = "../truapi" }
 # Chain connections for the People, Bulletin and Asset Hub host traffic the preset
-# serves as roles, plus `Chain/*` playground methods, over TLS. See src/chain.rs.
-truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws"] }
+# serves as roles, plus `Chain/*` playground methods: RPC nodes over TLS, or the
+# light client with the bundled network catalog. See src/chain.rs.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws", "networks"] }
 trinity-stack = { path = "../trinity-stack" }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }

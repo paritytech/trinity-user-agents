@@ -1,7 +1,8 @@
 //! Asset Hub dotNS reads over plain RPC (`state_getStorage` / `state_call`).
 //!
 //! The transport half of username resolution. This module supplies the two RPC
-//! primitives. `truapi::host_logic::dotns_gateway` walks the contract
+//! primitives, over a connection the CLI's chain provider opens on the
+//! selected backend. `truapi::host_logic::dotns_gateway` walks the contract
 //! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
 //! resolve identically.
 
@@ -17,7 +18,7 @@ use truapi::{
 	platform::async_trait,
 };
 
-use crate::network::NetworkConfig;
+use crate::{chain::CliChainProvider, network::NetworkConfig};
 
 /// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
 /// discovery.
@@ -40,18 +41,19 @@ pub struct AssetHubReader {
 }
 
 impl AssetHubReader {
-	/// Connects to the Asset Hub WebSocket endpoint.
-	pub async fn connect(asset_hub_ws: &str) -> Result<Self> {
-		let rpc = RpcClient::from_insecure_url(asset_hub_ws)
+	/// Connects to the network's Asset Hub.
+	pub async fn connect(network: &NetworkConfig) -> Result<Self> {
+		let rpc = CliChainProvider::new(network)
+			.rpc_client(network.asset_hub_genesis)
 			.await
-			.with_context(|| format!("connect {asset_hub_ws}"))?;
+			.context("connect to Asset Hub")?;
 		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
 	}
 
-	/// Connects to the preset's Asset Hub, falling back to its known
+	/// Connects to the network's Asset Hub, falling back to its known
 	/// `DotnsPopController` when the chain does not name one.
 	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
-		let mut reader = Self::connect(network.asset_hub_ws).await?;
+		let mut reader = Self::connect(network).await?;
 		reader.pop_controller_fallback = network.dotns_pop_controller;
 		Ok(reader)
 	}

@@ -4,6 +4,8 @@ use truapi::{
 	platform::{HostChainEntry, HostChainSet},
 };
 
+use crate::chain::ChainBackend;
+
 /// Supported live network presets for the headless hosts.
 ///
 /// The CLI account store keeps BIP-39 mnemonics in plaintext (`accounts.rs`),
@@ -91,20 +93,20 @@ impl ChainOverrides {
 impl Network {
 	/// CLI resolution: the preset with the backend and chain URL overrides, or
 	/// the opt-in disposable local-network configuration, which cannot be
-	/// combined with the chain URL overrides.
+	/// combined with the chain URL overrides. `chain_backend` selects how its
+	/// chains are reached, and the light client accepts neither kind of rerouting.
 	///
 	/// A rerouted chain must still be the chain the preset names: each endpoint
 	/// that differs from the preset's is asked for its genesis before anything
 	/// runs against it, and a disposable configuration may never carry the
 	/// genesis of a preset whose identities are real.
-	pub async fn cli_config(self) -> anyhow::Result<NetworkConfig> {
+	pub async fn cli_config(self, chain_backend: ChainBackend) -> anyhow::Result<NetworkConfig> {
 		let overrides = ChainOverrides::from_env()?;
 		let set = overrides.set_names();
-		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
-		let config = crate::local_network::resolve(
-			apply_chain_overrides(self.with_backend_override(), overrides),
-			&set,
-		)?;
+		let mut base = apply_chain_overrides(self.with_backend_override(), overrides);
+		base.chain_backend = chain_backend;
+		refuse_light_client(&base, &set)?;
+		let config = crate::local_network::resolve(base, &set)?;
 		refuse_real_identity_genesis(&config)?;
 		verify_rerouted_endpoints(&config, &self.preset()).await?;
 		Ok(config)
@@ -137,6 +139,7 @@ impl Network {
 				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
+				chain_backend: ChainBackend::Rpc,
 			},
 			Self::Previewnet => NetworkConfig {
 				id: "previewnet",
@@ -151,6 +154,7 @@ impl Network {
 				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
+				chain_backend: ChainBackend::Rpc,
 			},
 			Self::Polkadot => NetworkConfig {
 				id: "polkadot",
@@ -165,23 +169,31 @@ impl Network {
 				live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
 				dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
 				disposable_identities: false,
+				chain_backend: ChainBackend::Rpc,
 			},
 		}
 	}
 }
 
-/// A fork keeps the live genesis hashes, so the light client would find them in
-/// its catalog and sync the live chains instead.
-fn refuse_light_client(
-	chain_overrides: &[&str],
-	light_client: Option<String>,
-) -> anyhow::Result<()> {
+/// The light client syncs the chains `truapi-provider` bundles specs for, found
+/// by genesis hash. A network outside that catalog has nothing to sync, and a
+/// fork keeps the live genesis hashes, so the light client would sync the live
+/// chains instead.
+fn refuse_light_client(config: &NetworkConfig, chain_overrides: &[&str]) -> anyhow::Result<()> {
+	if config.chain_backend != ChainBackend::LightClient {
+		return Ok(());
+	}
 	anyhow::ensure!(
-		chain_overrides.is_empty() || light_client.as_deref() != Some("1"),
-		"{} and {}=1 cannot be used together: the light client syncs the live chains \
-         by genesis hash; unset one of them",
-		chain_overrides.join(", "),
-		crate::local_network::LIGHT_CLIENT_ENV
+		truapi_provider::known_networks().any(|network| network == config.id),
+		"--chain-backend light-client has no chain specs for {}; it bundles {}",
+		config.id,
+		truapi_provider::known_networks().collect::<Vec<_>>().join(", ")
+	);
+	anyhow::ensure!(
+		chain_overrides.is_empty(),
+		"{} and --chain-backend light-client cannot be used together: the light client \
+         syncs the live chains by genesis hash; unset one of them",
+		chain_overrides.join(", ")
 	);
 	Ok(())
 }
@@ -421,6 +433,8 @@ pub struct NetworkConfig {
 	/// plaintext account store may keep and auto-accept may sign for. Only
 	/// test networks set it.
 	pub disposable_identities: bool,
+	/// How this run reaches the chains, from `--chain-backend`.
+	pub chain_backend: ChainBackend,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -464,9 +478,9 @@ impl NetworkConfig {
 	/// identifier is not recoverable from it, which is why a served role needs its
 	/// own field here rather than a lookup into that list.
 	///
-	/// Every role listed must also be routable: `WsChainProvider` answers an
-	/// unmapped genesis with its fallback URL, so a role the routing filter drops
-	/// would connect to the wrong chain while the host claimed to serve it.
+	/// Every role listed must also be routable: `CliChainProvider` answers an
+	/// unmapped genesis with People, so a role the routing filter drops would
+	/// connect to the wrong chain while the host claimed to serve it.
 	/// `chain::tests::every_served_role_routes_to_its_own_chain` holds that.
 	pub fn host_chain_set(&self) -> HostChainSet {
 		HostChainSet {
@@ -571,9 +585,9 @@ mod tests {
 	/// Every served role must match an endpoint that actually routes it, at the
 	/// URL the preset names for that role.
 	///
-	/// `WsChainProvider::url_for` falls back to `people_ws` for an unrecognised
-	/// genesis, so a drifted `people_genesis` still resolves to a working URL
-	/// and satisfies every routing assertion. Pinning against
+	/// `CliChainProvider` falls back to People for an unrecognised genesis, so a
+	/// drifted `people_genesis` still resolves to a working URL and satisfies
+	/// every routing assertion. Pinning against
 	/// `live_chain_endpoints` checks the constants themselves rather than the
 	/// plumbing that reads them.
 	///
@@ -982,10 +996,49 @@ mod tests {
 
 	#[test]
 	fn chain_overrides_are_refused_with_the_light_client() {
-		let error = refuse_light_client(&[PEOPLE_WS_ENV], Some("1".to_string())).unwrap_err();
+		let rpc = Network::PaseoNextV2.preset();
+		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..rpc };
+		let error = refuse_light_client(&light, &[PEOPLE_WS_ENV]).unwrap_err();
 		assert!(error.to_string().contains(PEOPLE_WS_ENV), "{error}");
-		assert!(refuse_light_client(&[], Some("1".to_string())).is_ok());
-		assert!(refuse_light_client(&[PEOPLE_WS_ENV], None).is_ok());
+		assert!(refuse_light_client(&light, &[]).is_ok());
+		assert!(refuse_light_client(&rpc, &[PEOPLE_WS_ENV]).is_ok());
+	}
+
+	/// The light client has specs only for the networks `truapi-provider`
+	/// bundles. Accepting another would fail on every connect instead of once,
+	/// before the command starts.
+	#[test]
+	fn the_light_client_is_refused_for_a_network_it_has_no_specs_for() {
+		let polkadot = NetworkConfig {
+			chain_backend: ChainBackend::LightClient,
+			..Network::Polkadot.preset()
+		};
+		let error = refuse_light_client(&polkadot, &[]).unwrap_err();
+		assert!(error.to_string().contains("no chain specs for polkadot"), "{error}");
+	}
+
+	/// The light client finds each chain in `truapi-provider`'s bundled catalog
+	/// by the preset's genesis hash, so a network reset applied to only one of
+	/// the two copies leaves it unable to connect.
+	#[test]
+	fn every_preset_the_light_client_bundles_matches_its_catalog() {
+		let bundled: Vec<_> = Network::value_variants()
+			.iter()
+			.map(|network| network.config())
+			.filter(|config| truapi_provider::known_networks().any(|known| known == config.id))
+			.collect();
+		assert!(!bundled.is_empty(), "no preset is bundled, so this test would pass vacuously");
+		for config in bundled {
+			let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+				.add_network(config.id)
+				.expect("a known network registers");
+			assert_eq!(
+				(catalog.people, catalog.assethub, catalog.bulletin),
+				(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
+				"{} genesis hashes differ from the light-client catalog",
+				config.id
+			);
+		}
 	}
 
 	#[test]

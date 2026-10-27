@@ -8,10 +8,9 @@
 //!
 //! Per-target backend matrix:
 //!
-//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over WebSocket, also reachable
-//!   without a registry through [`connect_rpc_node`]. On native targets it runs on a jsonrpsee
-//!   transport and needs an ambient tokio runtime; on `wasm32` the same API is served by the
-//!   browser's `WebSocket`.
+//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over WebSocket. On native
+//!   targets it runs on a jsonrpsee transport and needs an ambient tokio runtime; on `wasm32` the
+//!   same API is served by the browser's `WebSocket`.
 //! - `smoldot` feature — `ChainSource::LightClient`, an embedded [smoldot](https://github.com/paritytech/smoldot)
 //!   light client. On native targets it runs on smoldot's default platform (OS threads, TCP + plain
 //!   WebSocket dialing), which declines `wss`, so those bootnodes are reached through the loopback
@@ -23,6 +22,12 @@
 //!   registration.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
 //!   the provider directly without a Rust caller.
+//!
+//! On native targets every `wss` connection, to a remote node or a light-client bootnode, checks
+//! the server certificate against the webpki roots compiled into the crate. Certificate authorities
+//! installed in the operating system are not trusted, so a native host behaves the same on every
+//! target, including a static binary on a system with no certificate store. On `wasm32` the
+//! browser verifies certificates itself.
 
 // The `uniffi` feature pulls in UniFFI's generated scaffolding, which contains
 // `unsafe` extern-"C" glue; scope the allowance to that feature so every other
@@ -84,8 +89,6 @@ pub use networks::{NetworkChains, known_networks};
 pub use provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder};
 #[cfg(feature = "smoldot")]
 pub use storage::{StorageClient, StorageClientError};
-#[cfg(feature = "ws")]
-pub use ws::connect as connect_rpc_node;
 
 #[cfg(all(feature = "uniffi", not(target_arch = "wasm32")))]
 uniffi::setup_scaffolding!();
