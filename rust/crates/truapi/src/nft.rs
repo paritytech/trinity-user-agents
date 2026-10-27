@@ -27,9 +27,8 @@ pub use import::{ImportRequest, StartImportError};
 pub use imported_secrets::ImportedSecretStore;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
-	ImportedItemKey, InvalidItemSecret, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets,
-	ItemSigner, ItemSlot, item_keys_from_entropy, item_secrets_from_entropy,
-	item_signer_from_entropy,
+	ImportedItemKey, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot,
+	item_keys_from_entropy, item_secrets_from_entropy, item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{

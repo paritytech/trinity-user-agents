@@ -1455,6 +1455,19 @@ impl crate::nft::ItemSecrets for SigningHost {
 	}
 }
 
+/// The user's chat key, until the team settles which key products publish
+/// for `Static` cheques.
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft_purse::StaticReceiveSecret for SigningHost {
+	fn static_receive_secret(
+		&self,
+	) -> Result<crate::host_logic::x25519_seal::X25519PrivateKey, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		let chat_key = crate::host_logic::sso::pairing::derive_identity_chat_private_key(&entropy);
+		Ok(crate::host_logic::x25519_seal::X25519PrivateKey::from(chat_key))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	mod activation;

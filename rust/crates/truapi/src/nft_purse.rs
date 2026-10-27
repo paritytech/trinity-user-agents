@@ -18,9 +18,9 @@ use truapi::latest::{
 };
 
 #[cfg(test)]
-pub use cheque::keys_in_cheque;
+pub use cheque::open_cheque;
 pub use operation::drain_needs_confirmation;
-pub use receive_key::CreateReceiveKeyError;
+pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
 
 use crate::{
 	encrypted_storage::EncryptedStorage,

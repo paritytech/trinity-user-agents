@@ -41,7 +41,7 @@ use crate::{
 		x25519_seal::X25519PrivateKey,
 	},
 	nft::HoldingTracker,
-	nft_purse::{NftPurses, NftPursesDeps, keys_in_cheque},
+	nft_purse::{NftPurses, NftPursesDeps, open_cheque},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
 	time::RealTimer,
@@ -391,7 +391,11 @@ impl ChequeRoundTrip<'_> {
 
 		let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
 		let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
-		let opened = keys_in_cheque(&X25519PrivateKey::from(secret), &cheque);
+		let opened: Vec<ItemKey> = open_cheque(&X25519PrivateKey::from(secret), &cheque)
+			.expect("the recipient opens the cheque")
+			.iter()
+			.map(|imported| imported.key())
+			.collect();
 		assert_eq!(opened.iter().copied().collect::<BTreeSet<_>>(), expected);
 		assert_eq!(self.owner.instances_held_by(&opened).await.len(), items.len());
 		assert_eq!(available_keys(self.ledger, from).await, BTreeSet::new());
