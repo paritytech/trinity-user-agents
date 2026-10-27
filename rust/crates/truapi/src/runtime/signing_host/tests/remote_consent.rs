@@ -66,7 +66,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 							payload: HostAccountGetAliasRequest {
 								key_handle: full_person_key_handle(),
 								context: v01::ProductProofContext {
-									product_id: "myapp.dot".parse().expect("valid product id"),
+									product_id: ProductId::for_test("myapp.dot"),
 									suffix: v01::DerivationIndex::Index(0),
 								},
 								ring_location: full_person_ring_location(),
@@ -79,7 +79,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 						ProductRequest {
 							calling_product_id: ProductId::for_test("myapp.dot"),
 							payload: HostAccountListRingVrfKeysRequest {
-								owner: "foreign.dot".parse().expect("valid product id"),
+								owner: ProductId::for_test("foreign.dot"),
 								disclosure: RingVrfKeyDisclosure::PublicKey,
 							},
 						},

@@ -1063,7 +1063,7 @@ fn permission_authorization_request_mirror_round_trips() {
 	}));
 	cases.push(PermissionAuthorizationRequest::IdentityDisclosure);
 	cases.push(PermissionAuthorizationRequest::AccountAccess {
-		target_product_id: "other.dot".parse().expect("valid product id"),
+		target_product_id: ProductId::for_test("other.dot"),
 	});
 
 	for case in cases {

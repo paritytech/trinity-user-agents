@@ -745,7 +745,7 @@ async fn run_pgas_check(
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
-	let candidates = accounts::collection_candidates(&entropy, network.network_suffix)?;
+	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
@@ -907,7 +907,7 @@ async fn run_alloc_check(
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
-	let candidates = accounts::collection_candidates(&entropy, network.network_suffix)?;
+	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
@@ -2162,7 +2162,9 @@ async fn run_dev(
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = match args.product_id {
 		Some(product_id) => product_id,
-		None => format!("localhost:{}", args.app_port).parse()?,
+		None => format!("localhost:{}", args.app_port)
+			.parse()
+			.expect("localhost with a u16 port is a valid product id; qed"),
 	};
 	let signing = SigningHostArgs {
 		product_id,

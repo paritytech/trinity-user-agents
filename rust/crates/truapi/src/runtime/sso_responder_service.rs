@@ -1385,7 +1385,7 @@ mod tests {
 						derivation_index: api::DerivationIndex::Index(0),
 					},
 					context: api::ProductProofContext {
-						product_id: "other.dot".parse().expect("valid product id"),
+						product_id: ProductId::for_test("other.dot"),
 						suffix: api::DerivationIndex::Index(0),
 					},
 					ring_location: api::RingLocation { chain_id: [0; 32], junctions: vec![] },

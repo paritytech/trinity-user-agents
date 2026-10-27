@@ -162,7 +162,7 @@ fn another_product_without_purses_lists_none() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
-		list(&host, v01::NftPurseOwner::Product("other.dot".parse().expect("valid product id"))),
+		list(&host, v01::NftPurseOwner::Product(ProductId::for_test("other.dot"))),
 		Ok(listed(vec![]))
 	);
 }

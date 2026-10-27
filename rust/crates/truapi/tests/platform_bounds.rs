@@ -133,10 +133,7 @@ fn product_id_validation_cases() {
 
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
-	let key = ProductStorageKey::new(
-		"Test.DOT".parse::<ProductId>().expect("valid product key"),
-		"settings:theme",
-	);
+	let key = ProductStorageKey::new(ProductId::for_test("Test.DOT"), "settings:theme");
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 

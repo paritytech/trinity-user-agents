@@ -321,7 +321,7 @@ struct RingRoot {
 mod tests {
 	use parity_scale_codec::Encode;
 	use scale_info::TypeInfo;
-	use truapi::v01::DerivationIndex;
+	use truapi::{latest::ProductId, v01::DerivationIndex};
 
 	use super::*;
 	use crate::host_logic::product_account::index_bytes;
@@ -343,7 +343,7 @@ mod tests {
 	#[test]
 	fn context_bytes_pins_derivation_index_preimage() {
 		let context = ProductProofContext {
-			product_id: "voting.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Index(0),
 		};
 
@@ -358,11 +358,11 @@ mod tests {
 	#[test]
 	fn context_bytes_distinguishes_selector_forms() {
 		let indexed = ProductProofContext {
-			product_id: "voting.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Index(0),
 		};
 		let raw = ProductProofContext {
-			product_id: "voting.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Raw([0; 32]),
 		};
 

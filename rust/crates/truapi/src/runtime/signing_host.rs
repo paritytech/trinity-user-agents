@@ -518,11 +518,11 @@ impl SigningHost {
 		Ok(vec![
 			CollectionCandidate {
 				collection: PersonhoodCollection::People,
-				entropy: derive_full_person_ring_vrf_entropy(&root, &self.network_suffix)?,
+				entropy: derive_full_person_ring_vrf_entropy(&root, &self.network_suffix),
 			},
 			CollectionCandidate {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: derive_lite_person_ring_vrf_entropy(&root, &self.network_suffix)?,
+				entropy: derive_lite_person_ring_vrf_entropy(&root, &self.network_suffix),
 			},
 		])
 	}
@@ -532,10 +532,7 @@ impl SigningHost {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner !=
-			&personhood_product_id(&self.network_suffix)
-				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?
-		{
+		if owner != &personhood_product_id(&self.network_suffix) {
 			return Ok(());
 		}
 		let chains = self
@@ -1844,7 +1841,7 @@ mod tests {
 		let ring = full_person_ring_location();
 		register_full_person_key(&authority, &session, &ring);
 		let context = v01::ProductProofContext {
-			product_id: "dim2.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("dim2.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let alias_for = |caller: &str| {
@@ -2180,7 +2177,7 @@ mod tests {
 			ProductRequest {
 				calling_product_id: ProductId::for_test("PEOPL.DOT"),
 				payload: v01::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".parse().expect("valid product id"),
+					owner: ProductId::for_test("peopl.dot"),
 					disclosure: v01::RingVrfKeyDisclosure::PublicKey,
 				},
 			},
@@ -2230,7 +2227,7 @@ mod tests {
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "bank.dot".parse().expect("valid product id"),
+						product_id: ProductId::for_test("bank.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: ring.clone(),
@@ -2471,7 +2468,7 @@ mod tests {
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
-							product_id: "peopl.dot".parse().expect("valid product id"),
+							product_id: ProductId::for_test("peopl.dot"),
 							suffix: v01::DerivationIndex::Index(0),
 						},
 						ring_location: ring.clone(),
@@ -2753,7 +2750,7 @@ mod tests {
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "dim2.dot".parse().expect("valid product id"),
+						product_id: ProductId::for_test("dim2.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location,
@@ -2770,7 +2767,7 @@ mod tests {
 			v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
-					product_id: "dim2.dot".parse().expect("valid product id"),
+					product_id: ProductId::for_test("dim2.dot"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring_location.clone(),
@@ -2901,7 +2898,7 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let cx = CallContext::default();
 		let context = v01::ProductProofContext {
-			product_id: "myapp.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("myapp.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let ring_location = full_person_ring_location();
@@ -2960,7 +2957,7 @@ mod tests {
 				payload: HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "myapp.dot".parse().expect("valid product id"),
+						product_id: ProductId::for_test("myapp.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: v01::RingLocation {
@@ -3024,7 +3021,7 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let cx = CallContext::default();
 		let context = v01::ProductProofContext {
-			product_id: "other.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("other.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let ring_location = full_person_ring_location();
@@ -3083,7 +3080,7 @@ mod tests {
 			payload: HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
-					product_id: "other.dot".parse().expect("valid product id"),
+					product_id: ProductId::for_test("other.dot"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: full_person_ring_location(),

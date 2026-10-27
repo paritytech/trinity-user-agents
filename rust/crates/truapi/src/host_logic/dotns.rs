@@ -267,10 +267,9 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 		None => "localhost".to_string(),
 	};
 
-	let host = match host.parse::<ProductId>() {
-		Ok(host) => host,
-		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
-	};
+	let host = host
+		.parse::<ProductId>()
+		.expect("localhost with an optional u16 port is a valid product id; qed");
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
 	let canonical_url = join_url("http://", host.as_str(), &path);
 	Some(NavigateDecision::Localhost { host, path, canonical_url })

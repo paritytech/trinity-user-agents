@@ -2233,9 +2233,7 @@ mod tests {
 			),
 			(CoreStorageKey::LastProcessedPairingStatement, "LastProcessedPairingStatement", None),
 			(
-				CoreStorageKey::AutoSigningKey {
-					product_id: "product.dot".parse().expect("valid product id"),
-				},
+				CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("product.dot") },
 				"AutoSigningKey",
 				Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 			),

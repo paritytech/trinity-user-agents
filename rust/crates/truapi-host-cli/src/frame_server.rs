@@ -774,7 +774,8 @@ mod tests {
 		let listener = TcpListener::bind("127.0.0.1:0").await?;
 		let address = listener.local_addr()?;
 		let endpoint = format!("ws://{address}");
-		let product = ProductSelection::new("localhost:3000".parse()?, ProductExecutionKind::App);
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
 		let container = tempfile::NamedTempFile::new()?;
 		std::fs::write(container.path(), "installSandbox();")?;
 		let server = tokio::spawn(async move {
@@ -936,7 +937,8 @@ mod tests {
 		let mut client = TcpStream::connect(address).await?;
 		let (server_stream, _) = listener.accept().await?;
 		client.write_all(b"GET /boot").await?;
-		let product = ProductSelection::new("localhost:3000".parse()?, ProductExecutionKind::App);
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
 		let endpoint = format!("ws://{address}");
 
 		let client_exchange = async move {
@@ -983,7 +985,8 @@ mod tests {
 		let address = listener.local_addr()?;
 		let runtime = Arc::new(PendingRuntime::default());
 		let server_runtime = runtime.clone();
-		let product = ProductSelection::new("localhost:3000".parse()?, ProductExecutionKind::App);
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
 		let product_updates = product.subscribe();
 		let server = tokio::spawn(async move {
 			let (stream, _) = listener.accept().await?;
@@ -1063,20 +1066,20 @@ mod tests {
 	}
 
 	#[test]
-	fn product_selection_compares_canonical_ids() -> Result<()> {
-		let product = ProductSelection::new(" Dotli.DOT ".parse()?, ProductExecutionKind::App);
+	fn product_selection_compares_canonical_ids() {
+		let product =
+			ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ProductExecutionKind::App);
 
 		assert_eq!(product.current().as_str(), "dotli.dot");
 		assert!(product.select(ProductId::for_test("localhost:3000")));
 		assert_eq!(product.current().as_str(), "localhost:3000");
 		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
-
-		Ok(())
 	}
 
 	#[tokio::test]
 	async fn changing_product_notifies_connections() -> Result<()> {
-		let product = ProductSelection::new("first.dot".parse()?, ProductExecutionKind::App);
+		let product =
+			ProductSelection::new(ProductId::for_test("first.dot"), ProductExecutionKind::App);
 		let mut connection = product.subscribe();
 
 		assert!(product.select(ProductId::for_test("second.dot")));
@@ -1444,13 +1447,12 @@ mod tests {
 		}
 	}
 
-	fn tapped_product(
-		tapped: &Arc<DebugTappedRuntime>,
-		product_id: &str,
-	) -> Result<ProductRuntime> {
-		let product =
-			ProductContext::new_with_execution(product_id.parse()?, ProductExecutionKind::App);
-		Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))
+	fn tapped_product(tapped: &Arc<DebugTappedRuntime>, product_id: &str) -> ProductRuntime {
+		let product = ProductContext::new_with_execution(
+			ProductId::for_test(product_id),
+			ProductExecutionKind::App,
+		);
+		tapped.product_runtime(product, Arc::new(DiscardingFrameSink))
 	}
 
 	/// The decorator builds its runtime through the wrapped factory, and the
@@ -1464,7 +1466,7 @@ mod tests {
 	async fn the_debug_tap_streams_received_frames_to_the_sink() -> Result<()> {
 		let sink = Arc::new(RecordingDebugSink::default());
 		let tapped = DebugTappedRuntime::new(signing_runtime()?, sink.clone());
-		let runtime = tapped_product(&tapped, "localhost:3000")?;
+		let runtime = tapped_product(&tapped, "localhost:3000");
 
 		let frame = vec![0xde, 0xad, 0xbe, 0xef];
 		let _ = runtime.receive_frame(frame.clone()).await;
@@ -1486,8 +1488,8 @@ mod tests {
 		let sink = Arc::new(RecordingDebugSink::default());
 		let tapped = DebugTappedRuntime::new(signing_runtime()?, sink.clone());
 
-		let first = tapped_product(&tapped, "localhost:3000")?;
-		let second = tapped_product(&tapped, "localhost:3000")?;
+		let first = tapped_product(&tapped, "localhost:3000");
+		let second = tapped_product(&tapped, "localhost:3000");
 		let _ = first.receive_frame(vec![1]).await;
 		let _ = second.receive_frame(vec![2]).await;
 		first.dispose();

@@ -40,6 +40,7 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	frame::{MESSAGE_TYPE_REQUEST, Payload, ProtocolMessage},
 	generated::wire_table,
+	latest::ProductId,
 	v01,
 	versioned::account::HostAccountGetRequest,
 };
@@ -55,7 +56,7 @@ const GOLDEN_PAYLOAD_LEN: usize = 1 + 1 + 7 + 1 + 4;
 fn expected_request() -> HostAccountGetRequest {
 	HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "foo.dot".parse().expect("valid product id"),
+			dot_ns_identifier: ProductId::for_test("foo.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	})

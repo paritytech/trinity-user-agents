@@ -7290,9 +7290,8 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	)
 	.unwrap();
 	let platform = Arc::new(StubPlatform::default());
-	let legacy_key = CoreStorageKey::AutoSigningKey {
-		product_id: "myapp.dot".parse().expect("valid product id"),
-	};
+	let legacy_key =
+		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };
 	platform
 		.local_storage
 		.lock()
@@ -8024,7 +8023,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				context: v01::ProductProofContext {
-					product_id: "dim2.dot".parse().expect("valid product id"),
+					product_id: ProductId::for_test("dim2.dot"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring_location_fixture(),
@@ -8110,7 +8109,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					context: v01::ProductProofContext {
-						product_id: "dim2.dot".parse().expect("valid product id"),
+						product_id: ProductId::for_test("dim2.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: ring_location_fixture(),

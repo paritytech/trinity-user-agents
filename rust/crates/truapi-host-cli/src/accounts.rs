@@ -675,17 +675,17 @@ fn resolved_lite_username(username: &str) -> bool {
 pub fn collection_candidates(
 	entropy: &[u8],
 	network_suffix: &str,
-) -> Result<Vec<alloc::CollectionCandidate>> {
-	Ok(vec![
+) -> Vec<alloc::CollectionCandidate> {
+	vec![
 		alloc::CollectionCandidate {
 			collection: PersonhoodCollection::People,
-			entropy: derive_full_person_ring_vrf_entropy(entropy, network_suffix)?,
+			entropy: derive_full_person_ring_vrf_entropy(entropy, network_suffix),
 		},
 		alloc::CollectionCandidate {
 			collection: PersonhoodCollection::LitePeople,
-			entropy: derive_lite_person_ring_vrf_entropy(entropy, network_suffix)?,
+			entropy: derive_lite_person_ring_vrf_entropy(entropy, network_suffix),
 		},
-	])
+	]
 }
 
 async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
@@ -693,7 +693,7 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 	const SLEEP: Duration = Duration::from_secs(4);
 
 	let people_ws = network.people_ws;
-	let candidates = collection_candidates(entropy, network.network_suffix)?;
+	let candidates = collection_candidates(entropy, network.network_suffix);
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 	let mut metadata = None;
 	for attempt in 1..=MAX_ATTEMPTS {

@@ -1951,7 +1951,7 @@ mod tests {
 				))),
 				status(PermissionAuthorizationRequest::IdentityDisclosure),
 				status(PermissionAuthorizationRequest::AccountAccess {
-					target_product_id: "other.dot".parse().expect("valid product id"),
+					target_product_id: ProductId::for_test("other.dot"),
 				}),
 				status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
 				futures::executor::block_on(
@@ -2124,7 +2124,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
 		let request = PermissionAuthorizationRequest::AccountAccess {
-			target_product_id: "target.dot".parse().expect("valid product id"),
+			target_product_id: ProductId::for_test("target.dot"),
 		};
 
 		futures::executor::block_on(
@@ -2138,7 +2138,7 @@ mod tests {
 		assert_eq!(
 			futures::executor::block_on(service.authorization_status(
 				&PermissionAuthorizationRequest::AccountAccess {
-					target_product_id: "other.dot".parse().expect("valid product id"),
+					target_product_id: ProductId::for_test("other.dot"),
 				}
 			))
 			.unwrap(),
@@ -2710,7 +2710,7 @@ mod tests {
 		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
 			.with_temporary_permissions(Arc::clone(&grants));
 		let request = PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: "dim2.dot".parse().expect("valid product id"),
+			target_product_id: ProductId::for_test("dim2.dot"),
 			kind: CrossProductSignatureKind::Payload,
 		};
 		let checked_by_runtime = cross_product_signature_key(

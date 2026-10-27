@@ -29,7 +29,7 @@ use std::{
 
 use parity_scale_codec::{Decode, Encode};
 
-use truapi::{CallError, v01};
+use truapi::{CallError, latest::ProductId, v01};
 
 use truapi::{
 	TrUApiCore,
@@ -270,11 +270,11 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	let core = make_core();
 	let request = v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".parse().expect("valid product id"),
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {
-			product_id: "myapp.dot".parse().expect("valid product id"),
+			product_id: ProductId::for_test("myapp.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		},
 		ring_location: v01::RingLocation {

@@ -3,6 +3,7 @@ pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
+	latest::ProductId,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
@@ -29,7 +30,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".parse().expect("valid product id")),
+		ProductContext::new(ProductId::for_test("dotli.dot")),
 	)
 }
 

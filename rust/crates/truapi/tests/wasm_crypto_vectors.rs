@@ -22,10 +22,8 @@ use truapi::{
 		},
 		statement_store::{build_signed_session_request_statement, decode_verified_statement_data},
 	},
-	platform::{
-		CoreStorageKey, HostDevicePermissionRequest, HostInfo, PairingHostConfig, PlatformInfo,
-		ProductId,
-	},
+	latest::{HostDevicePermissionRequest, ProductId},
+	platform::{CoreStorageKey, HostInfo, PairingHostConfig, PlatformInfo},
 };
 use wasm_bindgen_test::wasm_bindgen_test;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
@@ -92,7 +90,7 @@ fn sso_session() -> SsoSessionInfo {
 
 #[wasm_bindgen_test]
 fn product_account_and_entropy_vectors_match_mobile() {
-	let product_id = "myapp.dot".parse::<ProductId>().unwrap();
+	let product_id = ProductId::for_test("myapp.dot");
 	let root = derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = derive_product_subtree_keypair(&root, &product_id).unwrap();
 	let derived = derive_product_public_key(subtree.public.to_bytes(), index_bytes(0)).unwrap();
@@ -186,7 +184,7 @@ fn session_crypto_and_statement_proof_vectors_work_on_wasm() {
 #[wasm_bindgen_test]
 fn wasm_core_storage_descriptors_are_strict_and_stable() {
 	let encoded = CoreStorageKey::device_permission_authorization(
-		"product.dot",
+		&ProductId::for_test("product.dot"),
 		&HostDevicePermissionRequest::Camera,
 	)
 	.encode();
