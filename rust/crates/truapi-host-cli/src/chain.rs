@@ -62,7 +62,7 @@ impl CliChainProvider {
 	fn with_live_chain_routing(network: &NetworkConfig, live_chain_routing: bool) -> Self {
 		let backend = match network.chain_backend {
 			ChainBackend::Rpc => Backend::Rpc(Box::new(
-				routes(network, live_chain_routing)
+				routed_endpoints(network, live_chain_routing)
 					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
 						let url = endpoint
 							.ws
@@ -91,7 +91,7 @@ impl CliChainProvider {
 	/// the hash up in its bundled catalog and start the light client, whichever
 	/// backend was selected.
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> [u8; 32] {
-		if routes(&self.network, self.live_chain_routing)
+		if routed_endpoints(&self.network, self.live_chain_routing)
 			.any(|endpoint| endpoint.genesis == genesis_hash)
 		{
 			genesis_hash
@@ -116,7 +116,7 @@ impl CliChainProvider {
 	#[cfg(test)]
 	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &'static str {
 		let chain = self.chain_for(*genesis_hash);
-		routes(&self.network, self.live_chain_routing)
+		routed_endpoints(&self.network, self.live_chain_routing)
 			.find(|endpoint| endpoint.genesis == chain)
 			.map(|endpoint| endpoint.ws)
 			.expect("People is routed")
@@ -124,7 +124,7 @@ impl CliChainProvider {
 }
 
 /// The endpoints routed to their own chain.
-fn routes(
+fn routed_endpoints(
 	network: &NetworkConfig,
 	live_chain_routing: bool,
 ) -> impl Iterator<Item = &'static ChainEndpoint> {
