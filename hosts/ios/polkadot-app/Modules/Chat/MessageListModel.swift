@@ -12,6 +12,10 @@ struct MessageListModel {
     let oldestNewReactionTargetMessageId: Chat.MessageId?
     let newMessageCount: Int
 
+    /// The state of each end of the window. Only a product-source room pages.
+    var paging: ChatPagingState = .complete
+    var readiness: ChatRoomReadiness = .ready
+
     var hasNewMessages: Bool {
         newMessageCount > 0
     }

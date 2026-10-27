@@ -7,7 +7,8 @@ import Keystore_iOS
 import Foundation_iOS
 
 protocol ChatEngineProtocol {
-    func subscribe() async throws -> AsyncExtensions.AnyAsyncSequence<[Chat.LocalMessage]>
+    /// The window of messages with its paging state.
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot>
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws
     func leaveChat() async throws
@@ -18,6 +19,14 @@ protocol ChatEngineProtocol {
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?>
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>?
     func processAction(_ action: Chat.Action) async
+    /// Asks for the page before the window.
+    func loadOlder() async -> ChatPageOutcome
+    /// Asks for the page after the window.
+    func loadNewer() async -> ChatPageOutcome
+    /// Asks for pages until the message is in the window. Gives false when the message is not in the room.
+    func jump(to messageId: Chat.MessageId) async -> Bool
+    /// Writes an action of the user to the message source of the room.
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome
 }
 
 enum ChatEngineError: Error {
@@ -25,11 +34,8 @@ enum ChatEngineError: Error {
 }
 
 final class ChatEngine {
-    let historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>
-    let messageProviderFactory: ChatMessageDataProviderMaking
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
-    let messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>
-    let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
+    let sourceContext: ChatRoomSourceContext
     let chatProvider: ChatContactDataProviderMaking
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     let chatExtensionRegistry: ChatExtensionsRegistering
@@ -55,14 +61,13 @@ final class ChatEngine {
         self.chatId = chatId
         self.chatRequestContext = chatRequestContext
         self.chatExtensionRegistry = chatExtensionRegistry
-        self.messageProviderFactory = messageProviderFactory
         self.settings = settings
         self.leaveChatService = leaveChatService
         self.blockUserService = blockUserService
         self.chatProvider = chatProvider
         self.logger = logger
 
-        historyRepository = AnyDataProviderRepository(
+        let historyRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: .chatExtensionHistoryForChat(chatId),
                 sortDescriptors: [],
@@ -78,7 +83,7 @@ final class ChatEngine {
             )
         )
 
-        attachmentsUpdateRepository = AnyDataProviderRepository(
+        let attachmentsUpdateRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -86,7 +91,7 @@ final class ChatEngine {
             )
         )
 
-        messageStatusUpdateRepository = AnyDataProviderRepository(
+        let messageStatusUpdateRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -101,64 +106,41 @@ final class ChatEngine {
                 mapper: AnyCoreDataMapper(ChatModelMapper())
             )
         )
+
+        let coreDataSource = CoreDataMessageSource(
+            chatId: chatId,
+            chatExtensionRegistry: chatExtensionRegistry,
+            messageProviderFactory: messageProviderFactory,
+            historyRepository: historyRepository,
+            messageRepository: messageRepository,
+            messageStatusUpdateRepository: messageStatusUpdateRepository,
+            attachmentsUpdateRepository: attachmentsUpdateRepository,
+            logger: logger
+        )
+
+        sourceContext = ChatRoomSourceContext(coreDataSource: coreDataSource)
     }
 }
 
 extension ChatEngine: ChatEngineProtocol {
-    func subscribe() async throws -> AsyncExtensions.AnyAsyncSequence<[Chat.LocalMessage]> {
-        let chatProcessingHistory = try await historyRepository.fetchAllOperation(
-            with: RepositoryFetchOptions()
-        )
-        .asyncExecute()
+    func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
+        try await sourceContext.source().snapshots()
+    }
 
-        let processingContext = ChatExtensionProcessingContext(
-            chatId: chatId,
-            initialHistory: chatProcessingHistory,
-            messageRepository: messageRepository,
-            attachmentsUpdateRepository: attachmentsUpdateRepository,
-            processingHistoryRepository: historyRepository,
-            logger: logger
-        )
+    func loadOlder() async -> ChatPageOutcome {
+        await sourceContext.source().loadOlder()
+    }
 
-        let messageSequence = messageProviderFactory
-            .subscribeChatMessages(chatId)
-            .handleEvents(onElement: { messages in
-                let extensions = self.chatExtensionRegistry.getExtensions(for: self.chatId)
+    func loadNewer() async -> ChatPageOutcome {
+        await sourceContext.source().loadNewer()
+    }
 
-                for message in messages {
-                    await processingContext.processOncePerSession(message) { message in
-                        for chatExtension in extensions {
-                            let isProcessed = await processingContext.hasProcessed(
-                                messageId: message.messageId,
-                                extensionId: chatExtension.identifier
-                            )
+    func jump(to messageId: Chat.MessageId) async -> Bool {
+        await sourceContext.source().jump(to: messageId)
+    }
 
-                            let result = await chatExtension.process(
-                                message: message,
-                                lastProcessingOutcome: isProcessed ? .previouslyProcessed : .firstEncounter,
-                                context: processingContext
-                            )
-
-                            await processingContext.noteProcessingResult(
-                                messageId: message.messageId,
-                                extensionId: chatExtension.identifier,
-                                result: result
-                            )
-                        }
-                    }
-                }
-
-                await processingContext.flushChatExtensionHistory()
-            })
-
-        return await combineLatest(
-            messageSequence,
-            processingContext.messageOverridesSequence
-        )
-        .map { messages, overrides in
-            messages.map { overrides.applyOverrides(to: $0) }
-        }
-        .eraseToAnyAsyncSequence()
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
+        try await sourceContext.source().perform(action)
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
@@ -170,13 +152,7 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
-        let updates = messageIds.map { Chat.ChatMessageStatusUpdate(messageId: $0, status: .incoming(.seen)) }
-
-        guard !updates.isEmpty else {
-            return
-        }
-
-        try await messageStatusUpdateRepository.saveOperation({ updates }, { [] }).asyncExecute()
+        _ = try await sourceContext.source().perform(.markSeen(messageIds))
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
@@ -257,20 +233,6 @@ extension ChatEngine: ChatEngineProtocol {
 
 private extension ChatEngine {
     func sendUserMessageToExistingChat(with content: Chat.LocalMessage.Content) async throws {
-        let status = determineInitialMessageStatus(chatId: chatId)
-        let newMessage = Chat.LocalMessage
-            .newMessage(to: chatId, content: content)
-            .replacingStatus(status)
-
-        try await messageRepository.saveOperation({ [newMessage] }, { [] }).asyncExecute()
-    }
-
-    func determineInitialMessageStatus(chatId: Chat.Id) -> Chat.LocalMessage.Status {
-        switch chatId {
-        case .chatExtension:
-            .outgoing(.delivered)
-        case .person:
-            .outgoing(.new)
-        }
+        _ = try await sourceContext.source().perform(.send(content))
     }
 }
