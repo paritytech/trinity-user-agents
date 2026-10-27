@@ -401,6 +401,11 @@ pub mod latest {
 	/// NFT cheque creation failure.
 	pub type HostNftPurseCreateChequeError =
 		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
+	/// NFT cheque deposit request.
+	pub type HostNftPurseDepositRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
+	/// NFT cheque deposit failure.
+	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
 	/// NFT item transfer request.
 	pub type HostNftPurseTransferItemRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;

@@ -1,0 +1,124 @@
+//! Deposits: opening a received cheque and moving its items into a purse.
+
+use truapi::latest::{
+	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeRecipient, NftPurseIdempotencyKey,
+	NftPurseReceiveKey,
+};
+
+use super::{
+	NftPurses,
+	cheque::{CorruptedCheque, cheque_id_for, open_cheque},
+	dao,
+	operation::operation_key,
+	receive_key::ReceiveSecretError,
+};
+use crate::{
+	host_logic::x25519_seal::X25519PrivateKey,
+	nft::{ImportRequest, PurseId, StartImportError},
+	platform::ProductId,
+	runtime::AuthorityError,
+	store::DbError,
+};
+
+/// Why a deposit did not start. Nothing was registered.
+#[derive(Debug, thiserror::Error)]
+pub enum DepositRefusal {
+	/// The cheque lists no items.
+	#[error("the cheque lists no items")]
+	EmptyCheque,
+	/// No purse has the id the items should go into.
+	#[error("purse {} does not exist", .0.0)]
+	PurseNotFound(PurseId),
+	/// The receive key was not made on this host by the depositing product.
+	#[error("receive key {} was not made here by the depositing product", hex::encode(.0.0))]
+	UnknownReceiveKey(NftPurseReceiveKey),
+	/// The cheque carries an id other than the one its receive key derives.
+	#[error("the cheque id does not derive from its receive key")]
+	ChequeIdMismatch,
+	/// The receive key sends its cheques into another purse.
+	#[error("the receive key goes into purse {}, not {}", .receive_key_purse.0, .to.0)]
+	PurseMismatch {
+		/// The purse the receive key was made into.
+		receive_key_purse: PurseId,
+		/// The purse the deposit named.
+		to: PurseId,
+	},
+	/// The cheque does not open into its items.
+	#[error(transparent)]
+	CorruptedCheque(#[from] CorruptedCheque),
+	/// The secret of the receive key could not be read.
+	#[error(transparent)]
+	ReceiveSecret(#[from] ReceiveSecretError),
+	/// The static receive secret is unavailable, as without a session.
+	#[error("the static receive secret is unavailable: {0}")]
+	StaticSecret(AuthorityError),
+	/// The import did not start.
+	#[error(transparent)]
+	Start(#[from] StartImportError),
+	/// The database failed.
+	#[error(transparent)]
+	Db(#[from] DbError),
+}
+
+impl NftPurses {
+	/// Opens `cheque` and starts moving its items into `to`. Returns once the
+	/// moves are registered under the cheque id, scoped to `depositor`. An
+	/// `Ephemeral` cheque may be deposited only by the product that made its
+	/// receive key, and only into that key's purse.
+	pub async fn deposit(
+		&self,
+		depositor: &ProductId,
+		cheque: &NftPurseCheque,
+		to: PurseId,
+	) -> Result<(), DepositRefusal> {
+		if cheque.items.is_empty() {
+			return Err(DepositRefusal::EmptyCheque);
+		}
+		if self.ledger.purse(to).await?.is_none() {
+			return Err(DepositRefusal::PurseNotFound(to));
+		}
+		self.validate_recipient(depositor, cheque, to).await?;
+		let secret = self.recipient_secret(&cheque.recipient).await?;
+		let keys = open_cheque(&secret, cheque)?;
+		let operation = operation_key(depositor, NftPurseIdempotencyKey(cheque.id.0));
+		self.ledger.start_imports(ImportRequest { operation, into: to, keys }).await?;
+		Ok(())
+	}
+
+	/// Checks that `depositor` may deposit `cheque` into `to`: any product may
+	/// deposit a `Static` cheque anywhere, while an `Ephemeral` one belongs to
+	/// its receive key's maker and purse.
+	async fn validate_recipient(
+		&self,
+		depositor: &ProductId,
+		cheque: &NftPurseCheque,
+		to: PurseId,
+	) -> Result<(), DepositRefusal> {
+		let NftPurseChequeRecipient::Ephemeral(key) = cheque.recipient else {
+			return Ok(());
+		};
+		if cheque.id != cheque_id_for(&NftPurseChequeDestination::Ephemeral(key)) {
+			return Err(DepositRefusal::ChequeIdMismatch);
+		}
+		let record = self.db.read(move |conn| dao::receive_key(conn, &key)).await?;
+		let record = record.filter(|record| record.creator == depositor.as_str());
+		let record = record.ok_or(DepositRefusal::UnknownReceiveKey(key))?;
+		if record.purse != to {
+			return Err(DepositRefusal::PurseMismatch { receive_key_purse: record.purse, to });
+		}
+		Ok(())
+	}
+
+	/// The X25519 secret that opens cheques for `recipient`.
+	async fn recipient_secret(
+		&self,
+		recipient: &NftPurseChequeRecipient,
+	) -> Result<X25519PrivateKey, DepositRefusal> {
+		match recipient {
+			NftPurseChequeRecipient::Ephemeral(key) => Ok(self.receive_secret(key).await?),
+			NftPurseChequeRecipient::Static => {
+				self.static_secret.static_receive_secret().map_err(DepositRefusal::StaticSecret)
+			},
+		}
+	}
+}

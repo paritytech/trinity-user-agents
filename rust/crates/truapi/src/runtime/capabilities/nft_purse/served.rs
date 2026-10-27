@@ -15,6 +15,7 @@ use truapi::{
 		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
 		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
 		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
@@ -93,6 +94,15 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseCreateChequeRequest,
 	) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
 		version(request).exec(|request| self.create_nft_cheque(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.deposit"))]
+	async fn deposit(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseDepositRequest,
+	) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+		version(request).exec(|request| self.deposit_nft_cheque(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]

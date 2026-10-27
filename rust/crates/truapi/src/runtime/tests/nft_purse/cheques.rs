@@ -34,7 +34,7 @@ impl EncryptedStorage for RejectingStorage {
 	}
 }
 
-fn create_receive_key(
+pub fn create_receive_key(
 	host: &ProductRuntimeHost,
 	into: u32,
 ) -> Result<v01::NftPurseReceiveKey, CallError<HostNftPurseCreateReceiveKeyError>> {
@@ -119,7 +119,7 @@ fn a_receive_key_whose_secret_was_not_stored_is_not_recorded() {
 	assert_eq!(recorded_receive_keys(&purses), vec![]);
 }
 
-fn create_cheque(
+pub fn create_cheque(
 	host: &ProductRuntimeHost,
 	from: u32,
 	to: v01::NftPurseChequeDestination,
@@ -138,7 +138,7 @@ fn cheque_refusal(
 	CallError::Domain(HostNftPurseCreateChequeError::V1(error))
 }
 
-fn public_key_of(secret: [u8; 32]) -> [u8; 32] {
+pub fn public_key_of(secret: [u8; 32]) -> [u8; 32] {
 	X25519PrivateKey::from(secret).public_key().0
 }
 

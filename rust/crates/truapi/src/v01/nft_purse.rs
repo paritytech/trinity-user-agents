@@ -402,6 +402,8 @@ pub struct HostNftPurseDepositRequest {
 pub enum NftPurseDepositError {
 	/// `to` does not exist.
 	PurseNotFound,
+	/// `to` is not the purse the cheque's receive key was created into.
+	PurseMismatch,
 	/// The cheque is already deposited.
 	OperationExists,
 	/// The cheque holds no items.

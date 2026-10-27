@@ -18,6 +18,7 @@ mod browser {
 			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
 			HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
 			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
 			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
@@ -90,6 +91,14 @@ mod browser {
 			_request: HostNftPurseRebalancePurseRequest,
 		) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>>
 		{
+			Err(CallError::Unsupported)
+		}
+
+		async fn deposit(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseDepositRequest,
+		) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
 			Err(CallError::Unsupported)
 		}
 

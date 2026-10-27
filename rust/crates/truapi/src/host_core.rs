@@ -977,6 +977,8 @@ impl SigningHostRuntime {
 		let imported = crate::nft::ImportedSecretStore::new(encrypted);
 		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
 		let ledger = crate::nft::NftLedger::new(deps);
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
 	}

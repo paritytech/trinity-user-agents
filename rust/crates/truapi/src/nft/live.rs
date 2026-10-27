@@ -324,7 +324,8 @@ async fn items_minted_into_host_keys_rebalance_into_another_purse() {
 /// secrets kept in `encrypted`.
 fn live_product_purses(purses: &LivePurses, encrypted: Arc<MemoryEncryptedStorage>) -> NftPurses {
 	let ledger = purses.ledger.clone();
-	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted })
+	let static_secret = Arc::new(crate::nft_purse::FixedStaticSecret(rand::random()));
+	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted, static_secret })
 }
 
 #[tokio::test(flavor = "multi_thread")]

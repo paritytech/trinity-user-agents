@@ -33,7 +33,7 @@ use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
 	nft::{HoldingTracker, NftLedger},
-	nft_purse::{NftPurses, NftPursesDeps},
+	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
 use truapi::latest;
 
@@ -100,6 +100,9 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The secret that opens `Static` NFT cheques, installed with the ledger.
+	#[cfg(not(target_arch = "wasm32"))]
+	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
 	/// Keeps the ledger's holdings in step with the chain, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	holding_tracker: OnceLock<HoldingTracker>,
@@ -199,6 +202,8 @@ impl RuntimeServices {
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			holding_tracker: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -428,6 +433,13 @@ impl RuntimeServices {
 		self.nft_ledger.set(ledger).is_ok()
 	}
 
+	/// Install the secret that opens `Static` NFT cheques. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_static_receive_secret(&self, secret: Arc<dyn StaticReceiveSecret>) -> bool {
+		self.static_receive_secret.set(secret).is_ok()
+	}
+
 	/// Install the tracker of NFT holdings, which runs for as long as the
 	/// services live. Set-once; returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -461,13 +473,15 @@ impl RuntimeServices {
 		self.encrypted_storage.get().cloned()
 	}
 
-	/// NFT purses, once their ledger and the encrypted storage are installed.
+	/// NFT purses, once their ledger, the encrypted storage and the static
+	/// receive secret are installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
 		let ledger = self.nft_ledger.get().cloned()?;
 		let db = self.core_db.get().cloned()?;
 		let encrypted = self.encrypted_storage.get().cloned()?;
-		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted }))
+		let static_secret = self.static_receive_secret.get().cloned()?;
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

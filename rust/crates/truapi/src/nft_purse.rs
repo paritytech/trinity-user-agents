@@ -6,6 +6,7 @@
 
 mod cheque;
 mod dao;
+mod deposit;
 mod operation;
 mod receive_key;
 
@@ -19,6 +20,7 @@ use truapi::latest::{
 
 #[cfg(test)]
 pub use cheque::open_cheque;
+pub use deposit::DepositRefusal;
 pub use operation::drain_needs_confirmation;
 pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
 
@@ -140,6 +142,8 @@ pub struct NftPursesDeps {
 	pub db: Db,
 	/// Keeps the secrets of receive keys.
 	pub encrypted: Arc<dyn EncryptedStorage>,
+	/// Opens `Static` cheques.
+	pub static_secret: Arc<dyn StaticReceiveSecret>,
 }
 
 /// The RFC's purse calls, shared by every product.
@@ -148,13 +152,14 @@ pub struct NftPurses {
 	ledger: NftLedger,
 	db: Db,
 	encrypted: Arc<dyn EncryptedStorage>,
+	static_secret: Arc<dyn StaticReceiveSecret>,
 }
 
 impl NftPurses {
 	/// The RFC calls over `deps`.
 	pub fn new(deps: NftPursesDeps) -> Self {
-		let NftPursesDeps { ledger, db, encrypted } = deps;
-		Self { ledger, db, encrypted }
+		let NftPursesDeps { ledger, db, encrypted, static_secret } = deps;
+		Self { ledger, db, encrypted, static_secret }
 	}
 
 	/// Creates a purse owned by the product `caller`.
@@ -212,12 +217,31 @@ impl NftPurses {
 	}
 }
 
-/// Purse calls over `db` with the test ledger and encrypted storage in memory.
+/// Purse calls over `db` with the test ledger, encrypted storage in memory and
+/// [`TEST_STATIC_SECRET`].
 #[cfg(test)]
 pub fn test_purses(db: Db) -> NftPurses {
 	let ledger = crate::nft::test_ledger(db.clone());
 	let encrypted = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
-	NftPurses::new(NftPursesDeps { ledger, db, encrypted })
+	let static_secret = Arc::new(FixedStaticSecret(TEST_STATIC_SECRET));
+	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret })
+}
+
+/// The static receive secret of [`test_purses`].
+#[cfg(test)]
+pub const TEST_STATIC_SECRET: [u8; 32] = [0x5e; 32];
+
+/// Always the same static receive secret.
+#[cfg(test)]
+pub struct FixedStaticSecret(pub [u8; 32]);
+
+#[cfg(test)]
+impl StaticReceiveSecret for FixedStaticSecret {
+	fn static_receive_secret(
+		&self,
+	) -> Result<crate::host_logic::x25519_seal::X25519PrivateKey, crate::runtime::AuthorityError> {
+		Ok(crate::host_logic::x25519_seal::X25519PrivateKey::from(self.0))
+	}
 }
 
 /// The grant `caller` needs to read `owner`'s purses, or `None` when they are

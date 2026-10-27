@@ -7,9 +7,10 @@ use truapi::{CallContext, CallError, latest};
 
 use super::{host_failure, operations::Drain};
 use crate::{
+	durable::RegistrationError,
 	host_logic::x25519_seal::SealError,
-	nft::{HandoffError, ItemKey, ItemRefusal, PurseId},
-	nft_purse::CreateReceiveKeyError,
+	nft::{HandoffError, ItemKey, ItemRefusal, PurseId, StartImportError, StartOperationError},
+	nft_purse::{CreateReceiveKeyError, DepositRefusal},
 	platform::NftPurseDrainDestination,
 	runtime::ProductRuntimeHost,
 };
@@ -65,6 +66,59 @@ impl ProductRuntimeHost {
 			.await
 			.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
+	}
+
+	/// Opens a received cheque and starts moving its items into the purse the
+	/// product named. Any product may receive into any purse, so nothing is
+	/// asked.
+	pub async fn deposit_nft_cheque(
+		&self,
+		request: latest::HostNftPurseDepositRequest,
+	) -> Result<(), CallError<latest::HostNftPurseDepositError>> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseDepositRequest { cheque, to } = request;
+		let depositor = self.connection.product_id();
+		purses.deposit(depositor, &cheque, PurseId(to.0)).await.map_err(deposit_failure)
+	}
+}
+
+/// The product's refusals as its domain errors, everything else as the
+/// host's failure. A receive key that is not the depositor's answers as a
+/// corrupted cheque, so a product learns nothing about another's keys.
+fn deposit_failure(refusal: DepositRefusal) -> CallError<latest::HostNftPurseDepositError> {
+	let domain = match refusal {
+		DepositRefusal::EmptyCheque => latest::HostNftPurseDepositError::EmptyCheque,
+		DepositRefusal::PurseNotFound(_) => latest::HostNftPurseDepositError::PurseNotFound,
+		DepositRefusal::PurseMismatch { .. } => latest::HostNftPurseDepositError::PurseMismatch,
+		DepositRefusal::UnknownReceiveKey(_) |
+		DepositRefusal::ChequeIdMismatch |
+		DepositRefusal::CorruptedCheque(_) => latest::HostNftPurseDepositError::CorruptedCheque,
+		DepositRefusal::ReceiveSecret(_) |
+		DepositRefusal::Start(StartImportError::StoreSecrets(_)) => {
+			let reason = latest::GenericError { reason: refusal.to_string() };
+			latest::HostNftPurseDepositError::Other(reason)
+		},
+		DepositRefusal::Start(StartImportError::Registration(error)) => {
+			return import_registration_failure(error);
+		},
+		other => return host_failure(other),
+	};
+	CallError::Domain(domain)
+}
+
+/// A deposit already registered under the cheque id is the product's error.
+/// A host without NFT transfers does not support deposits. Everything else
+/// is the host's failure.
+fn import_registration_failure(
+	error: RegistrationError<StartOperationError>,
+) -> CallError<latest::HostNftPurseDepositError> {
+	match error {
+		RegistrationError::Hook(StartOperationError::OperationExists) => {
+			CallError::Domain(latest::HostNftPurseDepositError::OperationExists)
+		},
+		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
+		other => host_failure(other),
 	}
 }
 
