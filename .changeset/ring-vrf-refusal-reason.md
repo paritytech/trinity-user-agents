@@ -1,0 +1,5 @@
+---
+"@parity/truapi-host": patch
+---
+
+A ring-VRF proof or signature refused as `NotAllowlisted` by the manifest check or the context check, or an alias read refused by the context check, is logged as a warning, so a native host receives it as a `truapi.tracing.warn` line. This covers the manifest check the runtime makes before a product call reaches the signing or pairing host, and each refusal is logged once, by the check that made it. The line names the reason, the `trustedProducts` entry checked, the proof context, where the manifest came from, and the scopes the entry lists. The source is the cache and its age in seconds, a fresh dotNS read, no Asset Hub, the dotNS lookup failure, or a timeout. A lookup that runs past the deadline of the product call is logged as a timeout, and a call the product cancels logs nothing. A context on another network from the key owner is logged with no source, since no manifest is read. An alias read the owner manifest does not grant still falls back to user consent and logs no warning. A caller, key handle or context that names no product is still refused without a line. The error a product receives is unchanged.
