@@ -8,7 +8,7 @@ import { loadChatRecord } from "./chat/store.js";
  *
  * Names come, in order, from what the user chose in the host's picker this
  * session, from the host's own chat record, and from the username the chain
- * holds for the account, read once per session. None of them comes from a
+ * holds for the account, read once per session unless the read fails. None of them comes from a
  * product, and none is given to one.
  */
 
@@ -85,13 +85,17 @@ export class HostNames {
     if (directory === null || !/^0x[0-9a-f]{64}$/.test(account)) return;
     const generation = this.generation;
     this.onChain.set(account, null);
-    void lookupChatIdentity(directory, hexToBytes(account))
-      .then((identity) => identity?.name ?? null)
-      .catch(() => null)
-      .then((name) => {
+    void lookupChatIdentity(directory, hexToBytes(account)).then(
+      (identity) => {
         if (generation !== this.generation) return;
+        const name = identity?.name ?? null;
         this.onChain.set(account, name);
         if (name !== null) this.changed();
-      });
+      },
+      // A failed read is not "no name": the next ask reads again.
+      () => {
+        if (generation === this.generation) this.onChain.delete(account);
+      },
+    );
   }
 }
