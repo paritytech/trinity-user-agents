@@ -61,11 +61,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      # A scheduled nightly is started by nobody, so there is no one to check.
+      # A scheduled first attempt is started by nobody, so there is no one to
+      # check. A re-run of one is started by a person, who is checked.
       # Narrower than write access: see the action for why, and
       # IOS_SIGNING_ACTORS for who.
       - name: Require an iOS signing actor
-        if: github.event_name != 'schedule'
+        if: github.event_name != 'schedule' || github.run_attempt != '1'
         uses: ./.github/actions/require-ios-signing-actor
         with:
           allowed: ${{ vars.IOS_SIGNING_ACTORS }}

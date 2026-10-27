@@ -133,7 +133,7 @@ jobs:
           ls -lh "$RUNNER_TEMP/ios-core.tgz"
 
       # Kept for three days, so a leg re-run the next morning still finds it.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-nightly-core-${{ github.run_id }}
           path: ${{ runner.temp }}/ios-core.tgz

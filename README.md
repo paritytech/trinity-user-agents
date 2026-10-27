@@ -618,7 +618,8 @@ publishes the simulator `.app` as a prerelease and runs the host-playground e2e
 from that core, all from one commit, and announces the night once. A failed leg
 is re-run in place with "Re-run failed jobs"; the TestFlight upload re-runs only
 for someone in the same list. A re-run never announces the night a second
-time.
+time. A re-run reuses the night's build number, so once an upload has reached
+App Store Connect a failed TestFlight leg needs a new night instead.
 
 ### Android builds that reach testers
 
