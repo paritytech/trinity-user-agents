@@ -621,6 +621,32 @@ describe("the chat engine switch", () => {
     expect(mode.mode()).toBe("host");
   });
 
+  test("another identity of the same wallet ends the lent identity and asks for the worker to start again", async () => {
+    const { mode, ask } = setup();
+    const session = (walletId: string, identity: string) => ({
+      network: "paseo",
+      walletId,
+      identity,
+      keys: () => keysOf(BOB),
+    });
+    expect(mode.setSession(session("w1", "first"))).toBe(false);
+    mode.setMode("worker");
+    const lease = await ask(NOVA_WORKER_PRODUCT);
+    expect(mode.setSession(session("w1", "first"))).toBe(false);
+
+    expect(mode.setSession(session("w1", "second"))).toBe(true);
+    const alice = keysOf(ALICE);
+    await expect(
+      lease.identity.sessionTopics(alice.identity, alice.chatPublic),
+    ).rejects.toThrow("did not answer");
+    // The new frame is lent the new session's identity.
+    await ask(NOVA_WORKER_PRODUCT);
+
+    // Another wallet restarts every worker anyway; the host's engine needs no restart.
+    expect(mode.setSession(session("w2", "second"))).toBe(false);
+    expect(mode.setSession(session("w2", "third"))).toBe(false);
+  });
+
   test("keys that fail their check are never lent", async () => {
     const { mode, signIn, ask } = setup(
       "The host derived a different chat key than the core. Chat stays off.",

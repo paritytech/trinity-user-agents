@@ -122,20 +122,33 @@ export class NovaWorkerMode {
     return this.status;
   }
 
-  /** Follow the signed-in session. A new one ends the old one's service. */
-  setSession(session: NovaWorkerSession | null): void {
+  /**
+   * Follow the signed-in session. A new one ends the old one's service.
+   * Returns whether the Nova chat worker must start again: the same wallet
+   * and network now has another identity while chat runs in the worker, and
+   * the worker's frame holds only the ended link.
+   */
+  setSession(session: NovaWorkerSession | null): boolean {
+    const previous = this.session;
     if (
-      session?.network === this.session?.network &&
-      session?.walletId === this.session?.walletId &&
-      session?.identity === this.session?.identity
+      session?.network === previous?.network &&
+      session?.walletId === previous?.walletId &&
+      session?.identity === previous?.identity
     )
-      return;
+      return false;
     this.endService();
     this.copyNext = false;
     this.session = session;
     this.keys = null;
     this.status =
       this.mode() === "worker" ? { state: "waiting" } : { state: "off" };
+    return (
+      session !== null &&
+      previous !== null &&
+      session.network === previous.network &&
+      session.walletId === previous.walletId &&
+      this.mode() === "worker"
+    );
   }
 
   /**

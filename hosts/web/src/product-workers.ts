@@ -206,6 +206,11 @@ export class ProductWorkers {
     this.changed();
   }
 
+  /** Start `name`'s worker again in a new frame, if this session wants it. */
+  restart(name: string): Promise<void> {
+    return this.wanted(name).size === 0 ? Promise.resolve() : this.start(name);
+  }
+
   /** Start the wanted workers not running yet, as once the core is up. */
   resume(): void {
     for (const name of new Set([...this.names(), ...this.pocketCards.keys()]))
