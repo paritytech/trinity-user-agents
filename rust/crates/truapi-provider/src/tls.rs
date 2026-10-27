@@ -28,10 +28,8 @@ pub fn client_config() -> Arc<ClientConfig> {
 mod tests {
 	use tokio_rustls::rustls::crypto::CryptoProvider;
 
-	/// A host that installs its own crypto provider, or links a dependency that
-	/// enables a second one, must still be able to dial. Taking the process
-	/// default would install `ring` as everyone's default on first use, and
-	/// would panic in a build where rustls cannot choose one.
+	/// Taking the process default would install `ring` as the host's default on
+	/// first use, and panic in a build that enables a second provider.
 	#[test]
 	fn building_the_config_leaves_the_process_default_alone() {
 		super::client_config();

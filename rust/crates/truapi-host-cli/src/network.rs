@@ -93,8 +93,8 @@ impl ChainOverrides {
 impl Network {
 	/// CLI resolution: the preset with the backend and chain URL overrides, or
 	/// the opt-in disposable local-network configuration, which cannot be
-	/// combined with the chain URL overrides. `chain_backend` selects how its
-	/// chains are reached, and the light client accepts neither kind of rerouting.
+	/// combined with the chain URL overrides. `chain_backend` selects how the
+	/// chains are reached; the light client cannot be combined with either.
 	///
 	/// A rerouted chain must still be the chain the preset names: each endpoint
 	/// that differs from the preset's is asked for its genesis before anything
@@ -175,10 +175,8 @@ impl Network {
 	}
 }
 
-/// The light client syncs the chains `truapi-provider` bundles specs for, found
-/// by genesis hash. A network outside that catalog has nothing to sync, and a
-/// fork keeps the live genesis hashes, so the light client would sync the live
-/// chains instead.
+/// The light client knows only the networks `truapi-provider` bundles, by
+/// genesis hash, so it can serve neither another network nor a fork.
 fn refuse_light_client(config: &NetworkConfig, chain_overrides: &[&str]) -> anyhow::Result<()> {
 	if config.chain_backend != ChainBackend::LightClient {
 		return Ok(());
@@ -1004,9 +1002,8 @@ mod tests {
 		assert!(refuse_light_client(&rpc, &[PEOPLE_WS_ENV]).is_ok());
 	}
 
-	/// The light client has specs only for the networks `truapi-provider`
-	/// bundles. Accepting another would fail on every connect instead of once,
-	/// before the command starts.
+	/// Accepting a network without bundled specs would fail every connect
+	/// instead of once, before the command starts.
 	#[test]
 	fn the_light_client_is_refused_for_a_network_it_has_no_specs_for() {
 		let polkadot = NetworkConfig {

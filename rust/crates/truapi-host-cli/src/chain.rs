@@ -1,12 +1,8 @@
-//! The CLI's `ChainProvider`, behind every chain connection the hosts open.
+//! The CLI's `ChainProvider`.
 //!
-//! The headless hosts reach the real People-chain statement store, the same
-//! chain an iOS/web client uses, plus Bulletin and Asset Hub. This module picks
-//! which of the network's chains a genesis hash names, and every `connect` goes
-//! through `truapi-provider` on the backend `--chain-backend` selects. The
-//! provider owns keepalive, shutdown, and ending the response stream on
-//! disconnect. The runtime's `HostRpcClient` sits on top, speaks
-//! statement-store RPC, and connects again once that stream ends.
+//! This module picks which of the network's chains a genesis hash names, and
+//! `truapi-provider` connects to it on the selected backend. The runtime's
+//! `HostRpcClient` sits on top and connects again once a response stream ends.
 
 use std::{
 	collections::{BTreeMap, HashMap, hash_map::Entry},
@@ -39,11 +35,10 @@ pub enum ChainBackend {
 /// Chain provider shared by the host runtime, dotNS reads and Bulletin
 /// preimage lookups.
 ///
-/// Routing is the same on both backends. Every role the network serves —
-/// People, Bulletin and Asset Hub — is routed to its own chain; the test switch
-/// only widens routing to endpoints the network carries without serving them as
-/// a role. The all-zero genesis (the headless SSO sentinel) and any unrouted
-/// genesis are answered by People.
+/// Routing is the same on both backends. Every role the network serves (People,
+/// Bulletin and Asset Hub) is routed to its own chain, and the test switch also
+/// routes endpoints the network carries without serving them. The all-zero SSO
+/// sentinel and any other genesis are answered by People.
 pub struct CliChainProvider {
 	network: NetworkConfig,
 	live_chain_routing: bool,
@@ -157,17 +152,14 @@ impl ChainProvider for CliChainProvider {
 	}
 }
 
-/// The process's light client for one network, shared by every consumer.
-///
-/// Each `EmbeddedChainProvider` runs its own smoldot client, and smoldot stops
-/// a chain once its last connection closes. Sharing one provider per network,
-/// holding one idle connection per chain, lets the runtime, dotNS reads and
-/// preimage lookups reuse one sync and one set of peers.
+/// The process's light client for one network. Each `EmbeddedChainProvider`
+/// runs its own smoldot client, so every consumer shares this one to reuse one
+/// sync and one set of peers.
 struct LightClient {
 	provider: EmbeddedChainProvider,
-	/// One idle connection per chain for the life of the process. Consumers
-	/// connect once per use, so without it a chain would stop between uses and
-	/// start again with no peers to broadcast a statement to.
+	/// One idle connection per chain for the life of the process. smoldot stops
+	/// a chain once its last connection closes, and consumers connect once per
+	/// use, so without it a chain would start again with no peers.
 	kept_open: tokio::sync::Mutex<HashMap<[u8; 32], Box<dyn JsonRpcConnection>>>,
 }
 
@@ -257,10 +249,8 @@ mod tests {
 		assert_eq!(replacement.responses().next().await.as_deref(), Some("open"));
 	}
 
-	/// The provider resolves a genesis it was not given from its bundled
-	/// catalog, on the light client. Over RPC, a product naming a catalog chain
-	/// the network does not route, such as its relay, must still reach the RPC
-	/// node that answers for People.
+	/// Over RPC, a catalog chain the network does not route, such as its relay,
+	/// must reach People's RPC node rather than start the light client.
 	#[tokio::test]
 	async fn an_unrouted_catalog_chain_stays_on_rpc() {
 		let network = people_only(serve_one_frame_per_connection().await);
@@ -277,9 +267,8 @@ mod tests {
 		assert_eq!(first.as_deref(), Some("open"));
 	}
 
-	/// Every consumer connects once per use, and smoldot stops a chain when its
-	/// last connection closes. A chain dropped between uses would sync again
-	/// from its checkpoint and start with no peers.
+	/// A chain dropped between uses would sync again from its checkpoint and
+	/// start with no peers.
 	#[tokio::test]
 	async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
 		let mut network = Network::default().config();
@@ -295,7 +284,7 @@ mod tests {
 	/// Every role the host says it serves has to route to that role's own chain
 	/// without the test switch. An unmapped genesis is answered by People, so a
 	/// served role that the routing filter drops would connect to the People
-	/// chain while the host claimed to serve something else — and
+	/// chain while the host claimed to serve something else, and
 	/// `ChainContextCache` only warns when the reported genesis diverges.
 	#[test]
 	fn every_served_role_routes_to_its_own_chain() {

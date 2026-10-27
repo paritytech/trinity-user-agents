@@ -1054,17 +1054,11 @@ discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
 to opt into a TCP product-frame WebSocket; without it, the CLI creates and
 cleans up a unique temporary Unix socket.
 
-`--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) makes the
-hosts sync the chains with the embedded smoldot light client instead of dialing
-the preset's RPC nodes, `rpc`, which is the default. Use it when public nodes
-refuse the host, for instance a CI runner they rate-limit. A chain's first request
-waits for it to sync, and every read fetches its proof from peers, so chain work
-takes noticeably longer than over RPC. The host's chain traffic, dotNS username
-reads and Bulletin preimage lookups use it.
-The ring-membership poll during account setup, `register-name`'s transactions,
-`alloc-check` and `pgas-check` still use the RPC nodes. Only `paseo-next-v2` and
-`previewnet` are supported, and it cannot be combined with the chain URL overrides
-or `HOST_CLI_LOCAL_NETWORK_CONFIG` (SPEC.md §14.3).
+`--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
+chains with the embedded light client instead of dialing the preset's RPC nodes,
+for when public nodes refuse the host, such as a rate-limited CI runner. It is
+slower than RPC, supports only `paseo-next-v2` and `previewnet`, and a few commands
+still use RPC (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 
@@ -1118,11 +1112,11 @@ one-shot modes.
 
 ## Scope / gaps
 
-- **Chain methods** route to the selected `--network`'s chains, over its real
-  `wss://` nodes or the light client (`--chain-backend`). Every role the preset
-  serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to
-  endpoints it carries without serving. A rustls crypto provider is installed at
-  startup for the TLS connections the CLI opens outside the chain provider.
+- **Chain methods** route to real `wss://` nodes from the selected `--network`,
+  or to the light client (`--chain-backend`). Every role the preset serves is
+  routed unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to endpoints it
+  carries without serving. A rustls crypto provider is installed at startup for the
+  TLS connections.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

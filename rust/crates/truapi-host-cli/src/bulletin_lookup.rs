@@ -3,8 +3,7 @@
 //! Transaction storage serves every blob a node retains over bitswap, and the node exposes that
 //! on its JSON-RPC as `bitswap_v1_get(cid)`. The CID is fixed by the key: CIDv1, the `raw`
 //! codec, and the blake2b-256 multihash that is the preimage key itself. A lookup is therefore
-//! one round trip to the network's Bulletin chain, over the connection the CLI's chain provider
-//! opens on the selected backend, and the host needs no IPFS stack of its own.
+//! one round trip to the network's Bulletin chain, and the host needs no IPFS stack of its own.
 //!
 //! A subscription emits the current answer at once. On a miss it keeps asking every
 //! [`POLL_INTERVAL`] until the blob appears, since a submission from another host lands within

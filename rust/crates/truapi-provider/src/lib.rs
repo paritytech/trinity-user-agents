@@ -24,10 +24,8 @@
 //!   the provider directly without a Rust caller.
 //!
 //! On native targets every `wss` connection, to a remote node or a light-client bootnode, checks
-//! the server certificate against the webpki roots compiled into the crate. Certificate authorities
-//! installed in the operating system are not trusted, so a native host behaves the same on every
-//! target, including a static binary on a system with no certificate store. On `wasm32` the
-//! browser verifies certificates itself.
+//! the server certificate against the webpki roots compiled into the crate, not the operating
+//! system's trust store. On `wasm32` the browser checks it.
 
 // The `uniffi` feature pulls in UniFFI's generated scaffolding, which contains
 // `unsafe` extern-"C" glue; scope the allowance to that feature so every other

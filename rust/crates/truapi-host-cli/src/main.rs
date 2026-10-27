@@ -124,13 +124,8 @@ struct Cli {
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
-	/// `light-client` syncs the chains with the embedded light client instead,
-	/// which needs no node. Only `paseo-next-v2` and `previewnet` have light-client
-	/// specs, and neither the chain URL overrides nor a local network can be
-	/// combined with it. The host's chain traffic, dotNS username reads and
-	/// Bulletin preimage lookups honour it; account setup's ring-membership poll,
-	/// `register-name`'s People and Asset Hub transactions, `alloc-check` and
-	/// `pgas-check` still dial the RPC nodes directly.
+	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
+	/// and `previewnet` only).
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	#[command(subcommand)]

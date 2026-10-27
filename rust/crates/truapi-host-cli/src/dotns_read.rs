@@ -1,8 +1,8 @@
 //! Asset Hub dotNS reads over plain RPC (`state_getStorage` / `state_call`).
 //!
 //! The transport half of username resolution. This module supplies the two RPC
-//! primitives, over a connection the CLI's chain provider opens on the
-//! selected backend. `truapi::host_logic::dotns_gateway` walks the contract
+//! primitives, over a connection from the CLI's chain provider.
+//! `truapi::host_logic::dotns_gateway` walks the contract
 //! chain over them. The CLI and the in-core `chainHead_v1` lookup therefore
 //! resolve identically.
 

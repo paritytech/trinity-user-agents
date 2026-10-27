@@ -335,10 +335,9 @@ concurrent peers under one host do not share a trace key.
 ### 4.3 Global chain-backend option
 
 `--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
-default. `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
-explicit flag over it. The option is global, and every command that resolves a
-network applies it while resolving (§14.3), so a combination the light client
-cannot serve fails before the command starts.
+default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
+explicit flag over it. The option is global. A combination the light client
+cannot serve fails when the command resolves its network, before it starts.
 
 ## 5. `pairing-host`
 
@@ -1803,11 +1802,11 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 ### 14.3 Chain JSON-RPC
 
 The host runtime's chain connections, dotNS username reads and Bulletin preimage
-lookups all connect through one `ChainProvider` (`src/chain.rs`) over
+lookups connect through one `ChainProvider` (`src/chain.rs`) over
 `truapi-provider`, on the backend `--chain-backend` selects (§4.3). Routing
-(§14.1) is the same on both backends. Only a routed genesis is passed to the
-provider, because the provider resolves any other hash from its bundled catalog
-on the light client.
+(§14.1) is the same on both. Only a routed genesis reaches the provider, which
+would otherwise look the hash up in its bundled catalog and start the light
+client.
 
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
@@ -1818,25 +1817,20 @@ dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
 
-With `light-client`, the embedded smoldot light client syncs the network's chains
-from the specs `truapi-provider` bundles, so no RPC node is needed. Only
-`paseo-next-v2` and `previewnet` are bundled, so `polkadot` is refused. The
-`HOST_CLI_*_WS` overrides and `HOST_CLI_LOCAL_NETWORK_CONFIG` are refused too,
-because the light client finds chains by genesis hash and would sync the live
-chains instead. One light client per network serves the whole process. It keeps
-one idle connection open per chain, because smoldot stops a chain once its last
-connection closes and consumers connect once per use. A chain's first request
-waits for the chain to sync, and a connection's response stream ends only when
-the connection is closed.
+With `light-client`, the embedded smoldot light client syncs the chains from the
+specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
+cannot be combined with the `HOST_CLI_*_WS` overrides or
+`HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
+and keeps one idle connection per chain, since smoldot stops a chain when its
+last connection closes. A chain's first request waits for it to sync.
 
-On both backends, `wss://` certificates, for RPC nodes and light-client
-bootnodes alike, are verified with the root certificates built into the binary.
-Certificate authorities added to the operating system are not used.
+`wss://` certificates are verified with the root certificates built into the
+binary, on both backends. Certificate authorities added to the operating system
+are not used.
 
-These paths still dial the preset's RPC nodes directly, whichever backend is
-selected: the ring-membership poll during account setup, `register-name`'s
-People and Asset Hub transactions, the genesis check of a rerouted endpoint
-(§14.1), `alloc-check` and `pgas-check`.
+These still dial the preset's RPC nodes on either backend: the ring-membership
+poll during account setup, `register-name`'s People and Asset Hub transactions,
+the genesis check of a rerouted endpoint (§14.1), `alloc-check` and `pgas-check`.
 
 ## 15. TrUAPI capability surface
 
