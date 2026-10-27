@@ -33,6 +33,12 @@ import { createFrameTap } from "./frame-tap.js";
 import { messagePortBridge } from "./chat-v2/contract.js";
 import { ChatV2Host } from "./chat-v2/host.js";
 import { LocalChatDemo, demoAllowed } from "./chat-v2/local-demo.js";
+import { identityPortOver } from "./chat-worker/identity-bridge.js";
+import {
+  NOVA_WORKER_PRODUCT,
+  NovaWorkerMode,
+} from "./chat-worker/worker-mode.js";
+import { sessionChatKeys } from "./nova-chat-provider.js";
 import { createHostCallbacks } from "./callbacks.js";
 import { connectNetwork, type Network } from "./network.js";
 import {
@@ -90,6 +96,8 @@ import { NotificationStore, notificationsKey } from "./notifications.js";
 import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
+import { HostNames } from "./host-names.js";
+import { chatRecordKey } from "./chat/store.js";
 import {
   exactUsernameDirectory,
   routeDirectory,
@@ -218,13 +226,46 @@ const localChatDemo =
       })
     : null;
 /**
+ * Where the wallet's Nova chat runs, offered only by a dev server on this
+ * machine: the host (the default) or the Nova chat worker, a product worker
+ * this dev server builds. The two never run at once. A build reads
+ * `import.meta.env.DEV` as false and never creates it.
+ */
+const novaWorkerMode =
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
+    ? new NovaWorkerMode({
+        storage: localStorage,
+        base: BASE,
+        origin: window.location.origin,
+        // The host's engine stops before the worker starts, and the worker
+        // stops before the host's engine starts again.
+        changed: () => {
+          if (novaWorkerMode!.mode() === "host") {
+            chatV2.forget(NOVA_WORKER_PRODUCT);
+            productWorkers.defaultsChanged();
+            chatInbox.syncHostChat();
+          } else {
+            chatInbox.syncHostChat();
+            productWorkers.defaultsChanged();
+          }
+          engineSwitch?.render();
+        },
+        linkChanged: () => engineSwitch?.render(),
+        log,
+      })
+    : null;
+/**
  * The host end of the Chat Extension v2 draft bridge. It runs call media only
  * for the local demo, with the synthetic engine, which opens no device.
  */
 const chatV2 = new ChatV2Host({
   media: (productId) => localChatDemo?.media(productId) ?? null,
+  contactRooms: (productId) =>
+    novaWorkerMode?.isChatProduct(productId) ?? false,
   log,
 });
+/** The host's own names for the people of a chat product's contact rooms. */
+const hostNames = new HostNames();
 /** The wallet and network the v2 declarations belong to. */
 let chatV2Scope: string | null = null;
 const workerFrames = document.createElement("div");
@@ -236,8 +277,13 @@ const productWorkers = new ProductWorkers({
   resolve: (name, network) =>
     localChatDemo?.resolves(name)
       ? localChatDemo.resolve()
-      : resolveWorker(name, network),
-  defaults: () => localChatDemo?.workerNames() ?? [],
+      : novaWorkerMode?.resolves(name)
+        ? novaWorkerMode.resolve()
+        : resolveWorker(name, network),
+  defaults: () => [
+    ...(localChatDemo?.workerNames() ?? []),
+    ...(novaWorkerMode?.workerNames() ?? []),
+  ],
   container: workerFrames,
   base: BASE,
   storage: localStorage,
@@ -251,6 +297,16 @@ const productWorkers = new ProductWorkers({
       chatV2.connect(productId, messagePortBridge(port)),
     disconnect: (productId) => chatV2.disconnect(productId),
   },
+  ...(novaWorkerMode === null
+    ? {}
+    : {
+        novaIdentity: {
+          connect: (productId: string, port: MessagePort) =>
+            novaWorkerMode.connect(productId, identityPortOver(port)),
+          disconnect: (productId: string) =>
+            novaWorkerMode.disconnect(productId),
+        },
+      }),
 });
 /** The faces of Pocket's cards, drawn by the workers of the products behind them. */
 const pocketFaces = new PocketFaces({
@@ -275,6 +331,24 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   log,
   chatV2,
+  hostChat: () => novaWorkerMode?.hostRuns() ?? true,
+  // The Nova chat worker's rooms are named by the host, and it starts chats
+  // with whom the user chose, through a reference only its identity bridge
+  // resolves.
+  chatV2Options: (productId) =>
+    novaWorkerMode === null || productId !== NOVA_WORKER_PRODUCT
+      ? {}
+      : {
+          names: (account) => hostNames.name(account),
+          onNamesChange: (listener) => hostNames.onChange(listener),
+          start: {
+            reference: (account) => novaWorkerMode.startReference(account),
+            blocked: () =>
+              novaWorkerMode.isChatProduct(productId)
+                ? null
+                : "The Nova chat worker is not connected yet.",
+          },
+        },
 });
 const chatScreen = new ChatScreen(
   element("chat-screen"),
@@ -284,7 +358,13 @@ const chatScreen = new ChatScreen(
     chatBadge.hidden = pendingRequests === 0;
     chatBadge.textContent = String(pendingRequests);
   },
-  () => hostContacts.choose({ title: "New chat" }),
+  async () => {
+    const person = await hostContacts.choose({ title: "New chat" }, () =>
+      chatInbox.roomPeople(),
+    );
+    if (person !== null) hostNames.remember(person.account, person.name);
+    return person;
+  },
 );
 bindWorkersMenu({
   form: element<HTMLFormElement>("worker-form"),
@@ -405,7 +485,20 @@ const hostContacts = new HostContacts({
   removed: () => runtime?.notifyContactsChanged(),
   log,
 });
-/** The Developer menu's chat demo control. */
+/** The Developer menu's chat engine switch, with the Nova chat worker's state. */
+const engineSwitch =
+  novaWorkerMode === null || devSession === null
+    ? null
+    : (await import("./chat-worker/engine-switch.js")).drawEngineSwitch({
+        section: element("developer"),
+        signedIn: () => chatInbox.signedIn(),
+        mode: () => novaWorkerMode.mode(),
+        setMode: (mode, options) => novaWorkerMode.setMode(mode, options),
+        link: () => novaWorkerMode.link(),
+        worker: () => productWorkers.state(NOVA_WORKER_PRODUCT),
+        productId: NOVA_WORKER_PRODUCT,
+      });
+/** The Developer menu's chat demo control, beside the chat engine switch. */
 const chatDemo =
   localChatDemo === null || devSession === null
     ? null
@@ -425,6 +518,7 @@ const chatDemo =
         },
       });
 productWorkers.onChange(() => {
+  engineSwitch?.render();
   chatDemo?.render();
 });
 chatInbox.onChange((change) => {
@@ -907,11 +1001,35 @@ function syncChatSession(): void {
     productChat.setScope(null);
     notifications?.store.setScope(devSession?.notificationsScope ?? null);
     localChatDemo?.stop();
+    novaWorkerMode?.setSession(null);
+    hostNames.setSession(null);
     if (chatV2Scope !== null) chatV2.reset();
     chatV2Scope = null;
     chatInbox.setSession(null);
+    engineSwitch?.render();
     return;
   }
+  const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
+    lastAuthState.value;
+  hostNames.setSession({
+    scope: `${activeNetwork.id}:${wallet.id}`,
+    record: () =>
+      localStorage.getItem(chatRecordKey(activeNetwork.id, wallet.id)),
+    directory: () => chainDirectory(access.chain, access.genesis),
+  });
+  // First, so the workers and the inbox below see this session's engine choice.
+  novaWorkerMode?.setSession({
+    network: activeNetwork.id,
+    walletId: wallet.id,
+    identity: `${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
+    keys: () =>
+      sessionChatKeys({
+        entropy: wallet.entropy,
+        networkSuffix: access.networkSuffix,
+        identityAccountId: identityAccountId ?? undefined,
+        chatPublicKey: chatPublicKey ?? undefined,
+      }),
+  });
   const scope = productChatKey(activeNetwork.id, wallet.id);
   if (scope !== chatV2Scope) {
     // The demo belongs to the session it was started in.
@@ -927,8 +1045,6 @@ function syncChatSession(): void {
     networkId: activeNetwork.id,
     cards: pinnedCards(activeNetwork.networkSuffix),
   });
-  const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
-    lastAuthState.value;
   chatInbox.setSession({
     walletId: wallet.id,
     entropy: wallet.entropy,
@@ -945,6 +1061,7 @@ function syncChatSession(): void {
       return accountProofs(runtime, productId);
     },
   });
+  engineSwitch?.render();
 }
 
 const accountStatusList = element("account-status-rows");

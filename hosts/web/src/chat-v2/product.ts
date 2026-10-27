@@ -48,6 +48,10 @@ export interface ChatV2Product {
     request: ProductCalls["setRoomFeatures"][0],
   ): Answer<"setRoomFeatures">;
   setRoomCall(request: ProductCalls["setRoomCall"][0]): Answer<"setRoomCall">;
+  /** DRAFT: the one person a room is a conversation with; the host names and draws them. */
+  setRoomContact(
+    request: ProductCalls["setRoomContact"][0],
+  ): Answer<"setRoomContact">;
   deleteRoom(request: ProductCalls["deleteRoom"][0]): Answer<"deleteRoom">;
   updateFeed(request: ProductCalls["updateFeed"][0]): Answer<"updateFeed">;
   capabilities(): Answer<"capabilities">;
@@ -58,6 +62,8 @@ export interface ChatV2Product {
   onMessagesQuery(handler: QueryHandler<"messagesQuery">): void;
   onUserAction(handler: QueryHandler<"userAction">): void;
   onParticipantsQuery(handler: QueryHandler<"participantsQuery">): void;
+  /** DRAFT: the user chose someone in the host's picker and asked to start a conversation. */
+  onStartConversation(handler: QueryHandler<"startConversation">): void;
   callMedia: {
     start(request: ProductCalls["callMediaStart"][0]): Answer<"callMediaStart">;
     signal(
@@ -165,6 +171,7 @@ export function chatV2Over(port: BridgePort): ChatV2Product {
     setRoomPreview: (request) => call("setRoomPreview", request),
     setRoomFeatures: (request) => call("setRoomFeatures", request),
     setRoomCall: (request) => call("setRoomCall", request),
+    setRoomContact: (request) => call("setRoomContact", request),
     deleteRoom: (request) => call("deleteRoom", request),
     updateFeed: (request) => call("updateFeed", request),
     capabilities: () => call("capabilities", {}),
@@ -176,6 +183,11 @@ export function chatV2Over(port: BridgePort): ChatV2Product {
       void handlers.set("messagesQuery", handler as QueryHandler<QueryMethod>),
     onUserAction: (handler) =>
       void handlers.set("userAction", handler as QueryHandler<QueryMethod>),
+    onStartConversation: (handler) =>
+      void handlers.set(
+        "startConversation",
+        handler as QueryHandler<QueryMethod>,
+      ),
     onParticipantsQuery: (handler) =>
       void handlers.set(
         "participantsQuery",

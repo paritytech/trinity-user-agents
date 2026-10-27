@@ -5,7 +5,10 @@ import type {
   ProviderEvent,
 } from "./chat-provider.js";
 import type { ChatV2Host } from "./chat-v2/host.js";
-import { ChatV2Provider } from "./chat-v2/provider.js";
+import {
+  ChatV2Provider,
+  type ChatV2ProviderOptions,
+} from "./chat-v2/provider.js";
 import { startNovaChat, type ChatSession } from "./nova-chat-provider.js";
 import {
   ProductRoomProvider,
@@ -49,6 +52,14 @@ export interface ChatInboxDeps {
    * then also gets a provider for the rooms it declares there.
    */
   chatV2?: ChatV2Host;
+  /** What the host lends `productId`'s v2 provider: names for its contact rooms, and starting chats. */
+  chatV2Options?(productId: string): ChatV2ProviderOptions;
+  /**
+   * Whether the host's own Nova chat may run now. False while chat runs in
+   * the Nova chat worker instead (`src/chat-worker/worker-mode.ts`): the two
+   * never run at once for one identity. Absent means always.
+   */
+  hostChat?(): boolean;
 }
 
 const sessionKey = (session: ChatSession): string =>
@@ -104,6 +115,17 @@ export class ChatInbox implements ChatInboxView {
     return [...byAccount.values()];
   }
 
+  /**
+   * The people of the chat products' contact rooms, named by the host, for
+   * the host's own New chat picker only. They are not {@link contacts}: no
+   * other product gets them, and none is a payment recipient.
+   */
+  roomPeople(): ChatContact[] {
+    return [...this.v2Products.values()].flatMap((provider) =>
+      provider.people(),
+    );
+  }
+
   /** Follow the signed-in session. A different wallet, network or identity ends every provider. */
   setSession(session: ChatSession | null): void {
     const key = session === null ? null : sessionKey(session);
@@ -118,12 +140,33 @@ export class ChatInbox implements ChatInboxView {
     this.deps.diagnostics.clear();
     this.refusal = null;
     if (session !== null) {
-      const nova = startNovaChat(session, this.deps);
-      if (typeof nova === "string") this.refusal = nova;
-      else this.nova = this.add(nova);
+      this.startHostChat(session);
       this.syncProducts(false);
     }
     this.emit({ type: "session" });
+  }
+
+  private startHostChat(session: ChatSession): void {
+    if (this.deps.hostChat?.() === false) return;
+    const nova = startNovaChat(session, this.deps);
+    if (typeof nova === "string") this.refusal = nova;
+    else this.nova = this.add(nova);
+  }
+
+  /**
+   * Follow a change of engine: stop the host's Nova chat at once when it may
+   * no longer run, or start it for the session when it may again.
+   */
+  syncHostChat(): void {
+    const session = this.session;
+    const wanted = session !== null && this.deps.hostChat?.() !== false;
+    const running = this.nova !== null || this.refusal !== null;
+    if (wanted === running) return;
+    if (this.nova !== null) this.remove(this.nova);
+    this.nova = null;
+    this.refusal = null;
+    if (wanted) this.startHostChat(session!);
+    this.emit({ type: "providers" });
   }
 
   private add<T extends ChatProvider>(provider: T): T {
@@ -189,7 +232,14 @@ export class ChatInbox implements ChatInboxView {
       if (!this.v2Products.has(productId)) {
         this.v2Products.set(
           productId,
-          this.add(new ChatV2Provider(productId, host)),
+          this.add(
+            new ChatV2Provider(
+              productId,
+              host,
+              Date.now,
+              this.deps.chatV2Options?.(productId) ?? {},
+            ),
+          ),
         );
         changed = true;
       }

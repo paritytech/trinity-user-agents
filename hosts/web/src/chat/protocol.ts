@@ -422,11 +422,26 @@ export function checkIdentityProof(
   secret: Uint8Array,
 ): boolean {
   if (request.content.version !== 2) return true;
+  return identityProofMatches(
+    secret,
+    request.content.identity,
+    request.signer,
+    request.content.identityProof,
+  );
+}
+
+/** The check of {@link checkIdentityProof}, over the proof's parts. */
+export function identityProofMatches(
+  secret: Uint8Array,
+  identity: Uint8Array,
+  signer: Uint8Array,
+  proof: Uint8Array,
+): boolean {
   const expected = keyedBlake2b256(
     secret,
-    concat(request.content.identity, request.signer, text("mds-chat-request")),
+    concat(identity, signer, text("mds-chat-request")),
   );
-  return equalBytes(expected, request.content.identityProof);
+  return equalBytes(expected, proof);
 }
 
 // ---------------------------------------------------------------------------

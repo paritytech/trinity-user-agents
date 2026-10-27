@@ -191,23 +191,33 @@ export class HostContacts {
   /**
    * The picker, for the host's own use, such as Chat's New chat. It answers
    * whom the user chose and mints no handle; a product's pick goes through
-   * {@link platform} instead. Null when the user closed it, the session
+   * {@link platform} instead. `others` adds people the host offers here
+   * only, such as the people of a chat product's rooms, never to a product. Null when the user closed it, the session
    * changed meanwhile, or the person chosen is blocked or no longer a contact.
    */
-  async choose(asker: PickerAsker): Promise<PickedPerson | null> {
+  async choose(
+    asker: PickerAsker,
+    others: () => readonly ChatContact[] = () => [],
+  ): Promise<PickedPerson | null> {
     const session = this.session;
-    const chosen = await this.deps.choose(
-      asker,
-      this.deps.list(),
-      this.blocked(),
-    );
+    const offered = () => {
+      const contacts = this.deps.list();
+      const listed = new Set(
+        contacts.map((contact) => contact.account.toLowerCase()),
+      );
+      return [
+        ...contacts,
+        ...others().filter((other) => !listed.has(other.account.toLowerCase())),
+      ];
+    };
+    const chosen = await this.deps.choose(asker, offered(), this.blocked());
     if (chosen === null || session !== this.session) return null;
     if (this.blocked().has(chosen.account.toLowerCase())) return null;
     if (chosen.found) return chosen;
     // The list can change while the picker is open; only a current contact is an answer.
-    const current = this.deps
-      .list()
-      .find((contact) => sameAccount(contact.account, chosen.account));
+    const current = offered().find((contact) =>
+      sameAccount(contact.account, chosen.account),
+    );
     return current === undefined
       ? null
       : { ...chosen, account: current.account };

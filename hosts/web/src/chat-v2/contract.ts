@@ -410,6 +410,54 @@ export type HostCallMediaError =
   | { tag: "InvalidRequest"; value: { reason: string } }
   | { tag: "Unknown"; value: { reason: string } };
 
+// --- Contact rooms ----------------------------------------------------------
+
+/**
+ * Where a room's conversation with its one contact stands. The names follow
+ * `ChatContactState` of the unmerged contact rooms proposal
+ * (`paritytech/trinity-user-agents` `lc/product-only-chat` at `081dc4e43`).
+ */
+export type ChatContactState =
+  | "Invite"
+  | "Outgoing"
+  | "Incoming"
+  | "Established"
+  | "Blocked"
+  | "PeerLeft";
+
+/**
+ * The person a room is a conversation with. DRAFT: unlike that proposal's
+ * `ChatRoomContact`, it carries no username. The host names and draws the
+ * person itself, from the account.
+ */
+export interface ChatRoomContact {
+  /** The person's 32-byte account, as the product's protocol addresses them. */
+  account: HexString;
+  state: ChatContactState;
+}
+
+export interface HostChatSetRoomContactRequest {
+  roomId: string;
+  contact: ChatRoomContact;
+}
+
+/**
+ * DRAFT, in no proposal: the user chose a person in the host's own picker
+ * and asked to start a conversation with them. `contact` is an opaque,
+ * single-use reference the host made for this one start; it names the person
+ * only to a service of the host that may resolve it (the Nova chat worker's
+ * identity bridge). The product answers with the room the conversation is in.
+ */
+export interface ProductChatStartConversationRequest {
+  contact: string;
+  /** The first message the user wrote, if any. */
+  welcome?: string;
+}
+
+export interface ProductChatStartConversationItem {
+  roomId: string;
+}
+
 // --- Limits and names ---------------------------------------------------------
 
 /** Feature names of `capabilities`, from the additions RFC. */
@@ -418,6 +466,8 @@ export const FEATURE = {
   participants: "participants",
   inlineAttachments: "inline_attachments",
   callButtons: "call_buttons",
+  /** DRAFT: rooms with a contact, which the host names and draws. */
+  contactRooms: "contact_rooms",
   roomCalls: "room_calls",
 } as const;
 
@@ -439,6 +489,8 @@ export const QUERY_TIMEOUTS_MS = {
   newMessage: 30_000,
   userAction: 10_000,
   details: 5_000,
+  /** DRAFT: the product checks the person and sends a chat request. */
+  start: 30_000,
 } as const;
 
 // --- The draft bridge -------------------------------------------------------
@@ -484,6 +536,11 @@ export interface ProductCalls {
   ];
   setRoomCall: [
     HostChatSetRoomCallRequest,
+    Record<string, never>,
+    HostChatRoomError,
+  ];
+  setRoomContact: [
+    HostChatSetRoomContactRequest,
     Record<string, never>,
     HostChatRoomError,
   ];
@@ -543,6 +600,11 @@ export interface HostQueries {
     ProductChatParticipantsQueryRequest,
     ProductChatParticipantsQueryItem,
     ProductChatQueryError,
+  ];
+  startConversation: [
+    ProductChatStartConversationRequest,
+    ProductChatStartConversationItem,
+    ProductChatUserActionError,
   ];
 }
 

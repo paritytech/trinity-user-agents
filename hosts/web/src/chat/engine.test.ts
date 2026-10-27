@@ -19,6 +19,7 @@ import * as sr25519 from "@scure/sr25519";
 import { bytes, concat, equalBytes, text, u64 } from "./codec.js";
 import { cryptoRandom } from "./crypto.js";
 import { ChatDiagnostics } from "./diagnostics.js";
+import { localNovaIdentity } from "./identity.js";
 import { ChatKeys } from "./keys.js";
 import { loadChatRecord } from "./store.js";
 import {
@@ -186,7 +187,7 @@ async function pair(bobAllowed = true, hop?: HopService) {
   let clock = Date.UTC(2026, 9, 15, 12);
   const engine = (chatKeys: ChatKeys, allowed: boolean) =>
     new ChatEngine({
-      keys: chatKeys,
+      identity: localNovaIdentity(chatKeys),
       openStore: async () => store.connect(allowed),
       directory: chain,
       storage: new MemoryStorage(),
@@ -309,7 +310,7 @@ describe("chat engine", () => {
     ]);
     const make = (chatKeys: ChatKeys, chain: ChainDirectory) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage: new MemoryStorage(),
@@ -341,7 +342,7 @@ describe("chat engine permissions", () => {
     let opened = 0;
     const store = new MemoryStatementStore();
     const engine = new ChatEngine({
-      keys: keys(BOB),
+      identity: localNovaIdentity(keys(BOB)),
       openStore: async () => {
         opened += 1;
         return store.connect(true);
@@ -366,7 +367,7 @@ describe("chat engine permissions", () => {
     ]);
     const make = (chatKeys: ChatKeys, writes?: () => boolean) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage: new MemoryStorage(),
@@ -404,7 +405,7 @@ describe("chat engine permissions", () => {
     let bobWrites = true;
     const make = (chatKeys: ChatKeys, writes: () => boolean) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage: new MemoryStorage(),
@@ -454,7 +455,7 @@ describe("chat engine identity lookup", () => {
     const chain = directory(people);
     const make = (chatKeys: ChatKeys) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage: new MemoryStorage(),
@@ -500,7 +501,7 @@ describe("chat engine identity lookup", () => {
     const storage = new MemoryStorage();
     const make = (chatKeys: ChatKeys) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage,
@@ -509,7 +510,7 @@ describe("chat engine identity lookup", () => {
       });
     // Alice reaches Bob directly, as a sender Bob's directory cannot see yet.
     const aliceEngine = new ChatEngine({
-      keys: alice,
+      identity: localNovaIdentity(alice),
       openStore: async () => store.connect(true),
       directory: directory([
         { label: "alice.01", keys: alice, allowance: true },
@@ -669,7 +670,7 @@ describe("chat engine lifecycle", () => {
     const store = new MemoryStatementStore();
     let opened = 0;
     const engine = new ChatEngine({
-      keys: keys(BOB),
+      identity: localNovaIdentity(keys(BOB)),
       openStore: async () => {
         opened += 1;
         return store.connect(true);
@@ -716,7 +717,7 @@ describe("chat engine lifecycle", () => {
     const store = new MemoryStatementStore();
     let attempts = 0;
     const engine = new ChatEngine({
-      keys: keys(BOB),
+      identity: localNovaIdentity(keys(BOB)),
       openStore: async () => {
         attempts += 1;
         if (attempts < 3) throw new Error("no connection");
@@ -774,7 +775,7 @@ describe("chat engine lifecycle", () => {
     ]);
     const make = (chatKeys: ChatKeys, recordKey: string) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage,
@@ -806,7 +807,7 @@ describe("chat engine diagnostics", () => {
     const diagnostics = new ChatDiagnostics();
     const make = (chatKeys: ChatKeys, sink?: ChatDiagnostics) =>
       new ChatEngine({
-        keys: chatKeys,
+        identity: localNovaIdentity(chatKeys),
         openStore: async () => store.connect(true),
         directory: chain,
         storage: new MemoryStorage(),
@@ -948,7 +949,7 @@ describe("chat engine diagnostics", () => {
   test("reports a failed user action with its reason", async () => {
     const diagnostics = new ChatDiagnostics();
     const engine = new ChatEngine({
-      keys: keys(BOB),
+      identity: localNovaIdentity(keys(BOB)),
       openStore: async () => new MemoryStatementStore().connect(true),
       directory: directory([
         { label: "bob.02", keys: keys(BOB), allowance: true },
@@ -1238,7 +1239,7 @@ describe("chat engine files", () => {
     const diagnostics = new ChatDiagnostics();
     diagnostics.payloads.setLevel("decrypted");
     const watched = new ChatEngine({
-      keys: pairing.alice,
+      identity: localNovaIdentity(pairing.alice),
       openStore: async () => pairing.store.connect(true),
       directory: directory([
         { label: "alice.01", keys: pairing.alice, allowance: true },

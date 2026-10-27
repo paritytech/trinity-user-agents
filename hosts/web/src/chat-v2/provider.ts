@@ -2,6 +2,7 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import {
   Listeners,
   PAGE_SIZE,
+  type ChatContact,
   type ChatMessage,
   type ChatProvider,
   type Composer,
@@ -12,6 +13,7 @@ import {
   type MessageStatus,
   type ProviderEvent,
   type ProviderStatus,
+  type StartChat,
   type TimelinePage,
 } from "../chat-provider.js";
 import { V2Calls } from "./calls.js";
@@ -42,9 +44,38 @@ import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
  * - `"user"` is the user, `"product"` the product, and other participant ids
  *   are named through `participants_query` `ByIds`.
  *
+ * - DRAFT: a room with a contact (`set_room_contact`) is named and drawn by
+ *   the host, from the account, with {@link ChatV2ProviderOptions.names}; a
+ *   name the product put in the room's metadata is used only when the host
+ *   has none. A participant given as `LitePerson` is named the same way.
+ * - DRAFT: with {@link ChatV2ProviderOptions.start}, the user can start a
+ *   conversation with someone they chose in the host's picker
+ *   (`start_conversation`). The product gets an opaque reference, never the
+ *   name the picker showed.
+ *
  * The provider never touches the product rooms TrUAPI Chat keeps, or the Nova
  * chat.
  */
+
+/** What the host lends one chat product's provider. */
+export interface ChatV2ProviderOptions {
+  /** The host's name for an account, or null when it has none yet. */
+  names?(account: string): string | null;
+  /** Calls back when the host learned a name. */
+  onNamesChange?(listener: () => void): () => void;
+  /**
+   * Make the opaque reference the product gets for one start with `account`,
+   * which only the host's own services can resolve. Absent: no start.
+   */
+  start?: {
+    reference(account: string): string;
+    /** Why a conversation cannot be started now, or null. */
+    blocked(): string | null;
+  };
+}
+
+const abbreviate = (account: string): string =>
+  `${account.slice(0, 8)}…${account.slice(-6)}`;
 
 export const chatV2ProviderId = (productId: string): string =>
   `chat-v2:${productId}`;
@@ -205,11 +236,19 @@ export class ChatV2Provider implements ChatProvider {
   private generation = 0;
   private nextLocal = 1;
 
+  readonly start?: StartChat;
+  private readonly stopNames: () => void;
+
   constructor(
     readonly productId: string,
     private readonly host: ChatV2Host,
     private readonly now: () => number = Date.now,
+    private readonly options: ChatV2ProviderOptions = {},
   ) {
+    if (options.start !== undefined) this.start = this.starter(options.start);
+    this.stopNames =
+      options.onNamesChange?.(() => this.emit({ type: "conversations" })) ??
+      (() => {});
     this.id = chatV2ProviderId(productId);
     this.label = `${productId} (Chat v2 draft)`;
     this.calls = new V2Calls(productId, host, (roomId) => this.title(roomId));
@@ -288,7 +327,73 @@ export class ChatV2Provider implements ChatProvider {
   }
 
   private title(roomId: string): string {
-    return this.room(roomId)?.metadata.name ?? roomId;
+    const room = this.room(roomId);
+    return room === undefined ? roomId : this.roomName(room);
+  }
+
+  /** The host's name for the room's contact, else the name the product declared. */
+  private roomName(room: V2Room): string {
+    const account = room.contact?.account;
+    if (account === undefined) return room.metadata.name;
+    return this.options.names?.(account) ?? abbreviate(account);
+  }
+
+  private starter(
+    start: NonNullable<ChatV2ProviderOptions["start"]>,
+  ): StartChat {
+    return {
+      blocked: () =>
+        this.host.connected(this.productId)
+          ? start.blocked()
+          : "The product's worker is not running.",
+      conversationWith: (account) =>
+        this.host.roomWith(this.productId, account)?.roomId ?? null,
+      start: async (account, welcome) => {
+        const known = this.host.roomWith(this.productId, account);
+        if (known !== undefined) return known.roomId;
+        const answer = await this.host.query(
+          this.productId,
+          "startConversation",
+          {
+            contact: start.reference(account),
+            ...(welcome === "" ? {} : { welcome }),
+          },
+        );
+        if (answer.isErr()) throw new Error(refusalText(answer.error));
+        const roomId = answer.value.roomId;
+        const room = this.room(roomId);
+        // The product names the room's contact; only that person's room is an answer.
+        if (
+          room?.contact !== undefined &&
+          room.contact.account !== account.toLowerCase()
+        )
+          throw new Error(
+            "The product opened a conversation with someone else.",
+          );
+        return roomId;
+      },
+    };
+  }
+
+  /**
+   * The people of this product's contact rooms, named by the host, for the
+   * host's own New chat picker. Not {@link ChatProvider.contacts}: a product
+   * says who its rooms are with, so they are never offered to another product
+   * or used as a payment recipient.
+   */
+  people(): ChatContact[] {
+    if (this.options.names === undefined) return [];
+    return this.host.roomsOf(this.productId).flatMap((room) =>
+      room.contact === undefined || room.contact.state === "Blocked"
+        ? []
+        : [
+            {
+              account: room.contact.account,
+              name: this.roomName(room),
+              lastActiveAt: Number(room.preview?.timestamp ?? 0),
+            },
+          ],
+    );
   }
 
   status(): ProviderStatus {
@@ -307,10 +412,10 @@ export class ChatV2Provider implements ChatProvider {
       const badge = room.preview?.badge;
       return {
         id: room.roomId,
-        title: room.metadata.name,
+        title: this.roomName(room),
         subtitle: room.metadata.description ?? this.productId,
-        icon: dataUrl(room.metadata.avatar),
-        seed: this.productId,
+        icon: room.contact === undefined ? dataUrl(room.metadata.avatar) : null,
+        seed: room.contact?.account ?? this.productId,
         preview:
           room.preview?.text?.text ??
           (newest === undefined ? "" : previewText(newest.body)),
@@ -327,11 +432,23 @@ export class ChatV2Provider implements ChatProvider {
   composer(roomId: string): Composer {
     if (!this.host.connected(this.productId))
       return { kind: "blocked", reason: "The product's worker is not running" };
-    if (!this.room(roomId)?.config.productSource)
+    const room = this.room(roomId);
+    if (!room?.config.productSource)
       return {
         kind: "blocked",
         reason: "This draft host keeps no messages for this room",
       };
+    switch (room.contact?.state) {
+      case "Outgoing":
+        return {
+          kind: "blocked",
+          reason: "Waiting for them to accept your request",
+        };
+      case "PeerLeft":
+        return { kind: "blocked", reason: "They left this chat" };
+      case "Blocked":
+        return { kind: "blocked", reason: "You blocked this person" };
+    }
     return { kind: "text" };
   }
 
@@ -355,7 +472,13 @@ export class ChatV2Provider implements ChatProvider {
       );
       if (answer.isOk() && answer.value.tag !== "Count")
         for (const entry of answer.value.value.participants)
-          labels.set(entry.participantId, participantLabel(entry.participant));
+          labels.set(
+            entry.participantId,
+            entry.participant.tag === "LitePerson"
+              ? (this.options.names?.(entry.participant.value.account) ??
+                  participantLabel(entry.participant))
+              : participantLabel(entry.participant),
+          );
     }
     return messages.map((message) => this.view(roomId, message));
   }
@@ -621,6 +744,7 @@ export class ChatV2Provider implements ChatProvider {
   /** Stop following the rooms. The worker and its link belong to `ProductWorkers`. */
   dispose(): void {
     this.stop();
+    this.stopNames();
     this.calls.dispose();
     for (const room of this.state.values())
       for (const entry of room.unsent.values()) entry.controller?.abort();

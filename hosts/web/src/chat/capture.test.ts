@@ -12,6 +12,7 @@ import { aeadKey, cryptoRandom, type RandomBytes } from "./crypto.js";
 import { ChatDiagnostics, type ChatEvent } from "./diagnostics.js";
 import type { ChainDirectory } from "./directory.js";
 import { ChatEngine } from "./engine.js";
+import { localNovaIdentity } from "./identity.js";
 import { decodePlaintextLayer, decodeStatementLayer } from "./inspect.js";
 import {
   ChatKeys,
@@ -96,7 +97,7 @@ function exchange() {
   const diagnostics = new ChatDiagnostics();
   const engine = (chatKeys: ChatKeys, captured: boolean) =>
     new ChatEngine({
-      keys: chatKeys,
+      identity: localNovaIdentity(chatKeys, random),
       openStore: async () =>
         new StatementStore(
           rpc.connect(),
@@ -106,7 +107,6 @@ function exchange() {
       storage: new MemoryStorage(),
       recordKey: "chat",
       writes: () => true,
-      random,
       ...(captured
         ? { diagnostics: diagnostics.record, payloads: diagnostics.payloads }
         : {}),

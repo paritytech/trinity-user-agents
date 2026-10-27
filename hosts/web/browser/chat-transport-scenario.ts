@@ -12,6 +12,7 @@ import { aeadKey, cryptoRandom } from "../src/chat/crypto.js";
 import type { ChatDiagnostics } from "../src/chat/diagnostics.js";
 import type { ChainDirectory } from "../src/chat/directory.js";
 import { ChatEngine } from "../src/chat/engine.js";
+import { localNovaIdentity } from "../src/chat/identity.js";
 import { ChatKeys, deriveChatSecret } from "../src/chat/keys.js";
 import { MemoryStatementRpc } from "../src/chat/memory-rpc.js";
 import {
@@ -84,7 +85,7 @@ export async function runScenario(
   const rpc = new MemoryStatementRpc();
   const engine = (keys: ChatKeys, captured: boolean) =>
     new ChatEngine({
-      keys,
+      identity: localNovaIdentity(keys),
       openStore: async () =>
         new StatementStore(
           rpc.connect(),
