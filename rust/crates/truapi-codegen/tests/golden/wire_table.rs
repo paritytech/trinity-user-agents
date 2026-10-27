@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4a2e2efde5688ee6";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "10c3be79eb893a2a";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -668,6 +668,12 @@ pub const NFT_PURSE_OBSERVE_OPERATION_STATUS: MethodIds = MethodIds {
     method_id: 12,
 };
 
+/// Wire discriminants for `nft_purse_static_receive_key`.
+pub const NFT_PURSE_STATIC_RECEIVE_KEY: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 13,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -1087,5 +1093,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_observe_operation_status",
         kind: WireKind::Subscription(NFT_PURSE_OBSERVE_OPERATION_STATUS),
+    },
+    WireEntry {
+        method: "nft_purse_static_receive_key",
+        kind: WireKind::Request(NFT_PURSE_STATIC_RECEIVE_KEY),
     },
 ];

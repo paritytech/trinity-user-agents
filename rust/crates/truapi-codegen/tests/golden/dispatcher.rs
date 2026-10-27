@@ -1487,7 +1487,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::NFT_PURSE_OBSERVE_OPERATION_STATUS, move |request_id: String, request: versioned::nft_purse::HostNftPurseObserveOperationStatusRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -1507,6 +1507,25 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::NFT_PURSE_STATIC_RECEIVE_KEY, move |request_id: String, request: versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse, truapi::CallError<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>> =
+                    match host.static_receive_key(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
