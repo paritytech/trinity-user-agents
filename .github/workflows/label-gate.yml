@@ -13,8 +13,8 @@ name: Label gate
 on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
-  # A required check has to report in the merge queue too. Labels cannot change
-  # once a pull request is queued, and it was checked on the way in.
+  # A required check has to report in the merge queue too. A queued pull request
+  # can still be labelled, so the queue run reads its labels again.
   merge_group:
 
 permissions: {}
@@ -24,14 +24,30 @@ jobs:
     name: Label gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    permissions:
+      pull-requests: read
     steps:
       - name: Check for a label that holds the merge
-        if: github.event_name == 'pull_request'
         env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          # gh-readonly-queue/<base>/pr-<number>-<sha>, naming the pull request
+          # this queue entry adds.
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
         run: |
           set -euo pipefail
-          held="$(jq -r '.[] | select(startswith("needs:") or . == "status:blocked")' <<<"$LABELS")"
+          if [ -n "$QUEUE_REF" ]; then
+            number="$(sed -nE 's#.*/pr-([0-9]+)-[0-9a-f]+$#\1#p' <<<"$QUEUE_REF")"
+            if [ -z "$number" ]; then
+              echo "::error::Cannot read a pull request number from ${QUEUE_REF}."
+              exit 1
+            fi
+            labels="$(gh api "repos/${REPO}/issues/${number}/labels" --paginate --jq '.[].name')"
+          else
+            labels="$(jq -r '.[]' <<<"$EVENT_LABELS")"
+          fi
+          held="$(grep -E '^(needs:|status:blocked$)' <<<"$labels" || true)"
           if [ -n "$held" ]; then
             while IFS= read -r label; do
               echo "::error::\`${label}\` holds this pull request. Remove it once that is resolved."

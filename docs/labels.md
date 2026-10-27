@@ -73,7 +73,7 @@ One at a time on a pull request, named for who has to act next.
 
 | Label | Means |
 | --- | --- |
-| `status:waiting-on-review` | Ready for a reviewer. Set automatically when a pull request opens ready, or leaves draft, with no status. |
+| `status:waiting-on-review` | Ready for a reviewer. Set automatically whenever a pull request that is not a draft has no status, and removed when it goes back to draft. |
 | `status:waiting-on-author` | The author has changes to make. A reviewer sets it when they request changes. |
 | `status:ready-to-merge` | Approved, and waiting only to be queued. |
 | `status:blocked` | Cannot move until something else lands. Say what in a comment. |

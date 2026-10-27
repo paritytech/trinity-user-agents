@@ -557,7 +557,7 @@ jobs:
           retention-days: 3
 
   # An installable build for every commit on a pull request labelled
-  # ios-simulator-build. The simulator
+  # ci:ios-simulator. The simulator
   # slice needs no provisioning profile and no signing identity, so it needs
   # nothing the build job does not already have, and a reviewer can run the
   # change rather than read it.

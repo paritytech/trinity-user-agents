@@ -38,7 +38,6 @@ jobs:
             const { owner, repo } = context.repo;
             const pr = context.payload.pull_request;
             const number = pr.number;
-            const action = context.payload.action;
             const labels = pr.labels.map(l => l.name);
 
             const add = async names => names.length && github.rest.issues.addLabels({
@@ -109,11 +108,11 @@ jobs:
               if (!labels.includes(size)) await add([size]);
             }
 
+            // Decided from the pull request's state rather than the event, so a
+            // run cancelled by the next push leaves nothing the next run misses.
             const waiting = 'status:waiting-on-review';
-            if (action === 'converted_to_draft') {
-              await remove(waiting);
-            } else if (['opened', 'reopened', 'ready_for_review'].includes(action)
-                && !pr.draft
-                && !labels.some(l => l.startsWith('status:'))) {
+            if (pr.draft) {
+              if (labels.includes(waiting)) await remove(waiting);
+            } else if (!labels.some(l => l.startsWith('status:'))) {
               await add([waiting]);
             }

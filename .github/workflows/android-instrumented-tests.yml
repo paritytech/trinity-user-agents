@@ -2,7 +2,7 @@
 # commit: a cold emulator costs minutes before the first test.
 #
 # Started by a label rather than by every push: on-label.yml calls it for a
-# pull request labelled android-instrumented-tests. Dispatch exercises the
+# pull request labelled ci:android-emulator-tests. Dispatch exercises the
 # workflow itself without a pull request to carry the label.
 name: Android instrumented tests
 
