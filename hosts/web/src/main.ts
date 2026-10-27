@@ -97,7 +97,7 @@ import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatTabs, type ChatTab } from "./chat-tabs.js";
 import { AppsShelf, type ShelfApp } from "./apps-shelf.js";
 import { ChatInbox } from "./chat-inbox.js";
-import { HostContacts, chooseContact } from "./contacts.js";
+import { HostContacts, chooseContact, type PickedPerson } from "./contacts.js";
 import { HostNames } from "./host-names.js";
 import { blockedAccounts, chatRecordKey } from "./chat/store.js";
 import {
@@ -130,6 +130,7 @@ import { SerialQueue } from "./serial-queue.js";
 import { versionSections, type VersionRow } from "./versions.js";
 import { bindViewport } from "./viewport.js";
 import { SearchCard } from "./search-card.js";
+import { SearchPeople } from "./search-people.js";
 import {
   WalletPublicInfoStore,
   sessionUsernameFrom,
@@ -596,6 +597,7 @@ const searchCard = new SearchCard(
   element("search-card"),
   addressInput,
   element<HTMLButtonElement>("search-close"),
+  () => searchPeople.reset(),
 );
 element("pill").addEventListener("click", () => appsShelf.close(false));
 element("apps-toggle").addEventListener("click", () => searchCard.close(false));
@@ -2293,10 +2295,73 @@ function recentScope(): string {
   return activeWallet?.id ?? "signed-out";
 }
 
+/**
+ * The people the Docklet's search offers beside apps, through the contact
+ * picker's own directory. A person chosen there is shown in Chat as New chat
+ * would show them; a test user has no chat to show them in, so none is offered.
+ */
+const searchPeople = new SearchPeople({
+  available: () => testUser === null && chatScreen.canStart(),
+  contacts: () => {
+    const contacts = chatInbox.contacts();
+    const listed = new Set(
+      contacts.map((contact) => contact.account.toLowerCase()),
+    );
+    return [
+      ...contacts,
+      ...chatInbox
+        .roomPeople()
+        .filter((person) => !listed.has(person.account.toLowerCase())),
+    ];
+  },
+  blocked: blockedPeople,
+  directory: () => usernameDirectory,
+  changed: () => recentsMenu.refresh(),
+  chose: (person) => void showPersonInChat(person),
+});
+/** Counts sessions, so a person chosen in one is not shown in the next. */
+let searchSession = 0;
+chatInbox.onChange((change) => {
+  if (change.type === "session") {
+    searchSession += 1;
+    searchPeople.reset();
+  }
+  if (change.type === "session" || change.type === "providers")
+    recentsMenu.refresh();
+});
+
+/** Show a person chosen in the Docklet's search in Chat: their conversation, or a request to them. */
+async function showPersonInChat(person: PickedPerson): Promise<void> {
+  const session = searchSession;
+  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
+  searchStatus.textContent = "";
+  renderAddress();
+  searchCard.close(false);
+  hostNames.remember(person.account, person.name);
+  await selectDestination("chat");
+  if (session !== searchSession || destination !== "chat") return;
+  if (chatTab === "inbox") showChatTab("chats");
+  if (!chatScreen.startWith(person))
+    log("Chat cannot start a conversation in this session.");
+}
+
 const recentsMenu = bindRecentsMenu({
   input: addressInput,
   list: recentsList,
   network: activeNetwork,
+  people: searchPeople,
+  typedApp: () => {
+    try {
+      const address = parseTypedAddress(addressInput.value, activeNetwork);
+      return address.kind === "name" ? address.name : address.url.href;
+    } catch {
+      return null;
+    }
+  },
+  openTyped: () => {
+    openAddress();
+    addressInput.blur();
+  },
   entries: () => recents.list(recentScope(), activeNetwork.id),
   untouched: () =>
     addressInput.value.trim() ===
@@ -2383,7 +2448,10 @@ productForm.addEventListener("submit", (event) => {
   openAddress();
 });
 
-addressInput.addEventListener("input", renderAddress);
+addressInput.addEventListener("input", () => {
+  renderAddress();
+  searchPeople.type(addressInput.value);
+});
 productAddress.addEventListener("input", () => {
   addressInput.value = productAddress.value;
   renderAddress();

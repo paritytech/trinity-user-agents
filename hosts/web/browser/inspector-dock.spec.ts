@@ -355,7 +355,7 @@ describe("the developer tools", () => {
 
 describe("the Pill", () => {
   test(
-    "opens the address card with focus in the field, says scanning is not available, and Escape gives focus back",
+    "opens the search card with focus in the field, and Escape gives focus back",
     async () => {
       const { context, page } = await openHost({ width: 1280, height: 800 });
       try {
@@ -369,9 +369,6 @@ describe("the Pill", () => {
         expect(await page.getAttribute("#pill", "aria-expanded")).toBe("true");
         expect(await page.evaluate(() => document.activeElement?.id)).toBe(
           "address",
-        );
-        expect(await page.locator("#search-card").innerText()).toContain(
-          "Scanning a code is not available in this host.",
         );
         // A typed address that cannot open says why, in the card.
         await page.fill("#address", "javascript:alert(1)");

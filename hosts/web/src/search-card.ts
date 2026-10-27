@@ -1,7 +1,8 @@
 /**
- * The card the Docklet's Pill opens: the host's address field, where a
- * product is opened by name or URL, with its recents. It draws nothing of its
- * own; it only shows, hides and gives focus back.
+ * The card the Docklet's Pill opens: the host's search field, where a
+ * product is opened by name or URL and a person is found by name or username,
+ * with its suggestions. It draws nothing of its own; it only shows, hides and
+ * gives focus back.
  */
 export class SearchCard {
   constructor(
@@ -9,6 +10,8 @@ export class SearchCard {
     private readonly root: HTMLElement,
     private readonly input: HTMLInputElement,
     close: HTMLButtonElement,
+    /** Called each time the card closes. */
+    private readonly onClose: () => void = () => {},
   ) {
     pill.addEventListener("click", () =>
       this.isOpen() ? this.close(true) : this.open(),
@@ -55,6 +58,7 @@ export class SearchCard {
     this.root.hidden = true;
     document.body.dataset.search = "closed";
     this.pill.setAttribute("aria-expanded", "false");
+    this.onClose();
     if (returnFocus || inside) this.pill.focus();
   }
 }

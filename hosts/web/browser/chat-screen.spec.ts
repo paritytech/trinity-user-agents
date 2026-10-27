@@ -203,6 +203,50 @@ describe("chat screen over providers", () => {
   );
 
   test(
+    "a person chosen outside Chat opens their chat, or a request sent only when asked, with focus in it",
+    async () => {
+      const { context, page, outside } = await open();
+      const startedChats = () =>
+        harness(page, (chat) =>
+          chat.asked().filter((line) => line.startsWith("nova startChat")),
+        );
+      try {
+        await row(page, `nova/0x${"4b".repeat(32)}`).waitFor();
+        expect(
+          await harness(page, (chat) =>
+            chat.startWith(`0x${"4b".repeat(32)}`, "kim.01", false),
+          ),
+        ).toBe(true);
+        await page.locator('[data-focus="composer"]').waitFor();
+        expect(
+          await page.evaluate(
+            () => (document.activeElement as HTMLElement | null)?.dataset.focus,
+          ),
+        ).toBe("composer");
+        await back(page);
+
+        expect(
+          await harness(page, (chat) =>
+            chat.startWith(`0x${"7e".repeat(32)}`, "zed.01", true),
+          ),
+        ).toBe(true);
+        const send = page.locator('[data-action="start-chat"]');
+        expect(await send.innerText()).toBe("Send request to zed.01");
+        expect(
+          await page.evaluate(
+            () => (document.activeElement as HTMLElement | null)?.dataset.focus,
+          ),
+        ).toBe("welcome");
+        expect(await startedChats()).toEqual([]);
+        expect(outside).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "shows every provider's conversations in one list, with each provider's own steps",
     async () => {
       const { context, page, outside } = await open();

@@ -3953,16 +3953,50 @@ body[data-search="open"] .product-slot::after {
   display: none;
 }
 
-.search-note {
-  margin: 10px 4px 0;
-  color: #8c8f98;
-  font-size: 12px;
-  line-height: 1.45;
+/* With people in it, the list reads as two groups: Apps, then People. */
+.address-recents li.recent-heading,
+.address-recents li.recent-status {
+  display: block;
+  padding: 8px 10px 4px;
+  color: var(--bar-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: default;
 }
 
-.search-note code {
-  color: #f4f4f5;
-  font-family: var(--mono);
+.address-recents li.recent-status {
+  font-weight: 400;
+}
+
+.address-recents li.recent-heading:hover,
+.address-recents li.recent-status:hover {
+  background: none;
+}
+
+.address-recents li.recent-person {
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.address-recents .recent-person .recent-id {
+  margin-left: auto;
+}
+
+.recent-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--avatar);
+}
+
+.recent-avatar::before {
+  content: attr(data-initial);
+  color: #0b0c0f;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 /* ---- An open product: the app's two glass circles ---- */
