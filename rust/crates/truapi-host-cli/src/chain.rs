@@ -1,8 +1,8 @@
 //! The CLI's `ChainProvider`.
 //!
 //! This module picks which of the network's chains a genesis hash names, and
-//! `truapi-provider` connects to it on the selected backend. The runtime's
-//! `HostRpcClient` sits on top and connects again once a response stream ends.
+//! `truapi-provider` connects to it on the selected backend. When a
+//! connection's response stream ends, the core's chain runtime connects again.
 
 use std::{
 	collections::{BTreeMap, HashMap, hash_map::Entry},
@@ -363,5 +363,79 @@ mod tests {
 			"an endpoint that is not a role is excluded without the switch"
 		);
 		assert_eq!(widened.routed_url(&optional.genesis), optional.ws, "and included with it");
+	}
+
+	/// Ignored by default; needs network access to paseo-next-v2's chains. The
+	/// light client syncs from its bundled checkpoint first, so it runs longer.
+	///
+	/// ```sh
+	/// cargo test -p truapi-host-cli --bin truapi-host reaches_paseo -- --ignored --nocapture
+	/// ```
+	#[tokio::test]
+	#[ignore = "needs network access to the preset's chains"]
+	async fn rpc_reaches_paseo_next_v2() {
+		reach_paseo_next_v2(ChainBackend::Rpc).await;
+	}
+
+	#[tokio::test]
+	#[ignore = "needs network access to the preset's chains"]
+	async fn the_light_client_reaches_paseo_next_v2() {
+		reach_paseo_next_v2(ChainBackend::LightClient).await;
+	}
+
+	/// Every consumer this provider serves reaches its own chain on `backend`, and
+	/// a closed connection is replaced.
+	async fn reach_paseo_next_v2(backend: ChainBackend) {
+		use subxt_rpcs::client::rpc_params;
+
+		use crate::{
+			bulletin_lookup::{BitswapRpc, BlobSource, SourceError},
+			dotns_read::AssetHubReader,
+		};
+
+		let network = NetworkConfig { chain_backend: backend, ..Network::PaseoNextV2.config() };
+		let provider = Arc::new(CliChainProvider::new(&network));
+		let reported_genesis = async |genesis: [u8; 32]| -> String {
+			let rpc = provider.rpc_client(genesis).await.expect("connect");
+			rpc.request("chainSpec_v1_genesisHash", rpc_params![])
+				.await
+				.expect("genesis hash")
+		};
+
+		for genesis in [network.people_genesis, network.asset_hub_genesis, network.bulletin_genesis]
+		{
+			assert_eq!(reported_genesis(genesis).await, format!("0x{}", hex::encode(genesis)));
+		}
+		provider
+			.connect(network.people_genesis)
+			.await
+			.expect("connect to People")
+			.close();
+		assert_eq!(
+			reported_genesis(network.people_genesis).await,
+			format!("0x{}", hex::encode(network.people_genesis)),
+			"a new People connection replaces the closed one"
+		);
+
+		let mut reader = AssetHubReader::connect(&network).await.expect("connect to Asset Hub");
+		assert!(reader.timestamp_secs().await.expect("Asset Hub time") > 0);
+		assert!(reader.dotns_identity(&[0x11; 32]).await.expect("dotNS read").is_none());
+
+		// A light client may have no Bulletin peers yet, so a transient failure is
+		// asked again, as a preimage lookup does.
+		let bitswap = BitswapRpc::new(Arc::clone(&provider), network.bulletin_genesis);
+		let unstored = truapi::preimage_cid(&[0x22; 32]);
+		for _ in 0..10 {
+			match bitswap.get(&unstored).await {
+				Ok(None) => return,
+				Ok(Some(_)) => panic!("nobody stored {unstored}"),
+				Err(SourceError::Transient(reason)) => {
+					eprintln!("bitswap_v1_get: {reason}; asking again");
+					tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+				},
+				Err(SourceError::Permanent(reason)) => panic!("{reason}"),
+			}
+		}
+		panic!("Bulletin never answered bitswap_v1_get");
 	}
 }
