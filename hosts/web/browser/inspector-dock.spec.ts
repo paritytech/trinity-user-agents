@@ -10,7 +10,13 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type Browser, type Page } from "playwright-core";
-import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
+import {
+  type RunningHost,
+  closeTools,
+  openTools,
+  startHost,
+  testBrowser,
+} from "./fixtures.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 120_000;
@@ -92,6 +98,26 @@ const productSize = (page: Page) =>
     width: (element as HTMLElement).offsetWidth,
     height: (element as HTMLElement).offsetHeight,
   }));
+
+/** The panel's round buttons: each a 28 px circle, its icon inside it and centred. */
+const roundButtons = (page: Page) =>
+  page
+    .locator(".devtools-side button:visible, #devtools-close:visible")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const own = button.getBoundingClientRect();
+        const icon = button.querySelector("svg")!.getBoundingClientRect();
+        return {
+          name: button.getAttribute("aria-label"),
+          pressed: button.getAttribute("aria-pressed"),
+          size: [own.width, own.height],
+          round: getComputedStyle(button).borderRadius !== "0px",
+          iconCentred:
+            Math.abs(icon.left - own.left - (own.right - icon.right)) <= 1 &&
+            Math.abs(icon.top - own.top - (own.bottom - icon.bottom)) <= 1,
+        };
+      }),
+    );
 
 describe("the developer tools", () => {
   test(
@@ -222,6 +248,56 @@ describe("the developer tools", () => {
   );
 
   test(
+    "the side switch and Hide are round buttons with their icons centred, on either side and in either colour scheme",
+    async () => {
+      const { context, page } = await openHost({ width: 1280, height: 800 });
+      try {
+        const expected = (right: boolean) => [
+          {
+            name: "Dock on the right",
+            pressed: String(right),
+            size: [28, 28],
+            round: true,
+            iconCentred: true,
+          },
+          {
+            name: "Dock at the bottom",
+            pressed: String(!right),
+            size: [28, 28],
+            round: true,
+            iconCentred: true,
+          },
+          {
+            name: "Hide the developer tools (Focus)",
+            pressed: null,
+            size: [28, 28],
+            round: true,
+            iconCentred: true,
+          },
+        ];
+        for (const scheme of ["dark", "light"] as const) {
+          await page.emulateMedia({ colorScheme: scheme });
+          await openTools(page);
+          await page.click('.devtools-side [data-dev-side="right"]');
+          expect(await roundButtons(page)).toEqual(expected(true));
+          await page.click('.devtools-side [data-dev-side="bottom"]');
+          expect((await devtools(page)).side).toBe("bottom");
+          expect(await roundButtons(page)).toEqual(expected(false));
+          // Hover and focus keep the shape.
+          await page.hover('.devtools-side [data-dev-side="right"]');
+          await page.focus('.devtools-side [data-dev-side="right"]');
+          expect(await roundButtons(page)).toEqual(expected(false));
+          await page.click('.devtools-side [data-dev-side="right"]');
+          await closeTools(page);
+        }
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "a narrow window keeps the tools a sheet over the app",
     async () => {
       const { context, page } = await openHost({ width: 600, height: 900 });
@@ -252,6 +328,16 @@ describe("the developer tools", () => {
         ).toBe("fixed");
         expect(await page.locator("#scrim").isVisible()).toBe(true);
         expect((await box(page, "#devtools")).width).toBe(600);
+        // The sheet has no side switch, and Hide keeps its shape.
+        expect(await roundButtons(page)).toEqual([
+          {
+            name: "Hide the developer tools (Focus)",
+            pressed: null,
+            size: [28, 28],
+            round: true,
+            iconCentred: true,
+          },
+        ]);
         await page.keyboard.press("Escape");
         expect(await page.getAttribute("body", "data-inspector")).toBe(
           "closed",

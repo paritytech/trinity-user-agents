@@ -1167,25 +1167,26 @@ Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loa
 outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
 the bottom across the window, the Phone-sized app keeping its size and its device frame; that both inspector views fill
 the tools, that their top edge sets their height at the bottom, and that the side is kept after a reload; that Focus
-gives the app the whole window and brings the tools back at the same view; that a narrow window keeps them a sheet over
-the app; and that the Pill opens the address card with focus in the field, says scanning is not available, shows why an
-address cannot open, and on `Escape` closes and gives focus back. `browser/chat-diagnostics.spec.ts` mounts the
-inspector's Chat view alone on made-up events, and runs a chat exchange between two synthetic wallets over an in-memory
-JSON-RPC statement store to check each payload layer, the copies, the capture levels, and that no key or secret shows.
-`browser/chat-screen.spec.ts` mounts the Chat screen alone over the Nova and product room providers with stand-ins
-behind them and the chat product provider with the synthetic chat product on the other side of the bridge in the page,
-synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
-sender names and the user's own messages, status changes, a retried message staying one message, a product room's custom
-card, buttons, reaction and non-`https` file, the chat product answering while another room is open, unread cleared only
-for messages on screen, a product restart and a new session. It checks New chat through the host's contact picker over a
-test username index: Cancel changes nothing, a username that names another account on chain is not chosen, a contact
-opens their chat, anyone else opens a request that the provider is asked to send only on Send, once, and a choice made
-after the session changed is dropped. It also checks the user's reactions in a Nova conversation and a product room,
-blocking, unblocking and leaving, a generated image sent and fetched through a HOP node held in the page, and audio and
-video calls over real WebRTC to a second call manager in the same page, with generated media (a WebAudio tone and a
-canvas), not a camera or microphone, and every track stopped when the call ends. The shared Chromium runs with
-`WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep
-screenshots.
+gives the app the whole window and brings the tools back at the same view; that the side switch and Hide are 28 px
+circles with their icons centred, on either side, in either colour scheme and on hover and focus; that a narrow window
+keeps them a sheet over the app; and that the Pill opens the address card with focus in the field, says scanning is not
+available, shows why an address cannot open, and on `Escape` closes and gives focus back.
+`browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs a chat exchange
+between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer, the copies, the
+capture levels, and that no key or secret shows. `browser/chat-screen.spec.ts` mounts the Chat screen alone over the
+Nova and product room providers with stand-ins behind them and the chat product provider with the synthetic chat product
+on the other side of the bridge in the page, synthetic data only and every request outside this host refused, and checks
+one list across providers, paging on scroll, sender names and the user's own messages, status changes, a retried message
+staying one message, a product room's custom card, buttons, reaction and non-`https` file, the chat product answering
+while another room is open, unread cleared only for messages on screen, a product restart and a new session. It checks
+New chat through the host's contact picker over a test username index: Cancel changes nothing, a username that names
+another account on chain is not chosen, a contact opens their chat, anyone else opens a request that the provider is
+asked to send only on Send, once, and a choice made after the session changed is dropped. It also checks the user's
+reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated image sent and
+fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call manager in the
+same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every track stopped when
+the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set
+`CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
