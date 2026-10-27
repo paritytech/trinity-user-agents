@@ -85,6 +85,7 @@ import { bindProductCard } from "./pocket-card-view.js";
 import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
+import { bindWorkersMenu } from "./workers-menu.js";
 import { NotificationStore, notificationsKey } from "./notifications.js";
 import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
@@ -278,27 +279,26 @@ const chatInbox = new ChatInbox({
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
-  productWorkers,
   (pendingRequests) => {
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
     chatBadge.textContent = String(pendingRequests);
   },
-  localChatDemo === null
-    ? undefined
-    : {
-        productId: localChatDemo.productId,
-        source: localChatDemo.source,
-        running: () => localChatDemo.running(),
-        start: () => localChatDemo.start(),
-        stop: () => localChatDemo.stop(),
-        restart: () => {
-          localChatDemo.stop();
-          localChatDemo.start();
-        },
-      },
   () => hostContacts.choose({ title: "New chat" }),
 );
+bindWorkersMenu({
+  form: element<HTMLFormElement>("worker-form"),
+  input: element<HTMLInputElement>("worker-name"),
+  add: element<HTMLButtonElement>("worker-add"),
+  list: element<HTMLUListElement>("worker-list"),
+  status: element("worker-status"),
+  workers: productWorkers,
+  signedIn: () => chatInbox.signedIn(),
+  onSessionChange: (listener) =>
+    chatInbox.onChange((change) => {
+      if (change.type === "session") listener();
+    }),
+});
 /**
  * The Notifications screen, a prototype the dev server offers on this machine
  * only. A build reads `import.meta.env.DEV` as false and leaves it out, with
@@ -404,6 +404,31 @@ const hostContacts = new HostContacts({
     }),
   removed: () => runtime?.notifyContactsChanged(),
   log,
+});
+/** The Developer menu's chat demo control. */
+const chatDemo =
+  localChatDemo === null || devSession === null
+    ? null
+    : (await import("./dev-tools/chat-demo.js")).drawChatDemo({
+        section: element("developer"),
+        signedIn: () => chatInbox.signedIn(),
+        demo: {
+          productId: localChatDemo.productId,
+          source: localChatDemo.source,
+          running: () => localChatDemo.running(),
+          start: () => localChatDemo.start(),
+          stop: () => localChatDemo.stop(),
+          restart: () => {
+            localChatDemo.stop();
+            localChatDemo.start();
+          },
+        },
+      });
+productWorkers.onChange(() => {
+  chatDemo?.render();
+});
+chatInbox.onChange((change) => {
+  if (change.type === "session") chatDemo?.render();
 });
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,

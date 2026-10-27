@@ -430,12 +430,13 @@ A product can chat through its worker executable, as a game product's weekly bot
 workers keep in the same list as the person-to-person conversations above. These rooms are TrUAPI Chat: the worker's
 calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 
-- **Adding a worker.** **Workers** on the Chat screen takes a product name, such as `myapp.paseo`. The host reads
-  `worker.<name>`: its `executable` text record must be a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint`
-  module inside the directory) whose `includes.chat` is true, and its `contenthash` locates the files. The archive is
-  fetched and verified like a product opened by name, and the entry module is loaded in a hidden frame under the
-  product's mount, connected to the core as the product's `Worker` execution. The product id is the name, the one its
-  app opens under, so the two share the product's storage and accounts.
+- **Adding a worker.** The menu's **Workers** section takes a product name, such as `myapp.paseo`, and lists the
+  signed-in wallet's workers with their state and **Remove**. The host reads `worker.<name>`: its `executable` text
+  record must be a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint` module inside the directory) whose
+  `includes.chat` is true, and its `contenthash` locates the files. The archive is fetched and verified like a product
+  opened by name, and the entry module is loaded in a hidden frame under the product's mount, connected to the core as
+  the product's `Worker` execution. The product id is the name, the one its app opens under, so the two share the
+  product's storage and accounts.
 - **Lifetime.** The list of workers is kept per network and wallet. A worker runs while its wallet is signed in and the
   tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
   and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
@@ -539,8 +540,10 @@ codegen gives them. Nothing in this repository's Rust crates, codegen or package
 #### Local demo
 
 The dev server can run the synthetic chat product as a product worker, so the bridge can be tried by hand. Run
-`npm run dev`, open `http://localhost:5180` and sign in with a wallet, then **Chat**, **Workers**, **Start demo**. Its
-rooms (Ada, a group with Ada and Grace, and Lin) join the chat list.
+`npm run dev`, open `http://localhost:5180` and sign in with a wallet, then the menu's **Dev server only** section →
+**Chat demo** → **Start**. Its rooms (Ada, a group with Ada and Grace, and Lin) join the chat list, and it shows in
+**Workers** as added by this host. **Stop** and **Restart** sit beside it; what it is stays folded under **About the
+chat demo**.
 
 - **How it runs.** `chat-product-demo-plugin.ts`, a dev-server plugin that a build leaves out, builds
   `browser/chat-v2-product-worker.ts` into one module, packs it as an app archive, describes it at
@@ -953,8 +956,8 @@ opens, so the light client reaches no chain. It checks that:
   user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact picker and get a
   handle, which nothing turns into someone it can chat with;
 - the local chat product demo, with a synthetic wallet, every socket closed and every request outside this host refused,
-  starts from **Workers** and runs through the dev server's archive, the same loader and the core, and speaks the Chat
-  Extension v2 draft bridge: capabilities list only what the host serves; the list draws its rooms from their
+  starts from the Developer menu and runs through the dev server's archive, the same loader and the core, and speaks the
+  Chat Extension v2 draft bridge: capabilities list only what the host serves; the list draws its rooms from their
   declarations without asking for messages; the host pages history from the product with its cursor; the user's own
   messages and named peers come from participant ids; a sent message becomes the product's stored message and moves to
   read through the feed, and the answer arrives as a new message under the id the bubble first had; `Seen` reaches it; a
@@ -1038,6 +1041,7 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - `src/username-directory.ts`: finding people by username for the contact picker.
 - `src/username-search.ts`, `username-search-plugin.ts`: the dev server's username search route.
 - `src/notifications.ts`, `src/notifications-screen.ts`: the Notifications prototype.
+- `src/workers-menu.ts`: the menu's Workers section. `src/dev-tools/chat-demo.ts`: the chat demo's controls.
 - `src/invitations/`: invitations between users' hosts. `src/dev-tools/`: the menu's dev server controls, test users and
   Example Chat, loaded only by a dev server.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
@@ -1068,7 +1072,7 @@ a project path, the inspector's rendering, and layout on narrow screens.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs
-  from the Chat screen's **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
+  from the menu's **Workers** for chat, or for Humanity's face, and a `Widget` runs only from the Humanity card.
 - Preimage lookup. Every lookup is a miss. The core submits preimages to Bulletin itself.
 - Dialling an external wire debugger. `VITE_TRUAPI_DEBUGGER_URL` connects and receives no frames, because the signing
   core's product runtime does not install the debug tap the dial reads. The in-page inspector does not depend on it.

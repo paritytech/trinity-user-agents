@@ -8,7 +8,6 @@ import { CallOverlay } from "./call-view.js";
 import type { PickedPerson } from "./contacts.js";
 import { ConversationView, avatar, time } from "./conversation-view.js";
 import { NOVA_PROVIDER_ID } from "./nova-chat-provider.js";
-import type { WorkerState } from "./product-workers.js";
 
 /**
  * The host's own Chat screen, laid out like the Polkadot app's: a large
@@ -27,33 +26,7 @@ type View =
   | { kind: "list" }
   | { kind: "request"; providerId: string; person: PickedPerson }
   | { kind: "conversation"; providerId: string; conversationId: string }
-  | { kind: "workers" }
   | { kind: "blocked" };
-
-/** The worker list the Workers page manages. */
-export interface WorkersPanel {
-  names(): string[];
-  state(name: string): WorkerState | null;
-  isDefault(name: string): boolean;
-  add(name: string): Promise<void>;
-  remove(name: string): void;
-  onChange(listener: () => void): () => void;
-}
-
-/**
- * A local demo the Workers page offers, which only a dev server on this
- * machine provides: the synthetic chat product, run as one of the host's
- * workers.
- */
-export interface LocalDemoControl {
-  productId: string;
-  /** Where its code comes from. */
-  source: string;
-  running(): boolean;
-  start(): void;
-  stop(): void;
-  restart(): void;
-}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -90,11 +63,9 @@ export class ChatScreen {
   private view: View = { kind: "list" };
   private conversation: ConversationView | null = null;
   private newWelcome = "";
-  private workerName = "";
   /** Whether New chat's picker is open, so a second tap does not queue another. */
   private choosing = false;
   private formError: string | null = null;
-  private workerError: string | null = null;
   private busy = false;
   private visible = false;
   private renderQueued = false;
@@ -104,9 +75,7 @@ export class ChatScreen {
   constructor(
     private readonly root: HTMLElement,
     private readonly inbox: ChatInboxView,
-    private readonly workers: WorkersPanel,
     private readonly onActivity: (pendingRequests: number) => void,
-    private readonly demo?: LocalDemoControl,
     /**
      * The host's contact picker, which New chat opens. Absent, New chat is
      * not offered.
@@ -116,15 +85,14 @@ export class ChatScreen {
     root.dataset.chatEngine = "off";
     document.body.append(this.call.root);
     inbox.onChange((change) => this.follow(change));
-    workers.onChange(() => this.queueRender());
   }
 
   private follow(change: InboxChange): void {
     if (change.type === "session") {
       this.leaveConversation();
       this.view = { kind: "list" };
-      this.newWelcome = this.workerName = "";
-      this.formError = this.workerError = null;
+      this.newWelcome = "";
+      this.formError = null;
     }
     if (
       change.type === "provider" &&
@@ -292,7 +260,6 @@ export class ChatScreen {
           "Choose a wallet in the menu. Chat uses that wallet's identity.",
         ),
       ];
-    if (this.view.kind === "workers") return this.drawWorkers();
     if (this.view.kind === "blocked") return this.drawBlocked();
     if (this.view.kind === "request") {
       const provider = this.provider(this.view.providerId);
@@ -367,18 +334,12 @@ export class ChatScreen {
         this.empty(
           "Add your first contact",
           starter === undefined
-            ? "Add a product's worker to chat with it."
+            ? "Add a product's worker in the menu to chat with it."
             : "Tap + to choose someone to chat with.",
         ),
       );
 
     const links = el("p", "chat-inbox-links");
-    const manage = button("chat-link", "Workers", () => {
-      this.view = { kind: "workers" };
-      this.render();
-    });
-    manage.dataset.action = "manage-workers";
-    links.append(manage);
     const blocked = providers.reduce(
       (sum, provider) => sum + (provider.blocked?.().length ?? 0),
       0,
@@ -390,9 +351,9 @@ export class ChatScreen {
         this.render();
       });
       open.dataset.action = "blocked";
-      links.append(" · ", open);
+      links.append(open);
     }
-    body.append(links);
+    if (links.childElementCount > 0) body.append(links);
     if (this.formError !== null)
       body.append(el("p", "chat-error", this.formError));
     for (const provider of providers) {
@@ -636,128 +597,5 @@ export class ChatScreen {
     if (this.formError !== null)
       body.append(el("p", "chat-error", this.formError));
     return [bar, body];
-  }
-
-  /** The workers for this wallet, their state, and the form to add one. */
-  private drawWorkers(): HTMLElement[] {
-    const bar = el("header", "chat-bar chat-bar-small");
-    bar.append(this.back(), el("h2", "chat-title chat-title-small", "Workers"));
-    const body = el("div", "chat-body");
-    const form = el("form", "chat-form product-worker-form");
-    const input = el("input", "chat-input");
-    input.dataset.focus = "worker-name";
-    input.placeholder = "Product name, such as myapp.paseo";
-    input.value = this.workerName;
-    input.autocomplete = "off";
-    input.addEventListener("input", () => (this.workerName = input.value));
-    const add = el("button", "chat-pill chat-pill-primary", "Add worker");
-    add.type = "submit";
-    add.disabled = this.busy;
-    form.append(
-      el("label", "chat-label", "Run a product's worker"),
-      input,
-      add,
-    );
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const name = this.workerName;
-      this.busy = true;
-      this.workerError = null;
-      this.render();
-      this.workers
-        .add(name)
-        .then(() => (this.workerName = ""))
-        .catch((error: unknown) => (this.workerError = errorText(error)))
-        .finally(() => {
-          this.busy = false;
-          this.render();
-        });
-    });
-    if (this.workerError !== null)
-      form.append(el("p", "chat-error", this.workerError));
-    body.append(form);
-    const list = el("ul", "product-worker-list");
-    for (const name of this.workers.names()) {
-      const state = this.workers.state(name);
-      const item = el("li", "product-worker");
-      item.dataset.worker = name;
-      item.dataset.state = state?.state ?? "stopped";
-      const preview =
-        state === null
-          ? "Stopped"
-          : state.state === "running"
-            ? `Running, version ${state.manifest.appVersion.join(".")}`
-            : state.state === "starting"
-              ? "Starting…"
-              : `Failed: ${state.reason}`;
-      item.append(
-        el("span", "chat-row-title", name),
-        el(
-          "span",
-          "chat-row-preview",
-          this.workers.isDefault(name)
-            ? `${preview} · added by this host`
-            : preview,
-        ),
-      );
-      if (!this.workers.isDefault(name))
-        item.append(
-          button("chat-link", "Remove", () => this.workers.remove(name)),
-        );
-      list.append(item);
-    }
-    body.append(
-      list,
-      el(
-        "p",
-        "chat-identity-line",
-        "A worker runs while this wallet is signed in and this tab is open. It is the product's own code, on this host's origin.",
-      ),
-    );
-    if (this.demo !== undefined) body.prepend(this.drawDemo(this.demo));
-    return [bar, body];
-  }
-
-  /** The local chat product demo: what it is, and Start, Stop and Restart. */
-  private drawDemo(demo: LocalDemoControl): HTMLElement {
-    const running = demo.running();
-    const section = el("section", "chat-section local-demo");
-    section.dataset.demo = running ? "running" : "stopped";
-    section.append(
-      el("h3", "chat-section-title", "Local demo: synthetic chat product"),
-      el(
-        "p",
-        "chat-identity-line",
-        "Runs a made-up chat product as a product worker, through the same loader, archive check and core as any worker. It keeps its own rooms and history (Ada, a group with Ada and Grace, and Lin) in memory, and nothing leaves this tab. It speaks the Chat Extension v2 draft bridge, not TrUAPI, and it is not the Verbosity chat product. Its calls use a synthetic engine that opens no camera or microphone.",
-      ),
-      el(
-        "p",
-        "chat-row-preview",
-        `Product id ${demo.productId} · ${demo.source} · this machine only`,
-      ),
-    );
-    const actions = el("div", "local-demo-actions");
-    const action = (label: string, name: string, run: () => void) => {
-      const node = button(
-        name === "demo-start" ? "chat-pill chat-pill-primary" : "chat-pill",
-        label,
-        run,
-      );
-      node.dataset.action = name;
-      return node;
-    };
-    if (running)
-      actions.append(
-        action("Stop", "demo-stop", () => demo.stop()),
-        action("Restart", "demo-restart", () => demo.restart()),
-      );
-    else {
-      const start = action("Start demo", "demo-start", () => demo.start());
-      start.disabled = !this.inbox.signedIn();
-      if (start.disabled) start.title = "Sign in with a wallet first.";
-      actions.append(start);
-    }
-    section.append(actions);
-    return section;
   }
 }

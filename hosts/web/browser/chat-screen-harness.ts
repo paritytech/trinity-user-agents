@@ -603,16 +603,7 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
   const screen = new ChatScreen(
     root,
     inbox,
-    {
-      names: () => [QUIZ],
-      state: () => null,
-      isDefault: () => false,
-      add: async () => {},
-      remove: () => {},
-      onChange: () => () => {},
-    },
     (pending) => (root.dataset.pending = String(pending)),
-    undefined,
     () => people.choose({ title: "New chat" }),
   );
   await inbox.session();
