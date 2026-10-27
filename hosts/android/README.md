@@ -104,10 +104,6 @@ CI_KEYSTORE_KEY_ALIAS=<alias>
 CI_KEYSTORE_KEY_PASS=<key password>
 ```
 
-Debug, nightly, and safetynet builds report one `host.process.started` event through Sentry from
-the app initializer pipeline. Release builds stop at the shared host telemetry feature gate before
-collecting event metadata.
-
 Then provide the three files/services the build and the app depend on:
 
 1. **Dev keystore** at the repo root, matching the `CI_KEYSTORE_*` values:

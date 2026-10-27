@@ -19,9 +19,6 @@ import io.sentry.protocol.Message
 import java.util.UUID
 import javax.inject.Inject
 
-internal fun appVariant(flavor: String, buildType: String): String =
-    "$flavor${buildType.replaceFirstChar { it.titlecase() }}"
-
 internal fun interface HostLaunchIdProvider {
     fun current(): UUID
 }
@@ -67,7 +64,8 @@ internal class AndroidHostMonotonicTimeProvider @Inject constructor() : HostMono
 
 internal class AndroidHostEventOriginProvider @Inject constructor() : HostEventOriginProvider {
     override fun current() = HostEventOrigin(
-        appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
+        appVariant = BuildConfig.BUILD_TYPE,
+        appFlavor = BuildConfig.FLAVOR,
         nativeAppVersion = BuildConfig.VERSION_NAME,
         platform = "android",
         osVersion = Build.VERSION.RELEASE,
@@ -97,6 +95,7 @@ private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = 
     tags = mapOf(
         "host.platform" to platform,
         "host.app_variant" to appVariant,
+        "host.app_flavor" to appFlavor,
         "host.native_app_version" to nativeAppVersion,
         "host.os_version" to osVersion,
     ),

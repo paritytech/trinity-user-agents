@@ -39,6 +39,7 @@ private fun HostEventOrigin.webViewCreated(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
     tags = mapOf(
         "host.app_variant" to appVariant,
+        "host.app_flavor" to appFlavor,
         "host.native_app_version" to nativeAppVersion,
         "host.platform" to platform,
         "truapi.host_version" to hostVersion,

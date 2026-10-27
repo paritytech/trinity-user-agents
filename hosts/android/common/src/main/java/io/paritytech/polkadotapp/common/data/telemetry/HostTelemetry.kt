@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.common.data.telemetry
 
 data class HostEventOrigin(
     val appVariant: String,
+    val appFlavor: String,
     val nativeAppVersion: String,
     val platform: String,
     val osVersion: String,
