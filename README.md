@@ -257,6 +257,25 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Building extrinsics
+
+The core builds its own extrinsics through `ExtrinsicService` in the `chain`
+module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
+preimages, and the CLI's dotNS registrations. A caller names the call and the
+extensions it cares about; the builder fills every other extension of the
+runtime's pipeline, computes each extension's value from the bytes of the
+extensions after it, signs, and returns a mortal extrinsic born at the finalized
+head. Submitting it stays with the caller.
+
+The extrinsic version follows the host: `transactionExtensionVersions()` lists the
+chains the host builds as V5 general transactions and the extension pipeline each
+uses, and every other chain is V4. A host that never builds V5 can leave the
+callback at its default, an empty list, but then the core cannot build the
+allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
+only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
+`AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
+runtime's type by name.
+
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
@@ -398,7 +417,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures.
+host failures. Android hosts with Sentry enabled report the reminder lifecycle
+through `host.reminder.*` Sentry events without changing reminder delivery or
+cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
@@ -541,9 +562,12 @@ and Dependabot runs get no secrets, and so does the merge queue. A push to main
 that touches those inputs runs the same suite through `ios-main.yml`, outside
 `CI Status`, and publishes the core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
-labelled `ios-simulator-build`. CI's `iOS package (Swift + WebKit)` job also
-compiles the TrUAPIHost package against the core on a pull request touching
-`ios/` or the core crates. The first time a
+labelled `ios-simulator-build`. The same workflow's
+`TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
+TrUAPIProvider packages against the core the app jobs share, on a pull request
+touching their inputs, which the `swift` package in `.github/hosts.json` names,
+and runs their network permission tests. Like the rest of the iOS app it skips
+fork and Dependabot pull requests and the merge queue. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ios-simulator-build`, `ios-device-build` and
 `android-device-build`.
@@ -796,6 +820,10 @@ use a different state directory while debugging.
 - **v0.1**: initial protocol version.
 - **v0.2**: See [`docs/design/releases/v0.2.md`](docs/design/releases/v0.2.md) for the rationale behind each change.
 - **v0.3**: current protocol version.
+
+If a product sends a request in a newer version than the host knows, the
+call fails with `Unsupported`. See
+[Request versions](docs/design/truapi-protocol.md#request-versions).
 
 ## Deploy
 

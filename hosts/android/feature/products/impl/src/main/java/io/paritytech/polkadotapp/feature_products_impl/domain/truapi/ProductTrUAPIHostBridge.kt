@@ -42,6 +42,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -82,6 +83,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
+    private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -237,6 +239,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
+
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -253,7 +258,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             productGameReminder.schedule(callingProductId, startsAt.toLong())
                 .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
 
-        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+        override suspend fun cancelReminder() = productGameReminder.cancelByProduct(callingProductId)
     }
 
     /**
