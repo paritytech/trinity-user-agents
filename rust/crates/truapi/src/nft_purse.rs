@@ -18,8 +18,6 @@ use truapi::latest::{
 	NftPursePurse, RemotePermission,
 };
 
-#[cfg(test)]
-pub use cheque::open_cheque;
 pub use deposit::DepositRefusal;
 pub use operation::drain_needs_confirmation;
 pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};

@@ -1,27 +1,32 @@
 //! NFT purses against a live Asset Hub. Ignored by default; run with
 //! `cargo test -p truapi --lib nft::live -- --ignored --nocapture`.
 //!
-//! Each test creates a collection, mints into keys the ledger allocated,
-//! waits for the tracker to see them, then rebalances them into another purse
-//! through the durable engine, or hands them off in a cheque that a receive
-//! key opens. It burns everything and deletes the collection whatever
-//! happened. The collection's owner is `//Alice` unless
-//! `LIVE_NFT_OWNER_MNEMONIC` names another funded account, which then signs
-//! with its root key. `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS` point
-//! it at another Asset Hub.
+//! One run goes through every purse call a product makes, as a sending and a
+//! receiving product on one host: it creates a collection, mints into keys
+//! the sender allocated, rebalances them into another purse, hands one off
+//! in an `Ephemeral` and one in a `Static` cheque that the receiver deposits,
+//! and transfers one out of the purses, following each operation until it
+//! clears. It burns everything and deletes the collection whatever happened.
+//! The collection's owner is `//Alice` unless `LIVE_NFT_OWNER_MNEMONIC` names
+//! another funded account, which then signs with its root key.
+//! `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS` point it at another
+//! Asset Hub.
 
-use core::{num::NonZeroU32, time::Duration};
-use std::{collections::BTreeSet, sync::Arc};
+use core::time::Duration;
+use std::{collections::HashSet, sync::Arc};
 
 use futures::StreamExt;
 use subxt::{
 	dynamic::{At, Value, tx},
 	utils::{AccountId32, H256},
 };
+use truapi::latest::{
+	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseClearedItem,
+	NftPurseIdempotencyKey, NftPurseItemKey, NftPurseStatus,
+};
 
 use super::{
-	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId,
-	PurseTag, ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
+	ImportedSecretStore, ItemKey, NftLedger, NftLedgerDeps, PurseId, ScarcityTransfersDeps,
 	scarcity::ASSET_HUB_PIPELINE,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
@@ -36,17 +41,13 @@ use crate::{
 	durable::{DurableDeps, DurableRegistry, DurableTxEngine},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
-	host_logic::{
-		product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
-		x25519_seal::X25519PrivateKey,
-	},
+	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
 	nft::HoldingTracker,
-	nft_purse::{NftPurses, NftPursesDeps, open_cheque},
+	nft_purse::{FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
 	time::RealTimer,
 };
-use truapi::latest::NftPurseChequeDestination;
 
 const DEV_PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
 const ALICE_HEX: &str = "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d";
@@ -280,188 +281,202 @@ where
 		.unwrap_or_else(|_| panic!("timed out waiting for {what}"))
 }
 
-async fn available_keys(ledger: &NftLedger, purse: PurseId) -> BTreeSet<ItemKey> {
-	let page = PageRequest { index: 0, size: NonZeroU32::new(100).unwrap() };
-	ledger
-		.available_items(purse, page)
-		.await
-		.expect("page reads")
-		.items
-		.into_iter()
-		.collect()
+/// The purse calls over the live ledger, with receive key secrets in memory
+/// and a static receive secret fresh for this run.
+fn live_product_purses(purses: &LivePurses) -> NftPurses {
+	let ledger = purses.ledger.clone();
+	let encrypted = Arc::new(MemoryEncryptedStorage::default());
+	let static_secret = Arc::new(FixedStaticSecret(rand::random()));
+	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted, static_secret })
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a live Asset Hub and a funded collection owner"]
-async fn items_minted_into_host_keys_rebalance_into_another_purse() {
+async fn every_purse_call_moves_items_on_the_live_chain() {
 	let genesis = live_asset_hub_genesis();
 	let chain = live_asset_hub(genesis);
 	let owner = CollectionOwner::from_env(chain.clone(), genesis);
 	if std::env::var("LIVE_NFT_OWNER_MNEMONIC").is_err() {
 		assert_eq!(hex::encode(owner.signer_account()), ALICE_HEX);
 	}
-	let purses = live_purses(&chain, genesis);
-	let from = purses.ledger.create_purse("from".into(), PurseTag::default()).await.unwrap();
-	let to = purses.ledger.create_purse("to".into(), PurseTag::default()).await.unwrap();
-	let count = NonZeroU32::new(ITEM_COUNT).unwrap();
-	let items = purses.ledger.allocate_items(from, count).await.unwrap();
+	let live = live_purses(&chain, genesis);
+	let purses = live_product_purses(&live);
 	let collection = owner.create_collection().await;
+	let foreign = ItemKey(rand::random());
 
-	let transferred = futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(
-		rebalance_round_trip(&owner, &purses.ledger, collection, (from, to), &items),
-	))
-	.await;
+	let run = LiveRun { owner: &owner, purses: &purses, collection };
+	let ran =
+		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(run.every_call(foreign)))
+			.await;
 
-	let mut every_key = items.clone();
-	every_key.extend(transferred.as_ref().map(|minted| minted.clone()).unwrap_or_default());
+	let mut every_key = every_item_key(&live.ledger).await;
+	every_key.push(foreign);
 	owner.clean_up(collection, &every_key).await;
-	if let Err(panic) = transferred {
+	if let Err(panic) = ran {
 		std::panic::resume_unwind(panic);
 	}
 }
 
-/// The product-facing purse calls over the live ledger, with receive key
-/// secrets kept in `encrypted`.
-fn live_product_purses(purses: &LivePurses, encrypted: Arc<MemoryEncryptedStorage>) -> NftPurses {
-	let ledger = purses.ledger.clone();
-	let static_secret = Arc::new(crate::nft_purse::FixedStaticSecret(rand::random()));
-	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted, static_secret })
+/// Every key the ledger allocated, in this run's purses or as an import's
+/// destination.
+async fn every_item_key(ledger: &NftLedger) -> Vec<ItemKey> {
+	let mut keys = ledger.observe_item_keys();
+	keys.next().await.expect("item keys are read").expect("item keys read")
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "needs a live Asset Hub and a funded collection owner"]
-async fn items_minted_into_host_keys_open_from_a_cheque_to_a_receive_key() {
-	let genesis = live_asset_hub_genesis();
-	let chain = live_asset_hub(genesis);
-	let owner = CollectionOwner::from_env(chain.clone(), genesis);
-	let purses = live_purses(&chain, genesis);
-	let encrypted = Arc::new(MemoryEncryptedStorage::default());
-	let product_purses = live_product_purses(&purses, encrypted.clone());
-	let from = product_purses.create_purse(&live_product(), "from".into()).await.unwrap();
-	let count = NonZeroU32::new(ITEM_COUNT).unwrap();
-	let items = purses.ledger.allocate_items(from, count).await.unwrap();
-	let collection = owner.create_collection().await;
-
-	let round_trip =
-		ChequeRoundTrip { owner: &owner, ledger: &purses.ledger, purses: &product_purses };
-	let handing_off = round_trip.run(collection, from, &items, &encrypted);
-	let handed_off =
-		futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(handing_off)).await;
-
-	owner.clean_up(collection, &items).await;
-	if let Err(panic) = handed_off {
-		std::panic::resume_unwind(panic);
-	}
+/// The product that mints and sends.
+fn sender() -> ProductId {
+	ProductId::for_test("sender.dot")
 }
 
-/// The product the live cheque test acts as.
-fn live_product() -> ProductId {
-	ProductId::for_test("live.dot")
+/// The product that receives.
+fn receiver() -> ProductId {
+	ProductId::for_test("receiver.dot")
 }
 
-/// What the cheque round trip runs over.
-struct ChequeRoundTrip<'a> {
+/// What the live run goes through its calls with.
+struct LiveRun<'a> {
 	owner: &'a CollectionOwner,
-	ledger: &'a NftLedger,
 	purses: &'a NftPurses,
+	collection: u32,
 }
 
-impl ChequeRoundTrip<'_> {
-	/// Mints into `items`, waits for the tracker to list them, hands them off
-	/// in a cheque to a fresh receive key, and checks that the receive key's
-	/// secret opens it into the secrets of the keys holding the NFTs on chain.
-	async fn run(
+/// Items one purse lists.
+struct ListedItems {
+	purse: PurseId,
+	keys: Vec<NftPurseItemKey>,
+}
+
+impl LiveRun<'_> {
+	/// Every purse call a product makes, in the order a product would make them.
+	/// The last one transfers an item to `foreign`, outside the purses.
+	async fn every_call(&self, foreign: ItemKey) {
+		let minted = self.mint_into_new_purse().await;
+		let rebalanced = self.rebalance_into_spare_purse(minted).await;
+		let into = self.purses.create_purse(&receiver(), "received".into()).await.unwrap();
+		self.deposit_ephemeral_cheque(rebalanced.purse, rebalanced.keys[0], into).await;
+		self.deposit_static_cheque(rebalanced.purse, rebalanced.keys[1], into).await;
+		self.transfer_out_of_the_purses(into, foreign).await;
+	}
+
+	/// Creates a sender purse with new keys, mints into them, and waits until
+	/// the purse lists them.
+	async fn mint_into_new_purse(&self) -> ListedItems {
+		let purse = self.purses.create_purse(&sender(), "minted".into()).await.unwrap();
+		let count = ItemCount::new(ITEM_COUNT).unwrap();
+		let keys = self.purses.create_items(purse, count).await.unwrap();
+		let item_keys: Vec<_> = keys.iter().map(|key| ItemKey(key.0)).collect();
+		self.owner.mint_into(self.collection, &item_keys).await;
+		self.wait_until_listed(purse, keys.iter().copied().collect()).await;
+		ListedItems { purse, keys }
+	}
+
+	/// Rebalances `minted` into a second sender purse, follows it until it
+	/// clears, and waits until the second purse lists the new keys.
+	async fn rebalance_into_spare_purse(&self, minted: ListedItems) -> ListedItems {
+		let purse = self.purses.create_purse(&sender(), "spare".into()).await.unwrap();
+		let idempotency_key = NftPurseIdempotencyKey(rand::random());
+		let items = minted.keys.iter().map(|key| ItemKey(key.0)).collect();
+		let sender = sender();
+		let rebalance = self.purses.rebalance(&sender, minted.purse, purse, items, idempotency_key);
+		rebalance.await.expect("the rebalance registers");
+		let cleared = self.follow_until_cleared(&sender, idempotency_key).await;
+		let keys: Vec<_> = cleared.iter().map(|item| item.minted).collect();
+		self.wait_until_listed(purse, keys.iter().copied().collect()).await;
+		assert_eq!(self.listed_items(minted.purse).await, HashSet::new());
+		ListedItems { purse, keys }
+	}
+
+	/// The sender hands `item` of `from` to a receive key the receiver made into
+	/// `into`, and the receiver deposits the cheque.
+	async fn deposit_ephemeral_cheque(&self, from: PurseId, item: NftPurseItemKey, into: PurseId) {
+		let receive_key = self.purses.create_receive_key(&receiver(), into).await.unwrap();
+		let to = NftPurseChequeDestination::Ephemeral(receive_key);
+		let cheque = self.send_cheque(from, item, &to).await;
+		self.deposit_until_cleared(&cheque, into).await;
+	}
+
+	/// The sender hands `item` of `from` to the host's static receive key, and
+	/// the receiver deposits the cheque into `into`.
+	async fn deposit_static_cheque(&self, from: PurseId, item: NftPurseItemKey, into: PurseId) {
+		let encryption_key = self.purses.static_receive_key().expect("a static receive key");
+		let cheque_id = NftPurseChequeId(rand::random());
+		let to = NftPurseChequeDestination::Static { encryption_key, cheque_id };
+		let cheque = self.send_cheque(from, item, &to).await;
+		self.deposit_until_cleared(&cheque, into).await;
+	}
+
+	async fn send_cheque(
 		&self,
-		collection: u32,
 		from: PurseId,
-		items: &[ItemKey],
-		encrypted: &MemoryEncryptedStorage,
-	) {
-		self.owner.mint_into(collection, items).await;
-		let expected: BTreeSet<_> = items.iter().copied().collect();
-		wait_for("the minted items", || async {
-			(available_keys(self.ledger, from).await == expected).then_some(())
+		item: NftPurseItemKey,
+		to: &NftPurseChequeDestination,
+	) -> NftPurseCheque {
+		let items = [ItemKey(item.0)].into_iter().collect();
+		self.purses
+			.create_cheque(&sender(), from, to, items)
+			.await
+			.expect("the cheque is made")
+	}
+
+	/// Deposits `cheque` into `into` as the receiver, follows it by the cheque
+	/// id until it clears, and waits until `into` lists the new keys too.
+	async fn deposit_until_cleared(&self, cheque: &NftPurseCheque, into: PurseId) {
+		let mut expected = self.listed_items(into).await;
+		self.purses
+			.deposit(&receiver(), cheque, into)
+			.await
+			.expect("the deposit registers");
+		let idempotency_key = NftPurseIdempotencyKey(cheque.id.0);
+		let cleared = self.follow_until_cleared(&receiver(), idempotency_key).await;
+		expected.extend(cleared.iter().map(|item| item.minted));
+		self.wait_until_listed(into, expected).await;
+	}
+
+	/// Transfers one item of `from` to `foreign` as the receiver, follows it
+	/// until it clears, and checks that `foreign` holds an NFT.
+	async fn transfer_out_of_the_purses(&self, from: PurseId, foreign: ItemKey) {
+		let item = *self.listed_items(from).await.iter().next().expect("a received item");
+		let idempotency_key = NftPurseIdempotencyKey(rand::random());
+		let destination = NftPurseItemKey(foreign.0);
+		let receiver = receiver();
+		let transfer = self.purses.transfer(&receiver, from, item, destination, idempotency_key);
+		transfer.await.expect("the transfer registers");
+		self.follow_until_cleared(&receiver, idempotency_key).await;
+		assert_eq!(self.owner.instances_held_by(&[foreign]).await.len(), 1);
+	}
+
+	/// The items `caller`'s operation `idempotency_key` cleared, once it is
+	/// cleared in a finalized block. Fails the test on any other end.
+	async fn follow_until_cleared(
+		&self,
+		caller: &ProductId,
+		idempotency_key: NftPurseIdempotencyKey,
+	) -> Vec<NftPurseClearedItem> {
+		let mut statuses = self.purses.observe_status(caller, idempotency_key);
+		let cleared = async {
+			while let Some(read) = statuses.next().await {
+				let status = read.expect("the status reads");
+				if let Some(NftPurseStatus::Cleared { cleared, .. }) = status {
+					return cleared;
+				}
+				assert!(!matches!(status, Some(NftPurseStatus::Incomplete { .. })), "{status:?}");
+			}
+			panic!("the operation ended without clearing")
+		};
+		tokio::time::timeout(WAIT, cleared).await.expect("the operation clears in time")
+	}
+
+	async fn listed_items(&self, purse: PurseId) -> HashSet<NftPurseItemKey> {
+		let size = PageSize::new(100).unwrap();
+		let page = self.purses.query_purse(purse, 0, size).await.expect("the purse reads");
+		page.items.into_iter().collect()
+	}
+
+	async fn wait_until_listed(&self, purse: PurseId, expected: HashSet<NftPurseItemKey>) {
+		wait_for("the purse to list its items", || async {
+			(self.listed_items(purse).await == expected).then_some(())
 		})
 		.await;
-
-		let product = live_product();
-		let receive_key = self.purses.create_receive_key(&product, from).await.unwrap();
-		let to = NftPurseChequeDestination::Ephemeral(receive_key);
-		let cheque =
-			self.purses.create_cheque(&product, from, &to, expected.clone()).await.unwrap();
-
-		let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
-		let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();
-		let opened: Vec<ItemKey> = open_cheque(&X25519PrivateKey::from(secret), &cheque)
-			.expect("the recipient opens the cheque")
-			.iter()
-			.map(|imported| imported.key())
-			.collect();
-		assert_eq!(opened.iter().copied().collect::<BTreeSet<_>>(), expected);
-		assert_eq!(self.owner.instances_held_by(&opened).await.len(), items.len());
-		assert_eq!(available_keys(self.ledger, from).await, BTreeSet::new());
 	}
-}
-
-/// Mints into `items`, waits for the tracker to list them, rebalances them
-/// from the first purse into the second, waits for every transfer to finalize
-/// and for the second purse to list the new keys. Returns those keys.
-async fn rebalance_round_trip(
-	owner: &CollectionOwner,
-	ledger: &NftLedger,
-	collection: u32,
-	(from, to): (PurseId, PurseId),
-	items: &[ItemKey],
-) -> Vec<ItemKey> {
-	owner.mint_into(collection, items).await;
-	let expected: BTreeSet<_> = items.iter().copied().collect();
-	wait_for("the minted items", || async {
-		(available_keys(ledger, from).await == expected).then_some(())
-	})
-	.await;
-
-	let operation = OperationKey::new(b"live", rand::random());
-	let request = TransferRequest {
-		operation: operation.clone(),
-		from,
-		items: expected,
-		destinations: TransferDestinations::AllocatedIn(to),
-	};
-	ledger.start_transfers(request).await.expect("transfers register");
-	let minted = wait_for_finalized_transfers(ledger, &operation).await;
-
-	let landed: BTreeSet<_> = minted.iter().copied().collect();
-	wait_for("the transferred items", || async {
-		(available_keys(ledger, to).await == landed).then_some(())
-	})
-	.await;
-	assert_eq!(available_keys(ledger, from).await, BTreeSet::new());
-	minted
-}
-
-/// The destination of every transfer of `operation`, once each finalized.
-async fn wait_for_finalized_transfers(
-	ledger: &NftLedger,
-	operation: &OperationKey,
-) -> Vec<ItemKey> {
-	let mut transfers = ledger.observe_operation(operation);
-	let finalized = async {
-		while let Some(read) = transfers.next().await {
-			let progress = read.expect("transfers read");
-			assert!(
-				progress.iter().all(|step| step.state != TransferState::Failed),
-				"{progress:?}"
-			);
-			if progress
-				.iter()
-				.all(|step| step.state == TransferState::Landed { finalized: true })
-			{
-				return progress.into_iter().map(|step| step.minted).collect();
-			}
-		}
-		panic!("the operation stopped being observed")
-	};
-	tokio::time::timeout(WAIT, finalized)
-		.await
-		.expect("every transfer finalizes in time")
 }
