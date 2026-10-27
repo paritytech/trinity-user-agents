@@ -185,12 +185,12 @@ describe("dotNS TLDs", () => {
   // The core decides which TLDs are dotNS names. This host copies the list, so
   // a TLD added or removed there must be added or removed here.
   test("match the Rust core's DOTNS_TLDS", () => {
-    const platform = readFileSync(
-      new URL("../../../rust/crates/truapi/src/platform.rs", import.meta.url),
+    const dotnsName = readFileSync(
+      new URL("../../../rust/crates/truapi/src/dotns_name.rs", import.meta.url),
       "utf8",
     );
     const list = /pub const DOTNS_TLDS: &\[&str\] = &\[([^\]]*)\];/.exec(
-      platform,
+      dotnsName,
     );
     const core = [...(list?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map(
       (match) => match[1],

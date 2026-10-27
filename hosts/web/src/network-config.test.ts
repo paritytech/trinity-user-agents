@@ -54,12 +54,12 @@ describe("NETWORKS", () => {
   // The core validates `network_suffix` against `DOTNS_TLDS`, so a suffix this
   // host offers but the core rejects would fail at boot.
   test("every network suffix is a dotNS TLD the core lists", () => {
-    const platform = readFileSync(
-      new URL("../../../rust/crates/truapi/src/platform.rs", import.meta.url),
+    const dotnsName = readFileSync(
+      new URL("../../../rust/crates/truapi/src/dotns_name.rs", import.meta.url),
       "utf8",
     );
     const list = /pub const DOTNS_TLDS: &\[&str\] = &\[([^\]]*)\];/.exec(
-      platform,
+      dotnsName,
     );
     const tlds = [...(list?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map(
       (match) => match[1],

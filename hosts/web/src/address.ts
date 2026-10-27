@@ -17,7 +17,7 @@ export function normalizeAddress(raw: string): string {
 
 /**
  * Every TLD the core treats as a dotNS name, one per network. It mirrors
- * `DOTNS_TLDS` in `rust/crates/truapi/src/platform.rs`, and a test compares
+ * `DOTNS_TLDS` in `rust/crates/truapi/src/dotns_name.rs`, and a test compares
  * the two. A host recognises all of them so that a name on another network
  * gets an explanation and is not opened as a web address.
  */
