@@ -59,7 +59,7 @@ Three environments where products run:
 |---|---|---|---|---|
 | **SPA Browser** | Full-screen WebView | Visible | Inline (same .dot and cross-.dot stays in WebView) | native / TrUAPI |
 | **Explore** | Catalog → product list | Visible | Same .dot in WebView; cross-.dot opens a new SPA browser | native / TrUAPI |
-| **Chat** | Hidden WebView under a `ProductChatExtension` | Invisible | Disabled (rejects all navigation) | native only |
+| **Chat** | Hidden WebView under a `ProductChatExtension` | Invisible | To the deeplink handler while the product's chat is on screen, refused otherwise | native / TrUAPI |
 
 On the native runtime each environment composes a different `HostApiEnvironment`; on TrUAPI each builds a `ProductTrUAPIHostBridge` via `TrUAPISessionStarter`.
 
@@ -294,7 +294,7 @@ Two strategies based on environment:
 sealed interface NavigationPolicy {
     fun handleNavigation(type: DotNsNavigationType, destination: Uri): NavigationResult
 
-    object Disabled : NavigationPolicy                                  // Chat: reject all
+    class DeeplinkNavigation(...) : NavigationPolicy                    // Chat
     class InlineNavigation(...) : NavigationPolicy                      // SPA
     class HostApiNavigation(...) : NavigationPolicy                     // host-driven loads
     class CatalogNavigation(val onProductSelected: (ProductId) -> Unit) // Explore
@@ -354,7 +354,9 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
   `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
-  down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
+  down. A chat product's chat runs on the same execution through `TrUAPIChatWorker`. A `navigate_to` from the
+  worker opens through the deeplink handler while that chat is on screen, and is refused otherwise
+  (`TrUAPIWorkerNavigation`).
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
   renderer actions. Both callbacks of `ProductPocketHostBridge` run on the core's dispatcher thread: the list is a

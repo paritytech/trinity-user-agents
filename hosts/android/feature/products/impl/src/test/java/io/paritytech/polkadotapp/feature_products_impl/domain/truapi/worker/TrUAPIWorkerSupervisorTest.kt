@@ -11,6 +11,7 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -37,6 +38,10 @@ class TrUAPIWorkerSupervisorTest {
     private val providers = mutableListOf<ChatWebViewProvider>()
     private val executions = mutableListOf<TrUAPIProductExecution>()
     private val chatBridges = mutableListOf<ChatHostBridge?>()
+    private val navigationPolicies = mutableListOf<NavigationPolicy>()
+    private val navigation = mockk<TrUAPIWorkerNavigation> {
+        every { policy(any(), any()) } returns NavigationPolicy.DeeplinkNavigation {}
+    }
     private val bootstrapInstaller = mockk<TrUAPIBootstrapInstaller>(relaxed = true)
     private var includesChat = true
 
@@ -92,6 +97,18 @@ class TrUAPIWorkerSupervisorTest {
     }
 
     @Test
+    fun `a worker navigates by the policy made for its product`() = runTest {
+        val policy = NavigationPolicy.DeeplinkNavigation {}
+        every { navigation.policy(PRODUCT, any()) } returns policy
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(listOf<NavigationPolicy>(policy), navigationPolicies)
+    }
+
+    @Test
     fun `a worker bootstrap does not install host WebView telemetry`() = runTest {
         val supervisor = supervisor()
 
@@ -122,12 +139,14 @@ class TrUAPIWorkerSupervisorTest {
         },
         bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
+        navigation = navigation,
         dispatchers = testDispatchers(),
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
         coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            navigationPolicies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(5)
             Result.success(execution)
         }
