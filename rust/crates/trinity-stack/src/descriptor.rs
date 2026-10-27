@@ -290,8 +290,8 @@ impl Descriptor {
 				let is_http = matches!(parsed.scheme(), "http" | "https");
 				let is_base = match service.kind.as_str() {
 					"eth-rpc" => true,
-					// Readers prepend a name's label to the host and keep the query, which can
-					// pick the network a shared gateway serves.
+					// Readers prepend a name's label to the host, or resolve the name against the
+					// path, and keep the query, which can pick the network a shared gateway serves.
 					"web-gateway" => parsed.path().ends_with('/') && parsed.fragment().is_none(),
 					_ => {
 						url.ends_with('/') &&

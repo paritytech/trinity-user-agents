@@ -233,8 +233,11 @@ schemes.
   disagree on shorthand, so two readers would reach different hosts.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given. A `web-gateway` URL MUST use `https` and name a host, never an address, and its path MUST end
-  in `/`. It MAY carry a query, which readers keep, so one gateway can serve several stacks: on
-  `https://testnet.li/?network=previewnet`, the site of `my-app` is `https://my-app.testnet.li/?network=previewnet`.
+  in `/`. It MAY carry a query, which readers keep, so one gateway can serve several stacks. A name's site is at the URL
+  with the name's label prepended to the host, as `https://my-app.testnet.li/?network=previewnet` for `my-app` on
+  `https://testnet.li/?network=previewnet`. A gateway's wildcard certificate covers one label only, so a name of several
+  labels is at the URL with the name, without the stack's `tld`, resolved against its path:
+  `https://testnet.li/sub.my-app?network=previewnet`. Readers MAY use that path form for a one-label name as well.
 
 A chain has two kinds of chain spec, for two kinds of reader:
 
@@ -258,7 +261,7 @@ The service kinds `$v: 1` defines:
 | `eth-rpc`          | Ethereum JSON-RPC in front of Asset Hub                 | JSON-RPC URLs, with `chainId`                                                                   |
 | `storage-provider` | a Web3 Storage provider node                            | base URLs                                                                                       |
 | `faucet`           | a page or API that funds test accounts                  | base URLs                                                                                       |
-| `web-gateway`      | the gateway serving the sites of its dotNS names        | a name's site is at the URL with `<label>.` prepended to the host                               |
+| `web-gateway`      | the gateway serving the sites of its dotNS names        | a name's site is at the URL, by the label prepended to the host or by the name as a path        |
 | `evm-explorer`     | a block explorer for the chain `eth-rpc` serves         | base URLs; readers link `tx/<hash>` and `address/<address>` under them                          |
 
 The DUB's API, including `api/v1/turn/issue` and the access token it requires, is described in the DUB's
