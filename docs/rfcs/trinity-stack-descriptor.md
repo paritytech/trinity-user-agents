@@ -175,7 +175,18 @@ type SpecFile = {
 };
 
 type Service = {
-  kind: "dub" | "turn" | "stun" | "ipfs-gateway" | "hop" | "eth-rpc" | "storage-provider" | "faucet" | string;
+  kind:
+    | "dub"
+    | "turn"
+    | "stun"
+    | "ipfs-gateway"
+    | "hop"
+    | "eth-rpc"
+    | "storage-provider"
+    | "faucet"
+    | "web-gateway"
+    | "evm-explorer"
+    | string;
   urls: string[]; // Endpoints, most preferred first. Not empty.
   chainId?: number; // Required for eth-rpc, absent otherwise: the EVM chain id.
 };
@@ -221,7 +232,9 @@ schemes.
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
   disagree on shorthand, so two readers would reach different hosts.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
-  endpoints used as given.
+  endpoints used as given. A `web-gateway` URL MUST use `https` and name a host, never an address, and its path MUST end
+  in `/`. It MAY carry a query, which readers keep, so one gateway can serve several stacks: on
+  `https://testnet.li/?network=previewnet`, the site of `my-app` is `https://my-app.testnet.li/?network=previewnet`.
 
 A chain has two kinds of chain spec, for two kinds of reader:
 
@@ -245,6 +258,8 @@ The service kinds `$v: 1` defines:
 | `eth-rpc`          | Ethereum JSON-RPC in front of Asset Hub                 | JSON-RPC URLs, with `chainId`                                                                   |
 | `storage-provider` | a Web3 Storage provider node                            | base URLs                                                                                       |
 | `faucet`           | a page or API that funds test accounts                  | base URLs                                                                                       |
+| `web-gateway`      | the gateway serving the sites of its dotNS names        | a name's site is at the URL with `<label>.` prepended to the host                               |
+| `evm-explorer`     | a block explorer for the chain `eth-rpc` serves         | base URLs; readers link `tx/<hash>` and `address/<address>` under them                          |
 
 The DUB's API, including `api/v1/turn/issue` and the access token it requires, is described in the DUB's
 [API reference](https://github.com/paritytech/device-uniqueness-backend-community/blob/main/docs/api-reference/openapi.json).
