@@ -31,11 +31,9 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.computeChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.FirstNewMessageInfo
@@ -49,6 +47,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentErr
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
@@ -95,6 +94,7 @@ import timber.log.Timber
 import javax.inject.Inject
 import kotlin.math.max
 import kotlin.time.Duration.Companion.milliseconds
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val MAX_CHAT_MESSAGE_LENGTH = 500
 private const val NEWEST_MESSAGE_POSITION = 0
@@ -485,6 +485,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onUnreadMessageVisible(message: ChatMessageUiModel) = launchUnit {
         lastReadMessageTimestamp.update { max(it, message.timestamp) }
+        interactor.reportMessageSeen(chatId, message.id)
     }
 
     override fun onClearEdit() {
@@ -613,33 +614,25 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     private suspend fun sendMessageToActiveChat(messageText: String, relation: InputMessageRelation) {
-        when (relation) {
+        val outcome = when (relation) {
             is InputMessageRelation.Edit -> {
-                if (messageText != relation.originalText) {
-                    interactor.sendEdit(
-                        chatId = chatId,
-                        messageId = relation.messageId,
-                        newText = messageText
-                    )
-                }
+                if (messageText == relation.originalText) return
+                interactor.sendEdit(chatId = chatId, messageId = relation.messageId, newText = messageText)
             }
 
-            is InputMessageRelation.Reply -> {
-                interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = relation.preview.messageId
-                )
-            }
-
-            InputMessageRelation.None -> {
-                interactor.sendTextMessage(
-                    chatId = chatId,
-                    text = messageText,
-                    replyToMessageId = null
-                )
-            }
+            is InputMessageRelation.Reply -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = relation.preview.messageId)
+            InputMessageRelation.None -> interactor.sendTextMessage(chatId, messageText, replyToMessageId = null)
         }
+
+        showActionOutcome(outcome)
+    }
+
+    /** A product that refuses an action of the user gives the reason. */
+    private fun showActionOutcome(outcome: ChatSourceActionOutcome) {
+        if (outcome !is ChatSourceActionOutcome.Refused) return
+
+        val reason = outcome.reason
+        if (reason.isNullOrBlank()) showMessage(RCommon.string.chat_message_action_failed) else showError(reason)
     }
 
     private fun jumpToTargetMessageIfNeeded() {
@@ -698,19 +691,7 @@ class ChatFeedViewModel @Inject constructor(
 
     private fun toggleReaction(messageId: String, emoji: String) = launchUnit {
         val messageReactions = reactions.first()[messageId].orEmpty()
-        val existingUserReaction = messageReactions.find { it.origin.isUser() }
-
-        if (existingUserReaction != null) {
-            interactor.removeUserReaction(chatId, existingUserReaction)
-        }
-
-        if (existingUserReaction?.content?.emoji != emoji) {
-            interactor.addUserReaction(
-                chatId = chatId,
-                messageId = messageId,
-                content = ChatMessageReactionContent(emoji)
-            )
-        }
+        showActionOutcome(interactor.toggleUserReaction(chatId, messageId, emoji, messageReactions))
     }
 
     private fun replyToMessage(message: ChatMessageUiModel) = launchUnit {

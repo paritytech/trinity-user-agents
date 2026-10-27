@@ -1,14 +1,19 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListener
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -33,7 +38,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * The window opens on the newest page and pages older with the cursor of each page. The source never asks
  * `After`: it asks a dropped page again with its own `Before` request, and when the newest page comes back it
- * pages older until a page meets the window. Feed updates change the window in place.
+ * pages older until a page meets the window. Feed updates change the window in place. The messages, edits and
+ * reactions of the user go to the product through `user_action`. The window shows an edit or a reaction before the
+ * answer arrives, and a message once the product has it.
  *
  * The room shows no loading row and no failure: a page that did not
  * arrive is asked again, silently, after a delay that grows with each failure.
@@ -46,6 +53,7 @@ class ProductMessageSource(
     private val querying: ProductChatQuerying,
     private val cache: ProductMessageCaching,
     private val settings: Settings,
+    private val now: () -> Long,
     dispatcher: CoroutineDispatcher,
 ) : ChatMessageSource, ProductFeedListener {
     data class Settings(
@@ -55,9 +63,11 @@ class ProductMessageSource(
         val retryDelay: Duration,
         /** The most pages that one jump asks in each direction. */
         val jumpPageLimit: Int,
+        /** The product wants a `Seen` action when the user sees a newer message. */
+        val reportsSeen: Boolean,
     ) {
         companion object {
-            val Default = Settings(pageSize = 50, windowLimit = 500, retryDelay = 1.seconds, jumpPageLimit = 1_000)
+            val Default = Settings(pageSize = 50, windowLimit = 500, retryDelay = 1.seconds, jumpPageLimit = 1_000, reportsSeen = false)
         }
     }
 
@@ -78,6 +88,10 @@ class ProductMessageSource(
     private val confined = dispatcher.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + confined)
 
+    // A message, an edit or a reaction of the user reaches the product also when the user leaves the room at once.
+    // [close] does not cancel it.
+    private val userActions = CoroutineScope(SupervisorJob() + confined)
+
     private val extensionId = chatId.extensionOrNull()?.extensionId.orEmpty()
     private val window = ProductMessageWindow(settings.windowLimit)
 
@@ -90,6 +104,8 @@ class ProductMessageSource(
     private var newestRetryJob: Job? = null
     private var readiness = ChatRoomReadiness.LOADING
     private var started = false
+    private var seenToReport: String? = null
+    private var isReportingSeen = false
 
     private val state = MutableStateFlow(window.snapshot(chatId, extensionId, paging(), readiness))
 
@@ -167,6 +183,16 @@ class ProductMessageSource(
             scope.launch { loadNewestPage() }.also { firstPageJob = it }
         }
         job.join()
+    }
+
+    override suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome = when (action) {
+        is ChatSourceAction.Send -> userActions.async { send(action) }.await()
+        is ChatSourceAction.Edit -> userActions.async { edit(action) }.await()
+        is ChatSourceAction.ToggleReaction -> userActions.async { toggleReaction(action.messageId, action.emoji) }.await()
+        is ChatSourceAction.MarkSeen -> onSource {
+            markSeen(action.messageIds)
+            ChatSourceActionOutcome.Done
+        }
     }
 
     override suspend fun apply(chatId: ChatId, update: ProductFeedUpdateModel) {
@@ -339,6 +365,119 @@ class ProductMessageSource(
                 window.modify(update.messageId) { it.adjustReaction(update.emoji, update.participantId, placed = false) }
 
             is ProductFeedUpdateModel.StatusChanged -> window.modify(update.messageId) { it.copy(status = update.status) }
+        }
+    }
+
+    // endregion
+
+    // region User actions
+
+    // The room shows its newest messages, and the message once the product has it.
+    private suspend fun send(action: ChatSourceAction.Send): ChatSourceActionOutcome {
+        if (onSource { !window.isAtNewestEnd }) reload()
+
+        val result = querying.userAction(chatId, ChatUserActionModel.NewMessage(action.content, action.replyTo))
+        val error = result.exceptionOrNull()
+        if (error != null) {
+            if (error is CancellationException) throw error
+            Timber.w(error, "A message of a product room failed")
+            return ChatSourceActionOutcome.Refused((error as? ProductChatQueryException.Rejected)?.reason)
+        }
+
+        (result.getOrNull() as? ChatUserActionOutcome.MessageCreated)?.let { created ->
+            window.insertLive(created.message)
+            emit()
+        }
+        return ChatSourceActionOutcome.Done
+    }
+
+    private suspend fun edit(action: ChatSourceAction.Edit): ChatSourceActionOutcome {
+        val original = window.messages[action.messageId] ?: return ChatSourceActionOutcome.Refused(reason = null)
+
+        val edited = (action.content as? ChatMessage.Content.Text)?.text?.let(original.content::withEditedText) ?: action.content
+        window.modify(action.messageId) { it.copy(content = edited, editedAt = now()) }
+        return askAction(ChatUserActionModel.EditMessage(action.messageId, action.content)) { window.put(original) }
+    }
+
+    private suspend fun toggleReaction(messageId: ChatMessageId, emoji: String): ChatSourceActionOutcome {
+        val original = window.messages[messageId] ?: return ChatSourceActionOutcome.Refused(reason = null)
+        val placed = original.reactions.none { it.emoji == emoji && it.reactedByUser }
+
+        // As in a person chat, the user has one reaction on a message: a new emoji replaces the one before.
+        window.modify(messageId) { message ->
+            val others = message.reactions.filter { it.reactedByUser && it.emoji != emoji }.map { it.emoji }
+            others.fold(message) { changed, other -> changed.adjustReaction(other, ProductParticipant.USER, placed = false) }
+                .adjustReaction(emoji, ProductParticipant.USER, placed)
+        }
+        val action = if (placed) ChatUserActionModel.ReactionPlaced(messageId, emoji) else ChatUserActionModel.ReactionRemoved(messageId, emoji)
+        return askAction(action) { window.put(original) }
+    }
+
+    /** Sends an action whose change the window shows already. [revert] undoes the change when the action fails. */
+    private suspend fun askAction(action: ChatUserActionModel, revert: () -> Unit): ChatSourceActionOutcome {
+        emit()
+
+        val error = querying.userAction(chatId, action).exceptionOrNull() ?: return ChatSourceActionOutcome.Done
+        if (error is CancellationException) throw error
+
+        Timber.w(error, "A user action of a product room failed")
+        revert()
+        emit()
+        return ChatSourceActionOutcome.Refused((error as? ProductChatQueryException.Rejected)?.reason)
+    }
+
+    // endregion
+
+    // region Seen
+
+    /** Notes the newest of the messages as seen, and tells the product when it asks for `Seen`. */
+    private fun markSeen(messageIds: Set<ChatMessageId>) {
+        val ids = window.orderedIds
+        val newestIndex = ids.indexOfLast { it in messageIds }
+        val newest = ids.getOrNull(newestIndex)?.let { window.messages[it] } ?: return
+
+        if (isNewer(newest, window.seenMessageId, window.seenTimestamp, ids)) {
+            window.seenMessageId = newest.messageId
+            window.seenTimestamp = newest.timestamp
+            emit()
+        }
+
+        if (!settings.reportsSeen) return
+
+        val reported = window.reportedSeenMessageId
+        if (isNewer(newest, reported, reported?.let { window.messages[it] }?.timestamp, ids)) {
+            seenToReport = newest.messageId
+            reportSeenIfNeeded()
+        }
+    }
+
+    private fun isNewer(message: ProductRoomMessage, otherId: String?, otherTimestamp: Long?, ids: List<String>): Boolean {
+        if (otherId == null) return true
+        if (otherId == message.messageId) return false
+
+        val index = ids.indexOf(message.messageId)
+        val otherIndex = ids.indexOf(otherId)
+        if (index != -1 && otherIndex != -1) return index > otherIndex
+
+        return message.timestamp > (otherTimestamp ?: 0)
+    }
+
+    /** Sends one `Seen` at a time. A newer message that the user sees in the meantime goes next. */
+    private fun reportSeenIfNeeded() {
+        if (isReportingSeen) return
+        val messageId = seenToReport ?: return
+
+        isReportingSeen = true
+        seenToReport = null
+
+        scope.launch {
+            querying.userAction(chatId, ChatUserActionModel.Seen(messageId))
+                .onFailure { Timber.w(it, "A seen report of a product room failed") }
+
+            window.reportedSeenMessageId = messageId
+            isReportingSeen = false
+            reportSeenIfNeeded()
+            storeCache()
         }
     }
 

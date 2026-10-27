@@ -4,7 +4,7 @@ import AsyncExtensions
 /// Where the room screen reads its messages and where it writes what the user does.
 ///
 /// `CoreDataMessageSource` reads and writes the host database. `ProductMessageSource` asks the product for
-/// pages.
+/// pages and sends the actions of the user to the product.
 protocol ChatMessageSourcing: AnyObject, Sendable {
     /// The window of messages, oldest first. A new value comes each time the window changes.
     func snapshots() async throws -> AnyAsyncSequence<MessageListSnapshot>
@@ -35,19 +35,23 @@ struct MessageListSnapshot: Equatable {
     let editedAt: [Chat.MessageId: Chat.Timestamp]
     /// The messages that replies of the window quote and the window does not hold, by their ids.
     let replyPreviews: [Chat.MessageId: Chat.LocalMessage]
+    /// The messages with a reaction of the contact that the user has not seen yet, oldest first.
+    let unseenReactionTargets: [Chat.MessageId]
 
     init(
         messages: [Chat.LocalMessage],
         paging: ChatPagingState = .complete,
         readiness: ChatRoomReadiness = .ready,
         editedAt: [Chat.MessageId: Chat.Timestamp] = [:],
-        replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
+        replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:],
+        unseenReactionTargets: [Chat.MessageId] = []
     ) {
         self.messages = messages
         self.paging = paging
         self.readiness = readiness
         self.editedAt = editedAt
         self.replyPreviews = replyPreviews
+        self.unseenReactionTargets = unseenReactionTargets
     }
 }
 
@@ -112,4 +116,9 @@ enum ChatSourceActionOutcome: Equatable {
 enum ChatMessageSourceError: Error, Equatable {
     /// This source does not do the action.
     case unsupported
+}
+
+/// The product refused an action of the user. The room screen shows the reason.
+struct ChatUserActionRefusal: Error, Equatable {
+    let reason: String?
 }

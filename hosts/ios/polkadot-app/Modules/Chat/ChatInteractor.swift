@@ -205,6 +205,16 @@ extension ChatInteractor: ChatInteractorInputProtocol {
     func readMessages(_ identifiers: [Chat.MessageId]) {
         Task { [engine, notificationsCleaner] in
             do {
+                // A product-source room knows which message the user saw last, and tells the product.
+                if await engine.messageStore() == .product {
+                    let seesNewMessage = await self.state.noteSeen(messageIds: identifiers)
+                    try await engine.markAsSeen(messageIds: Set(identifiers))
+                    if seesNewMessage {
+                        try await notificationsCleaner.cleanNotifications(for: chatId, messageIds: identifiers)
+                    }
+                    return
+                }
+
                 let messageIdsToMark = await self.state.markAsSeen(messageIds: identifiers)
 
                 guard !messageIdsToMark.isEmpty else {
@@ -227,6 +237,11 @@ extension ChatInteractor: ChatInteractorInputProtocol {
     func toggleReaction(messageId: String, emoji: String) {
         Task {
             do {
+                if await engine.messageStore() == .product {
+                    try await perform(.toggleReaction(messageId: messageId, emoji: emoji))
+                    return
+                }
+
                 let userOrigin = Chat.LocalMessage.Origin.user
 
                 let ownReactions = try await reactionRepository
@@ -378,6 +393,13 @@ extension ChatInteractor: ChatInteractorInputProtocol {
 }
 
 private extension ChatInteractor {
+    /// Sends the action to the message source. A refusal is logged.
+    func perform(_ action: ChatSourceAction) async throws {
+        if case let .refused(reason) = try await engine.perform(action) {
+            logger.error("The product refused \(action): \(reason ?? "")")
+        }
+    }
+
     /// A leave or a block of a person chat dismisses the screen on its own path.
     var isProductRoom: Bool {
         chatId.roomId != nil

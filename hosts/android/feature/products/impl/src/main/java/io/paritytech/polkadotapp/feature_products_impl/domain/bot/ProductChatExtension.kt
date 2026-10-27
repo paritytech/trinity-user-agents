@@ -21,10 +21,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -132,7 +135,7 @@ class ProductChatExtension(
 
             chatExtensionContext.subscribeNewMessages(NewMessagesRoomFilter.AnyFromExtension(id))
                 .filter { it.origin !is ChatMessageOrigin.Extension }
-                .onEach { message -> routeMessage(message) }
+                .onEach { message -> routeMessage(chatExtensionContext, message) }
                 .launchIn(scope)
 
             // Enable chat messaging before the worker's started hook so an initial/welcome message
@@ -196,10 +199,30 @@ class ProductChatExtension(
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.messagesPage(room, anchor, pageSize)
             }
+
+            override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.userAction(room, action.withProductIds(chatId))
+            }
         }
     }
 
-    private suspend fun routeMessage(message: ChatMessage) {
+    // The room screen may name a message by its store id; the product knows it by its own id.
+    private fun ChatUserActionModel.withProductIds(chatId: ChatId): ChatUserActionModel {
+        fun productId(id: String) = ProductMessageIds.product(id, chatId)
+        return when (this) {
+            is ChatUserActionModel.NewMessage -> copy(replyTo = replyTo?.let(::productId))
+            is ChatUserActionModel.EditMessage -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.ReactionPlaced -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.ReactionRemoved -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.Seen -> copy(messageId = productId(messageId))
+        }
+    }
+
+    // In a room whose product keeps the messages, the user's messages go to `user_action`.
+    private suspend fun routeMessage(context: ChatExtensionContext, message: ChatMessage) {
+        val config = context.roomDeclarations(message.chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
+        if (config.productSource) return
         when (val content = message.content) {
             is ChatMessage.Content.Text -> runningWorker.onUserMessage(message.chatId.productRoomId(id), content.text)
             else -> {}

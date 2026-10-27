@@ -37,6 +37,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
@@ -60,6 +61,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
@@ -199,13 +202,41 @@ class ChatFeedInteractor @Inject internal constructor(
         chatId: ChatId,
         text: String,
         replyToMessageId: ChatMessageId?
-    ) {
+    ): ChatSourceActionOutcome {
         val content = ChatMessage.Content.Text(text)
+
+        // A product-source room sends the message to the product, which keeps it.
+        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId))?.let { return it }
+
         chatEngine.sendUserMessage(
             chatId = chatId,
             content = content,
             replyToMessageId = replyToMessageId
         )
+        return ChatSourceActionOutcome.Done
+    }
+
+    /**
+     * Adds the reaction of the user, or removes it when the user has it. In a host-store room the user has one
+     * reaction a message, so a new emoji replaces the old one.
+     */
+    suspend fun toggleUserReaction(
+        chatId: ChatId,
+        messageId: ChatMessageId,
+        emoji: String,
+        messageReactions: List<ChatMessageReaction>,
+    ): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.ToggleReaction(messageId, emoji))?.let { return it }
+
+        val existingUserReaction = messageReactions.find { it.origin.isUser() }
+        if (existingUserReaction != null) removeUserReaction(chatId, existingUserReaction)
+        if (existingUserReaction?.content?.emoji != emoji) addUserReaction(chatId, messageId, ChatMessageReactionContent(emoji))
+        return ChatSourceActionOutcome.Done
+    }
+
+    /** Tells the product of a product-source room that the user saw the message. The host database needs nothing. */
+    suspend fun reportMessageSeen(chatId: ChatId, messageId: ChatMessageId) {
+        performInProductRoom(chatId, ChatSourceAction.MarkSeen(setOf(messageId)))
     }
 
     suspend fun sendAttachmentMessage(
@@ -341,8 +372,11 @@ class ChatFeedInteractor @Inject internal constructor(
         return deleteContactChatLocalData(chatId)
     }
 
-    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String) {
+    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.Edit(messageId, ChatMessage.Content.Text(newText)))?.let { return it }
+
         chatEngine.editMessage(chatId, messageId, newText)
+        return ChatSourceActionOutcome.Done
     }
 
     suspend fun getEditHistory(chatId: ChatId, messageId: ChatMessageId): List<MessageEditHistoryItem> {
@@ -445,6 +479,10 @@ class ChatFeedInteractor @Inject internal constructor(
             removeContactUseCase.removeContact(contactChat.contactAccountId)
         }
     }
+
+    /** The outcome of the action in a product-source room, or null when the host database keeps the messages. */
+    private suspend fun performInProductRoom(chatId: ChatId, action: ChatSourceAction): ChatSourceActionOutcome? =
+        roomSource(chatId).productSource()?.perform(action)
 
     private fun roomSource(chatId: ChatId): ChatRoomSourceContext =
         roomSources.computeIfAbsent(chatId) { roomSourceContextFactory.create(it) }

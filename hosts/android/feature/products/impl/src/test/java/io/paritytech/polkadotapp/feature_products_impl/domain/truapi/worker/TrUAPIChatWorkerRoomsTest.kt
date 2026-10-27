@@ -9,7 +9,10 @@ import io.mockk.verify
 import io.parity.truapi.ChatQueryException
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -25,10 +28,14 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatPageAnchor
+import uniffi.truapi.ChatUserAction
 import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
+import uniffi.truapi.ProductChatUserActionError
+import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ProductRuntimeException
 
 class TrUAPIChatWorkerRoomsTest {
@@ -144,5 +151,39 @@ class TrUAPIChatWorkerRoomsTest {
 
         assertTrue(page.isFailure)
         assertTrue(currentTime < 20_000)
+    }
+
+    @Test
+    fun `a new message goes to the product with its body`() = runTest {
+        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionItem.Acknowledged
+
+        worker().userAction(room, ChatUserActionModel.NewMessage(ChatMessage.Content.Text("hi"), replyTo = "m0", messageId = "id-1", timestamp = 7))
+
+        coVerify {
+            execution.chatUserAction(
+                match { it.roomId == "lobby" && it.action == ChatUserAction.NewMessage(ChatMessageBody.Text("hi"), "m0", "id-1", 7uL) },
+                any(),
+            )
+        }
+    }
+
+    @Test
+    fun `an unavailable worker is asked an action once more after a second`() = runTest {
+        coEvery { execution.chatUserAction(any(), any()) } throws ChatQueryException.Failed("not connected") andThen
+            ProductChatUserActionItem.Acknowledged
+
+        val outcome = worker().userAction(room, ChatUserActionModel.Seen("m1"))
+
+        assertEquals(ChatUserActionOutcome.Acknowledged, outcome.getOrNull())
+        coVerify(exactly = 2) { execution.chatUserAction(any(), any()) }
+    }
+
+    @Test
+    fun `a rejected action carries its reason to the screen`() = runTest {
+        coEvery { execution.chatUserAction(any(), any()) } throws ChatQueryException.ActionRefused(ProductChatUserActionError.Rejected("too long"))
+
+        val outcome = worker().userAction(room, ChatUserActionModel.Seen("m1"))
+
+        assertEquals("too long", (outcome.exceptionOrNull() as ProductChatQueryException.Rejected).reason)
     }
 }

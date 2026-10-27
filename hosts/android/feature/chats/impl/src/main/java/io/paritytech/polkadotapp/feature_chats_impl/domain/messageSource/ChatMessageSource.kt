@@ -7,7 +7,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Where the room screen reads its messages. [HostStoreMessageSource] reads the host database.
+ * Where the room screen reads its messages and where it writes what the user does. [HostStoreMessageSource] reads the
+ * host database. [ProductMessageSource] asks the product for pages and sends the actions of the user to the product.
  */
 interface ChatMessageSource {
     /** The window of messages. A new value comes each time the window changes. */
@@ -21,6 +22,8 @@ interface ChatMessageSource {
 
     /** Asks for pages until the message is in the window. False when both ends of the room come first. */
     suspend fun jump(messageId: ChatMessageId): Boolean
+
+    suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome
 
     /** Asks for the newest page again, for example after the room became unavailable. */
     suspend fun reload()
@@ -89,4 +92,25 @@ sealed interface ChatPageOutcome {
 
     /** The product is not available. */
     data object Unavailable : ChatPageOutcome
+}
+
+/** An action of the user on the messages of a room. Ids are the ids of the window. */
+sealed interface ChatSourceAction {
+    /** The user sent a message. The window shows the newest messages, and the message once the product has it. */
+    data class Send(val content: ChatMessage.Content, val replyTo: ChatMessageId?) : ChatSourceAction
+
+    data class Edit(val messageId: ChatMessageId, val content: ChatMessage.Content) : ChatSourceAction
+
+    /** Adds the reaction of the user, or removes it when the user has it. */
+    data class ToggleReaction(val messageId: ChatMessageId, val emoji: String) : ChatSourceAction
+
+    /** The user saw these messages. */
+    data class MarkSeen(val messageIds: Set<ChatMessageId>) : ChatSourceAction
+}
+
+sealed interface ChatSourceActionOutcome {
+    data object Done : ChatSourceActionOutcome
+
+    /** The product refused the action, and the window shows the state before it. [reason] is for the user. */
+    data class Refused(val reason: String?) : ChatSourceActionOutcome
 }

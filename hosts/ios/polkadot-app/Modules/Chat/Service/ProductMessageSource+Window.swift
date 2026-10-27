@@ -80,6 +80,7 @@ extension ProductMessageSource {
         let seenIndex = seenMessageId.flatMap { ids.firstIndex(of: $0) }
         var editedAt: [Chat.MessageId: Chat.Timestamp] = [:]
         var replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
+        var unseenReactionTargets: [Chat.MessageId] = []
 
         let localMessages = ids.enumerated().compactMap { index, id -> Chat.LocalMessage? in
             guard let message = messages[id] else {
@@ -93,6 +94,10 @@ extension ProductMessageSource {
             if let replyTo = message.replyTo, messages[replyTo] == nil,
                let quoted = message.replyPreviewMessage(chatId: chatId, extensionId: productId) {
                 replyPreviews[replyTo] = quoted
+            }
+
+            if message.hasUnseenReaction {
+                unseenReactionTargets.append(id)
             }
 
             // The user saw the message on this device before the product marked it read.
@@ -113,7 +118,8 @@ extension ProductMessageSource {
             paging: paging,
             readiness: readiness,
             editedAt: editedAt,
-            replyPreviews: replyPreviews
+            replyPreviews: replyPreviews,
+            unseenReactionTargets: unseenReactionTargets
         ))
     }
 
@@ -145,6 +151,11 @@ extension ProductMessageSource {
 }
 
 extension ChatMessage {
+    /// A reaction of the contact that the user has not seen yet.
+    var hasUnseenReaction: Bool {
+        reactions.contains(where: \.unseen)
+    }
+
     /// The replied message as the room screen quotes it, when the window does not hold it.
     func replyPreviewMessage(chatId: Chat.Id, extensionId: ChatExtension.Id) -> Chat.LocalMessage? {
         guard let replyTo, let replyPreview else {

@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
@@ -22,7 +24,8 @@ class RealProductMessageSourceFactory @Inject constructor(
             chatId = chatId,
             querying = querying ?: MissingProductChatQuerying,
             cache = cache,
-            settings = ProductMessageSource.Settings.Default,
+            settings = ProductMessageSource.Settings.Default.copy(reportsSeen = policy.reportsSeen),
+            now = System::currentTimeMillis,
             dispatcher = dispatchers.computation,
         )
 
@@ -43,5 +46,8 @@ private class FeedRegisteredSource(
 /** The queries of a product that does not serve product-source rooms. Each query fails as unavailable. */
 internal object MissingProductChatQuerying : ProductChatQuerying {
     override suspend fun messagesPage(chatId: ChatId, anchor: ChatPageAnchorModel, pageSize: Int): Result<ProductMessagesPage> =
+        Result.failure(ProductChatQueryException.Unavailable(null))
+
+    override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> =
         Result.failure(ProductChatQueryException.Unavailable(null))
 }

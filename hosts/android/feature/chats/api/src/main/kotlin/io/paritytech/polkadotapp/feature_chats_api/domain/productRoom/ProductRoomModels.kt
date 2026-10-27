@@ -49,6 +49,36 @@ sealed interface ChatPageAnchorModel {
     data class Before(val cursor: String?) : ChatPageAnchorModel
 }
 
+/** What the user did in a room whose messages the product keeps (`ChatUserAction`). Ids are product ids. */
+sealed interface ChatUserActionModel {
+    /**
+     * [messageId] is the id that the host chose for the message, a UUID. The product sends the message under it, and a
+     * second `NewMessage` with the same id sends nothing new. [timestamp] is when the user wrote it, in milliseconds
+     * since the Unix epoch: the product sends the message with that time.
+     */
+    data class NewMessage(
+        val content: ChatMessage.Content,
+        val replyTo: String?,
+        val messageId: String? = null,
+        val timestamp: Long? = null,
+    ) : ChatUserActionModel
+
+    data class EditMessage(val messageId: String, val content: ChatMessage.Content) : ChatUserActionModel
+
+    data class ReactionPlaced(val messageId: String, val emoji: String) : ChatUserActionModel
+
+    data class ReactionRemoved(val messageId: String, val emoji: String) : ChatUserActionModel
+
+    data class Seen(val messageId: String) : ChatUserActionModel
+}
+
+sealed interface ChatUserActionOutcome {
+    /** The answer to [ChatUserActionModel.NewMessage]: the message as the product keeps it. */
+    data class MessageCreated(val message: ProductRoomMessage) : ChatUserActionOutcome
+
+    data object Acknowledged : ChatUserActionOutcome
+}
+
 /** Why a query to the product has no answer. */
 sealed class ProductChatQueryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
     /** The product cannot answer this question. The host hides the feature; this is not a failure. */

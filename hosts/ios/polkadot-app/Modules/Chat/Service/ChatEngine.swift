@@ -269,6 +269,13 @@ extension ChatEngine: ChatEngineProtocol {
 
 private extension ChatEngine {
     func sendUserMessageToExistingChat(with content: Chat.LocalMessage.Content) async throws {
-        _ = try await sourceContext.source().perform(.send(content))
+        try await performRefusable(.send(content))
+    }
+
+    /// Throws ``ChatUserActionRefusal`` when the product refuses the action, so the room screen shows why.
+    func performRefusable(_ action: ChatSourceAction) async throws {
+        if case let .refused(reason) = try await sourceContext.source().perform(action) {
+            throw ChatUserActionRefusal(reason: reason)
+        }
     }
 }

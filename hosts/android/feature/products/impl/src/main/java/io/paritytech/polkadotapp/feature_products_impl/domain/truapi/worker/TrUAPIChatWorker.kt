@@ -7,6 +7,9 @@ import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -44,6 +47,7 @@ import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
@@ -105,6 +109,14 @@ class TrUAPIChatWorker(
     ): Result<ProductMessagesPage> = query { execution ->
         execution.chatMessagesQuery(ProductChatMessagesQueryRequest(roomId.value, anchor.toCore(), pageSize.toUInt()))
             .toModel()
+    }
+
+    override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
+        val coreAction = action.toCore()
+            ?: return Result.failure(ProductChatQueryException.Failed("the message has no body that the product can take"))
+        return query { execution ->
+            execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel()
+        }
     }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an

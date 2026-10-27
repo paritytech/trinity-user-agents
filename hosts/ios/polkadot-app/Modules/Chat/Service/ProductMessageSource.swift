@@ -8,7 +8,8 @@ import TrUAPIHost
 /// The window opens on the newest page. `loadOlder` adds the page before the window and `loadNewer` the page
 /// after it. The window holds at most `Settings.windowLimit` messages, so a new page at one end drops whole
 /// pages at the other end. The source keeps the request of each dropped page and asks it again when the user
-/// comes back. Feed updates change the window in place.
+/// comes back. Feed updates change the window in place. The actions of the user go to the product as
+/// `user_action` queries, and the window shows their result before the answer arrives.
 actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     struct Settings: Sendable {
         var pageSize: UInt32 = 50
@@ -17,6 +18,12 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         var retryDelay: Duration = .seconds(1)
         /// The most pages that one jump asks in each direction.
         var jumpPageLimit = 1_000
+        /// The product wants a `Seen` action when the user sees a newer message.
+        var reportsSeen = false
+        /// The wait before a `Seen` that the product did not take goes again.
+        var seenRetryDelay: Duration = .seconds(3)
+        /// The most times that one `Seen` goes to the product.
+        var seenAttempts = 3
     }
 
     struct Page {
@@ -45,6 +52,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     let querying: ProductChatQuerying
     let cache: ProductMessageCaching
     let settings: Settings
+    let now: @Sendable () -> UInt64
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
@@ -68,6 +76,10 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     var seenMessageId: String?
     var seenTimestamp: UInt64?
     var reportedSeenMessageId: String?
+    var seenToReport: String?
+    var isReportingSeen = false
+    /// How many times the source sent the `Seen` of ``seenToReport`` with no answer of the product.
+    var failedSeenAttempts = 0
 
     init(
         chatId: Chat.Id,
@@ -76,6 +88,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         querying: ProductChatQuerying,
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: Settings = Settings(),
+        now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -84,6 +97,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         self.querying = querying
         self.cache = cache
         self.settings = settings
+        self.now = now
         self.logger = logger
         subject = AsyncCurrentValueSubject(MessageListSnapshot(
             messages: [],
@@ -233,9 +247,27 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         await task.value
     }
 
-    /// The window takes no action of the user.
-    func perform(_: ChatSourceAction) async throws -> ChatSourceActionOutcome {
-        throw ChatMessageSourceError.unsupported
+    func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
+        switch action {
+        case let .send(.edited(edit)):
+            return await perform(.editMessage(
+                messageId: edit.messageId,
+                body: editedBody(of: edit.messageId, text: edit.newContent.text ?? "")
+            ))
+        case let .send(content):
+            guard let userAction = content.productUserAction else {
+                throw ChatMessageSourceError.unsupported
+            }
+            return await perform(userAction)
+        case let .markSeen(messageIds):
+            markSeen(messageIds)
+            return .done
+        case let .toggleReaction(messageId, emoji):
+            let hasReaction = messages[messageId]?.reactions.contains { $0.emoji == emoji && $0.reactedByUser } ?? false
+            return await perform(hasReaction
+                ? .reactionRemoved(messageId: messageId, emoji: emoji)
+                : .reactionPlaced(messageId: messageId, emoji: emoji))
+        }
     }
 
     // MARK: - Feed updates

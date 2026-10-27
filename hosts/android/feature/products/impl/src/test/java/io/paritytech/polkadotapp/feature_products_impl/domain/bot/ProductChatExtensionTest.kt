@@ -11,9 +11,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomP
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -90,6 +94,7 @@ class ProductChatExtensionTest {
         scope: CoroutineScope,
         ownRooms: Flow<List<ChatId>>,
         incoming: Flow<ChatMessage> = emptyFlow(),
+        roomDeclarations: ChatRoomDeclarations? = null,
     ): ChatExtensionContext {
         val computationalScope = object : ComputationalScope, CoroutineScope by scope {}
 
@@ -97,17 +102,19 @@ class ProductChatExtensionTest {
             every { it.scope } returns computationalScope
             every { it.subscribeNewMessages(any(), any()) } returns incoming
             every { it.subscribeOwnRooms() } returns ownRooms
+            coEvery { it.roomDeclarations(any()) } returns roomDeclarations
         }
     }
 
     private fun TestScope.withChatHost(
         ownRooms: Flow<List<ChatId>> = emptyFlow(),
         incoming: Flow<ChatMessage> = emptyFlow(),
+        roomDeclarations: ChatRoomDeclarations? = null,
         block: context(ChatExtensionContext) (CoroutineScope) -> Unit,
     ) {
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
         try {
-            with(chatExtensionContext(hostScope, ownRooms, incoming)) { block(hostScope) }
+            with(chatExtensionContext(hostScope, ownRooms, incoming, roomDeclarations)) { block(hostScope) }
             advanceUntilIdle()
         } finally {
             hostScope.cancel()
@@ -192,6 +199,30 @@ class ProductChatExtensionTest {
 
         assertEquals(listOf("open" to ProductChatIdParameter(ROOM), "close" to ProductChatIdParameter(ROOM)), worker.roomCalls)
         assertEquals(null, extension.roomLifecycle(ChatId.forExtension(extensionId)))
+    }
+
+    @Test
+    fun `a room whose product keeps the messages sends no user message`() = runTest {
+        val worker = RecordingWorker()
+        val productSource = ChatRoomDeclarations.EMPTY.copy(config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true))
+
+        withChatHost(incoming = flowOf(textMessage("hello")), roomDeclarations = productSource) {
+            extension(FakeRefCounter(worker)).startGlobalWork()
+        }
+
+        assertTrue(worker.delivered.isEmpty())
+    }
+
+    @Test
+    fun `a user action names its message by the product id`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Seen(ProductMessageIds.stored("m1", room)))
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Seen("m2"))
+
+        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Seen("m1"), ChatUserActionModel.Seen("m2")), worker.userActions)
     }
 
     private fun textMessage(text: String) = ChatMessage.new(

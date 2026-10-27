@@ -51,10 +51,24 @@ fun ChatResource.toModel(): ChatResourceModel = when (this) {
     is ChatResource.Hop -> ChatResourceModel.Hop(identifier.toDataByteArray(), ticket.toDataByteArray(), node, size.toLong())
 }
 
+fun ChatResourceModel.toCore(): ChatResource = when (this) {
+    is ChatResourceModel.Hop -> ChatResource.Hop(identifier.value, ticket.value, node, size.toULong())
+}
+
 fun ChatMediaItem.toModel(): ChatMediaItemModel = when (this) {
     is ChatMediaItem.Image -> ChatMediaItemModel.Image(resource.toModel(), meta.toModel())
     is ChatMediaItem.Video -> ChatMediaItemModel.Video(resource.toModel(), meta.toModel())
     is ChatMediaItem.File -> ChatMediaItemModel.File(resource.toModel(), meta.toModel(), fileName)
+}
+
+fun ChatMediaItemModel.toCore(): ChatMediaItem {
+    val resource = resource.toCore()
+    val meta = meta.toCore()
+    return when (this) {
+        is ChatMediaItemModel.Image -> ChatMediaItem.Image(resource, meta)
+        is ChatMediaItemModel.Video -> ChatMediaItem.Video(resource, meta)
+        is ChatMediaItemModel.File -> ChatMediaItem.File(resource, meta, fileName)
+    }
 }
 
 private fun ChatMediaMeta.toModel() = ChatMediaMetaModel(
@@ -65,4 +79,14 @@ private fun ChatMediaMeta.toModel() = ChatMediaMetaModel(
     placeholder = placeholder,
     alt = alt,
     durationMs = durationMs?.toLong(),
+)
+
+private fun ChatMediaMetaModel.toCore() = ChatMediaMeta(
+    mimeType = mimeType,
+    sizeBytes = sizeBytes?.toULong(),
+    width = width?.toUInt(),
+    height = height?.toUInt(),
+    placeholder = placeholder,
+    alt = alt,
+    durationMs = durationMs?.toULong(),
 )

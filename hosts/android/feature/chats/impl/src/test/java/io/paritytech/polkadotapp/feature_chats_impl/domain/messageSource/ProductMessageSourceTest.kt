@@ -1,9 +1,16 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
@@ -229,7 +236,7 @@ class ProductMessageSourceTest {
     }
 
     @Test
-    fun `an incoming message is unread until the product reads it`() = runBlocking<Unit> {
+    fun `an incoming message is unread until the product reads it or the user sees it`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 3)
         val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
 
@@ -245,6 +252,10 @@ class ProductMessageSourceTest {
             ),
             source.snapshot.messages.reversed().map { it.status },
         )
+
+        source.perform(ChatSourceAction.MarkSeen(setOf("m3")))
+
+        assertTrue(source.snapshot.messages.all { it.status == ChatMessage.Status.IS_READ })
     }
 
     @Test
@@ -259,21 +270,169 @@ class ProductMessageSourceTest {
 
     // endregion
 
+    // region User actions
+
+    @Test
+    fun `a sent message goes to the product, and the window shows it once the product has it`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2)
+        val created = productMessage(2, participant = "user")
+        val querying = ScriptedProductChatQuerying(
+            answerPage = history.answer,
+            answerAction = { Result.success(ChatUserActionOutcome.MessageCreated(created)) },
+        )
+        val source = openedSource(querying)
+
+        val outcome = source.perform(ChatSourceAction.Send(text("hello"), replyTo = "m1"))
+
+        assertEquals(ChatSourceActionOutcome.Done, outcome)
+        val sent = querying.actionRequests.single() as ChatUserActionModel.NewMessage
+        assertEquals("hello", (sent.content as ChatMessage.Content.Text).text)
+        assertEquals("m1", sent.replyTo)
+        assertEquals(listOf("m0", "m1", "m2"), source.oldestFirstIds())
+        assertTrue(source.snapshot.messages.first().origin is ChatMessageOrigin.User)
+    }
+
+    @Test
+    fun `a message that the product refuses shows the reason and stays out of the window`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2)
+        val querying = ScriptedProductChatQuerying(
+            answerPage = history.answer,
+            answerAction = { Result.failure(ProductChatQueryException.Rejected("Too long")) },
+        )
+        val source = openedSource(querying)
+
+        val outcome = source.perform(ChatSourceAction.Send(text("hello"), replyTo = null))
+
+        assertEquals(ChatSourceActionOutcome.Refused("Too long"), outcome)
+        assertEquals(listOf("m0", "m1"), source.oldestFirstIds())
+    }
+
+    @Test
+    fun `a message sent while the newest page is out of the window brings the newest page back`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2_000)
+        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+        val source = openedSource(querying)
+        repeat(20) { source.loadOlder() }
+        assertEquals(ChatPagingState.Edge.MORE, source.snapshot.paging.newer)
+
+        source.perform(ChatSourceAction.Send(text("hello"), replyTo = null))
+
+        assertEquals(history.ids(1_950..1_999), source.oldestFirstIds())
+    }
+
+    @Test
+    fun `a refused edit restores the body`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 5, participant = "user")
+        val querying = ScriptedProductChatQuerying(
+            answerPage = history.answer,
+            answerAction = { Result.failure(ProductChatQueryException.Rejected("Locked")) },
+        )
+        val source = openedSource(querying)
+        val original = source.snapshot.messages.single { it.id == "m3" }.content
+
+        val outcome = source.perform(ChatSourceAction.Edit("m3", text("new")))
+
+        assertEquals(ChatSourceActionOutcome.Refused("Locked"), outcome)
+        assertTrue(querying.actionRequests.single() is ChatUserActionModel.EditMessage)
+        assertEquals(original, source.snapshot.messages.single { it.id == "m3" }.content)
+        assertFalse("m3" in source.snapshot.revisions)
+    }
+
+    @Test
+    fun `an edit of a message with media keeps the media and takes the text as caption`() = runBlocking<Unit> {
+        val querying = ScriptedProductChatQuerying()
+        val source = openedSource(querying)
+        val media = ChatMediaItemModel.Image(
+            ChatResourceModel.Hop(byteArrayOf(1).toDataByteArray(), byteArrayOf(2).toDataByteArray(), "wss://hop.example", size = 1),
+            ChatMediaMetaModel("image/png", sizeBytes = 1, width = 1, height = 1, placeholder = null, alt = null),
+        )
+        val photo = productMessage(1, participant = "user").copy(content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText("old", listOf(media))))
+        source.apply(productRoom, ProductFeedUpdateModel.New(photo))
+
+        source.perform(ChatSourceAction.Edit("m1", text("new")))
+
+        val body = (source.snapshot.messages.single().content as ChatMessage.Content.ProductBody).body as ProductMessageBody.RichText
+        assertEquals("new", body.text)
+        assertEquals(listOf(media), body.media)
+        assertEquals(ChatUserActionModel.EditMessage("m1", text("new")).messageId, (querying.actionRequests.single() as ChatUserActionModel.EditMessage).messageId)
+    }
+
+    @Test
+    fun `as in a person chat, a new emoji replaces the reaction of the user`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2)
+        val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
+
+        source.perform(ChatSourceAction.ToggleReaction("m1", "👍"))
+        source.perform(ChatSourceAction.ToggleReaction("m1", "🔥"))
+
+        assertEquals(listOf("🔥"), source.snapshot.reactions.getValue("m1").map { it.content.emoji })
+    }
+
+    @Test
+    fun `a reaction toggles the reaction of the user`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2)
+        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+        val source = openedSource(querying)
+
+        source.perform(ChatSourceAction.ToggleReaction("m1", "👍"))
+        assertTrue(source.snapshot.reactions.getValue("m1").single().origin is ChatMessageOrigin.User)
+
+        source.perform(ChatSourceAction.ToggleReaction("m1", "👍"))
+        assertFalse("m1" in source.snapshot.reactions)
+
+        assertEquals(
+            listOf(ChatUserActionModel.ReactionPlaced("m1", "👍"), ChatUserActionModel.ReactionRemoved("m1", "👍")),
+            querying.actionRequests,
+        )
+    }
+
+    @Test
+    fun `seen goes to the product for a newer message only`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 10)
+        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+        val source = openedSource(querying, reportsSeen = true)
+
+        source.perform(ChatSourceAction.MarkSeen(setOf("m4", "m9")))
+        waitFor { querying.actionRequests.firstOrNull() }
+        source.perform(ChatSourceAction.MarkSeen(setOf("m5")))
+        source.perform(ChatSourceAction.MarkSeen(setOf("m9")))
+        delay(50)
+
+        assertEquals(listOf(ChatUserActionModel.Seen("m9")), querying.actionRequests)
+    }
+
+    @Test
+    fun `seen stays in the host when the product does not ask for it`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 10)
+        val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+        val source = openedSource(querying, reportsSeen = false)
+
+        source.perform(ChatSourceAction.MarkSeen(setOf("m9")))
+        delay(50)
+
+        assertTrue(querying.actionRequests.isEmpty())
+    }
+
+    // endregion
+
     private fun source(
         querying: ScriptedProductChatQuerying,
         cache: ProductMessageCaching = ProductMessageCache(),
+        reportsSeen: Boolean = false,
     ) = ProductMessageSource(
         chatId = productRoom,
         querying = querying,
         cache = cache,
-        settings = ProductMessageSource.Settings.Default.copy(retryDelay = 1.milliseconds),
+        settings = ProductMessageSource.Settings.Default.copy(retryDelay = 1.milliseconds, reportsSeen = reportsSeen),
+        now = { 1_000_000L },
         dispatcher = Dispatchers.Default,
     )
 
     private suspend fun openedSource(
         querying: ScriptedProductChatQuerying,
         cache: ProductMessageCaching = ProductMessageCache(),
-    ): ProductMessageSource = source(querying, cache).apply {
+        reportsSeen: Boolean = false,
+    ): ProductMessageSource = source(querying, cache, reportsSeen).apply {
         start()
         awaitFirstPage()
     }

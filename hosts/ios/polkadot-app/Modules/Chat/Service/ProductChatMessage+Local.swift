@@ -165,6 +165,31 @@ private extension ChatMessageBody {
     }
 }
 
+extension Chat.LocalMessage.Content {
+    /// The user action that sends this content to the product, or nil when a product room cannot carry it.
+    var productUserAction: ChatUserAction? {
+        switch self {
+        case let .text(text):
+            .newMessage(body: .text(text: text), replyTo: nil, messageId: nil, timestamp: nil)
+        case let .reply(reply):
+            .newMessage(
+                body: .text(text: reply.ownContent.text ?? ""),
+                replyTo: reply.messageId,
+                messageId: nil,
+                timestamp: nil
+            )
+        case let .edited(edit):
+            .editMessage(messageId: edit.messageId, body: .text(text: edit.newContent.text ?? ""))
+        case let .reacted(reaction):
+            .reactionPlaced(messageId: reaction.messageId, emoji: reaction.emoji)
+        case let .reactionRemoved(reaction):
+            .reactionRemoved(messageId: reaction.messageId, emoji: reaction.emoji)
+        default:
+            nil
+        }
+    }
+}
+
 private extension ChatContactEvent {
     var nativeContent: Chat.LocalMessage.Content {
         switch self {
