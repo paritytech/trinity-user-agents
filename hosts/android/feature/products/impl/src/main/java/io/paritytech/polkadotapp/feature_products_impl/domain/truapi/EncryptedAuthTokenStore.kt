@@ -19,8 +19,8 @@ import javax.inject.Singleton
  * the opaque key the core derives from the signed-in account, the product and its service, so no
  * lookup here reaches another account's or product's token.
  *
- * Preferences cannot be listed, so an encrypted index maps each key to its product and account
- * for counting and clearing. A key enters the index before its token is written and leaves it if
+ * An entry's field names neither its product nor its account, so an encrypted index maps each key
+ * to both for counting and clearing. A key enters the index before its token is written and leaves it if
  * the write fails, so clearing always finds every token. An index that no longer decodes is dropped
  * with every entry, so the store starts over empty rather than losing track of tokens. The core
  * clears tokens whenever a session ends and when a product's state is cleared.
