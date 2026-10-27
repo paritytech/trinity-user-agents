@@ -276,19 +276,20 @@ export class NovaWorkerMode {
       return;
     }
     this.endService();
-    const copy = this.copyNext;
-    this.copyNext = false;
     const counts = { calls: 0, refused: 0 };
     this.status = { state: "connected", ...counts };
     this.service = serveNovaIdentity(port, {
       identity: localNovaIdentity(keys),
       resolveContact: (reference) => this.resolveReference(reference),
-      history: () =>
-        copy
-          ? this.deps.storage.getItem(
-              chatRecordKey(session.network, session.walletId),
-            )
-          : null,
+      // Taken when the worker asks, so a worker that stops before it asks
+      // still gets the copy when it connects again.
+      history: () => {
+        if (!this.copyNext) return null;
+        this.copyNext = false;
+        return this.deps.storage.getItem(
+          chatRecordKey(session.network, session.walletId),
+        );
+      },
       onCall: (_method, ok) => {
         if (ok) counts.calls += 1;
         else counts.refused += 1;
