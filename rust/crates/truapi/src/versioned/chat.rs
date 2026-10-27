@@ -37,6 +37,26 @@ truapi_macros::versioned_type! {
 	pub enum HostChatSetRoomFooterRequest { V1 => v01::HostChatSetRoomFooterRequest }
 	pub enum HostChatSetRoomFooterResponse { V1 }
 	pub enum HostChatSetRoomFooterError { V1 => v01::HostChatSetRoomFooterError }
+	pub enum HostChatRoomError { V1 => v01::HostChatRoomError }
+	pub enum ProductChatQueryError { V1 => v01::ProductChatQueryError }
+	pub enum HostChatSetRoomMetadataRequest { V1 => v01::HostChatSetRoomMetadataRequest }
+	pub enum HostChatSetRoomMetadataResponse { V1 }
+	pub enum HostChatSetRoomPreviewRequest { V1 => v01::HostChatSetRoomPreviewRequest }
+	pub enum HostChatSetRoomPreviewResponse { V1 }
+	pub enum HostChatDeleteRoomRequest { V1 => v01::HostChatDeleteRoomRequest }
+	pub enum HostChatDeleteRoomResponse { V1 }
+	pub enum HostChatUpdateFeedRequest { V1 => v01::HostChatUpdateFeedRequest }
+	pub enum HostChatUpdateFeedResponse { V1 }
+	pub enum HostChatUpdateFeedError { V1 => v01::HostChatUpdateFeedError }
+	pub enum ProductChatMessagesQueryRequest { V1 => v01::ProductChatMessagesQueryRequest }
+	pub enum ProductChatMessagesQueryItem { V1 => v01::ProductChatMessagesQueryItem }
+	pub enum ProductChatUserActionRequest { V1 => v01::ProductChatUserActionRequest }
+	pub enum ProductChatUserActionItem { V1 => v01::ProductChatUserActionItem }
+	pub enum ProductChatUserActionError { V1 => v01::ProductChatUserActionError }
+	pub enum ProductChatReactionsQueryRequest { V1 => v01::ProductChatReactionsQueryRequest }
+	pub enum ProductChatReactionsQueryItem { V1 => v01::ProductChatReactionsQueryItem }
+	pub enum HostChatSetRoomConfigRequest { V1 => v01::HostChatSetRoomConfigRequest }
+	pub enum HostChatSetRoomConfigResponse { V1 }
 }
 
 impl IntoLatest for HostChatPostMessageRequest {
@@ -108,6 +128,31 @@ mod tests {
 
 		assert_eq!(HostChatPostMessageResponse::from_latest(response.clone(), 1).version(), 1);
 		assert_eq!(HostChatPostMessageResponse::from_latest(response, 2).version(), 2);
+	}
+
+	// Products built against the first SDK create rooms, set footers and post
+	// in these shapes through whichever client the host injects, so these
+	// methods keep their first wire.
+	#[test]
+	fn a_room_its_footer_and_a_post_keep_the_first_wire() {
+		assert_eq!(HostChatCreateRoomRequest::LATEST, 1);
+		assert_eq!(HostChatSetRoomFooterRequest::LATEST, 1);
+		assert_eq!(HostChatPostMessageRequest::LATEST, 2);
+
+		let room = HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".into(),
+			name: "Room".into(),
+			icon: String::new(),
+		});
+		// V1 envelope, the room id, the name, then the empty icon.
+		assert_eq!(hex::encode(room.encode()), "0010726f6f6d10526f6f6d00");
+
+		let footer = HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "room".into(),
+			footer: v01::ChatRoomFooter::TextInput,
+		});
+		// V1 envelope, the room id, then `TextInput` at index 0.
+		assert_eq!(hex::encode(footer.encode()), "0010726f6f6d00");
 	}
 
 	// Fixture is `ChatRegisterBotV1_request` output from triangle-js-sdks

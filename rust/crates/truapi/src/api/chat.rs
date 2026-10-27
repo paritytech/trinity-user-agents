@@ -5,10 +5,18 @@ use crate::{
 	versioned::chat::{
 		HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+		HostChatDeleteRoomRequest, HostChatDeleteRoomResponse, HostChatListSubscribeError,
+		HostChatListSubscribeItem, HostChatListSubscribeRequest, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatRoomError,
+		HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse, HostChatSetRoomFooterError,
+		HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomMetadataResponse,
+		HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatMessagesQueryItem,
+		ProductChatMessagesQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
+		ProductChatReactionsQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
+		ProductChatUserActionRequest,
 	},
 	wire, wire_trait,
 };
@@ -152,6 +160,247 @@ pub trait Chat: Send + Sync {
 		_cx: &CallContext,
 		_request: HostChatSetRoomFooterRequest,
 	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Replace the name and description of a room.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.setRoomMetadata({
+	///   roomId: "test-room",
+	///   metadata: { name: "Renamed Room", description: "Now with a description" },
+	/// });
+	/// assert(result.isOk(), "setRoomMetadata failed:", result);
+	/// ```
+	#[wire(id = 8)]
+	async fn set_room_metadata(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomMetadataRequest,
+	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Replace how a room shows in the chat list: its sort time, its badge,
+	/// and the newest message and reaction the host makes the preview line
+	/// from.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.setRoomPreview({
+	///   roomId: "test-room",
+	///   preview: {
+	///     timestamp: BigInt(Date.now()),
+	///     badge: { tag: "UnreadCount", value: { count: 3 } },
+	///     lastMessage: {
+	///       messageId: "m3",
+	///       origin: { participantId: "contact" },
+	///       timestamp: BigInt(Date.now()),
+	///       body: { tag: "Text", value: { text: "Three new answers" } },
+	///       status: "Delivered",
+	///       reactions: [],
+	///       request: false,
+	///     },
+	///     unseenReactions: 0,
+	///   },
+	/// });
+	/// assert(result.isOk(), "setRoomPreview failed:", result);
+	/// ```
+	#[wire(id = 9)]
+	async fn set_room_preview(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomPreviewRequest,
+	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Delete a room and all the host keeps for it: messages, configuration
+	/// and cache. Deleting a room that is gone succeeds.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.deleteRoom({ roomId: "test-room" });
+	/// assert(result.isOk(), "deleteRoom failed:", result);
+	/// ```
+	#[wire(id = 10)]
+	async fn delete_room(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatDeleteRoomRequest,
+	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Push one change to the messages of a room: a new message, an edit, a
+	/// reaction, a status, or a message drawn again with new content. The host stores the change
+	/// for a room it stores, and only shows it for a room the product keeps.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.updateFeed({
+	///   roomId: "test-room",
+	///   update: {
+	///     tag: "New",
+	///     value: {
+	///       messageId: "welcome",
+	///       origin: { participantId: "product" },
+	///       timestamp: BigInt(Date.now()),
+	///       body: { tag: "Text", value: { text: "Welcome!" } },
+	///       status: "Sent",
+	///       reactions: [],
+	///       request: false,
+	///     },
+	///   },
+	/// });
+	/// assert(result.isOk(), "updateFeed failed:", result);
+	/// ```
+	#[wire(id = 11)]
+	async fn update_feed(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatUpdateFeedRequest,
+	) -> Result<HostChatUpdateFeedResponse, CallError<HostChatUpdateFeedError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Answer one page of messages of a room the product keeps. Send one item,
+	/// then the host closes the query. The host asks only for a room whose
+	/// configuration sets `productSource`.
+	///
+	/// ```ts
+	/// truapi.chat.onMessagesQuery(({ roomId, anchor, pageSize }, send) => {
+	///   console.log("page asked:", roomId, anchor.tag, pageSize);
+	///   send({
+	///     messages: [
+	///       {
+	///         messageId: "first",
+	///         origin: { participantId: "product" },
+	///         timestamp: BigInt(Date.now()),
+	///         body: { tag: "Text", value: { text: "The oldest message" } },
+	///         status: "Sent",
+	///         reactions: [],
+	///         request: false,
+	///       },
+	///     ],
+	///   });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 16)]
+	fn messages_query(
+		&self,
+		_cx: &CallContext,
+		_request: ProductChatMessagesQueryRequest,
+	) -> Subscription<ProductChatMessagesQueryItem, CallError<ProductChatQueryError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Apply what the user did in a room the product keeps. Send one item,
+	/// then the host closes the query: the stored message for a new message,
+	/// under the `messageId` the host chose when it chose one, or for a
+	/// payment, under its `messageId`; or an acknowledgement.
+	///
+	/// ```ts
+	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
+	///   if (roomId !== "test-room") {
+	///     interrupt({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
+	///     return;
+	///   }
+	///   if (action.tag !== "NewMessage") {
+	///     send({ tag: "Acknowledged" });
+	///     return;
+	///   }
+	///   send({
+	///     tag: "MessageCreated",
+	///     value: {
+	///       messageId: action.value.messageId ?? `m-${Date.now()}`,
+	///       origin: { participantId: "user" },
+	///       timestamp: BigInt(Date.now()),
+	///       body: action.value.body,
+	///       status: "Sent",
+	///       replyTo: action.value.replyTo,
+	///       reactions: [],
+	///       request: false,
+	///     },
+	///   });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 17)]
+	fn user_action(
+		&self,
+		_cx: &CallContext,
+		_request: ProductChatUserActionRequest,
+	) -> Subscription<ProductChatUserActionItem, CallError<ProductChatUserActionError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Answer who reacted to one message. Send one item, then the host closes
+	/// the query. The host asks only for a room whose configuration sets
+	/// `reactionDetails`.
+	///
+	/// ```ts
+	/// truapi.chat.onReactionsQuery(({ messageId }, send) => {
+	///   console.log("reactions asked:", messageId);
+	///   send({ reactions: [{ participantId: "user", emoji: "👍", timestamp: BigInt(Date.now()) }] });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 18)]
+	fn reactions_query(
+		&self,
+		_cx: &CallContext,
+		_request: ProductChatReactionsQueryRequest,
+	) -> Subscription<ProductChatReactionsQueryItem, CallError<ProductChatQueryError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Declare the parts of a room the product serves itself: its messages
+	/// (`productSource`), who reacted (`reactionDetails`) and the reports of
+	/// what the user saw (`reportSeen`). The host keeps the configuration
+	/// across restarts, and a new one replaces the previous one completely. A
+	/// room the product declared no configuration for keeps the behaviour of a
+	/// room the host stores. Declare it right after `createRoom`, before the
+	/// room shows messages.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.setRoomConfig({
+	///   roomId: "test-room",
+	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
+	/// });
+	/// assert(result.isOk(), "setRoomConfig failed:", result);
+	/// ```
+	#[wire(id = 31)]
+	async fn set_room_config(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomConfigRequest,
+	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
 		Err(CallError::unavailable())
 	}
 }

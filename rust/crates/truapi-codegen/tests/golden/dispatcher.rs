@@ -82,6 +82,45 @@ where
     register_worker(dispatcher, host);
 }
 
+/// Start the host-initiated `chat_messages_query` subscription.
+pub fn chat_messages_query(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatMessagesQueryRequest,
+) -> truapi::Subscription<versioned::chat::ProductChatMessagesQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.start(
+        wire_table::CHAT_MESSAGES_QUERY,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `chat_user_action` subscription.
+pub fn chat_user_action(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatUserActionRequest,
+) -> truapi::Subscription<versioned::chat::ProductChatUserActionItem, truapi::CallError<versioned::chat::ProductChatUserActionError>> {
+    subscriptions.start(
+        wire_table::CHAT_USER_ACTION,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `chat_reactions_query` subscription.
+pub fn chat_reactions_query(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatReactionsQueryRequest,
+) -> truapi::Subscription<versioned::chat::ProductChatReactionsQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.start(
+        wire_table::CHAT_REACTIONS_QUERY,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
 /// Start the host-initiated `renderer_render` subscription.
 pub fn renderer_render(
     subscriptions: &HostInitiatedSubscriptionManager,
@@ -731,7 +770,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, request: versioned::chat::HostChatSetRoomFooterRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -745,6 +784,131 @@ where
                 let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> =
                     match host.set_room_footer(&cx, request).await {
                         Ok(response) => Ok(<versioned::chat::HostChatSetRoomFooterResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_METADATA, move |request_id: String, request: versioned::chat::HostChatSetRoomMetadataRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.set_room_metadata(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomMetadataResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_PREVIEW, move |request_id: String, request: versioned::chat::HostChatSetRoomPreviewRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.set_room_preview(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomPreviewResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_DELETE_ROOM, move |request_id: String, request: versioned::chat::HostChatDeleteRoomRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.delete_room(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatDeleteRoomResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_UPDATE_FEED, move |request_id: String, request: versioned::chat::HostChatUpdateFeedRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatUpdateFeedError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatUpdateFeedResponse, truapi::CallError<versioned::chat::HostChatUpdateFeedError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatUpdateFeedResponse, truapi::CallError<versioned::chat::HostChatUpdateFeedError>> =
+                    match host.update_feed(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatUpdateFeedResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_CONFIG, move |request_id: String, request: versioned::chat::HostChatSetRoomConfigRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.set_room_config(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomConfigResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

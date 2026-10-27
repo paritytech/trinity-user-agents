@@ -99,9 +99,13 @@ pub mod latest {
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+		ChatActions, ChatBotRegistrationStatus, ChatCallClose, ChatCallRecord, ChatContactEvent,
+		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
+		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatMessageStatus,
+		ChatPageAnchor, ChatPaymentRecord, ChatPreviewReaction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatReplyPreview, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge,
+		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview,
+		ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
 		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
@@ -216,6 +220,41 @@ pub mod latest {
 	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
 	/// Failure to set what a native chat room shows below its messages.
 	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
+	/// Failure of a request that changes a native chat room.
+	pub type HostChatRoomError = LatestOf<versioned::chat::HostChatRoomError>;
+	/// Failure of a chat query the host sends to a product.
+	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
+	/// Request to replace the name and description of a native chat room.
+	pub type HostChatSetRoomMetadataRequest =
+		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
+	/// Request to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewRequest =
+		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
+	/// Request to delete a native chat room.
+	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
+	/// Request to push one change to the messages of a native chat room.
+	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
+	/// Failure to push a change to the messages of a native chat room.
+	pub type HostChatUpdateFeedError = LatestOf<versioned::chat::HostChatUpdateFeedError>;
+	/// Host-to-product question for one page of chat messages.
+	pub type ProductChatMessagesQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
+	/// Product-to-host page of chat messages.
+	pub type ProductChatMessagesQueryItem = LatestOf<versioned::chat::ProductChatMessagesQueryItem>;
+	/// Host-to-product report of what the user did in a chat room.
+	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
+	/// Product-to-host answer to a chat user action.
+	pub type ProductChatUserActionItem = LatestOf<versioned::chat::ProductChatUserActionItem>;
+	/// Failure to apply a chat user action.
+	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
+	/// Host-to-product question about who reacted to a chat message.
+	pub type ProductChatReactionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
+	/// Product-to-host list of who reacted to a chat message.
+	pub type ProductChatReactionsQueryItem =
+		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
+	/// Request to set the parts of a native chat room the product serves.
+	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
