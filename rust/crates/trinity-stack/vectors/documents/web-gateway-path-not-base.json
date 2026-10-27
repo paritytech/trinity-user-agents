@@ -52,9 +52,9 @@
   "sequence": 42,
   "services": [
     {
-      "kind": "dub",
+      "kind": "web-gateway",
       "urls": [
-        "https://previewnet.substrate.dev/dub/"
+        "https://testnet.li/apps?network=previewnet"
       ]
     },
     {
@@ -74,12 +74,6 @@
       "kind": "stun",
       "urls": [
         "stun:previewnet.substrate.dev:3478"
-      ]
-    },
-    {
-      "kind": "web-gateway",
-      "urls": [
-        "https://testnet.li/apps?network=previewnet"
       ]
     }
   ],

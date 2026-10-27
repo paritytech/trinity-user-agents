@@ -254,23 +254,6 @@ describe("read", () => {
     expect("fork" in accepted.descriptor).toBe(false);
   });
 
-  test("webUrl opens a name on the stack's gateway, and is undefined without one", async () => {
-    const gateway = {
-      kind: "web-gateway",
-      urls: ["https://testnet.li/?network=previewnet"],
-    };
-    const { descriptor } = await publish(
-      { ...MODEL, services: [gateway] },
-      { generation: "g1" },
-    );
-    expect(webUrl(descriptor, "sub.my-app.local")).toBe(
-      "https://testnet.li/sub.my-app?network=previewnet",
-    );
-    const none = await publish(MODEL, { generation: "g1" });
-    expect(webUrl(none.descriptor, "my-app")).toBeUndefined();
-    expect(codeOf(() => webUrl(descriptor, "My-App"))).toBe("invalid-name");
-  });
-
   test("parse says whether a document is an envelope without checking any key", async () => {
     const plain = await publish(MODEL, { generation: "g1" });
     const signed = await publish(MODEL, {

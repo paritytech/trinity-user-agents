@@ -469,18 +469,18 @@
       }
     },
     {
-      "expect": "invalid-url",
-      "file": "documents/web-gateway-on-address.json",
-      "name": "web-gateway-on-address",
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-without-slash.json",
+      "name": "web-gateway-without-slash",
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
       }
     },
     {
-      "expect": "service-url-not-base",
-      "file": "documents/web-gateway-without-slash.json",
-      "name": "web-gateway-without-slash",
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-on-address.json",
+      "name": "web-gateway-on-address",
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -972,7 +972,7 @@
             ]
           }
         ],
-        "tld": "testnet"
+        "tld": "local"
       },
       "dotnsName": "my-app",
       "expect": {
@@ -1005,9 +1005,9 @@
             ]
           }
         ],
-        "tld": "testnet"
+        "tld": "local"
       },
-      "dotnsName": "my-app.testnet",
+      "dotnsName": "my-app.local",
       "expect": {
         "url": "https://my-app.testnet.li/?network=previewnet"
       },
@@ -1038,9 +1038,9 @@
             ]
           }
         ],
-        "tld": "testnet"
+        "tld": "local"
       },
-      "dotnsName": "sub.my-app.testnet",
+      "dotnsName": "sub.my-app.local",
       "expect": {
         "url": "https://testnet.li/sub.my-app?network=previewnet"
       },
@@ -1130,7 +1130,7 @@
         "network": "local",
         "sequence": 0,
         "services": [],
-        "tld": "testnet"
+        "tld": "local"
       },
       "dotnsName": "my-app",
       "expect": {
@@ -1163,7 +1163,7 @@
             ]
           }
         ],
-        "tld": "testnet"
+        "tld": "local"
       },
       "dotnsName": "My-App",
       "expect": {
@@ -1196,13 +1196,112 @@
             ]
           }
         ],
-        "tld": "testnet"
+        "tld": "local"
       },
       "dotnsName": "a..b",
       "expect": {
         "error": "invalid-name"
       },
       "name": "name-empty-label"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-empty"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": ".local",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-only-tld"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app/x",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-with-path"
     }
   ]
 }

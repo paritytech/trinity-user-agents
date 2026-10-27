@@ -7,7 +7,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 // is not absent.
 use serde_with::{rust::unwrap_or_skip, skip_serializing_none};
 use std::collections::{BTreeMap, HashSet};
-use url::Host;
 
 /// The only format version this crate reads and writes.
 pub const VERSION: u64 = 1;
@@ -224,18 +223,22 @@ impl Descriptor {
 	/// given. A one-label name goes in front of the gateway's host, the only level its wildcard
 	/// certificate covers, and a longer one after its path.
 	pub fn web_url(&self, name: &str) -> Result<Option<String>, Error> {
-		let suffix = format!(".{}", self.tld);
-		let bare = name.strip_suffix(&suffix).unwrap_or(name);
+		let bare = name
+			.strip_suffix(self.tld.as_str())
+			.and_then(|rest| rest.strip_suffix('.'))
+			.unwrap_or(name);
 		if !bare.split('.').all(is_label) {
 			return Err(Error::InvalidName(name.to_owned()));
 		}
-		let gateway = self
+		let Some(gateway) = self
 			.services
 			.iter()
 			.find(|service| service.kind == "web-gateway")
-			.and_then(|service| service.urls.first());
-		let Some(gateway) = gateway else { return Ok(None) };
-		let mut url = format::url(gateway, Schemes::Web)?;
+			.and_then(|service| service.urls.first())
+		else {
+			return Ok(None);
+		};
+		let mut url = format::url(gateway, Schemes::Gateway)?;
 		if bare.contains('.') {
 			url.set_path(&format!("{}{bare}", url.path()));
 		} else {
@@ -310,32 +313,23 @@ impl Descriptor {
 			if service.urls.is_empty() {
 				return Err(Error::Empty("urls"));
 			}
-			let schemes = if service.kind == "stun" { Schemes::Stun } else { Schemes::Web };
+			let schemes = match service.kind.as_str() {
+				"stun" => Schemes::Stun,
+				"web-gateway" => Schemes::Gateway,
+				_ => Schemes::Web,
+			};
+			// A web gateway's query picks the stack it serves, and readers keep it.
+			let query_allowed = service.kind == "web-gateway";
 			for url in &service.urls {
 				let parsed = format::url(url, schemes)?;
 				let is_http = matches!(parsed.scheme(), "http" | "https");
-				let is_base = match service.kind.as_str() {
-					"eth-rpc" => true,
-					// Readers prepend a name's label to the host, or append the name to the path,
-					// and keep the query, which can pick the network a shared gateway serves.
-					// The slash is checked as written: the parser adds one to an empty path.
-					"web-gateway" => {
-						let before_query = url.split(['?', '#']).next().unwrap_or_default();
-						before_query.ends_with('/') && parsed.fragment().is_none()
-					},
-					_ => {
-						url.ends_with('/') &&
-							parsed.query().is_none() &&
-							parsed.fragment().is_none()
-					},
-				};
-				if is_http && !is_base {
+				// As written: the parser adds a slash to an empty path.
+				let before_query = url.split(['?', '#']).next().unwrap_or_default();
+				let is_base = before_query.ends_with('/') &&
+					parsed.fragment().is_none() &&
+					(query_allowed || parsed.query().is_none());
+				if is_http && service.kind != "eth-rpc" && !is_base {
 					return Err(Error::ServiceUrlNotBase(url.clone()));
-				}
-				let names_a_host =
-					parsed.scheme() == "https" && matches!(parsed.host(), Some(Host::Domain(_)));
-				if service.kind == "web-gateway" && !names_a_host {
-					return Err(Error::InvalidUrl(url.clone()));
 				}
 			}
 		}
@@ -434,26 +428,5 @@ mod tests {
 		let round_trip: Descriptor =
 			serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
 		assert_eq!(round_trip, valid);
-	}
-
-	fn with_gateway(services: &str) -> Descriptor {
-		serde_json::from_str(&format!(
-			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"testnet","services":{services},"chains":{RELAY}}}"#
-		))
-		.unwrap()
-	}
-
-	/// Names that would put a path, an empty label or another case into the URL. The vectors pin
-	/// the URLs a valid name gives.
-	#[test]
-	fn a_malformed_name_is_refused() {
-		let descriptor = with_gateway(r#"[{"kind":"web-gateway","urls":["https://testnet.li/"]}]"#);
-		for name in ["", "My-App", "my-app/../x", "a..b", ".testnet"] {
-			assert_eq!(
-				descriptor.web_url(name).map_err(|error| error.code()),
-				Err("invalid-name"),
-				"{name}"
-			);
-		}
 	}
 }

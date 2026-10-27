@@ -36,6 +36,8 @@ pub enum Schemes {
 	Web,
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
+	/// `https` on a hostname, for a `web-gateway`, which takes a name's label in front of its host.
+	Gateway,
 }
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
@@ -61,6 +63,8 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "https" | "wss") => web,
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
+		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }
 }

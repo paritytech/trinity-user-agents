@@ -84,6 +84,20 @@ fn with(edit: impl FnOnce(&mut Value)) -> Value {
 	value
 }
 
+/// `base()` with a `web-gateway` in place of its `dub`.
+fn web_gateway(url: &str) -> Value {
+	with(|value| value["services"][0] = json!({ "kind": "web-gateway", "urls": [url] }))
+}
+
+/// The smallest valid descriptor.
+fn minimal() -> Value {
+	json!({
+		"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local",
+		"network": "local", "tld": "local", "services": [],
+		"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
+	})
+}
+
 fn bytes(value: &Value) -> Vec<u8> {
 	serde_json::to_vec_pretty(value).unwrap()
 }
@@ -230,15 +244,7 @@ fn document_cases() -> Vec<DocumentCase> {
 	let compact = serde_json::to_string(&base()).unwrap();
 	vec![
 		plain("valid-full", base(), "ok"),
-		plain(
-			"valid-minimal",
-			json!({
-				"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local",
-				"network": "local", "tld": "local", "services": [],
-				"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
-			}),
-			"ok",
-		),
+		plain("valid-minimal", minimal(), "ok"),
 		plain(
 			"valid-private-range",
 			with(|value| {
@@ -489,42 +495,16 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		plain(
 			"web-gateway-path-not-base",
-			with(|value| {
-				value["services"].as_array_mut().unwrap().push(
-					json!({ "kind": "web-gateway", "urls": ["https://testnet.li/apps?network=previewnet"] }),
-				)
-			}),
+			web_gateway("https://testnet.li/apps?network=previewnet"),
 			"service-url-not-base",
-		),
-		plain(
-			"web-gateway-on-address",
-			with(|value| {
-				value["services"]
-					.as_array_mut()
-					.unwrap()
-					.push(json!({ "kind": "web-gateway", "urls": ["https://10.0.0.5/"] }))
-			}),
-			"invalid-url",
 		),
 		plain(
 			"web-gateway-without-slash",
-			with(|value| {
-				value["services"].as_array_mut().unwrap().push(
-					json!({ "kind": "web-gateway", "urls": ["https://testnet.li?network=previewnet"] }),
-				)
-			}),
+			web_gateway("https://testnet.li?network=previewnet"),
 			"service-url-not-base",
 		),
-		plain(
-			"web-gateway-on-wss",
-			with(|value| {
-				value["services"]
-					.as_array_mut()
-					.unwrap()
-					.push(json!({ "kind": "web-gateway", "urls": ["wss://testnet.li/"] }))
-			}),
-			"invalid-url",
-		),
+		plain("web-gateway-on-address", web_gateway("https://10.0.0.5/"), "invalid-url"),
+		plain("web-gateway-on-wss", web_gateway("wss://testnet.li/"), "invalid-url"),
 		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
@@ -787,60 +767,58 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
-/// The smallest descriptor with this `tld` and, when given, this `web-gateway` URL.
-fn with_web_gateway(tld: &str, gateway: Option<&str>) -> Value {
-	let services =
-		gateway.map_or(json!([]), |url| json!([{ "kind": "web-gateway", "urls": [url] }]));
-	json!({
-		"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local", "network": "local",
-		"tld": tld, "services": services,
-		"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
-	})
+/// `minimal()`, whose `tld` is `local`, with this `web-gateway`, or none.
+fn with_web_gateway(gateway: Option<&str>) -> Value {
+	let mut value = minimal();
+	if let Some(url) = gateway {
+		value["services"] = json!([{ "kind": "web-gateway", "urls": [url] }]);
+	}
+	value
 }
 
-/// `(name, tld, gateway, dotNS name, expected)` for `web_url`.
-fn web_url_cases() -> Vec<(&'static str, &'static str, Option<&'static str>, &'static str, Value)> {
+/// `(name, gateway, dotNS name, expected)` for `web_url`.
+fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Value)> {
 	let previewnet = Some("https://testnet.li/?network=previewnet");
 	let nested = Some("https://gateway.example/gw/?n=x");
+	let url = |url: &str| json!({ "url": url });
+	let invalid = json!({ "error": "invalid-name" });
 	vec![
 		(
 			"host-form-keeps-query",
-			"testnet",
 			previewnet,
 			"my-app",
-			json!({ "url": "https://my-app.testnet.li/?network=previewnet" }),
+			url("https://my-app.testnet.li/?network=previewnet"),
 		),
 		(
 			"tld-is-dropped",
-			"testnet",
 			previewnet,
-			"my-app.testnet",
-			json!({ "url": "https://my-app.testnet.li/?network=previewnet" }),
+			"my-app.local",
+			url("https://my-app.testnet.li/?network=previewnet"),
 		),
 		(
 			"path-form-keeps-query",
-			"testnet",
 			previewnet,
-			"sub.my-app.testnet",
-			json!({ "url": "https://testnet.li/sub.my-app?network=previewnet" }),
+			"sub.my-app.local",
+			url("https://testnet.li/sub.my-app?network=previewnet"),
 		),
 		(
 			"host-form-under-gateway-path",
-			"local",
 			nested,
 			"my-app",
-			json!({ "url": "https://my-app.gateway.example/gw/?n=x" }),
+			url("https://my-app.gateway.example/gw/?n=x"),
 		),
 		(
 			"path-form-under-gateway-path",
-			"local",
 			nested,
 			"sub.my-app",
-			json!({ "url": "https://gateway.example/gw/sub.my-app?n=x" }),
+			url("https://gateway.example/gw/sub.my-app?n=x"),
 		),
-		("no-gateway", "testnet", None, "my-app", json!({ "url": null })),
-		("name-uppercase", "testnet", previewnet, "My-App", json!({ "error": "invalid-name" })),
-		("name-empty-label", "testnet", previewnet, "a..b", json!({ "error": "invalid-name" })),
+		("no-gateway", None, "my-app", json!({ "url": null })),
+		("name-uppercase", previewnet, "My-App", invalid.clone()),
+		("name-empty-label", previewnet, "a..b", invalid.clone()),
+		("name-empty", previewnet, "", invalid.clone()),
+		("name-only-tld", previewnet, ".local", invalid.clone()),
+		("name-with-path", previewnet, "my-app/x", invalid),
 	]
 }
 
@@ -872,8 +850,8 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.collect();
 	let web_urls: Vec<Value> = web_url_cases()
 		.into_iter()
-		.map(|(name, tld, gateway, dotns_name, expect)| {
-			json!({ "name": name, "descriptor": with_web_gateway(tld, gateway), "dotnsName": dotns_name, "expect": expect })
+		.map(|(name, gateway, dotns_name, expect)| {
+			json!({ "name": name, "descriptor": with_web_gateway(gateway), "dotnsName": dotns_name, "expect": expect })
 		})
 		.collect();
 	let cases =
