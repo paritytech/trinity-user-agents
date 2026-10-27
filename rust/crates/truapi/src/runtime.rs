@@ -1521,9 +1521,6 @@ impl FundingProvider for ProductRuntimeHost {
 						update,
 					)
 					.await?;
-				// A cancel offer can lapse on its own, so the expiry sweep keeps
-				// time for it.
-				self.connection.services.funding().keep_expiring(&self.connection.services);
 				reported.map_err(CallError::Domain)
 			})
 			.await
@@ -1628,7 +1625,7 @@ impl Funding for ProductRuntimeHost {
 					return Subscription::interrupted(error);
 				}
 				let intent = host_funding_intent(&self.connection.product, id);
-				if let Err(error) = registry.load(&self.connection.services).await {
+				if let Err(error) = registry.load(self.connection.platform.as_ref()).await {
 					return Subscription::interrupted(CallError::HostFailure {
 						reason: error.to_string(),
 					});

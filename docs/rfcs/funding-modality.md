@@ -190,12 +190,15 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and `funding_history` gives the host every recorded session, full or compacted, to rebuild its own history if it was lost. Sessions and the pack are stored as versioned blobs: a corrupt one is set aside under `FundingSessionsUnreadable`, and one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable.
-- The core records every top-up and payment request a provider's worker starts while it serves an open session in
-  that direction, with the amount: on the one such session asking for that amount when exactly one does, otherwise
-  on each of them (the report names which). `Crediting` must name a recorded
-  top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
-  anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
+- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and `funding_history` gives the host every recorded session, full or compacted, to rebuild its own history if it was lost. Sessions and the pack are stored as versioned blobs: a corrupt one is set aside under `FundingSessionsUnreadable`, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
+- A worker names the session when it starts funds: `payment.topUp` and `payment.request` take `funding: Some(intent)`
+  for an open session it serves in that direction, or fail with `FundingNotServed`. The core records the id, amount
+  and the rest of the request before the host is asked, at most 3 per session, and marks the record taken once the
+  host's engine takes it. A repeat under the id must ask the same, and an id another session or the engine already
+  holds fails with `AlreadyExists`. A record whose call was lost is placed from the engine: taken once it holds the
+  id, dropped once it still does not an hour after the record. `Crediting` must name a taken top-up and `Collecting`
+  a taken payment request of that session, at the recorded amount, once; anything else fails with `NotStarted`.
+  Funds started without `funding` belong to no session.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.

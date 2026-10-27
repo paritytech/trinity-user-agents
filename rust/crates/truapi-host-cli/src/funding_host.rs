@@ -386,6 +386,7 @@ mod tests {
 					derivation_index: truapi::latest::DerivationIndex::Index(0),
 				},
 				id: [1; 32],
+				funding: None,
 			},
 		));
 
