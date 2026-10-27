@@ -225,8 +225,9 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
 
 - **The Docklet.** As the Polkadot app's R1 Docklet: a glass dock at most 440 px wide with a round cutout, the app's 28
   px tab icons only, Chat and Pocket left of the Pill, Browse and Apps right of it, and a lens under the current one.
-  The labels stay for screen readers. Apps shows the open count inside its glyph. It floats over the app, as in the app:
-  a product runs full-bleed under its glass, and host screens end above it. The Pill opens the address card (see
+  The labels stay for screen readers. Apps shows the open count inside its glyph. It floats over the app, as in the app.
+  Host screens and a product's frame end above it, the Pill included, so nothing of a product is under its glass: a
+  product in a frame gets no inset it could use to keep clear by itself. The Pill opens the address card (see
   [Developer tools](#developer-tools)); while the card shows, the other icons step back.
 - **Apps.** Its count is the products open in this tab, in front or running behind. It opens the Apps shelf, as the
   app's TabBarShelfView draws it: the bar's glass grows upward, with a row of icons on the right (the Inbox, when the
@@ -241,11 +242,12 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
   product's frame starts below the band, which is the top inset (a device's 54 px, or the page's own
   `env(safe-area-inset-top)`), a 12 px gap, the 44 px circles and a 12 px gap. Nothing of the product is under the
   circles or a device's island, and the product is told of no inset, so it adds none of its own. The band does not fold
-  away on scroll as the iOS one does: the host cannot see a product's scrolling. The Docklet is kept below. On the left,
-  **Minimize** for a product that belongs to Browse: it goes back to the last host screen and keeps running, and Browse
-  or the shelf brings it back. A product that cannot run behind, such as one opened from a link or a Pocket card, gets
-  **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer tools' Product
-  tab) and **Close**.
+  away on scroll as the iOS one does: the host cannot see a product's scrolling. At the bottom the frame ends above the
+  Docklet. Whether the iOS web view also ends above its tab bar was not settled from the vendored iOS source. On the
+  left, **Minimize** for a product that belongs to Browse: it goes back to the last host screen and keeps running, and
+  Browse or the shelf brings it back. A product that cannot run behind, such as one opened from a link or a Pocket card,
+  gets **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer tools'
+  Product tab) and **Close**.
 
 - **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
   its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
@@ -1127,11 +1129,12 @@ returns where it was; a scaled preview draws the sheet at the app's scale; and o
 sideways and the buttons are 44px or taller.
 
 `browser/app-area.spec.ts` checks where a product in front sits, with a synthetic product on loopback that has a field
-at its very top, no wallet, every socket closed and every request outside this host and the product refused: in the
-Phone preview with each frame, drawn at full size and shrunk, and in a phone-sized window, the field starts below both
-circles and, in the device frame, below the island; the product reads no safe-area inset of its own; the Preview tab
-states the product's frame and what the host keeps; More opens its menu from the keyboard, clear of the island and
-inside the app, Escape gives focus back; and Minimize keeps the same product running until Browse brings it back.
+at its very top and a button fixed to its bottom, no wallet, every socket closed and every request outside this host and
+the product refused: in the Phone preview with each frame, drawn at full size and shrunk, and in a phone-sized window,
+the field starts below both circles and, in the device frame, below the island, and the button fixed to its bottom ends
+above the Docklet and its Pill; the product reads no safe-area inset of its own; the Preview tab states the product's
+frame and what the host keeps; More opens its menu from the keyboard, clear of the island and inside the app, Escape
+gives focus back; and Minimize keeps the same product running until Browse brings it back.
 
 `browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
 closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no

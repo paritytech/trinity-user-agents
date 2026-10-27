@@ -142,7 +142,7 @@ async function islandBottom(page: Page): Promise<number> {
   return app.y + (11 + 37) * scale;
 }
 
-/** Everything a product's content must stay clear of, as drawn. */
+/** Everything a product's content must stay clear of, as drawn: the circles, the island and the Docklet. */
 async function expectClear(page: Page, frame: Frame): Promise<void> {
   const top = await frameBox(frame, "#top");
   const minimize = await box(page, "#app-minimize");
@@ -152,6 +152,11 @@ async function expectClear(page: Page, frame: Frame): Promise<void> {
   );
   if ((await page.getAttribute("#product-frame", "data-frame")) === "device")
     expect(top.y).toBeGreaterThanOrEqual((await islandBottom(page)) - 0.5);
+  const bottom = await frameBox(frame, "#bottom");
+  // The Pill rises above the bar, so both bound the product.
+  const dock = await box(page, "#dock");
+  const pill = await box(page, "#pill");
+  expect(bottomOf(bottom)).toBeLessThanOrEqual(Math.min(dock.y, pill.y) + 0.5);
 }
 
 async function screenshot(page: Page, name: string): Promise<void> {
@@ -162,7 +167,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("a product in front", () => {
   test(
-    "starts below the circles and the island in every frame, at full size and shrunk",
+    "starts below the circles and the island and ends above the Docklet in every frame, at full size and shrunk",
     async () => {
       for (const height of [1000, 640]) {
         const { context, page } = await open({ width: 1280, height });
@@ -195,7 +200,7 @@ describe("a product in front", () => {
   );
 
   test(
-    "fills a phone-sized window below the circles, and the Preview tab says what it gets",
+    "fills a phone-sized window between the circles and the Docklet, and the Preview tab says what it gets",
     async () => {
       const { context, page } = await open({
         width: 390,
@@ -206,10 +211,10 @@ describe("a product in front", () => {
         await expectClear(page, frame);
         expect(
           await frame.evaluate(() => [window.innerWidth, window.innerHeight]),
-        ).toEqual([390, 844 - 68]);
+        ).toEqual([390, 844 - 68 - 84]);
         await openTools(page, "preview");
         expect(await page.locator("#viewport-app-area").textContent()).toBe(
-          "Product frame 390 × 776 · the host keeps 68 px on top",
+          "Product frame 390 × 692 · the host keeps 68 px on top and 84 px below",
         );
         await closeTools(page);
         await screenshot(page, "phone-window");
