@@ -69,6 +69,15 @@ export interface ProductWorkersDeps {
     connect(productId: string, port: MessagePort): void;
     disconnect(productId: string): void;
   };
+  /**
+   * Where a chat worker's frame asks for the wallet's Nova chat identity
+   * (`src/chat-worker/worker-mode.ts`), which decides whether to answer. The
+   * link ends when the worker stops.
+   */
+  novaIdentity?: {
+    connect(productId: string, port: MessagePort): void;
+    disconnect(productId: string): void;
+  };
 }
 
 interface Running {
@@ -380,6 +389,15 @@ export class ProductWorkers {
                 },
               }
             : {}),
+          ...(this.deps.novaIdentity !== undefined &&
+          worker.manifest.includes.chat
+            ? {
+                onNovaIdentityPort: (port: MessagePort) => {
+                  if (current()) this.deps.novaIdentity?.connect(name, port);
+                  else port.close();
+                },
+              }
+            : {}),
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
               running.state = { state: "failed", reason: detail };
@@ -417,6 +435,7 @@ export class ProductWorkers {
     const running = this.workers.get(name);
     if (running === undefined) return;
     this.deps.chatV2?.disconnect(name);
+    this.deps.novaIdentity?.disconnect(name);
     if (running.handle !== null) {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();

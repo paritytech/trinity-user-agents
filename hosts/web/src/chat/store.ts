@@ -161,6 +161,10 @@ const empty = (): ChatRecord => ({
   left: [],
 });
 
+/** An account id shortened for a name line, when the account has no name. */
+export const abbreviateAccount = (account: string): string =>
+  `${account.slice(0, 8)}…${account.slice(-6)}`;
+
 export const chatRecordKey = (network: string, walletId: string): string =>
   `truapi-web-signing-host:network:${network}:chat:${walletId}:v1`;
 

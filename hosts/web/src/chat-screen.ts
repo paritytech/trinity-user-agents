@@ -490,12 +490,14 @@ export class ChatScreen {
     );
     if (person === null || this.provider(provider.id) !== provider) return;
     const existing =
-      provider
-        .conversations()
-        .find(
-          (summary) =>
-            summary.id.toLowerCase() === person.account.toLowerCase(),
-        )?.id ?? null;
+      provider.start?.conversationWith !== undefined
+        ? provider.start.conversationWith(person.account)
+        : (provider
+            .conversations()
+            .find(
+              (summary) =>
+                summary.id.toLowerCase() === person.account.toLowerCase(),
+            )?.id ?? null);
     if (existing !== null) return this.open(provider.id, existing);
     this.leaveConversation();
     this.newWelcome = "";

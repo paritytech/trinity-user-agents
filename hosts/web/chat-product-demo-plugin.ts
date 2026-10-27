@@ -7,6 +7,7 @@ import {
   DEMO_WORKER_PATH,
   EXAMPLE_CHAT_PATH,
   LOOPBACK_HOSTNAMES,
+  NOVA_WORKER_PATH,
   type DemoWorkerAnswer,
 } from "./src/chat-v2/local-demo-route.js";
 
@@ -15,6 +16,7 @@ const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 /** The products this server builds: where each is described, its entry module, and whether it is an app. */
 const WORKERS = [
   { path: DEMO_WORKER_PATH, entry: "browser/chat-v2-product-worker.ts" },
+  { path: NOVA_WORKER_PATH, entry: "src/chat-worker/worker.ts" },
   {
     path: EXAMPLE_CHAT_PATH,
     entry: "src/dev-tools/example-chat/product.ts",
@@ -175,10 +177,12 @@ function serveDemo(base: string): Middleware {
 }
 
 /**
- * The local chat products, for the dev server only. It builds the synthetic
- * chat product's worker (`browser/chat-v2-product-worker.ts`), packs it as an
- * app archive and describes it at {@link DEMO_WORKER_PATH}, and does the same
- * for Example Chat, the test users' app, at {@link EXAMPLE_CHAT_PATH}. It serves the archives' blocks, and only those, at `/ipfs/<cid>` as a
+ * The local chat workers, for the dev server only. It builds the synthetic
+ * chat product's worker (`browser/chat-v2-product-worker.ts`) and the Nova
+ * chat worker (`src/chat-worker/worker.ts`), packs each as an app archive,
+ * describes them at {@link DEMO_WORKER_PATH} and {@link NOVA_WORKER_PATH},
+ * and does the same for Example Chat, the test users' app, at
+ * {@link EXAMPLE_CHAT_PATH}. It serves the archives' blocks, and only those, at `/ipfs/<cid>` as a
  * gateway would. The host's loader fetches and checks the archive as it checks any
  * worker's, so nothing skips the archive check. Requests from or to another
  * machine are refused. A build does not include it.

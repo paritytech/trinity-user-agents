@@ -18,9 +18,11 @@ import {
   type TurnStatus,
 } from "./chat/turn.js";
 import { chatRefusal } from "./chat/gate.js";
+import { localNovaIdentity } from "./chat/identity.js";
 import { ChatKeys, hopSender } from "./chat/keys.js";
 import { StatementStore } from "./chat/statement-store.js";
 import {
+  abbreviateAccount,
   chatRecordKey,
   type Contact,
   type StoredMessage,
@@ -177,23 +179,23 @@ async function imageSize(
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const abbreviate = (account: string): string =>
-  `${account.slice(0, 8)}…${account.slice(-6)}`;
-
 const displayName = (entry: {
   name: string | null;
   account?: string;
   peer?: string;
-}): string => entry.name ?? abbreviate(entry.account ?? entry.peer ?? "");
+}): string =>
+  entry.name ?? abbreviateAccount(entry.account ?? entry.peer ?? "");
 
 /**
- * Derive the session's keys, check them against what the core reports, and
- * start the engine. Returns why chat stays off instead, when it does.
+ * Derive the session's chat keys and check them against what the core
+ * reports. Returns why chat stays off instead, when it does.
  */
-export function startNovaChat(
-  session: ChatSession,
-  deps: { storage: Storage; diagnostics: ChatDiagnostics },
-): NovaChatProvider | string {
+export function sessionChatKeys(
+  session: Pick<
+    ChatSession,
+    "entropy" | "networkSuffix" | "identityAccountId" | "chatPublicKey"
+  >,
+): ChatKeys | string {
   const refusal = chatRefusal(session.entropy);
   if (refusal !== null) return refusal;
   let keys: ChatKeys;
@@ -215,6 +217,19 @@ export function startNovaChat(
   ].filter((part) => part !== null);
   if (mismatch.length > 0)
     return `The host derived a different ${mismatch.join(" and ")} than the core. Chat stays off.`;
+  return keys;
+}
+
+/**
+ * Derive and check the session's keys, and start the engine. Returns why
+ * chat stays off instead, when it does.
+ */
+export function startNovaChat(
+  session: ChatSession,
+  deps: { storage: Storage; diagnostics: ChatDiagnostics },
+): NovaChatProvider | string {
+  const keys = sessionChatKeys(session);
+  if (typeof keys === "string") return keys;
   const hop: HopService = {
     nodes: () => hopNodes(deps.storage, session.network),
     connect: openHopConnection,
@@ -222,7 +237,7 @@ export function startNovaChat(
   };
   const engine = new ChatEngine({
     hop,
-    keys,
+    identity: localNovaIdentity(keys),
     openStore: async () =>
       new StatementStore(
         await session.chain.connect(hexToBytes(session.genesis.people)),
@@ -411,7 +426,7 @@ export class NovaChatProvider implements ChatProvider {
           conversationId: held.account,
           title:
             contact === undefined
-              ? abbreviate(held.account)
+              ? abbreviateAccount(held.account)
               : displayName(contact),
           video: call.video,
           direction: call.direction,
@@ -512,7 +527,7 @@ export class NovaChatProvider implements ChatProvider {
     return {
       id: contact.account,
       title: displayName(contact),
-      subtitle: abbreviate(contact.account),
+      subtitle: abbreviateAccount(contact.account),
       icon: null,
       seed: contact.account,
       preview: preview(contact),
@@ -762,7 +777,7 @@ export class NovaChatProvider implements ChatProvider {
         "No statement allowance: this identity cannot answer or send.",
       );
     return {
-      name: `${snapshot.name ?? this.username ?? "No username"} · ${abbreviate(snapshot.account)}`,
+      name: `${snapshot.name ?? this.username ?? "No username"} · ${abbreviateAccount(snapshot.account)}`,
       title: `Identity account ${snapshot.account}\nChat key ${snapshot.chatKey}`,
       notes,
       setAside: snapshot.skipped,

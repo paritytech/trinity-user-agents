@@ -314,6 +314,12 @@ export interface StartChat {
   blocked(): string | null;
   /** Start a conversation with `target`. Resolves to its id. */
   start(target: string, welcome: string): Promise<string>;
+  /**
+   * The conversation the provider already has with `account`, when its
+   * conversation ids are not accounts. Absent: a conversation's id is the
+   * account.
+   */
+  conversationWith?(account: string): string | null;
 }
 
 export interface ChatRequest {

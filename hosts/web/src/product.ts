@@ -2,6 +2,10 @@ import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "./chat-v2/contract.js";
+import {
+  NOVA_IDENTITY_CONNECT,
+  NOVA_IDENTITY_DRAFT,
+} from "./chat-worker/identity-bridge.js";
 import type { FrameTap } from "./frame-tap.js";
 import { isProductHello as isInvitationsHello } from "./invitations/contract.js";
 
@@ -101,6 +105,12 @@ export interface OpenProductOptions {
    */
   onChatV2Port?(port: MessagePort): void;
   /**
+   * Called with the port the frame hands over to ask for the wallet's Nova
+   * chat identity (`src/chat-worker/identity-bridge.ts`). Heard as
+   * {@link onChatV2Port} is; without this the port is closed unanswered.
+   */
+  onNovaIdentityPort?(port: MessagePort): void;
+  /**
    * Called with the port the frame hands over for invitations
    * (`src/invitations/contract.ts`). Heard as {@link onChatV2Port} is;
    * without this the port is closed unanswered.
@@ -136,6 +146,7 @@ export async function openProduct(
     mounted = false,
     executionKind = "App",
     onChatV2Port,
+    onNovaIdentityPort,
     onInvitationsPort,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
@@ -190,6 +201,15 @@ export async function openProduct(
       onChatV2Port?.(event.ports[0]);
       return;
     }
+    if (
+      data?.type === NOVA_IDENTITY_CONNECT &&
+      data.protocol === NOVA_IDENTITY_DRAFT &&
+      event.ports.length === 1
+    ) {
+      if (onNovaIdentityPort === undefined) event.ports[0].close();
+      else onNovaIdentityPort(event.ports[0]);
+      return;
+    }
     if (isInvitationsHello(data, event.ports)) {
       if (onInvitationsPort === undefined) event.ports[0].close();
       else onInvitationsPort(event.ports[0]);
@@ -200,7 +220,12 @@ export async function openProduct(
     if (data.state === "loading" || data.state === "error")
       onSandboxStatus?.(data.state, data.detail);
   };
-  if (onSandboxStatus || onChatV2Port || onInvitationsPort)
+  if (
+    onSandboxStatus ||
+    onChatV2Port ||
+    onNovaIdentityPort ||
+    onInvitationsPort
+  )
     window.addEventListener("message", onWindowMessage);
   return {
     url,

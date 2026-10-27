@@ -20,6 +20,7 @@ import {
   type ChatRoomFeatures,
   type ChatRoomMetadata,
   type ChatRoomPreview,
+  type ChatRoomContact,
   type ChatV2Envelope,
   type HostChatCapabilitiesResponse,
   type HostChatRoomEventsSubscribeItem,
@@ -83,6 +84,8 @@ export interface V2Room {
   preview?: ChatRoomPreview;
   features?: ChatRoomFeatures;
   call?: ChatRoomCall;
+  /** The one person the room is a conversation with, for a product that may declare one. */
+  contact?: ChatRoomContact;
   /** The messages the host has seen, by id. Only a cache: the product keeps them. */
   cache: Map<string, ChatMessage>;
 }
@@ -112,6 +115,13 @@ export type ChatV2Change =
 export interface ChatV2HostDeps {
   /** The host's call engine for `productId`'s calls, or null when it runs none for it. */
   media(productId: string): CallMediaEngine | null;
+  /**
+   * Whether `productId` may give its rooms a contact, which the host then
+   * names and draws as a person. Only the chat product the user chose may:
+   * a name the host draws in a room is the host's word for who is there.
+   * Absent means none may.
+   */
+  contactRooms?(productId: string): boolean;
   now?(): number;
   log(text: string): void;
 }
@@ -132,6 +142,14 @@ type CallAnswer<M extends ProductMethod> = Result<
 >;
 
 const MESSAGE_TEXT_MAX = 16 * 1024;
+const CONTACT_STATES: readonly ChatRoomContact["state"][] = [
+  "Invite",
+  "Outgoing",
+  "Incoming",
+  "Established",
+  "Blocked",
+  "PeerLeft",
+];
 const HELD_SIGNALS_MAX = 32;
 
 const domain = <const E>(value: E): CallErrorValue<E> => ({
@@ -364,13 +382,16 @@ export class ChatV2Host {
   }
 
   /** What this host serves end to end over the bridge. */
-  capabilities(): HostChatCapabilitiesResponse {
+  capabilities(productId?: string): HostChatCapabilitiesResponse {
     return {
       features: [
         FEATURE.productSourceRooms,
         FEATURE.participants,
         FEATURE.inlineAttachments,
         FEATURE.callButtons,
+        ...(productId !== undefined && this.deps.contactRooms?.(productId)
+          ? [FEATURE.contactRooms]
+          : []),
       ],
       inlineAttachmentMaxBytes: INLINE_MEDIA_MAX_BYTES,
       preimageAttachmentMaxBytes: 0,
@@ -410,6 +431,15 @@ export class ChatV2Host {
         tag: "HostFailure",
         value: { reason: "The product's worker is not running." },
       });
+    if (method === "startConversation")
+      return (await link.ask(
+        method,
+        request,
+        options.timeoutMs ?? QUERY_TIMEOUTS_MS.start,
+        options.signal,
+      )) as QueryResult<M>;
+    if (!("roomId" in request))
+      return err(unknown("no room")) as QueryResult<M>;
     const room = this.room(productId, request.roomId);
     if (room === undefined)
       return err(domain({ tag: "UnknownRoom" })) as QueryResult<M>;
@@ -450,6 +480,7 @@ export class ChatV2Host {
     request: HostQueries[M][0],
     item: HostQueries[M][1],
   ): void {
+    if (!("roomId" in request)) return;
     const room = this.room(productId, request.roomId);
     if (room === undefined) return;
     if (method === "messagesQuery") {
@@ -564,7 +595,7 @@ export class ChatV2Host {
           request as ProductCalls["createRoom"][0],
         );
       case "capabilities":
-        return ok(this.capabilities());
+        return ok(this.capabilities(productId));
       case "roomEventsSubscribe":
         link.subscribed = true;
         return ok({});
@@ -598,6 +629,12 @@ export class ChatV2Host {
         this.emit({ type: "rooms", productId });
         this.emit({ type: "call", productId });
         return ok({});
+      case "setRoomContact":
+        return this.setRoomContact(
+          productId,
+          room,
+          (request as ProductCalls["setRoomContact"][0]).contact,
+        );
       case "setRoomCall":
         return this.setRoomCall(
           productId,
@@ -668,6 +705,41 @@ export class ChatV2Host {
     });
     this.emit({ type: "rooms", productId });
     return ok({ status: "New" });
+  }
+
+  private setRoomContact(
+    productId: string,
+    room: V2Room,
+    contact: ChatRoomContact,
+  ): CallAnswer<"setRoomContact"> {
+    if (this.deps.contactRooms?.(productId) !== true)
+      return err(
+        unknown(
+          `this host serves ${FEATURE.contactRooms} only to the chat product`,
+        ),
+      );
+    if (
+      typeof contact?.account !== "string" ||
+      !/^0x[0-9a-fA-F]{64}$/.test(contact.account) ||
+      !CONTACT_STATES.includes(contact.state)
+    )
+      return err(
+        unknown("the contact needs a 32-byte account and a known state"),
+      );
+    room.contact = {
+      account: contact.account.toLowerCase() as ChatRoomContact["account"],
+      state: contact.state,
+    };
+    this.emit({ type: "rooms", productId });
+    return ok({});
+  }
+
+  /** The room of `productId` whose contact is `account`, if it declared one. */
+  roomWith(productId: string, account: string): V2Room | undefined {
+    const wanted = account.toLowerCase();
+    return this.roomsOf(productId).find(
+      (room) => room.contact?.account === wanted,
+    );
   }
 
   private setRoomCall(
