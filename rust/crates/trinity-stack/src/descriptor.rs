@@ -26,10 +26,12 @@ pub const SERVICE_KINDS: &[&str] =
 // adding `from_json`'s checks on the way in.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 #[serde(remote = "Self", rename_all = "camelCase")]
 pub struct Descriptor {
 	/// Format version; always [`VERSION`].
 	#[serde(rename = "$v")]
+	#[cfg_attr(feature = "js", tsify(type = "1"))]
 	pub version: u64,
 	/// Raised on every publish.
 	pub sequence: u32,
@@ -70,6 +72,7 @@ pub struct Descriptor {
 /// One chain of a stack.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 #[serde(rename_all = "camelCase")]
 pub struct Chain {
 	/// RFC 0026 role, such as `Relay` or `AssetHub`, or another role that serves tools.
@@ -97,6 +100,7 @@ pub struct Chain {
 
 /// A chain spec file and the digest of its bytes as served.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct SpecFile {
 	/// Where the spec is served.
 	pub url: String,
@@ -106,6 +110,7 @@ pub struct SpecFile {
 
 /// A block by number and hash.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct Block {
 	/// Block number.
 	pub number: u32,
@@ -116,6 +121,7 @@ pub struct Block {
 /// An off-chain service.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 #[serde(rename_all = "camelCase")]
 pub struct Service {
 	/// One of [`SERVICE_KINDS`].
@@ -133,6 +139,7 @@ const MAX_CHAIN_ID: u64 = (1 << 53) - 1;
 
 /// An asset readers treat specially.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct Asset {
 	/// What it is for, such as `payment`.
 	pub role: String,
@@ -146,6 +153,7 @@ pub struct Asset {
 
 /// Where the Coinage pallet runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct Coinage {
 	/// Role of the chain that runs it.
 	pub chain: String,
@@ -155,6 +163,7 @@ pub struct Coinage {
 
 /// The stack a fork was made from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct Fork {
 	/// The source stack's pointer.
 	pub of: ForkSource,
@@ -165,6 +174,7 @@ pub struct Fork {
 /// The pointer of a fork's source stack.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct ForkSource {
 	/// The source descriptor's URL.
 	pub url: String,

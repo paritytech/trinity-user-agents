@@ -20,6 +20,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
+    private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -29,12 +30,14 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
+        backedUpInstallation: TrUAPIBackedUpInstallation,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
+        self.backedUpInstallation = backedUpInstallation
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -54,7 +57,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
     /// the manager hands the transition off rather than acting on it here.
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
@@ -119,8 +122,16 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         }
     }
 
+    func currentInstallation() async throws -> Data {
+        try await backedUpInstallation.installationId()
+    }
+
     func supportedChains() throws -> HostChainSet {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
+    }
+
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: chainRegistry)
     }
 
     func authStateChanged(state: AuthState) {
