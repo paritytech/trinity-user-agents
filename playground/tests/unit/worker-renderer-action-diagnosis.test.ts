@@ -75,8 +75,9 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
     chat: {
       createRoom(request: HostChatCreateRoomRequest) {
         createRoomCalls += 1;
-        // First call is the static Playground room; the rest are the
-        // per-run diagnostic room (New, then Exists).
+        // First call is the static Playground room, the next two are the
+        // per-run diagnostic room (New, then Exists), and the last is the
+        // room of the Chat Extension v2 probe.
         if (createRoomCalls === 1) {
           return okAsync<HostChatCreateRoomResponse, never>({ status: "Exists" });
         }
@@ -96,6 +97,11 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
       },
       listSubscribe: () => chatRooms.observable,
       setRoomFooter: () => okAsync<undefined, never>(undefined),
+      setRoomConfig: () => okAsync<undefined, never>(undefined),
+      setRoomMetadata: () => okAsync<undefined, never>(undefined),
+      setRoomPreview: () => okAsync<undefined, never>(undefined),
+      updateFeed: () => okAsync<undefined, never>(undefined),
+      deleteRoom: () => okAsync<undefined, never>(undefined),
       postMessage(request: HostChatPostMessageRequest) {
         postMessageCalls.push(request);
         const payload: ChatMessageContent = request.payload;

@@ -2,6 +2,7 @@ import { getClientSync } from "@parity/truapi/sandbox";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
   CallErrorValue,
+  ChatMessage,
   HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -15,6 +16,7 @@ import {
   CHAT_DIAGNOSIS_COPY_ACTION,
   CHAT_DIAGNOSIS_REFRESH_ACTION,
   ChatDiagnosis,
+  type WorkerDiagnosisMethod,
 } from "./diagnosis";
 import { servePocket } from "./pocket";
 
@@ -180,6 +182,103 @@ async function runStartupDiagnosis(): Promise<void> {
   diagnosis.pass("Chat/post_message", "posted text and custom messages");
 
   await runBotRegistrationProbe();
+  await runRoomDeclarationProbe();
+}
+
+/**
+ * Makes the Chat Extension v2 calls on a room of their own, so the diagnosis
+ * room keeps its messages and a host without these calls reports only these
+ * rows red. After the first failure, the calls that did not run fail with it.
+ */
+async function runRoomDeclarationProbe(): Promise<void> {
+  // The calls of the probe, in the order it makes them.
+  const methods: readonly WorkerDiagnosisMethod[] = [
+    "Chat/set_room_config",
+    "Chat/set_room_metadata",
+    "Chat/set_room_preview",
+    "Chat/update_feed",
+    "Chat/delete_room",
+  ];
+  const roomId = `${diagnosticRoomId}-v2`;
+  const message: ChatMessage = {
+    messageId: "diagnosis",
+    origin: { participantId: "product" },
+    timestamp: BigInt(Date.now()),
+    body: { tag: "Text", value: { text: "Chat Extension v2 diagnosis" } },
+    status: "Sent",
+    reactions: [],
+    request: false,
+  };
+  let step = 0;
+  const done = (details: string): void => {
+    diagnosis.pass(methods[step], details);
+    step += 1;
+  };
+  try {
+    await ensureRoom(roomId, `TrUAPI Diagnosis v2 ${runId}`);
+
+    const config = await chat.setRoomConfig({
+      roomId,
+      config: {
+        productSource: false,
+        reactionDetails: false,
+        reportSeen: false,
+      },
+    });
+    if (config.isErr()) {
+      throw new Error(`setRoomConfig failed: ${JSON.stringify(config.error)}`);
+    }
+    done("declared a room the host stores");
+
+    const metadata = await chat.setRoomMetadata({
+      roomId,
+      metadata: {
+        name: `TrUAPI Diagnosis v2 ${runId}`,
+        description: "Chat Extension v2",
+      },
+    });
+    if (metadata.isErr()) {
+      throw new Error(
+        `setRoomMetadata failed: ${JSON.stringify(metadata.error)}`,
+      );
+    }
+    done("replaced the name and the description");
+
+    const preview = await chat.setRoomPreview({
+      roomId,
+      preview: {
+        timestamp: message.timestamp,
+        badge: { tag: "UnreadCount", value: { count: 1 } },
+        lastMessage: message,
+        unseenReactions: 0,
+      },
+    });
+    if (preview.isErr()) {
+      throw new Error(
+        `setRoomPreview failed: ${JSON.stringify(preview.error)}`,
+      );
+    }
+    done("replaced the chat list preview");
+
+    const feed = await chat.updateFeed({
+      roomId,
+      update: { tag: "New", value: message },
+    });
+    if (feed.isErr()) {
+      throw new Error(`updateFeed failed: ${JSON.stringify(feed.error)}`);
+    }
+    done("stored a new message of the product");
+
+    const deleted = await chat.deleteRoom({ roomId });
+    if (deleted.isErr()) {
+      throw new Error(`deleteRoom failed: ${JSON.stringify(deleted.error)}`);
+    }
+    done("deleted the room");
+  } catch (error) {
+    for (const id of methods.slice(step)) {
+      diagnosis.fail(id, error);
+    }
+  }
 }
 
 /**
