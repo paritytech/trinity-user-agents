@@ -76,8 +76,9 @@ pub struct RuntimeServices {
 	/// Host keeper of product auth tokens, installed once at startup by a host
 	/// with secure storage. Unset leaves every AuthTokens call `Unsupported`.
 	auth_token_platform: OnceLock<Arc<dyn AuthTokenPlatform>>,
-	/// Held across an auth token store's count check and its write, so two
-	/// stores cannot both pass the per-product cap.
+	/// Held across an auth token store's session and count checks and its
+	/// write, and across a clear, so two stores cannot both pass the
+	/// per-product cap and no store lands after a sign-out's clear.
 	auth_token_writes: futures::lock::Mutex<()>,
 	/// Host scanner, installed once at startup by a host that can draw a
 	/// viewfinder. Unset leaves every product scan `Unsupported`.
@@ -344,21 +345,27 @@ impl RuntimeServices {
 		}
 	}
 
-	/// The lock an auth token store holds from its count check to its write.
+	/// The lock an auth token store holds from its session check to its
+	/// write, and a clear holds while it drops tokens.
 	pub async fn auth_token_writes(&self) -> futures::lock::MutexGuard<'_, ()> {
 		self.auth_token_writes.lock().await
 	}
 
 	/// Drop the auth tokens the host keeps for `product_id`, or every
 	/// product's when it is `None`. Nothing to drop without a keeper.
+	///
+	/// Holds [`Self::auth_token_writes`], so a store already past its session
+	/// check finishes first and its token is dropped too, and one still
+	/// waiting sees the session change before it writes.
 	pub async fn clear_auth_tokens(
 		&self,
 		product_id: Option<&str>,
 	) -> Result<(), latest::GenericError> {
-		match self.auth_token_platform() {
-			Some(platform) => platform.clear_auth_tokens(product_id).await,
-			None => Ok(()),
-		}
+		let Some(platform) = self.auth_token_platform() else {
+			return Ok(());
+		};
+		let _writes = self.auth_token_writes().await;
+		platform.clear_auth_tokens(product_id).await
 	}
 
 	/// Install the host's contacts adapter. Answers whether this call was the

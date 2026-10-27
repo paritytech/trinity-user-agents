@@ -69,10 +69,13 @@ class EncryptedAuthTokenStore @Inject constructor(
         }
     }
 
-    private fun readIndex(): Map<String, IndexRow> =
-        preferences.getDecryptedString(INDEX_FIELD)
-            ?.let { runCatching { gson.fromJson<Map<String, IndexRow>>(it, INDEX_TYPE) }.getOrNull() }
-            .orEmpty()
+    // An empty index is removed, so one that is there but does not decode is lost, not empty: reading
+    // it as empty would let the next write drop every token it lists from clearing and the count.
+    private fun readIndex(): Map<String, IndexRow> {
+        val stored = preferences.getDecryptedString(INDEX_FIELD) ?: return emptyMap()
+        return runCatching { gson.fromJson<Map<String, IndexRow>>(stored, INDEX_TYPE) }.getOrNull()
+            ?: throw HostRejection.Rejected("the auth token index is unreadable")
+    }
 
     private fun writeIndex(index: Map<String, IndexRow>) {
         if (index.isEmpty()) preferences.removeKey(INDEX_FIELD) else write(INDEX_FIELD, gson.toJson(index))

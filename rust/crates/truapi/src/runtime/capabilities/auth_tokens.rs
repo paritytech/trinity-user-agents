@@ -36,16 +36,25 @@ impl ProductRuntimeHost {
 		let session = self.accounts.current_session().ok_or(CallError::Denied)?;
 		Ok(AuthTokenSlot {
 			platform,
+			owner: session.public_key,
 			account: account_tag(&session.public_key),
 			key: storage_key(&session.public_key, &self.connection.product.product_id, service),
 		})
 	}
+
+	/// Whether `owner` is still the signed-in account.
+	fn is_signed_in(&self, owner: &[u8; 32]) -> bool {
+		self.accounts
+			.current_session()
+			.is_some_and(|session| &session.public_key == owner)
+	}
 }
 
-/// The host's token keeper with the signed-in account's tag and the key one
-/// service's token is kept under.
+/// The host's token keeper with the signed-in account, its tag, and the key
+/// one service's token is kept under.
 struct AuthTokenSlot {
 	platform: Arc<dyn AuthTokenPlatform>,
+	owner: [u8; 32],
 	account: String,
 	key: String,
 }
@@ -65,7 +74,9 @@ impl AuthTokens for ProductRuntimeHost {
 	/// A service the product has no token for yet only gets one while the
 	/// product keeps fewer than [`MAX_SERVICES_PER_PRODUCT`] for the signed-in
 	/// account. The count check and the write hold one lock, so concurrent
-	/// stores cannot pass the cap together.
+	/// stores cannot pass the cap together. Dropping tokens at sign-out takes
+	/// the same lock, and the session is checked again under it, so a store
+	/// racing a sign-out or an account switch cannot outlive it.
 	#[instrument(skip_all, fields(runtime.method = "auth_tokens.store"))]
 	async fn store(
 		&self,
@@ -75,10 +86,13 @@ impl AuthTokens for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostAuthTokensStoreRequest { service, token } = request.into_latest();
 		let result = async {
-			let AuthTokenSlot { platform, account, key } = self.auth_token_slot(&service)?;
+			let AuthTokenSlot { platform, owner, account, key } = self.auth_token_slot(&service)?;
 			check_store(&service, &token).map_err(CallError::Domain)?;
 			let product_id = self.connection.product.product_id.as_str();
 			let _writes = self.connection.services.auth_token_writes().await;
+			if !self.is_signed_in(&owner) {
+				return Err(CallError::Denied);
+			}
 			let replacing = platform.auth_token(product_id, &key).await.map_err(store_failure)?;
 			if replacing.is_none() &&
 				platform.auth_token_count(product_id, &account).await.map_err(store_failure)? >=

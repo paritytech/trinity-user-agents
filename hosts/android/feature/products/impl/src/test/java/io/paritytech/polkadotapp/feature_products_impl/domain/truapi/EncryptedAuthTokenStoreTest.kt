@@ -85,6 +85,27 @@ class EncryptedAuthTokenStoreTest {
         assertEquals(emptyMap<String, String>(), preferences.values.filterValues { it.isNotEmpty() })
     }
 
+    // A failed decrypt reads as an empty string. Taking that index as empty would orphan the tokens
+    // it lists, so every call that needs the index fails and the kept entry stays listed.
+    @Test
+    fun `an index that does not decode fails instead of reading as empty`() = runTest {
+        val store = store()
+        store.storeAuthToken("wallet.dot", "alice", "k1", token)
+        val index = prefs.values.getValue("truapi/auth-token-index")
+        prefs.values["truapi/auth-token-index"] = ""
+
+        val failures = listOf(
+            runCatching { store.storeAuthToken("wallet.dot", "alice", "k2", token) },
+            runCatching { store.authTokenCount("wallet.dot", "alice") },
+            runCatching { store.clearAuthTokens(null) },
+        ).map { it.exceptionOrNull()?.let { failure -> failure::class } }
+
+        assertEquals(List(3) { HostRejection.Rejected::class }, failures)
+        assertEquals(setOf("truapi/auth-token/k1", "truapi/auth-token-index"), prefs.values.keys)
+        prefs.values["truapi/auth-token-index"] = index
+        assertEquals(1u, store.authTokenCount("wallet.dot", "alice"))
+    }
+
     // The encrypt path reports a failure by storing an empty string, which must not pass as kept.
     @Test
     fun `a write that did not land is reported`() = runTest {

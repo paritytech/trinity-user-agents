@@ -900,6 +900,15 @@ impl PairingHost {
 			lifecycle.external_session_active = external_session;
 			previous
 		};
+		// Dropped once the new account is current, so a store still racing
+		// for the previous one fails its session check instead of landing
+		// after the clear.
+		if previous
+			.as_ref()
+			.is_some_and(|previous| previous.public_key != session.public_key)
+		{
+			self.services.drop_auth_tokens_after_session().await;
+		}
 		if previous.as_ref() != Some(&session) {
 			self.stop_session_channel(previous.as_ref());
 		}

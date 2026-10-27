@@ -9392,6 +9392,70 @@ fn concurrent_stores_cannot_pass_the_service_cap() {
 	);
 }
 
+// A store waiting on the write lock while the user signs out must not land
+// after the sign-out drops tokens: it checks the session again once it holds
+// the lock.
+#[test]
+fn a_store_racing_sign_out_keeps_no_token() {
+	let services = payment_services();
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let cx = CallContext::default();
+	let mut store = Box::pin(truapi::api::AuthTokens::store(
+		&wallet,
+		&cx,
+		truapi::versioned::auth_tokens::HostAuthTokensStoreRequest::V1(
+			v01::HostAuthTokensStoreRequest {
+				service: "onramp".to_string(),
+				token: onramp_token(),
+			},
+		),
+	));
+
+	let writes = futures::executor::block_on(services.auth_token_writes());
+	assert!(futures::FutureExt::now_or_never(store.as_mut()).is_none(), "store waits on the lock");
+	wallet.test_session_state().clear_session();
+	drop(writes);
+	futures::executor::block_on(services.drop_auth_tokens_after_session());
+
+	assert_eq!(
+		(futures::executor::block_on(store), keeper.tokens().len()),
+		(Err(CallError::Denied), 0)
+	);
+}
+
+// Switching the paired account drops the previous account's tokens, as
+// signing out does. Pairing the same account again keeps them.
+#[test]
+fn a_paired_account_switch_drops_auth_tokens() {
+	let services = payment_services();
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let wallet = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.clone(),
+		product,
+	);
+
+	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session_info()));
+	store_auth_token(&wallet, "onramp", onramp_token()).expect("token stored");
+	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session_info()));
+	let kept_for_same_account = keeper.tokens().len();
+	futures::executor::block_on(
+		pairing_host.set_connected_session_for_tests(SessionInfo {
+			public_key: [0xb0; 32],
+			..session_info()
+		}),
+	);
+
+	assert_eq!((kept_for_same_account, keeper.tokens().len()), (1, 0));
+}
+
 // The worker signs in again when it finds no token, so a removed token has to
 // read as absent, and removing it twice is not an error.
 #[test]
