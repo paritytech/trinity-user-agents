@@ -291,7 +291,6 @@ type TransactionHash = [u8; 32];
 
 ```rust
 type ReceiveKey = [u8; 32];
-// As defined in RFC 0022
 type X25519PublicKey = [u8; 32];
 // Opaque cheque id
 type ChequeId = [u8; 32];
@@ -356,6 +355,19 @@ fn create_receive_key(into: PurseId) -> Result<ReceiveKey, CreateReceiveKeyError
 
 enum CreateReceiveKeyError {
     PurseNotFound,
+    Other(GenericError),
+}
+```
+
+#### Static receive key
+
+```rust
+// Receiver side: the X25519 key a sender seals a ChequeDestination::Static cheque to,
+// for the product to publish. The same for every product.
+// Needs no grant or confirmation.
+fn static_receive_key() -> Result<X25519PublicKey, StaticReceiveKeyError>;
+
+enum StaticReceiveKeyError {
     Other(GenericError),
 }
 ```
@@ -445,18 +457,40 @@ enum RevokeChequeError {
 // Cheque.id is the idempotency key: depositing the same cheque again fails with OperationExists.
 // Depositing a cheque with the same id but different content is undefined behavior.
 // Needs no grant or confirmation: receiving only adds items to a purse.
+// Returns once the transfers are registered; follow them with `observe_operation_status`
+// under Cheque.id.
 fn deposit(what: Cheque, to: PurseId) -> Result<(), DepositError>;
 
 enum DepositError {
     PurseNotFound,
+    // `to` is not the purse the cheque's receive key was created into
+    PurseMismatch,
     OperationExists,
     // Cheque.items is empty
     EmptyCheque,
-    // Cheque.encrypted_secrets cannot be decoded, or the decoded secrets do not match `items`
+    // The cheque cannot be opened or does not match `items`
     CorruptedCheque,
     Other(GenericError),
 }
 ```
+
+Who may deposit a cheque depends on its recipient:
+
+- An `Ephemeral` cheque may be deposited only by the product that created its `ReceiveKey`, and only into the purse
+  the key was created into. `to` naming another purse fails with `PurseMismatch`. A receive key this host does not know,
+  or one another product created, fails with `CorruptedCheque`, so a product learns nothing about another product's
+  receive keys.
+- A `Static` cheque opens with the host's static receive key (see `static_receive_key`). Any product may deposit it into
+  any purse.
+
+`CorruptedCheque` covers a cheque whose `version` is not 0, whose `items` list a key twice, whose `id` is not the one
+its `ReceiveKey` derives, whose `encrypted_secrets` do not decrypt with the recipient's key or do not decode, that holds
+a different number of secrets than `items`, or whose secret at some position is not a valid secret key or does not
+derive the key listed there.
+
+A deposit does not need the items to be at the cheque's keys yet: each transfer waits up to an hour for its key to
+hold an NFT, so a product does not have to wait for the sender's mint or transfer to land. A key that holds nothing by
+then is reported in `Status::Incomplete.failed`.
 
 #### Refund a cheque
 
@@ -529,8 +563,6 @@ The host's only obligation during backup recovery is to recover all assets. In a
 ## Prior Art and References
 
 - [RFC 0017: Coinage Payment User Agent API](0017-coinage-payment.md), which this RFC is based on.
-- [RFC 0022: Account key derivations](0022-account-derivations.md), which defines the X25519 keys used by
-  `ChequeDestination::Static`.
 - [RFC 0002: Permission Model for Host API](0002-permission-model.md).
 
 ## Future Directions
