@@ -80,7 +80,9 @@ type RpcReply = {
  * The stack's dotNS contracts, or undefined when its Asset Hub has no gateway dispatcher set.
  * With a store, under the pointer's `stackId` plus `#dotns`, an answer from the descriptor's
  * `generation` younger than `maxAgeMs` (an hour by default) skips the chain, and a refresh that
- * fails falls back to it. Throws when the chain cannot be reached and nothing usable is stored.
+ * fails falls back to it. "No gateway" is always asked again, since a restarted stack sets its
+ * gateway after its chains start. Throws when the chain cannot be reached and nothing usable is
+ * stored.
  */
 export async function resolveDotns(
   pointer: Pointer,
@@ -102,28 +104,26 @@ export async function resolveDotns(
       ? kept
       : undefined;
   if (
-    usable &&
+    usable?.dotns &&
     (now - usable.resolvedAt) * 1000 < (options.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
   )
-    return usable.dotns ?? undefined;
+    return usable.dotns;
+  let dotns: Dotns | null;
   try {
-    const dotns = await lookUp(
+    dotns = await lookUp(
       options.transport ?? defaultTransport(descriptor, options),
     );
-    const fresh: Kept = {
-      generation: descriptor.generation,
-      resolvedAt: now,
-      dotns,
-    };
-    await options.store?.set(
-      id,
-      new TextEncoder().encode(JSON.stringify(fresh)),
-    );
-    return dotns ?? undefined;
   } catch (error) {
     if (usable) return usable.dotns ?? undefined;
     throw error;
   }
+  const fresh: Kept = {
+    generation: descriptor.generation,
+    resolvedAt: now,
+    dotns,
+  };
+  await options.store?.set(id, new TextEncoder().encode(JSON.stringify(fresh)));
+  return dotns ?? undefined;
 }
 
 /** What a store holds under a stack's dotNS id, or undefined when it holds nothing usable. */
@@ -137,7 +137,8 @@ function decodeKept(bytes: Uint8Array | undefined): Kept | undefined {
       (dotns === null ||
         (isAddress(dotns?.dispatcher) &&
           isAddress(dotns.protocolRegistry) &&
-          typeof dotns.addresses === "object"));
+          typeof dotns.addresses === "object" &&
+          Object.values(dotns.addresses).every(isAddress)));
     return valid ? kept : undefined;
   } catch {
     return undefined;
@@ -241,9 +242,11 @@ function defaultTransport(
     );
   const fetcher = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const askRpc = failover(rpc);
+  const askEthRpc = failover(ethRpc);
   return {
     storage: (key) =>
-      firstAnswer(rpc, async (url) => {
+      askRpc(async (url) => {
         const value = await webSocketRequest(
           url,
           "state_getStorage",
@@ -259,28 +262,35 @@ function defaultTransport(
     call: (to, data) => {
       if (ethRpc.length === 0)
         throw new Error(`${descriptor.id} names no eth-rpc; pass a transport`);
-      return firstAnswer(ethRpc, (url) =>
-        ethCall(fetcher, url, to, data, timeoutMs),
-      );
+      return askEthRpc((url) => ethCall(fetcher, url, to, data, timeoutMs));
     },
   };
 }
 
-/** The first endpoint's answer, trying the next on failure. A revert is an answer. */
-async function firstAnswer<T>(
-  urls: string[],
-  ask: (url: string) => Promise<T>,
-): Promise<T> {
-  let lastError: unknown;
-  for (const url of urls) {
-    try {
-      return await ask(url);
-    } catch (error) {
-      if (error instanceof DotnsRevert) throw error;
-      lastError = error;
+/**
+ * Asks `urls` in turn until one answers, starting from the one that answered last, so an
+ * endpoint that is down costs its timeout once rather than on every call. A revert is an answer.
+ */
+function failover(urls: string[]) {
+  let first = 0;
+  return async <T>(ask: (url: string) => Promise<T>): Promise<T> => {
+    let lastError: unknown;
+    for (let offset = 0; offset < urls.length; offset++) {
+      const index = (first + offset) % urls.length;
+      try {
+        const answer = await ask(urls[index]);
+        first = index;
+        return answer;
+      } catch (error) {
+        if (error instanceof DotnsRevert) {
+          first = index;
+          throw error;
+        }
+        lastError = error;
+      }
     }
-  }
-  throw lastError;
+    throw lastError;
+  };
 }
 
 async function ethCall(
@@ -350,7 +360,8 @@ function webSocketRequest(
       if (reply?.id !== 1) return;
       const { result, error } = reply;
       if (error) fail(`failed: ${error.message}`);
-      else settle(() => resolve(result ?? null));
+      else if (result === undefined) fail("answered without a result");
+      else settle(() => resolve(result));
     };
     socket.onerror = () => fail("could not connect");
     socket.onclose = () => fail("closed before answering");

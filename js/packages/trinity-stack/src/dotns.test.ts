@@ -172,12 +172,28 @@ describe("resolveDotns", () => {
     expect(requests()).toBe(3 * once);
   });
 
-  test("a stack without a gateway is remembered as one", async () => {
+  test("no gateway is asked again, since a restarted stack sets one after its chains start", async () => {
+    const store = memoryStore();
+    expect(
+      await resolve("g1", {
+        store,
+        transport: chain(null).transport,
+        now: at(100),
+      }),
+    ).toBeUndefined();
+    expect(
+      await resolve("g1", {
+        store,
+        transport: chain(DISPATCHER).transport,
+        now: at(101),
+      }),
+    ).toEqual(resolved());
+  });
+
+  test("no gateway stands in for an unreachable chain like any other answer", async () => {
     const store = memoryStore();
     const { transport } = chain(null);
-    expect(
-      await resolve("g1", { store, transport, now: at(100) }),
-    ).toBeUndefined();
+    await resolve("g1", { store, transport, now: at(100) });
     expect(
       await resolve("g1", { store, transport: DOWN, now: at(101) }),
     ).toBeUndefined();
@@ -201,6 +217,15 @@ describe("resolveDotns", () => {
       "{not json",
       "",
       '{"generation":"g1","resolvedAt":1}',
+      JSON.stringify({
+        generation: "g1",
+        resolvedAt: 1,
+        dotns: {
+          dispatcher: DISPATCHER,
+          protocolRegistry: REGISTRY,
+          addresses: null,
+        },
+      }),
     ]) {
       const store: Store = memoryStore();
       store.set(`${POINTER.url}#dotns`, new TextEncoder().encode(corrupt));
@@ -211,6 +236,29 @@ describe("resolveDotns", () => {
         await resolve("g1", { store, transport: DOWN, now: at(101) }),
       ).toEqual(resolved());
     }
+  });
+
+  test("a store that cannot be written fails the call instead of passing for an unreachable chain", async () => {
+    const store = memoryStore();
+    await resolve("g1", {
+      store,
+      transport: chain(DISPATCHER).transport,
+      now: at(100),
+    });
+    const full: Store = {
+      get: store.get,
+      set: () => {
+        throw new Error("disk full");
+      },
+    };
+    await expect(
+      resolve("g1", {
+        store: full,
+        transport: chain(DISPATCHER).transport,
+        maxAgeMs: 0,
+        now: at(200),
+      }),
+    ).rejects.toThrow("disk full");
   });
 
   test("a stack that names no Asset Hub RPC needs a transport", async () => {
@@ -275,6 +323,35 @@ describe("resolveDotns over the stack's own endpoints", () => {
         timeoutMs: 5_000,
       }),
     ).rejects.toThrow("something other than JSON");
+  });
+
+  test("a reply without a result fails the read instead of reading as an unset gateway", async () => {
+    const rpc = assetHub((id) => [JSON.stringify({ jsonrpc: "2.0", id })]);
+    await expect(
+      resolveDotns(POINTER, descriptor("g1", rpc, [ETH_RPC]), {
+        fetch: ethRpc,
+      }),
+    ).rejects.toThrow("answered without a result");
+  });
+
+  test("an eth-rpc endpoint that is down is tried once, not on every call", async () => {
+    const rpc = assetHub((id) => [
+      JSON.stringify({ jsonrpc: "2.0", id, result: DISPATCHER }),
+    ]);
+    const down = "http://127.0.0.1:1";
+    let downCalls = 0;
+    const fetcher: Fetch = async (url, init) => {
+      if (url !== down) return ethRpc(url, init);
+      downCalls++;
+      throw new TypeError("connection refused");
+    };
+    const service = { ...ETH_RPC, urls: [down, ...ETH_RPC.urls] };
+    expect(
+      await resolveDotns(POINTER, descriptor("g1", rpc, [service]), {
+        fetch: fetcher,
+      }),
+    ).toEqual(resolved());
+    expect(downCalls).toBe(1);
   });
 
   test("a dispatcher on a stack that names no eth-rpc needs a transport", async () => {

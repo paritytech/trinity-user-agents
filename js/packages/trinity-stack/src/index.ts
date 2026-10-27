@@ -143,7 +143,7 @@ export async function publish(
   return { document, descriptor: parse(plain).descriptor, state };
 }
 
-/** Where a reader keeps the last accepted document of each stack. */
+/** Where a reader keeps the last accepted document of each stack, and `resolveDotns` its last answer. */
 export interface Store {
   get(id: string): Uint8Array | undefined | Promise<Uint8Array | undefined>;
   set(id: string, document: Uint8Array): void | Promise<void>;
