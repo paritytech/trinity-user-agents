@@ -478,6 +478,35 @@ fn document_cases() -> Vec<DocumentCase> {
 			"service-url-not-base",
 		),
 		plain(
+			"valid-web-gateway-with-query",
+			with(|value| {
+				value["services"].as_array_mut().unwrap().extend([
+					json!({ "kind": "web-gateway", "urls": ["https://testnet.li/?network=previewnet"] }),
+					json!({ "kind": "evm-explorer", "urls": ["https://blockscout-testnet.polkadot.io/"] }),
+				])
+			}),
+			"ok",
+		),
+		plain(
+			"web-gateway-path-not-base",
+			with(|value| {
+				value["services"].as_array_mut().unwrap().push(
+					json!({ "kind": "web-gateway", "urls": ["https://testnet.li/apps?network=previewnet"] }),
+				)
+			}),
+			"service-url-not-base",
+		),
+		plain(
+			"web-gateway-on-address",
+			with(|value| {
+				value["services"]
+					.as_array_mut()
+					.unwrap()
+					.push(json!({ "kind": "web-gateway", "urls": ["https://10.0.0.5/"] }))
+			}),
+			"invalid-url",
+		),
+		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
 				value["services"][2].as_object_mut().unwrap().remove("chainId");

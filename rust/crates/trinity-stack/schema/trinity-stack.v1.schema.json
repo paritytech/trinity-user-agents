@@ -87,7 +87,18 @@
       "if": {
         "properties": {
           "kind": {
-            "enum": ["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"]
+            "enum": [
+              "dub",
+              "turn",
+              "stun",
+              "ipfs-gateway",
+              "hop",
+              "eth-rpc",
+              "storage-provider",
+              "faucet",
+              "web-gateway",
+              "evm-explorer"
+            ]
           }
         }
       },

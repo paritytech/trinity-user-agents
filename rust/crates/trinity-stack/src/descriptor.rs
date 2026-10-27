@@ -7,13 +7,24 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 // is not absent.
 use serde_with::{rust::unwrap_or_skip, skip_serializing_none};
 use std::collections::{BTreeMap, HashSet};
+use url::Host;
 
 /// The only format version this crate reads and writes.
 pub const VERSION: u64 = 1;
 
 /// The service kinds `$v: 1` defines. Readers drop entries of any other kind before validating.
-pub const SERVICE_KINDS: &[&str] =
-	&["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"];
+pub const SERVICE_KINDS: &[&str] = &[
+	"dub",
+	"turn",
+	"stun",
+	"ipfs-gateway",
+	"hop",
+	"eth-rpc",
+	"storage-provider",
+	"faucet",
+	"web-gateway",
+	"evm-explorer",
+];
 
 /// A validated `$v: 1` descriptor, with unknown fields and service kinds already dropped.
 ///
@@ -277,10 +288,24 @@ impl Descriptor {
 			for url in &service.urls {
 				let parsed = format::url(url, schemes)?;
 				let is_http = matches!(parsed.scheme(), "http" | "https");
-				let is_base =
-					url.ends_with('/') && parsed.query().is_none() && parsed.fragment().is_none();
-				if is_http && service.kind != "eth-rpc" && !is_base {
+				let is_base = match service.kind.as_str() {
+					"eth-rpc" => true,
+					// Readers prepend a name's label to the host and keep the query, which can
+					// pick the network a shared gateway serves.
+					"web-gateway" => parsed.path().ends_with('/') && parsed.fragment().is_none(),
+					_ => {
+						url.ends_with('/') &&
+							parsed.query().is_none() &&
+							parsed.fragment().is_none()
+					},
+				};
+				if is_http && !is_base {
 					return Err(Error::ServiceUrlNotBase(url.clone()));
+				}
+				let names_a_host =
+					parsed.scheme() == "https" && matches!(parsed.host(), Some(Host::Domain(_)));
+				if service.kind == "web-gateway" && !names_a_host {
+					return Err(Error::InvalidUrl(url.clone()));
 				}
 			}
 		}
