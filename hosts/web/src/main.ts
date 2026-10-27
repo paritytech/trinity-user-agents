@@ -48,7 +48,7 @@ import {
   tabWalletKey,
   type NetworkChoice,
 } from "./network-choice.js";
-import { ask } from "./prompt.js";
+import { ask, setPromptArea } from "./prompt.js";
 import { RecentProducts } from "./recents.js";
 import {
   readPeopleChain,
@@ -179,6 +179,8 @@ const productStatus = element("product-status");
 const productMore = element<HTMLDetailsElement>("product-more");
 const productDetails = element("product-details");
 const productFrame = element("product-frame");
+// Prompts are drawn over the app, as the phone app draws its sheets.
+setPromptArea(productFrame);
 const productSlot = element("product-slot");
 const pocketScreen = element("pocket-screen");
 /** What Pocket says about a card it could not open. */
@@ -274,6 +276,7 @@ const hostContacts = new HostContacts({
   onChange: (listener) => chatInbox.onChange(listener),
   choose: chooseContact,
   removed: () => runtime?.notifyContactsChanged(),
+  log,
 });
 const chatScreen = new ChatScreen(
   element("chat-screen"),
@@ -1792,8 +1795,8 @@ async function resetAppData(): Promise<void> {
       },
     ],
     choices: [
-      { label: "Cancel", value: false },
-      { label: "Reset app data", value: true, primary: true },
+      { label: "Cancel", value: false, tone: "cancel" },
+      { label: "Reset app data", value: true, tone: "destructive" },
     ],
     dismissed: false,
   });

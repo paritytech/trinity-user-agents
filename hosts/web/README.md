@@ -24,7 +24,10 @@ and it makes no security promise against a hostile one. Its separations are for 
   kept under the active wallet and product id. See [Wallets and sessions](#wallets-and-sessions) for what the browser
   keeps apart and what it does not.
 - **The permission prompts are a development aid.** They show what a product asks for and let you answer. They are not
-  custody.
+  custody. Every host prompt (permissions, confirmations, the contact picker, chat controls) is drawn as the Polkadot
+  app's bottom sheet, over the app's rectangle only and at its scale, so the menu and the inspector stay visible beside
+  it. It names the product that asks once, under its title. Escape or a tap outside the sheet gives the safe answer
+  (deny, reject, cancel), and focus returns where it was.
 - **A product's own requests follow the browser.** The host does not intercept a product's `fetch`, XHR, WebSocket,
   WebRTC or media. They follow the browser's rules and the target's CORS headers, and camera and microphone also need
   the browser's and the operating system's permission. Calls a product makes through TrUAPI, such as signing or a

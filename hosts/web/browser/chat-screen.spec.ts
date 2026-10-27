@@ -446,7 +446,9 @@ describe("chat screen over providers", () => {
         // Block from the conversation's options: it leaves the list, then comes back.
         await page.click('[data-action="chat-options"]');
         await page.click('dialog.prompt button:has-text("Block")');
-        await page.click('dialog.prompt button.primary:has-text("Block")');
+        await page.click(
+          'dialog.prompt button[data-tone="destructive"]:has-text("Block")',
+        );
         await page.locator(".chat-list").waitFor();
         expect(await row(page, `nova/0x${"4b".repeat(32)}`).count()).toBe(0);
         await page.click('[data-action="blocked"]');
@@ -461,7 +463,9 @@ describe("chat screen over providers", () => {
         await row(page, `nova/0x${"4b".repeat(32)}`).click();
         await page.click('[data-action="chat-options"]');
         await page.click('dialog.prompt button:has-text("Leave chat")');
-        await page.click('dialog.prompt button.primary:has-text("Leave")');
+        await page.click(
+          'dialog.prompt button[data-tone="destructive"]:has-text("Leave")',
+        );
         await page.locator(".chat-list").waitFor();
         expect(await row(page, `nova/0x${"4b".repeat(32)}`).count()).toBe(0);
 

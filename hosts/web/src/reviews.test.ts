@@ -16,8 +16,8 @@ describe("describeReview", () => {
         },
       },
     });
-    expect(review.fields.slice(0, 2)).toEqual([
-      { label: "Requested by", value: "myapp.paseo" },
+    expect(review.product).toBe("myapp.paseo");
+    expect(review.fields.slice(0, 1)).toEqual([
       {
         label: "Warning",
         value:
@@ -39,10 +39,7 @@ describe("describeReview", () => {
         },
       },
     });
-    expect(review.fields.map((field) => field.label)).toEqual([
-      "Requested by",
-      "Request",
-    ]);
+    expect(review.fields.map((field) => field.label)).toEqual(["Request"]);
   });
 
   test("names the product that asks for another product's account", () => {
@@ -50,10 +47,7 @@ describe("describeReview", () => {
       tag: "AccountAccess",
       value: { requestingProductId: "one.paseo", targetProductId: "two.paseo" },
     });
-    expect(review.fields[0]).toEqual({
-      label: "Requested by",
-      value: "one.paseo",
-    });
+    expect(review.product).toBe("one.paseo");
   });
 });
 

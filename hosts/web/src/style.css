@@ -2413,84 +2413,278 @@ body[data-product="open"] .stage-loading {
   background: rgb(0 0 0 / 0.45);
 }
 
+/*
+ * The host's prompts, drawn as the Polkadot app's bottom sheets
+ * (`BottomSheetStyleConstants` on iOS): a sheet with 32px corners, 8px from
+ * the app's edges, over a scrim that covers the app only. The dialog sits in
+ * the top layer, placed and scaled over the app's rectangle by `prompt.ts`.
+ */
 .prompt {
-  width: min(560px, 90vw);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 20px;
+  --sheet-bg: #17181c;
+  --sheet-raised: #22232a;
+  --sheet-line: #2a2b33;
+  --sheet-text: #f4f4f5;
+  --sheet-muted: #8c8f98;
+  --sheet-danger: #ff8f8f;
+  --sheet-warning: #ffd37f;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--sheet-text);
+  font:
+    400 15px/20px "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  overflow: hidden;
+}
+
+.prompt[data-area="app"] {
+  inset: auto;
+  left: var(--prompt-left);
+  top: var(--prompt-top);
+  width: var(--prompt-width);
+  height: var(--prompt-height);
+  transform: scale(var(--prompt-scale));
+  transform-origin: top left;
 }
 
 .prompt::backdrop {
-  background: rgb(0 0 0 / 0.4);
+  background: transparent;
+}
+
+.prompt-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.prompt-sheet {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  max-width: 480px;
+  max-height: calc(100% - 24px);
+  margin: 0 auto;
+  overflow: auto;
+  padding: 0 24px 16px;
+  border-radius: 32px;
+  background: var(--sheet-bg);
+  box-shadow: 0 -8px 40px rgb(0 0 0 / 0.4);
+  animation: prompt-rise 180ms ease-out;
+}
+
+@keyframes prompt-rise {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-sheet {
+    animation: none;
+  }
+}
+
+.prompt-grabber {
+  display: block;
+  width: 48px;
+  height: 4px;
+  margin: 16px auto 8px;
+  border-radius: 2px;
+  background: var(--sheet-line);
 }
 
 .prompt h2 {
-  font-size: 16px;
+  margin: 8px 0 0;
+  font:
+    700 22px/28px "Manrope",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  text-align: center;
   text-transform: none;
-  letter-spacing: normal;
-  color: var(--text);
+  letter-spacing: -0.2px;
+  color: var(--sheet-text);
+  overflow-wrap: anywhere;
+}
+
+.prompt h2:focus {
+  outline: none;
+}
+
+.prompt-from,
+.prompt-subtitle {
+  margin: 6px 0 0;
+  text-align: center;
+  color: var(--sheet-muted);
+  overflow-wrap: anywhere;
 }
 
 .prompt-subtitle {
-  color: var(--muted);
-}
-
-.prompt dt {
-  color: var(--muted);
   margin-top: 10px;
+  color: var(--sheet-text);
 }
 
-.prompt dd {
+.prompt-fields {
+  margin: 16px 0 0;
+  padding: 4px 16px 12px;
+  border-radius: 20px;
+  background: var(--sheet-raised);
+}
+
+.prompt-fields dt {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--sheet-muted);
+}
+
+.prompt-fields dd {
   margin: 2px 0 0;
   overflow-wrap: anywhere;
 }
 
-.prompt pre {
-  margin: 2px 0 0;
+.prompt-fields pre {
+  margin: 4px 0 0;
   max-height: 240px;
   overflow: auto;
   padding: 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  font-size: 12px;
+  border-radius: 10px;
+  background: var(--sheet-bg);
+  color: var(--sheet-text);
+  font: 12px/16px var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-fields .warning {
+  color: var(--sheet-warning);
+}
+
+/* A choice among many: rows like the app's contact list. */
+.prompt-list {
+  display: grid;
+  margin: 16px -8px 0;
+}
+
+.prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 8px;
+  border: none;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--sheet-text);
+  font:
+    600 16px/22px "Manrope",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  text-align: left;
+}
+
+.prompt-row:hover,
+.prompt-row:focus-visible {
+  background: var(--sheet-raised);
+}
+
+.prompt-row[data-tone="destructive"] {
+  color: var(--sheet-danger);
+}
+
+.prompt-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prompt-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--avatar) 28%, #0b0c0f);
+  color: var(--avatar);
+  font:
+    700 18px/1 "Manrope",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+.prompt-avatar::before {
+  content: attr(data-initial);
 }
 
 .prompt-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 12px;
+  margin-top: 20px;
 }
 
-.prompt {
-  max-height: 88dvh;
-  overflow: auto;
-}
-
-.prompt-list {
+.prompt-actions[data-layout="stack"] {
   flex-direction: column;
-  align-items: stretch;
+  margin-top: 8px;
 }
 
-.prompt-list button {
-  text-align: left;
+.prompt-action {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 999px;
+  background: var(--sheet-raised);
+  color: var(--sheet-text);
+  font:
+    600 15px/1.2 "Inter",
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
-.prompt-actions {
+.prompt-action[data-tone="primary"] {
+  border-color: var(--sheet-text);
+  background: var(--sheet-text);
+  color: #0b0c0f;
+}
+
+.prompt-action[data-tone="destructive"] {
+  border-color: var(--sheet-danger);
+  background: var(--sheet-danger);
+  color: #0b0c0f;
+}
+
+.prompt-action[data-tone="cancel"] {
+  background: transparent;
+}
+
+/* Three choices or more do not fit one row on a phone. */
+.prompt-actions[data-layout="row"]:has(> :nth-child(3)) {
   flex-wrap: wrap;
 }
 
-@media (max-width: 520px) {
-  .prompt {
-    width: 94vw;
-    padding: 16px;
-  }
+.prompt-actions[data-layout="row"]:has(> :nth-child(3)) > * {
+  flex-basis: calc(50% - 6px);
+}
 
-  .prompt-actions button {
-    flex: 1 1 auto;
-  }
+.prompt-actions[data-layout="row"]:has(> :nth-child(3))
+  > [data-tone="primary"] {
+  order: 1;
+  flex-basis: 100%;
 }
 
 /* Narrow screens: the panels cover the product instead of sitting beside it. */

@@ -6,6 +6,7 @@ import type {
   ProviderEvent,
 } from "./chat-provider.js";
 import { renderTree } from "./product-render.js";
+import { avatarColor } from "./avatar-color.js";
 import { ask } from "./prompt.js";
 
 /**
@@ -54,15 +55,6 @@ function button(
   return node;
 }
 
-const AVATAR_COLORS = [
-  "#e6007a",
-  "#56f39a",
-  "#ffd37f",
-  "#7f9dff",
-  "#ff8f6b",
-  "#b98cff",
-];
-
 /** A conversation's icon when it has one, else its initial in a color its seed picks. */
 export function avatar(
   summary: Pick<ConversationSummary, "icon" | "seed" | "title">,
@@ -80,10 +72,7 @@ export function avatar(
     `chat-avatar chat-avatar-${size}`,
     (summary.title || "?").slice(0, 1).toUpperCase(),
   );
-  const hue =
-    [...summary.seed].reduce((sum, char) => sum + char.charCodeAt(0), 0) %
-    AVATAR_COLORS.length;
-  node.style.setProperty("--avatar", AVATAR_COLORS[hue]);
+  node.style.setProperty("--avatar", avatarColor(summary.seed));
   node.setAttribute("aria-hidden", "true");
   return node;
 }
@@ -625,12 +614,24 @@ export class ConversationView {
       layout: "list",
       choices: [
         ...(controls.block && this.provider.block !== undefined
-          ? [{ label: "Block", value: "block" as const }]
+          ? [
+              {
+                label: "Block",
+                value: "block" as const,
+                tone: "destructive" as const,
+              },
+            ]
           : []),
         ...(controls.leave && this.provider.leave !== undefined
-          ? [{ label: "Leave chat", value: "leave" as const }]
+          ? [
+              {
+                label: "Leave chat",
+                value: "leave" as const,
+                tone: "destructive" as const,
+              },
+            ]
           : []),
-        { label: "Cancel", value: null },
+        { label: "Cancel", value: null, tone: "cancel" },
       ],
       dismissed: null,
     });
@@ -646,11 +647,11 @@ export class ConversationView {
           : "They are told that you left. The chat leaves your list and its messages are kept on this device. They can send a new request later.",
       fields: [],
       choices: [
-        { label: "Cancel", value: false },
+        { label: "Cancel", value: false, tone: "cancel" },
         {
           label: choice === "block" ? "Block" : "Leave",
           value: true,
-          primary: true,
+          tone: "destructive",
         },
       ],
       dismissed: false,
