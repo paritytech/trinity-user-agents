@@ -24,6 +24,7 @@ import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
+import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
@@ -80,6 +81,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val ipfsContentLookup: IpfsContentLookup,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -261,6 +263,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
+
+        // A contact's profile avatar is fetched through this. The bridge default answers every
+        // key with a miss, which the core retries until it gives up.
+        override suspend fun lookupPreimage(key: ByteArray): ByteArray? =
+            ipfsContentLookup.lookupRawHash(key).getOrNull()
 
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
