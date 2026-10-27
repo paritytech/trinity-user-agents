@@ -27,21 +27,31 @@ function setup(
   const chosen: PickedPerson[] = [];
   let available = options.available ?? true;
   let blocked = options.blocked ?? [];
+  let startProblem: string | null = null;
+  let confirmed = 0;
+  const directory =
+    options.directory ??
+    fixtureDirectory("test", [
+      { account: ALINE, username: "aline.01" },
+      { account: ALVA, username: "alva.02" },
+      { account: KIM, username: "kim.01" },
+    ]);
   const people = new SearchPeople({
     available: () => available,
+    startProblem: () => startProblem,
     contacts: () =>
       options.contacts ?? [
         { account: KIM, name: "kim.01" },
         { account: SAM, name: "sam.01" },
       ],
     blocked: () => blocked,
-    directory: () =>
-      options.directory ??
-      fixtureDirectory("test", [
-        { account: ALINE, username: "aline.01" },
-        { account: ALVA, username: "alva.02" },
-        { account: KIM, username: "kim.01" },
-      ]),
+    directory: () => ({
+      ...directory,
+      confirm: (user) => {
+        confirmed += 1;
+        return directory.confirm(user);
+      },
+    }),
     changed: () => {},
     chose: (person) => chosen.push(person),
     delayMs: 0,
@@ -54,6 +64,8 @@ function setup(
     labels,
     setAvailable: (value: boolean) => (available = value),
     setBlocked: (value: HexString[]) => (blocked = value),
+    setStartProblem: (value: string | null) => (startProblem = value),
+    confirmed: () => confirmed,
   };
 }
 
@@ -146,7 +158,7 @@ describe("the Docklet's people", () => {
     expect(people.shown()).toBe(false);
   });
 
-  test("offers no one who is blocked, and no one at all where Chat cannot show a person", async () => {
+  test("offers no one who is blocked, and no one at all when people cannot be looked up", async () => {
     const { people, labels, setAvailable } = setup({ blocked: [KIM, ALVA] });
     people.type("k");
     await settle();
@@ -161,6 +173,37 @@ describe("the Docklet's people", () => {
     await settle();
     expect(labels()).toEqual([]);
     expect(people.status()).toBeNull();
+  });
+
+  // Finding a person does not depend on the chat engine, so the user still
+  // sees who exists; picking one says why Chat cannot show them, and checks
+  // nothing on chain for a conversation that cannot start.
+  test("people are found while Chat cannot start a conversation, and picking one says why", async () => {
+    const { people, chosen, labels, setStartProblem, confirmed } = setup();
+    setStartProblem("The Nova chat worker is not running.");
+    people.type("k");
+    await settle();
+    expect(labels()).toEqual([["kim.01", null]]);
+    people.rows()[0]!.choose();
+    people.type("aline");
+    await settle();
+    expect(labels()).toEqual([["aline.01", "Not in your contacts"]]);
+    people.rows()[0]!.choose();
+    expect({
+      chosen,
+      confirmed: confirmed(),
+      status: people.status(),
+    }).toEqual({
+      chosen: [],
+      confirmed: 0,
+      status: "The Nova chat worker is not running.",
+    });
+
+    setStartProblem(null);
+    people.type("kim");
+    await settle();
+    people.rows()[0]!.choose();
+    expect(chosen).toEqual([{ account: KIM, name: "kim.01", found: false }]);
   });
 
   test("text that cannot be a username, such as a URL, shows no people", async () => {

@@ -509,6 +509,15 @@ export class ChatScreen {
     return this.inbox.signedIn() && this.starter() !== undefined;
   }
 
+  /** Why a person chosen elsewhere cannot be shown here, or null when they can. */
+  startProblem(): string | null {
+    if (this.canStart()) return null;
+    const problem = this.inbox.problem();
+    return problem === null
+      ? "Chat cannot start a conversation in this session."
+      : `Chat cannot start a conversation: ${problem}`;
+  }
+
   /**
    * Show `person`, chosen outside Chat, as New chat would: their
    * conversation, or a request to them that is sent only when the user asks.

@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
+  TEST_MNEMONIC,
   type RunningHost,
   closeTools,
   openTools,
@@ -71,6 +72,7 @@ afterAll(async () => {
 async function open(
   viewport = { width: 390, height: 844 },
   allowed: string[] = [],
+  phrase = PHRASE,
 ): Promise<{ context: BrowserContext; page: Page; searched: string[] }> {
   const context = await browser.newContext({ viewport });
   context.setDefaultTimeout(STEP_MS);
@@ -110,7 +112,7 @@ async function open(
         JSON.stringify(record),
       );
     },
-    { id: WALLET_ID, mnemonic: PHRASE, record: RECORD },
+    { id: WALLET_ID, mnemonic: phrase, record: RECORD },
   );
   await page.reload();
   await page
@@ -122,7 +124,7 @@ async function open(
   await page
     .locator("#import")
     .evaluate((details) => ((details as HTMLDetailsElement).open = true));
-  await page.fill("#mnemonic", PHRASE);
+  await page.fill("#mnemonic", phrase);
   await page.click("#add-wallet");
   await page.locator("#session").filter({ hasNotText: "Signed out" }).waitFor();
   await closeTools(page);
@@ -235,6 +237,47 @@ describe("the Docklet's search", () => {
         expect(await page.evaluate(() => document.activeElement?.id)).toBe(
           "pill",
         );
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  // Who exists does not depend on whether Chat runs: with the public
+  // development phrase, whose chat stays off, people are still found, and
+  // picking one says why Chat cannot show them instead of opening anything.
+  test(
+    "while Chat cannot start a conversation, people are found and picking one says why",
+    async () => {
+      const { context, page, searched } = await open(
+        undefined,
+        [],
+        TEST_MNEMONIC,
+      );
+      try {
+        await type(page, "zed");
+        await page
+          .locator("#address-recents li", { hasText: "zed.01" })
+          .waitFor();
+        expect(await suggestions(page)).toEqual([
+          "Apps",
+          "  Open zed.paseo",
+          "People",
+          "  zed.01 (Not in your contacts)",
+        ]);
+        expect(searched).toEqual(["zed"]);
+        await page
+          .locator("#address-recents li", { hasText: "zed.01" })
+          .click();
+        await page
+          .locator("#address-recents .recent-status", {
+            hasText:
+              "Chat cannot start a conversation: Not available for the public development phrase.",
+          })
+          .waitFor();
+        expect(await page.locator("#search-card").isVisible()).toBe(true);
+        expect(await page.locator("#chat-screen").isHidden()).toBe(true);
       } finally {
         await context.close();
       }

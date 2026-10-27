@@ -2362,11 +2362,13 @@ function recentScope(): string {
 
 /**
  * The people the Docklet's search offers beside apps, through the contact
- * picker's own directory. A person chosen there is shown in Chat as New chat
- * would show them; a test user has no chat to show them in, so none is offered.
+ * picker's own directory, while a wallet is signed in. A person chosen there
+ * is shown in Chat as New chat would show them, or told why Chat cannot; a
+ * test user has no chat to show them in, so none is offered.
  */
 const searchPeople = new SearchPeople({
-  available: () => testUser === null && chatScreen.canStart(),
+  available: () => testUser === null && chatInbox.signedIn(),
+  startProblem: () => chatScreen.startProblem(),
   contacts: () => {
     const contacts = chatInbox.contacts();
     const listed = new Set(

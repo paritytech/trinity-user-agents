@@ -13,12 +13,15 @@ import {
  * contacts whose names match what is typed, then people found by username in
  * the same directory the contact picker searches. Nothing is chosen while
  * typing; a row answers only when the user picks it, and a person found by
- * username is checked on chain first, as in the picker.
+ * username is checked on chain first, as in the picker. People are found
+ * while Chat cannot start a conversation too; picking one then says why.
  */
 
 export interface SearchPeopleDeps {
-  /** Whether a chosen person can be shown in Chat now. When not, no person is offered. */
+  /** Whether people can be looked up now. When not, no person is offered. */
   available(): boolean;
+  /** Why a chosen person cannot be shown in Chat now, or null when they can. */
+  startProblem(): string | null;
   /** The session's contacts, as the host names them. */
   contacts(): readonly ChatContact[];
   blocked(): readonly HexString[];
@@ -138,7 +141,11 @@ export class SearchPeople {
       note,
       avatarSeed: account,
       choose: () => {
-        if (this.checking === null) choose();
+        if (this.checking !== null) return;
+        const problem = this.deps.startProblem();
+        if (problem === null) return choose();
+        this.refused = problem;
+        this.deps.changed();
       },
     };
   }
