@@ -63,6 +63,7 @@ class TrUAPIHostRuntimeProviderTest {
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
         installations = mockk(),
+        extensionVersions = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
