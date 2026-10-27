@@ -25,6 +25,20 @@ stack.stale; // past validUntil
 store gets no rollback protection. Errors from a rule of the RFC carry a `code`, such as `bad-signature`, which
 `isTrinityStackError` recognises.
 
+## Reading a stack's dotNS contracts
+
+```ts
+import { resolveDotns } from "@parity/trinity-stack/dotns";
+
+const dotns = await resolveDotns(pointer, stack.descriptor, { store });
+dotns?.addresses.registrar; // undefined dotns: the stack's Asset Hub has no dotNS gateway
+```
+
+Descriptors leave dotNS out, so `resolveDotns` reads it from the stack's Asset Hub: the gateway's dispatcher from
+storage over the chain's RPC, then the protocol registry through its `eth-rpc`. With a store, it keeps the result under
+the descriptor's `generation` and asks the chain again after `maxAgeMs`, an hour by default. If that refresh fails, it
+returns the kept copy. A reader with its own client, such as a light client, passes a `transport`.
+
 ## Publishing a stack
 
 ```ts

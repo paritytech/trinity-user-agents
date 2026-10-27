@@ -55,7 +55,8 @@ js/packages/
                           no debug seam. Where the app ultimately lives is still
                           an open decision.
   trinity-stack/          @parity/trinity-stack: the trinity-stack crate built to wasm/
-                          by `npm run build:wasm`, plus read/publish; its bun tests
+                          by `npm run build:wasm`, plus read/publish; `/dotns` reads a
+                          stack's dotNS contracts from its Asset Hub; its bun tests
                           run the crate's vectors
 js/container/              Shared TS lockdown container for native web views and CLI dev; scripts reuse its web API gates
                            `npm run build` bundles it into ios/truapi-host/Sources/TrUAPIHost/Resources/
