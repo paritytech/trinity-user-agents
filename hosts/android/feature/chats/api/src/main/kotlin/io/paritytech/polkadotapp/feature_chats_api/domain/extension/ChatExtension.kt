@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -61,4 +62,7 @@ interface ChatExtension {
 
     /** Holds the worker of the product while a room screen shows [chatId]. Null when the room needs no worker. */
     fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? = null
+
+    /** The queries of a room whose messages the product keeps. Null when the extension cannot answer them. */
+    fun roomQuerying(chatId: ChatId): ProductChatQuerying? = null
 }

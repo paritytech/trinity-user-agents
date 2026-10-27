@@ -21,6 +21,7 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     var metadataUpdates: [ChatMetadata?] = []
     /// What `messageSnapshots` yields. The stream stays open, as the stream of a room screen does.
     var snapshotUpdates: [MessageListSnapshot] = []
+    var store = ChatRoomPolicy.MessageStore.host
     var jumpFindsMessage = true
     var actionOutcome = ChatSourceActionOutcome.done
     /// What `sendUserMessage` throws after it records the call.
@@ -78,6 +79,10 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
         .eraseToAnyAsyncSequence()
     }
 
+    func messageStore() async -> ChatRoomPolicy.MessageStore {
+        store
+    }
+
     func loadOlder() async -> ChatPageOutcome {
         continuation.yield(.loadOlder)
         return .appended(0)
@@ -104,5 +109,9 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
 
     func closeRoom() async {
         continuation.yield(.closeRoom)
+    }
+
+    func refreshMessageStore() async -> Bool {
+        false
     }
 }

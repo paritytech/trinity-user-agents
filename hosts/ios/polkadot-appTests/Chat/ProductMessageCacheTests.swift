@@ -67,18 +67,26 @@ struct ProductMessageCacheTests {
         #expect(await cache.entry(productId: productId, roomId: roomId) == nil)
     }
 
-    /// The bridge gives the cache an update of a room that the product keeps.
+    /// The bridge gives an update that no open room takes to the cache, and an update that an open room takes only
+    /// to the room.
     @Test func theBridgeGivesTheCacheTheUpdatesOfAClosedRoom() async throws {
         let fixture = ProductRoomFixture()
+        let listeners = ProductFeedListeners()
         let cache = ProductMessageCache()
-        let bridge = await fixture.bridge(pageCache: cache)
+        let bridge = await fixture.bridge(feedListeners: listeners, pageCache: cache)
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
         await cache.store(entry([message(1)]), productId: fixture.productId, roomId: "lobby")
 
         try await bridge.updateFeed(roomId: "lobby", update: .new(message(2)), persist: false)
 
+        let listener = CachedFeedListener()
+        let registration = listeners.register(listener, for: fixture.chatId("lobby"))
+        try await bridge.updateFeed(roomId: "lobby", update: .new(message(3)), persist: false)
+        registration.cancel()
+
         let cached = await cache.entry(productId: fixture.productId, roomId: "lobby")
         #expect(cached?.messages.map(\.messageId) == ["m1", "m2"])
+        #expect(await listener.updates.map(\.update) == [.new(message(3))])
     }
 
     /// A room that opens after the update shows it from the cache before the product answers.
@@ -125,5 +133,13 @@ struct ProductMessageCacheTests {
             reactions: [],
             request: false
         )
+    }
+}
+
+private actor CachedFeedListener: ProductFeedListening {
+    private(set) var updates: [(roomId: String, update: ChatFeedUpdate)] = []
+
+    func apply(roomId: String, update: ChatFeedUpdate) {
+        updates.append((roomId, update))
     }
 }

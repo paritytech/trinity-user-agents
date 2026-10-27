@@ -55,6 +55,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.NoChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
@@ -628,6 +629,9 @@ class ChatEngine @Inject constructor(
 
     suspend fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle =
         chatExtensionRegistry.getExtensionForChat(chatId)?.roomLifecycle(chatId) ?: NoChatRoomLifecycle
+
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.roomQuerying(chatId)
 
     fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
         return flowOfAll {

@@ -193,14 +193,14 @@ class ProductChatHostBridgeTest {
     @Test
     fun `a declared config is answered as declared`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
-        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true, reportSeen = true)
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
 
         val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
 
+        assertTrue(config.productSource)
         assertTrue(config.reportSeen)
-        assertFalse(config.productSource)
     }
 
     @Test
@@ -230,19 +230,6 @@ class ProductChatHostBridgeTest {
             )
         }
         coVerify { messaging.deleteRoom(room) }
-    }
-
-    // The room screen reads the host store only, so a room whose product keeps the messages would show nothing.
-    @Test
-    fun `a room whose product keeps the messages is refused`() = runTest {
-        val messaging = mockk<ProductChatMessaging>()
-
-        val thrown = runCatching {
-            ProductChatHostBridge(productId, messaging).setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
-        }.exceptionOrNull()
-
-        assertTrue(thrown is HostRejection)
-        coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
     }
 
     @Test

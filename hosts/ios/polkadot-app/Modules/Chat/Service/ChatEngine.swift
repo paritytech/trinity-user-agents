@@ -27,9 +27,14 @@ protocol ChatEngineProtocol {
     func jump(to messageId: Chat.MessageId) async -> Bool
     /// Writes an action of the user to the message source of the room.
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome
+    /// Where the messages of the room live.
+    func messageStore() async -> ChatRoomPolicy.MessageStore
     /// The room screen shows the room. A product room holds its product until `closeRoom`.
     func openRoom() async
     func closeRoom() async
+    /// Picks the message source again when the product changed where the messages of the room live since the
+    /// source was picked. Gives true when the source changed, so the screen subscribes to the new one.
+    func refreshMessageStore() async -> Bool
 }
 
 enum ChatEngineError: Error {
@@ -126,6 +131,12 @@ final class ChatEngine {
             chatId: chatId,
             coreDataSource: coreDataSource,
             services: productRoomServices,
+            policy: { [chatRepository] in
+                let chat = try? await chatRepository
+                    .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+                    .asyncExecute()
+                return chat?.roomPolicy
+            },
             logger: logger
         )
     }
@@ -152,12 +163,20 @@ extension ChatEngine: ChatEngineProtocol {
         try await sourceContext.source().perform(action)
     }
 
+    func messageStore() async -> ChatRoomPolicy.MessageStore {
+        await sourceContext.messageStore()
+    }
+
     func openRoom() async {
         await sourceContext.open()
     }
 
     func closeRoom() async {
         await sourceContext.close()
+    }
+
+    func refreshMessageStore() async -> Bool {
+        await sourceContext.refresh()
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {

@@ -311,17 +311,37 @@ struct ChatProductFeedTests {
         }
     }
 
-    /// A room that the product keeps stores nothing.
-    @Test func anUpdateThatIsNotKeptStoresNothing() async throws {
-        let bridge = try await openRoom()
+    /// A room that the product keeps stores nothing: an open room screen or the cached page takes the update.
+    @Test func anUpdateThatIsNotKeptReachesOnlyAnOpenRoom() async throws {
+        let listeners = ProductFeedListeners()
+        let bridge = try await openRoom(feedListeners: listeners)
+        let listener = RecordingFeedListener()
+        let update = ChatFeedUpdate.new(message("m1", body: .text(text: "hi")))
 
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m1", body: .text(text: "hi"))),
-            persist: false
-        )
+        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
+        #expect(await listener.updates.isEmpty)
 
+        let registration = listeners.register(listener, for: fixture.chatId("lobby"))
+        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
+        try await bridge.updateFeed(roomId: "other", update: update, persist: false)
+        registration.cancel()
+        try await bridge.updateFeed(roomId: "lobby", update: update, persist: false)
+
+        #expect(await listener.updates.map(\.roomId) == ["lobby"])
+        #expect(await listener.updates.map(\.update) == [update])
         #expect(try await fixture.messages("lobby").isEmpty)
+    }
+
+    @Test func theRegistryDoesNotKeepAListener() async throws {
+        let listeners = ProductFeedListeners()
+        var listener: RecordingFeedListener? = RecordingFeedListener()
+        let registration = try listeners.register(#require(listener), for: fixture.chatId("lobby"))
+        listener = nil
+
+        #expect(await listeners
+            .deliver(.statusChanged(messageId: "m1", status: .sent), roomId: "lobby", to: fixture.chatId("lobby"))
+            == false)
+        _ = registration
     }
 }
 
@@ -387,10 +407,19 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
     ]
 }
 
+private actor RecordingFeedListener: ProductFeedListening {
+    private(set) var updates: [(roomId: String, update: ChatFeedUpdate)] = []
+
+    func apply(roomId: String, update: ChatFeedUpdate) {
+        updates.append((roomId, update))
+    }
+}
+
 private extension ChatProductFeedTests {
-    func openRoom() async throws -> RustChatExecutionBridge {
+    func openRoom(feedListeners: ProductFeedListeners = ProductFeedListeners()) async throws
+        -> RustChatExecutionBridge {
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
-        return await fixture.bridge()
+        return await fixture.bridge(feedListeners: feedListeners)
     }
 
     func message(

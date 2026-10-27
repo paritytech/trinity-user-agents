@@ -62,11 +62,18 @@ private extension ChatInteractor {
             do {
                 let metadataStream = engine.chatMetadataStream()
                 var hasShownChat = false
+                var messageStore: ChatRoomPolicy.MessageStore?
                 for try await chatMetadata in metadataStream {
                     if let chatMetadata {
                         hasShownChat = true
                         let metadata = MessageListMetadata(chatMetadata: chatMetadata, myUsername: currentUsername)
                         await self?.presenter?.didReceive(metadata: metadata)
+
+                        let store = chatMetadata.roomPolicy?.messageStore
+                        if store != messageStore {
+                            messageStore = store
+                            await self?.refreshMessageStore()
+                        }
                     } else if hasShownChat, self?.isProductRoom == true {
                         await self?.presenter?.didRemoveChat()
                         hasShownChat = false
@@ -94,6 +101,17 @@ private extension ChatInteractor {
                 self?.logger.error("Unexpected footer error: \(error)")
             }
         }
+    }
+
+    /// The product set the configuration of the room after the room screen subscribed to its messages: the screen
+    /// follows the messages of the new store.
+    func refreshMessageStore() async {
+        guard await engine.refreshMessageStore() else {
+            return
+        }
+
+        messagesTask?.cancel()
+        subscribeMessages()
     }
 
     func subscribeMessages() {

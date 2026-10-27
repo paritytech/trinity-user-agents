@@ -71,10 +71,7 @@ class ProductChatHostBridge(
     override suspend fun roomConfig(roomId: String): ChatRoomConfig =
         chatMessaging.roomDeclarations(requireRoom(roomId)).orReject()?.config?.toCore() ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
 
-    // The room screen reads the messages of a room from the host store only, so this host refuses a room whose product
-    // keeps the messages.
     override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
-        if (config.productSource) throw HostRejection.Rejected("this host does not serve product-source rooms")
         chatMessaging.setRoomConfig(requireRoom(roomId), config.toModel()).orReject()
     }
 

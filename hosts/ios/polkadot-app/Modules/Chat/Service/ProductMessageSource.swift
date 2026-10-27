@@ -9,7 +9,7 @@ import TrUAPIHost
 /// after it. The window holds at most `Settings.windowLimit` messages, so a new page at one end drops whole
 /// pages at the other end. The source keeps the request of each dropped page and asks it again when the user
 /// comes back. Feed updates change the window in place.
-actor ProductMessageSource: ChatMessageSourcing {
+actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     struct Settings: Sendable {
         var pageSize: UInt32 = 50
         var windowLimit = 500
@@ -96,6 +96,16 @@ actor ProductMessageSource: ChatMessageSourcing {
         firstPageTask?.cancel()
         olderTask?.cancel()
         newerTask?.cancel()
+    }
+
+    // MARK: - ProductFeedListening
+
+    func apply(roomId: String, update: ChatFeedUpdate) async {
+        guard roomId == self.roomId else {
+            return
+        }
+
+        apply(update)
     }
 
     // MARK: - ChatMessageSourcing

@@ -244,6 +244,16 @@ struct ProductMessageSourceTests {
         #expect(sent.status == .outgoing(.delivered))
         #expect(sent.origin == .user)
     }
+
+    @Test func aFeedUpdateForAnotherRoomIsIgnored() async {
+        let source = makeSource(ScriptedProductChatQuerying())
+        await open(source)
+
+        await source.apply(roomId: "other", update: .new(productMessage(1)))
+        await source.apply(roomId: roomId, update: .new(productMessage(2)))
+
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m2"])
+    }
 }
 
 // MARK: - Helpers

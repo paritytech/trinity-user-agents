@@ -49,6 +49,28 @@ sealed interface ChatPageAnchorModel {
     data class Before(val cursor: String?) : ChatPageAnchorModel
 }
 
+/** Why a query to the product has no answer. */
+sealed class ProductChatQueryException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    /** The product cannot answer this question. The host hides the feature; this is not a failure. */
+    class NotAvailable : ProductChatQueryException("the product does not answer this question")
+
+    class UnknownRoom : ProductChatQueryException("the product does not know the room")
+
+    class UnknownMessage : ProductChatQueryException("the product does not know the message")
+
+    /** The product refused the action of the user. Show [reason] to the user. */
+    class Rejected(val reason: String) : ProductChatQueryException(reason)
+
+    class Failed(val reason: String) : ProductChatQueryException(reason)
+
+    class NoAnswer : ProductChatQueryException("the product ended the query without an answer")
+
+    class TimedOut : ProductChatQueryException("the product did not answer in time")
+
+    /** The worker of the product does not run, or the host does not serve the query. */
+    class Unavailable(cause: Throwable?) : ProductChatQueryException("the product is not available", cause)
+}
+
 /** The room does not exist, or another extension owns it. */
 class UnknownChatRoomException : Exception("the chat room does not exist")
 
