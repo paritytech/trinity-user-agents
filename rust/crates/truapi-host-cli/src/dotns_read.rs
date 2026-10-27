@@ -10,10 +10,10 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
-		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN,
-		account_alias_key, claim_blocker, classify_labels, discover_pop_controller,
-		encode_revive_call, label_available, lite_label_owner_key, resolve_labels,
-		timestamp_now_key, view_output,
+		ClaimBlocker, DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, ReviveDryRun,
+		VIEW_CALL_ORIGIN, account_alias_key, claim_blocker, classify_labels, decode_revive_dry_run,
+		discover_pop_controller, encode_revive_call, label_available, lite_label_owner_key,
+		resolve_labels, timestamp_now_key, view_output,
 	},
 	platform::async_trait,
 };
@@ -114,7 +114,7 @@ impl AssetHubReader {
 	/// `DotnsPopController` address, resolved once per reader. The env override
 	/// wins, then on-chain discovery from `DotnsGateway.DispatcherAddress`, then
 	/// the preset's own controller.
-	async fn pop_controller(&mut self) -> Result<[u8; 20]> {
+	pub async fn pop_controller(&mut self) -> Result<[u8; 20]> {
 		if let Some(controller) = self.pop_controller {
 			return Ok(controller);
 		}
@@ -154,7 +154,30 @@ impl AssetHubReader {
 	/// Views originate from the synthetic always-mapped account. They work
 	/// regardless of the queried account's revive mapping.
 	async fn raw_view(&self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
+		view_output(&self.revive_dry_run(&VIEW_CALL_ORIGIN, dest, &input).await?)
+	}
+
+	/// Dry-runs `input` against `dest` from `origin`, for the weight and storage
+	/// deposit a signed `Revive.call` of it needs and the call's outcome.
+	pub async fn dry_run_call(
+		&self,
+		origin: &[u8; 32],
+		dest: &[u8; 20],
+		input: &[u8],
+	) -> Result<ReviveDryRun> {
+		let output = self.revive_dry_run(origin, dest, input).await?;
+		Ok(decode_revive_dry_run(&output)?)
+	}
+
+	/// The raw `ReviveApi_call` output of a dry-run of `input` against `dest`
+	/// from `origin`.
+	async fn revive_dry_run(
+		&self,
+		origin: &[u8; 32],
+		dest: &[u8; 20],
+		input: &[u8],
+	) -> Result<Vec<u8>, DotnsViewError> {
+		let args = encode_revive_call(origin, dest, input);
 		let output: Value = self
 			.rpc
 			.request(
@@ -170,10 +193,9 @@ impl AssetHubReader {
 				"state_call returned a non-string response".to_string(),
 			));
 		};
-		let bytes = hex::decode(output.strip_prefix("0x").unwrap_or(output)).map_err(|err| {
+		hex::decode(output.strip_prefix("0x").unwrap_or(output)).map_err(|err| {
 			DotnsViewError::Failed(format!("state_call output is not valid hex: {err}"))
-		})?;
-		view_output(&bytes)
+		})
 	}
 
 	/// One `state_getStorage` read at the best block.

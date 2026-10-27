@@ -2160,14 +2160,34 @@ REGISTER_CONFIRMED label=<label> full_username=<name>
 `REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
 account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
 `<pending>`). Before signing: the label must be unminted on `DotnsRegistrar`;
-the label's reservation queue on `DotnsPopController` must let the account
-claim it, which fails when another account holds the first active reservation
-or, on dotNS 1.1.0 and later, when more expired or emptied reservations stand
-in front than one gateway call clears (`MAX_QUEUE_STEPS_PER_CALL`; clear them
-with `DotnsPopController.expireReservation(label)`); the account must not already
-hold a `DotnsGateway.AccountAlias`; a linked lite username must be owned by the
+another account must not hold the first active reservation in the label's
+reservation queue on `DotnsPopController`; the account must not already hold a
+`DotnsGateway.AccountAlias`; a linked lite username must be owned by the
 account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 `RegisterFullName` shape differs are rejected.
+
+A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+reservations from the front of the queue, and a reverted claim keeps none of
+that clearing. When more of them stand in front of the claim (dotNS 1.1.0 and
+later), the command first clears the queue with
+`DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
+the account, with the weight and storage deposit limits of a dry-run from it.
+The dry-run reports those limits even when the account cannot fund the
+deposit, and any other dry-run failure stops the command. The fee and the
+storage deposit are paid in PGAS: when the account's balance does not cover
+both, the command claims PGAS into the account with the same People ring
+membership (`Pgas.claim_pgas`, one daily slot), and dry-runs again. It stops
+when that dry-run still fails, and after inclusion it reads the queue again and
+stops if the claim would still revert. Clearing prints, before
+`REGISTER_SUBMITTED`:
+
+```text
+REGISTER_QUEUE_BLOCKED label=<label> dead=<count>
+REGISTER_PGAS_CLAIMED block=<hash>
+REGISTER_QUEUE_CLEARED label=<label> block=<hash>
+```
+
+`REGISTER_PGAS_CLAIMED` appears only when a claim was needed.
 
 ### 19.3 `alloc-check`
 
