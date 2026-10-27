@@ -99,7 +99,7 @@ import { AppsShelf, type ShelfApp } from "./apps-shelf.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
 import { HostNames } from "./host-names.js";
-import { chatRecordKey } from "./chat/store.js";
+import { blockedAccounts, chatRecordKey } from "./chat/store.js";
 import {
   exactUsernameDirectory,
   routeDirectory,
@@ -269,6 +269,10 @@ const novaWorkerMode =
           engineSwitch?.render();
         },
         linkChanged: () => engineSwitch?.render(),
+        blocked: (account) =>
+          blockedPeople().some(
+            (blocked) => blocked.toLowerCase() === account.toLowerCase(),
+          ),
         log,
       })
     : null;
@@ -456,6 +460,17 @@ const devSession =
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
+/**
+ * The people the signed-in wallet blocked in Chat. The host's chat record
+ * keeps them whichever engine runs, so the contact picker and the Nova chat
+ * worker's start references read one list. A test user blocks no one.
+ */
+function blockedPeople(): HexString[] {
+  const wallet = activeWallet;
+  return testUser !== null || wallet === null
+    ? []
+    : blockedAccounts(localStorage, chatRecordKey(activeNetwork.id, wallet.id));
+}
 /** The account `username` names on this network's chains, or null. */
 async function usernameOwner(username: string): Promise<HexString | null> {
   const access = chainAccess;
@@ -491,15 +506,7 @@ const hostContacts = new HostContacts({
   onChange: (listener) => chatInbox.onChange(listener),
   choose: (asker, contacts, blocked) =>
     chooseContact(asker, contacts, usernameDirectory, blocked),
-  // A Nova conversation's id is the person's account.
-  blocked: () =>
-    devSession !== null
-      ? []
-      : chatInbox
-          .providers()
-          .flatMap((provider) => provider.blocked?.() ?? [])
-          .map((conversation) => conversation.id)
-          .filter((id): id is HexString => /^0x[0-9a-fA-F]{64}$/.test(id)),
+  blocked: blockedPeople,
   onSessionChange: (listener) =>
     chatInbox.onChange((change) => {
       if (change.type === "session") listener();

@@ -210,6 +210,19 @@ export function loadChatRecord(storage: Storage, key: string): ChatRecord {
   }
 }
 
+/** The accounts the record at `key` holds as blocked, read without writing anything. */
+export function blockedAccounts(
+  storage: Pick<Storage, "getItem">,
+  key: string,
+): HexString[] {
+  const raw = storage.getItem(key);
+  if (raw === null) return [];
+  const readOnly = { getItem: () => raw, setItem: () => {} };
+  return loadChatRecord(readOnly as unknown as Storage, key)
+    .contacts.filter((contact) => contact.blocked === true)
+    .map((contact) => contact.account);
+}
+
 export function saveChatRecord(
   storage: Storage,
   key: string,
