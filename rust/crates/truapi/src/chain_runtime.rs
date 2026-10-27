@@ -33,7 +33,7 @@ use std::{
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-use crate::platform::JsonRpcConnection;
+use crate::platform::{ChainProvider, JsonRpcConnection};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -243,6 +243,37 @@ pub trait RuntimeChainProvider: Send + Sync {
 		&self,
 		genesis_hash: Vec<u8>,
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
+}
+
+/// Adapter from a host's [`ChainProvider`] into the [`RuntimeChainProvider`]
+/// surface the chain runtime expects.
+pub struct HostChainProvider {
+	provider: Arc<dyn ChainProvider>,
+}
+
+impl HostChainProvider {
+	/// Opens connections through `provider`.
+	pub fn new(provider: Arc<dyn ChainProvider>) -> Self {
+		Self { provider }
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeChainProvider for HostChainProvider {
+	async fn connect(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+		let genesis_hash: [u8; 32] = genesis_hash.try_into().map_err(|genesis_hash: Vec<u8>| {
+			RuntimeFailure::host_failure(
+				"remote_chain_connect",
+				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
+			)
+		})?;
+		self.provider.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
+			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
+		})
+	}
 }
 
 /// Which caller a chain connection belongs to.
