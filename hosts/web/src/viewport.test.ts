@@ -4,8 +4,29 @@ import {
   MIN_SIDE,
   clampSide,
   draggedSize,
+  initialViewport,
   loadCustomSize,
 } from "./viewport.js";
+
+describe("the tab's first size", () => {
+  // A new tab previews a phone, but a size the tab chose stays chosen.
+  test("is Phone until the tab saves a choice, then that choice", () => {
+    expect(
+      [null, "", "watch", "auto", "fill", "desktop", "custom", "phone"].map(
+        initialViewport,
+      ),
+    ).toEqual([
+      "phone",
+      "phone",
+      "phone",
+      "auto",
+      "fill",
+      "desktop",
+      "custom",
+      "phone",
+    ]);
+  });
+});
 
 describe("custom viewport size", () => {
   test("holds a side between the bounds and rounds it", () => {

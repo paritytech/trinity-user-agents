@@ -444,6 +444,53 @@ describe("the developer tools", () => {
   );
 
   test(
+    "a new tab previews a phone, and a size the tab chose stays chosen",
+    async () => {
+      const { context, page } = await openHost({ width: 1440, height: 900 });
+      try {
+        const preview = () =>
+          page.locator("#product-frame").evaluate((element) => ({
+            choice: (document.getElementById("viewport") as HTMLSelectElement)
+              .value,
+            frame: (element as HTMLElement).dataset.frame ?? null,
+            width: (element as HTMLElement).offsetWidth,
+            height: (element as HTMLElement).offsetHeight,
+          }));
+        expect(await preview()).toEqual({
+          choice: "phone",
+          frame: "device",
+          width: 393,
+          height: 852,
+        });
+
+        // Desktop, chosen in the Preview tab, survives a reload of the tab.
+        await openTools(page, "preview");
+        await page.click('#dev-preview [data-viewport="fill"]');
+        await page.reload();
+        await scriptReady(page);
+        const filled = await preview();
+        expect(filled).toMatchObject({ choice: "fill", frame: null });
+        expect(filled.width).toBeGreaterThan(393);
+
+        // A narrow window fills with the app, not a phone inside a phone.
+        await page.evaluate(() => sessionStorage.clear());
+        await page.setViewportSize({ width: 600, height: 900 });
+        await page.reload();
+        await scriptReady(page);
+        expect(await preview()).toEqual({
+          choice: "phone",
+          frame: null,
+          width: 600,
+          height: (await box(page, "#product-frame")).height,
+        });
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "a narrow window keeps the tools a sheet over the app",
     async () => {
       const { context, page } = await openHost({ width: 600, height: 900 });

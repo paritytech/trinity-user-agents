@@ -16,6 +16,7 @@ import {
   testBrowser,
   closeTools,
   openTools,
+  previewFill,
   type DevTab,
 } from "./fixtures.js";
 
@@ -43,12 +44,15 @@ async function open(
   viewport = { width: 1280, height: 800 },
   /** A product served on loopback, saved as what Browse opens. */
   browse?: string,
+  /** The preview size the tab starts on; a new tab's own is Phone. */
+  preview: "phone" | "fill" = "phone",
 ): Promise<{
   context: BrowserContext;
   page: Page;
   outside: string[];
 }> {
   const context = await browser.newContext({ viewport });
+  if (preview === "fill") await previewFill(context);
   if (browse !== undefined)
     await context.addInitScript((address) => {
       if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
@@ -174,10 +178,12 @@ describe("the Inbox", () => {
   test(
     "marks a row seen only once it shows in a visible page, and Dismiss takes it off the list without an answer",
     async () => {
-      const { context, page, outside } = await open({
-        width: 1280,
-        height: 600,
-      });
+      // At full scale the list is taller than its view, so a jump skips rows.
+      const { context, page, outside } = await open(
+        { width: 1280, height: 600 },
+        undefined,
+        "fill",
+      );
       try {
         // Signed out: the tab is there, with nothing in it and no badge.
         await openInbox(page);
