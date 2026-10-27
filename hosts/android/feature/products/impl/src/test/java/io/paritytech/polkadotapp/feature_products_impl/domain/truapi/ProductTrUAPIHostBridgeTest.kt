@@ -51,6 +51,7 @@ class ProductTrUAPIHostBridgeTest {
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
+        extensionVersions = mockk(),
         scope = scope,
     )
 
