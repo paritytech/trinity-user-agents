@@ -1115,6 +1115,7 @@ export class Session {
             amount,
             source: { tag: "PrivateKey", value: { sr25519SecretKey: secret } },
             id,
+            funding: this.intent,
           }),
           "payment.topUp",
         );
@@ -1163,7 +1164,12 @@ export class Session {
       const destination = toHex((await reserveAccount()).publicKey);
       try {
         await unwrap(
-          client.payment.request({ amount, destination, id }),
+          client.payment.request({
+            amount,
+            destination,
+            id,
+            funding: this.intent,
+          }),
           "payment.request",
         );
       } catch (error) {
