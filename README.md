@@ -325,10 +325,21 @@ and the core database records only the public key, its purse and its creator.
 the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
 key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
 under the cheque id, so they are spent from then on. A second cheque with the
-same id from the same product answers `OperationExists`. Deposit, refund,
-revoke and listening for payments answer unavailable for now. A host without a
-core database, such as the browser core, answers `Unsupported` to the served
-calls.
+same id from the same product answers `OperationExists`.
+
+`deposit` opens a received cheque and registers one move per item into fresh
+keys of the purse the product names, under the cheque id, and returns;
+`observeOperationStatus` follows it by that id. An `Ephemeral` cheque opens with
+its receive key's secret, and only the product that made the key may deposit
+it, into the key's purse (`PurseMismatch` otherwise). A `Static` cheque opens
+with the host's static receive key, which `staticReceiveKey` returns so a
+product can publish it; for now it is the user's chat key, and any product may
+deposit such a cheque into any purse. The item secrets go to encrypted storage
+before the moves are registered, so each move is signed from its stored secret
+after a restart too. A move waits up to an hour for its cheque key to hold an
+NFT, so a product need not wait for the sender's mint itself. Refund, revoke
+and listening for payments answer unavailable for now. A host without a core
+database, such as the browser core, answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
