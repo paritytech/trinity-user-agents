@@ -3,7 +3,7 @@
 
 use std::sync::Weak;
 
-use truapi::latest::{GenericError, NftPurseReceiveKey};
+use truapi::latest::{GenericError, NftPurseReceiveKey, X25519PublicKey};
 
 use super::{NftPurses, dao};
 use crate::{
@@ -94,6 +94,11 @@ impl NftPurses {
 			.write(move |tx| dao::insert_receive_key(tx, &key, into, &creator))
 			.await?;
 		Ok(key)
+	}
+
+	/// The public half of the static receive secret. Fails without a session.
+	pub fn static_receive_key(&self) -> Result<X25519PublicKey, AuthorityError> {
+		Ok(self.static_secret.static_receive_secret()?.public_key())
 	}
 
 	/// The secret of the receive key `key`, made on this host.

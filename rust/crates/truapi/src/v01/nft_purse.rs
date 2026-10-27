@@ -414,6 +414,25 @@ pub enum NftPurseDepositError {
 	Other(GenericError),
 }
 
+/// Request for the key a sender seals a `Static` cheque to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyRequest {}
+
+/// The host's static receive key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyResponse {
+	/// The X25519 key `Static` cheques are sealed to. The same for every
+	/// product.
+	pub key: X25519PublicKey,
+}
+
+/// Why the static receive key could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseStaticReceiveKeyError {
+	/// Any other failure.
+	Other(GenericError),
+}
+
 /// Request to return a deposited cheque's items to their original keys.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRefundRequest {

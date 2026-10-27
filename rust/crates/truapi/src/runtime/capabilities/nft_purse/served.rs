@@ -21,8 +21,10 @@ use truapi::{
 		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
 		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
-		HostNftPurseRebalancePurseResponse, HostNftPurseTransferItemError,
-		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+		HostNftPurseRebalancePurseResponse, HostNftPurseStaticReceiveKeyError,
+		HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemResponse,
 	},
 };
 
@@ -103,6 +105,16 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseDepositRequest,
 	) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
 		version(request).exec(|request| self.deposit_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.static_receive_key"))]
+	async fn static_receive_key(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseStaticReceiveKeyRequest,
+	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
+	{
+		version(request).exec(|_| self.static_nft_receive_key()).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]

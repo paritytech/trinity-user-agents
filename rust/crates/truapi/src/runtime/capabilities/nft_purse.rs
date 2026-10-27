@@ -25,8 +25,9 @@ mod browser {
 			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
 			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
 			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
-			HostNftPurseTransferItemResponse,
+			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -99,6 +100,17 @@ mod browser {
 			_cx: &CallContext,
 			_request: HostNftPurseDepositRequest,
 		) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn static_receive_key(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseStaticReceiveKeyRequest,
+		) -> Result<
+			HostNftPurseStaticReceiveKeyResponse,
+			CallError<HostNftPurseStaticReceiveKeyError>,
+		> {
 			Err(CallError::Unsupported)
 		}
 

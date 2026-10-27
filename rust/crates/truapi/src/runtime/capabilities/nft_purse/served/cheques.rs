@@ -68,6 +68,20 @@ impl ProductRuntimeHost {
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 
+	/// The key products publish for `Static` cheques. Every product gets the
+	/// same key, so nothing is asked.
+	pub async fn static_nft_receive_key(
+		&self,
+	) -> Result<
+		latest::HostNftPurseStaticReceiveKeyResponse,
+		CallError<latest::HostNftPurseStaticReceiveKeyError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let key = purses.static_receive_key().map_err(host_failure)?;
+		Ok(latest::HostNftPurseStaticReceiveKeyResponse { key })
+	}
+
 	/// Opens a received cheque and starts moving its items into the purse the
 	/// product named. Any product may receive into any purse, so nothing is
 	/// asked.

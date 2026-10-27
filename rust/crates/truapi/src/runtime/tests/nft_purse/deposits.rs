@@ -4,6 +4,8 @@ use futures::{StreamExt, executor::block_on};
 use truapi::versioned::nft_purse::{
 	HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 	HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+	HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+	HostNftPurseStaticReceiveKeyResponse,
 };
 
 use super::{
@@ -183,4 +185,37 @@ fn a_static_cheque_sealed_to_another_key_answers_corrupted_cheque() {
 	let refused = deposit(&purses.host, cheque, TICKETS);
 
 	assert_eq!(refused, Err(deposit_refusal(v01::NftPurseDepositError::CorruptedCheque)));
+}
+
+fn static_receive_key(
+	host: &ProductRuntimeHost,
+) -> Result<v01::X25519PublicKey, CallError<HostNftPurseStaticReceiveKeyError>> {
+	let request =
+		HostNftPurseStaticReceiveKeyRequest::V1(v01::HostNftPurseStaticReceiveKeyRequest {});
+	let HostNftPurseStaticReceiveKeyResponse::V1(response) =
+		block_on(host.static_receive_key(&CallContext::default(), request))?;
+	Ok(response.key)
+}
+
+/// The key belongs to the user, so every product publishes the same one.
+#[test]
+fn every_product_gets_the_static_receive_key() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+
+	let by_product = static_receive_key(&purses.host);
+	let by_other = static_receive_key(&purses.other_product());
+
+	let expected = v01::X25519PublicKey(public_key_of(TEST_STATIC_SECRET));
+	assert_eq!(by_product, Ok(expected));
+	assert_eq!(by_other, Ok(expected));
+}
+
+/// Without a session there is no user whose key it is.
+#[test]
+fn the_static_receive_key_is_denied_without_a_session() {
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), false);
+
+	let refused = static_receive_key(&host);
+
+	assert_eq!(refused, Err(CallError::Denied));
 }
