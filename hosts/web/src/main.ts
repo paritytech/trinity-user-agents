@@ -1299,7 +1299,7 @@ function syncChatSession(): void {
     directory: () => chainDirectory(access.chain, access.genesis),
   });
   // First, so the workers and the inbox below see this session's engine choice.
-  novaWorkerMode?.setSession({
+  const restartNova = novaWorkerMode?.setSession({
     network: activeNetwork.id,
     walletId: wallet.id,
     identity: `${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
@@ -1342,6 +1342,11 @@ function syncChatSession(): void {
       return accountProofs(runtime, productId);
     },
   });
+  if (restartNova === true) {
+    // Its frame holds the link of the identity that ended; a new frame asks again.
+    chatV2.forget(NOVA_WORKER_PRODUCT);
+    void productWorkers.restart(NOVA_WORKER_PRODUCT);
+  }
   engineSwitch?.render();
 }
 
