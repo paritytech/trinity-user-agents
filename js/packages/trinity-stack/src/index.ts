@@ -9,6 +9,7 @@ import type {
   SpecFile,
   Verified,
 } from "../wasm/trinity_stack.js";
+import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
 
 // Generated from the crate's types by the wasm build.
@@ -260,12 +261,4 @@ async function readCapped(response: Response): Promise<Uint8Array | undefined> {
     offset += chunk.length;
   }
   return bytes;
-}
-
-/** Seconds since the epoch; an invalid `Date` would otherwise turn off staleness and expiry. */
-function unixSeconds(date: Date): number {
-  const milliseconds = date.getTime();
-  if (Number.isNaN(milliseconds))
-    throw new RangeError("now is an invalid Date");
-  return Math.floor(milliseconds / 1000);
 }

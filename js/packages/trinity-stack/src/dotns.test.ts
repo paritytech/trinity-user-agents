@@ -5,25 +5,45 @@ import {
   DotnsRevert,
   resolveDotns,
 } from "./dotns.js";
-import { type Descriptor, type Fetch, memoryStore, parse } from "./index.js";
+import { type Fetch, type Store, memoryStore, parse } from "./index.js";
 
 const POINTER = { url: "https://stack.example/.well-known/trinity-stack.json" };
-const STORE_ID = `${POINTER.url}#dotns`;
 const DISPATCHER = `0x${"d1".repeat(20)}`;
 const ROOT_DISPATCHER = `0x${"d0".repeat(20)}`;
 const REGISTRY = `0x${"ee".repeat(20)}`;
 const REGISTRAR = `0x${"aa".repeat(20)}`;
 const RESOLVER = `0x${"bb".repeat(20)}`;
+const ETH_RPC = {
+  kind: "eth-rpc",
+  urls: ["http://127.0.0.1:8545"],
+  chainId: 420420417,
+};
 
 const word = (address: string) => `0x${address.slice(2).padStart(64, "0")}`;
 const key = (name: string) =>
   `0x8eaa6ac0${Buffer.from(name).toString("hex").padEnd(64, "0")}`;
 const at = (seconds: number) => new Date(seconds * 1000);
 
+/** A descriptor of `generation`, with an Asset Hub on `assetHubRpc` when given. */
 function descriptor(
   generation: string,
-  extra: { chains?: object[]; services?: object[] } = {},
-): Descriptor {
+  assetHubRpc?: string,
+  services: object[] = [],
+) {
+  const chains: object[] = [
+    {
+      role: "Relay",
+      genesisHash: `0x${"86".repeat(32)}`,
+      rpc: ["ws://127.0.0.1:9944"],
+    },
+  ];
+  if (assetHubRpc)
+    chains.push({
+      role: "AssetHub",
+      genesisHash: `0x${"bb".repeat(32)}`,
+      paraId: 1000,
+      rpc: [assetHubRpc],
+    });
   const document = {
     $v: 1,
     sequence: 1,
@@ -32,18 +52,16 @@ function descriptor(
     name: "Local",
     network: "local",
     tld: "local",
-    services: extra.services ?? [],
-    chains: [
-      {
-        role: "Relay",
-        genesisHash: `0x${"86".repeat(32)}`,
-        rpc: ["ws://127.0.0.1:9944"],
-      },
-      ...(extra.chains ?? []),
-    ],
+    services,
+    chains,
   };
   return parse(new TextEncoder().encode(JSON.stringify(document))).descriptor;
 }
+
+const resolve = (
+  generation: string,
+  options: Parameters<typeof resolveDotns>[2],
+) => resolveDotns(POINTER, descriptor(generation), options);
 
 const ANSWERS = new Map([
   [`${DISPATCHER}:0x7656419f`, word(REGISTRY)],
@@ -54,27 +72,26 @@ const ANSWERS = new Map([
 
 /** The eth_call answers of a registry holding `registrar` and `resolver`. */
 function answer(to: string, data: string): string {
-  if (to === REGISTRY && data.startsWith("0x8eaa6ac0"))
-    return ANSWERS.get(`${to}:${data}`) ?? word(`0x${"0".repeat(40)}`);
   const found = ANSWERS.get(`${to}:${data}`);
-  if (!found) throw new DotnsRevert("execution reverted");
-  return found;
+  if (found) return found;
+  if (to === REGISTRY) return word(`0x${"0".repeat(40)}`);
+  throw new DotnsRevert("execution reverted");
 }
 
 /** A chain whose gateway dispatches to `dispatcher`, counting the requests made to it. */
 function chain(dispatcher: string | null) {
-  const calls = { count: 0 };
+  let count = 0;
   const transport: DotnsTransport = {
     storage: async () => {
-      calls.count++;
+      count++;
       return dispatcher;
     },
     call: async (to, data) => {
-      calls.count++;
+      count++;
       return answer(to, data);
     },
   };
-  return { transport, calls };
+  return { transport, requests: () => count };
 }
 
 const DOWN: DotnsTransport = {
@@ -82,128 +99,100 @@ const DOWN: DotnsTransport = {
   call: () => Promise.reject(new Error("unreachable")),
 };
 
-const resolved = (
-  generation: string,
-  resolvedAt: number,
-  dispatcher = DISPATCHER,
-) => ({
+const resolved = (dispatcher = DISPATCHER) => ({
   dispatcher,
   protocolRegistry: REGISTRY,
   addresses: { registrar: REGISTRAR, resolver: RESOLVER },
-  generation,
-  resolvedAt,
 });
 
 describe("resolveDotns", () => {
   test("follows the gateway's dispatcher to the registry and leaves unset keys out", async () => {
-    const { transport, calls } = chain(DISPATCHER);
-    expect(
-      await resolveDotns(POINTER, descriptor("g1"), {
-        transport,
-        now: at(100),
-      }),
-    ).toEqual(resolved("g1", 100));
+    const { transport, requests } = chain(DISPATCHER);
+    expect(await resolve("g1", { transport })).toEqual(resolved());
     // The storage read, protocolRegistry(), then one get per key.
-    expect(calls.count).toBe(2 + DOTNS_KEYS.length);
+    expect(requests()).toBe(2 + DOTNS_KEYS.length);
   });
 
   test("reaches the registry through a dispatcher that forwards to TARGET()", async () => {
     const { transport } = chain(ROOT_DISPATCHER);
-    expect(
-      await resolveDotns(POINTER, descriptor("g1"), {
-        transport,
-        now: at(100),
-      }),
-    ).toEqual(resolved("g1", 100, ROOT_DISPATCHER));
+    expect(await resolve("g1", { transport })).toEqual(
+      resolved(ROOT_DISPATCHER),
+    );
   });
 
-  test("only a revert sends it to TARGET(), so a failed call keeps its own error", async () => {
-    const transport: DotnsTransport = {
-      storage: async () => DISPATCHER,
+  test("a dispatcher that answers neither call is named, and a failed call keeps its own error", async () => {
+    const neither: DotnsTransport = {
+      storage: async () => `0x${"0c".repeat(20)}`,
+      call: async (to, data) => answer(to, data),
+    };
+    await expect(resolve("g1", { transport: neither })).rejects.toThrow(
+      "answers neither protocolRegistry() nor TARGET()",
+    );
+    const failing: DotnsTransport = {
+      storage: async () => ROOT_DISPATCHER,
       call: async (to, data) => {
         if (data === "0x7656419f") throw new Error("connection reset");
         return answer(to, data);
       },
     };
-    await expect(
-      resolveDotns(POINTER, descriptor("g1"), { transport }),
-    ).rejects.toThrow("connection reset");
+    await expect(resolve("g1", { transport: failing })).rejects.toThrow(
+      "connection reset",
+    );
   });
 
   test("an answer that is not an address, or a word with high bytes set, is refused", async () => {
-    const notAnAddress: DotnsTransport = {
-      storage: async () => "0x1234",
-      call: DOWN.call,
-    };
-    await expect(
-      resolveDotns(POINTER, descriptor("g1"), { transport: notAnAddress }),
-    ).rejects.toThrow("not an address");
-    const dirtyWord: DotnsTransport = {
-      storage: async () => DISPATCHER,
-      call: async () => `0x${"ff".repeat(32)}`,
-    };
-    await expect(
-      resolveDotns(POINTER, descriptor("g1"), { transport: dirtyWord }),
-    ).rejects.toThrow("not an address");
+    for (const transport of [
+      { storage: async () => "0x1234", call: DOWN.call },
+      {
+        storage: async () => DISPATCHER,
+        call: async () => `0x${"ff".repeat(32)}`,
+      },
+    ])
+      await expect(resolve("g1", { transport })).rejects.toThrow(
+        "not an address",
+      );
   });
 
   test("a stored answer is reused until it ages out or the chains restart", async () => {
     const store = memoryStore();
-    const { transport, calls } = chain(DISPATCHER);
-    const options = { store, transport, maxAgeMs: 60_000 };
-    await resolveDotns(POINTER, descriptor("g1"), { ...options, now: at(100) });
-    const afterFirst = calls.count;
-    expect(
-      await resolveDotns(POINTER, descriptor("g1"), {
-        ...options,
-        now: at(159),
-      }),
-    ).toEqual(resolved("g1", 100));
-    expect(calls.count).toBe(afterFirst);
-    await resolveDotns(POINTER, descriptor("g1"), { ...options, now: at(160) });
-    expect(calls.count).toBe(2 * afterFirst);
-    expect(
-      await resolveDotns(POINTER, descriptor("g2"), {
-        ...options,
-        now: at(161),
-      }),
-    ).toEqual(resolved("g2", 161));
+    const { transport, requests } = chain(DISPATCHER);
+    const options = (seconds: number) => ({
+      store,
+      transport,
+      maxAgeMs: 60_000,
+      now: at(seconds),
+    });
+    await resolve("g1", options(100));
+    const once = requests();
+    expect(await resolve("g1", options(159))).toEqual(resolved());
+    expect(requests()).toBe(once);
+    await resolve("g1", options(160));
+    expect(requests()).toBe(2 * once);
+    await resolve("g2", options(161));
+    expect(requests()).toBe(3 * once);
   });
 
   test("a stack without a gateway is remembered as one", async () => {
     const store = memoryStore();
     const { transport } = chain(null);
     expect(
-      await resolveDotns(POINTER, descriptor("g1"), {
-        store,
-        transport,
-        now: at(100),
-      }),
+      await resolve("g1", { store, transport, now: at(100) }),
     ).toBeUndefined();
     expect(
-      await resolveDotns(POINTER, descriptor("g1"), {
-        store,
-        transport: DOWN,
-        now: at(101),
-      }),
+      await resolve("g1", { store, transport: DOWN, now: at(101) }),
     ).toBeUndefined();
   });
 
   test("a failed refresh falls back to the stored answer of the same generation only", async () => {
     const store = memoryStore();
-    const { transport } = chain(DISPATCHER);
-    await resolveDotns(POINTER, descriptor("g1"), {
+    await resolve("g1", {
       store,
-      transport,
+      transport: chain(DISPATCHER).transport,
       now: at(100),
     });
     const later = { store, transport: DOWN, maxAgeMs: 0, now: at(200) };
-    expect(await resolveDotns(POINTER, descriptor("g1"), later)).toEqual(
-      resolved("g1", 100),
-    );
-    await expect(
-      resolveDotns(POINTER, descriptor("g2"), later),
-    ).rejects.toThrow("unreachable");
+    expect(await resolve("g1", later)).toEqual(resolved());
+    await expect(resolve("g2", later)).rejects.toThrow("unreachable");
   });
 
   test("a corrupt store entry is ignored and replaced", async () => {
@@ -213,29 +202,19 @@ describe("resolveDotns", () => {
       "",
       '{"generation":"g1","resolvedAt":1}',
     ]) {
-      const store = memoryStore();
-      store.set(STORE_ID, new TextEncoder().encode(corrupt));
+      const store: Store = memoryStore();
+      store.set(`${POINTER.url}#dotns`, new TextEncoder().encode(corrupt));
+      expect(await resolve("g1", { store, transport, now: at(100) })).toEqual(
+        resolved(),
+      );
       expect(
-        await resolveDotns(POINTER, descriptor("g1"), {
-          store,
-          transport,
-          now: at(100),
-        }),
-      ).toEqual(resolved("g1", 100));
-      expect(
-        await resolveDotns(POINTER, descriptor("g1"), {
-          store,
-          transport: DOWN,
-          now: at(101),
-        }),
-      ).toEqual(resolved("g1", 100));
+        await resolve("g1", { store, transport: DOWN, now: at(101) }),
+      ).toEqual(resolved());
     }
   });
 
   test("a stack that names no Asset Hub RPC needs a transport", async () => {
-    await expect(resolveDotns(POINTER, descriptor("g1"))).rejects.toThrow(
-      "names no Asset Hub RPC",
-    );
+    await expect(resolve("g1", {})).rejects.toThrow("names no Asset Hub RPC");
   });
 });
 
@@ -276,41 +255,22 @@ describe("resolveDotns over the stack's own endpoints", () => {
     }
   };
 
-  const stack = (rpc: string, services: object[]) =>
-    descriptor("g1", {
-      chains: [
-        {
-          role: "AssetHub",
-          genesisHash: `0x${"bb".repeat(32)}`,
-          paraId: 1000,
-          rpc: [rpc],
-        },
-      ],
-      services,
-    });
-  const ETH_RPC = {
-    kind: "eth-rpc",
-    urls: ["http://127.0.0.1:8545"],
-    chainId: 420420417,
-  };
-
   test("reads storage over the RPC and calls through eth-rpc, skipping messages that are not the reply", async () => {
     const rpc = assetHub((id) => [
       JSON.stringify({ jsonrpc: "2.0", method: "chain_newHead", params: {} }),
       JSON.stringify({ jsonrpc: "2.0", id, result: ROOT_DISPATCHER }),
     ]);
     expect(
-      await resolveDotns(POINTER, stack(rpc, [ETH_RPC]), {
+      await resolveDotns(POINTER, descriptor("g1", rpc, [ETH_RPC]), {
         fetch: ethRpc,
-        now: at(100),
       }),
-    ).toEqual(resolved("g1", 100, ROOT_DISPATCHER));
+    ).toEqual(resolved(ROOT_DISPATCHER));
   });
 
   test("a reply that is not JSON fails the read instead of hanging", async () => {
     const rpc = assetHub(() => ["<html>502 Bad Gateway</html>"]);
     await expect(
-      resolveDotns(POINTER, stack(rpc, [ETH_RPC]), {
+      resolveDotns(POINTER, descriptor("g1", rpc, [ETH_RPC]), {
         fetch: ethRpc,
         timeoutMs: 5_000,
       }),
@@ -321,7 +281,7 @@ describe("resolveDotns over the stack's own endpoints", () => {
     const rpc = assetHub((id) => [
       JSON.stringify({ jsonrpc: "2.0", id, result: DISPATCHER }),
     ]);
-    await expect(resolveDotns(POINTER, stack(rpc, []))).rejects.toThrow(
+    await expect(resolveDotns(POINTER, descriptor("g1", rpc))).rejects.toThrow(
       "names no eth-rpc",
     );
   });

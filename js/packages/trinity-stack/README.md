@@ -2,10 +2,9 @@
 
 Reads, verifies, signs and publishes Trinity stack descriptors, as
 [RFC: Trinity stack descriptor](https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/trinity-stack-descriptor.md)
-defines them. Every rule a reader applies runs in the
+defines them. Every rule a reader applies to a descriptor runs in the
 [`trinity-stack`](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack) Rust crate,
-compiled to WebAssembly, so this package and the host core accept and refuse the same descriptors. Its `/dotns` entry
-reads a stack's dotNS contracts from the stack's Asset Hub.
+compiled to WebAssembly, so this package and the host core accept and refuse the same descriptors.
 
 ## Reading a stack
 
@@ -32,13 +31,13 @@ store gets no rollback protection. Errors from a rule of the RFC carry a `code`,
 import { resolveDotns } from "@parity/trinity-stack/dotns";
 
 const dotns = await resolveDotns(pointer, stack.descriptor, { store });
-dotns?.addresses.registrar; // undefined dotns: the stack's Asset Hub has no dotNS gateway
+dotns?.addresses.registrar; // dotns is undefined when the stack's Asset Hub has no dotNS gateway
 ```
 
-Descriptors leave dotNS out, so `resolveDotns` reads it from the stack's Asset Hub: the gateway's dispatcher from
-storage over the chain's RPC, then the protocol registry through its `eth-rpc`. With a store, it keeps the result under
-the descriptor's `generation` and asks the chain again after `maxAgeMs`, an hour by default. If that refresh fails, it
-returns the kept copy. A reader with its own client, such as a light client, passes a `transport`.
+Descriptors leave dotNS out, so `resolveDotns` reads it from the stack's Asset Hub over the chain's RPC and `eth-rpc`,
+the way the RFC describes. With a store, it keeps the answer under the descriptor's `generation` and asks the chain
+again after `maxAgeMs`, an hour by default, falling back to the kept answer if that fails. A reader with its own client,
+such as a light client, passes a `transport`.
 
 ## Publishing a stack
 
