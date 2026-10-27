@@ -31,6 +31,8 @@ internal class RealEncryptedPreferences @Inject constructor(
         preferences.removeField(field)
     }
 
+    override fun fieldsStartingWith(prefix: String) = preferences.fieldsStartingWith(prefix)
+
     override fun decryptedStringFlow(field: String) = flowOfAll {
         preferences.stringFlow(field)
             .map { encryptedString ->

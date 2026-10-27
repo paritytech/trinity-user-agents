@@ -14,5 +14,8 @@ interface EncryptedPreferences {
 
     fun removeKey(field: String)
 
+    /** Every stored field whose name starts with [prefix], readable or not. */
+    fun fieldsStartingWith(prefix: String): Set<String>
+
     fun decryptedStringFlow(field: String): Flow<String?>
 }

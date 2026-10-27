@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import timber.log.Timber
 import uniffi.truapi.AuthToken
 import uniffi.truapi.HostRejection
 import javax.inject.Inject
@@ -20,8 +21,9 @@ import javax.inject.Singleton
  *
  * Preferences cannot be listed, so an encrypted index maps each key to its product and account
  * for counting and clearing. A key enters the index before its token is written and leaves it if
- * the write fails, so clearing always finds every token. The core clears tokens whenever a session
- * ends and when a product's state is cleared.
+ * the write fails, so clearing always finds every token. An index that no longer decodes is dropped
+ * with every entry, so the store starts over empty rather than losing track of tokens. The core
+ * clears tokens whenever a session ends and when a product's state is cleared.
  */
 @Singleton
 class EncryptedAuthTokenStore @Inject constructor(
@@ -69,12 +71,20 @@ class EncryptedAuthTokenStore @Inject constructor(
         }
     }
 
-    // An empty index is removed, so one that is there but does not decode is lost, not empty: reading
-    // it as empty would let the next write drop every token it lists from clearing and the count.
     private fun readIndex(): Map<String, IndexRow> {
         val stored = preferences.getDecryptedString(INDEX_FIELD) ?: return emptyMap()
         return runCatching { gson.fromJson<Map<String, IndexRow>>(stored, INDEX_TYPE) }.getOrNull()
-            ?: throw HostRejection.Rejected("the auth token index is unreadable")
+            ?: dropUnreadableIndex()
+    }
+
+    // An empty index is removed, so one that is there but does not decode has lost track of its
+    // tokens. Every entry goes with it, so none outlives clearing or escapes the count, and products
+    // sign in again.
+    private fun dropUnreadableIndex(): Map<String, IndexRow> {
+        Timber.w("auth token index is unreadable; dropping every kept auth token")
+        preferences.fieldsStartingWith(ENTRY_PREFIX).forEach(preferences::removeKey)
+        preferences.removeKey(INDEX_FIELD)
+        return emptyMap()
     }
 
     private fun writeIndex(index: Map<String, IndexRow>) {

@@ -60,6 +60,9 @@ interface Preferences {
 
     fun removeField(field: String)
 
+    /** Every stored field whose name starts with [prefix]. */
+    fun fieldsStartingWith(prefix: String): Set<String>
+
     fun stringFlow(
         field: String,
         initialValueProducer: InitialValueProducer<String>? = null,

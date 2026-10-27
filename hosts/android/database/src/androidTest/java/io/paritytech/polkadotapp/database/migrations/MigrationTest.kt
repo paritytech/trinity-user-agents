@@ -67,6 +67,7 @@ private class NoOpPreferences : Preferences {
     override fun putStringSet(field: String, value: Set<String>) = Unit
     override fun getStringSet(field: String): Set<String> = emptySet()
     override fun removeField(field: String) = Unit
+    override fun fieldsStartingWith(prefix: String): Set<String> = emptySet()
     override fun stringFlow(field: String, initialValueProducer: InitialValueProducer<String>?): Flow<String?> = emptyFlow()
     override fun booleanFlow(field: String, defaultValue: Boolean): Flow<Boolean> = emptyFlow()
     override fun longFlow(field: String, defaultValue: Long): Flow<Long> = emptyFlow()

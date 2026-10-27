@@ -127,5 +127,7 @@ private class FakeEncryptedPreferences(
         values.remove(field)
     }
 
+    override fun fieldsStartingWith(prefix: String): Set<String> = values.keys.filterTo(mutableSetOf()) { it.startsWith(prefix) }
+
     override fun decryptedStringFlow(field: String): Flow<String?> = flowOf(values[field])
 }

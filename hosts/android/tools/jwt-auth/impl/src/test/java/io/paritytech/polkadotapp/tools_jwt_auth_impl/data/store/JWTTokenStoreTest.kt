@@ -132,5 +132,7 @@ private class FakeEncryptedPreferences : EncryptedPreferences {
         storage.remove(field)
     }
 
+    override fun fieldsStartingWith(prefix: String): Set<String> = storage.keys.filterTo(mutableSetOf()) { it.startsWith(prefix) }
+
     override fun decryptedStringFlow(field: String): Flow<String?> = flowOf(storage[field])
 }

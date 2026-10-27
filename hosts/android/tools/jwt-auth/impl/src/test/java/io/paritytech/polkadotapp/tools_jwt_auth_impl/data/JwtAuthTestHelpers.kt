@@ -32,6 +32,7 @@ internal fun createFakeTokenStore(): JWTTokenStore {
         override fun getDecryptedString(field: String): String? = storage[field]
         override fun hasKey(field: String): Boolean = storage.containsKey(field)
         override fun removeKey(field: String) { storage.remove(field) }
+        override fun fieldsStartingWith(prefix: String) = storage.keys.filterTo(mutableSetOf()) { it.startsWith(prefix) }
         override fun decryptedStringFlow(field: String) = kotlinx.coroutines.flow.flowOf(storage[field])
     }
     return JWTTokenStore(prefs)

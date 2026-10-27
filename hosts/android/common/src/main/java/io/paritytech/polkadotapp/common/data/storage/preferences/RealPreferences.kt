@@ -101,6 +101,9 @@ class RealPreferences @Inject constructor(
         sharedPreferences.edit().remove(field).apply()
     }
 
+    override fun fieldsStartingWith(prefix: String): Set<String> =
+        sharedPreferences.all.keys.filterTo(mutableSetOf()) { it.startsWith(prefix) }
+
     override fun stringFlow(
         field: String,
         initialValueProducer: (suspend () -> String)?,
