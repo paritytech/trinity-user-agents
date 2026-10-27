@@ -38,6 +38,11 @@ class ChatDisplayGenerator @Inject constructor(
         return ChatDisplay(name, avatar)
     }
 
+    /** A profile photo is drawn over the contact's letter, which stays if the photo cannot be loaded. */
+    fun applyProfileAvatar(url: String, defaultDisplay: ChatDisplay): ChatDisplay {
+        return ChatDisplay(defaultDisplay.name, ChatAvatar.Url(url, placeholder = defaultDisplay.avatar.letter()))
+    }
+
     private fun ChatAvatar.letter(): ChatAvatar.Account? = when (this) {
         is ChatAvatar.Account -> this
         is ChatAvatar.Url -> placeholder

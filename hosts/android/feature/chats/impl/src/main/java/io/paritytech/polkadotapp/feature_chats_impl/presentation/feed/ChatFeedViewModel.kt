@@ -274,6 +274,11 @@ class ChatFeedViewModel @Inject constructor(
         markNonDisplayableMessagesAsRead()
         draftController.start()
         jumpToTargetMessageIfNeeded()
+        refreshContactProfile()
+    }
+
+    private fun refreshContactProfile() = launchUnit {
+        interactor.refreshContactProfile(chatId).logFailure("ChatFeed contact profile")
     }
 
     override fun onCleared() {

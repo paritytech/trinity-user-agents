@@ -32,6 +32,9 @@ class ContactLocal(
     @ColumnInfo(defaultValue = "0")
     val addedAt: Long,
     val establishedAt: Long? = null,
+    val profileAvatarUri: String? = null,
+    val profileAvatarCid: String? = null,
+    val profileCheckedAt: Long? = null,
 ) {
     enum class OperatingSystem {
         ANDROID,

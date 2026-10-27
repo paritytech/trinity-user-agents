@@ -145,11 +145,13 @@ class ChatEngine @Inject constructor(
     }
 
     fun getContactChatDisplay(contact: Contact): ChatDisplay {
-        return chatDisplayGenerator.generateAccountChatDisplay(
+        val display = chatDisplayGenerator.generateAccountChatDisplay(
             accountId = contact.accountId,
             username = contact.username,
             avatarUrl = contact.avatarUrl
         )
+        val profileAvatarUri = contact.profileAvatarUri ?: return display
+        return chatDisplayGenerator.applyProfileAvatar(profileAvatarUri, display)
     }
 
     fun subscribeUserInputStateChat(chatId: ChatId): Flow<ChatUserInputState> {

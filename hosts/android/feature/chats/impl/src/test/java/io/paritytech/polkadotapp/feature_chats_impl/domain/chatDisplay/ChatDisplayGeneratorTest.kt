@@ -44,6 +44,15 @@ class ChatDisplayGeneratorTest {
         assertSame(letter, (display.avatar as ChatAvatar.Url).placeholder)
     }
 
+    // A contact's profile photo replaces the request-provided avatar and keeps the letter beneath it.
+    @Test
+    fun `a profile photo is drawn over the contact's letter`() {
+        val letter = ChatAvatar.Account("alice", byteArrayOf(1))
+        val display = generator.applyProfileAvatar("content://avatars/alice-bafkcid.webp", ChatDisplay("alice", letter))
+        assertEquals("content://avatars/alice-bafkcid.webp", (display.avatar as ChatAvatar.Url).url)
+        assertSame(letter, (display.avatar as ChatAvatar.Url).placeholder)
+    }
+
     // Which room icons are acceptable is decided where a product registers them, so the chat draws any it is given.
     @Test
     fun `a room draws a remote icon too`() {

@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
+import io.paritytech.polkadotapp.feature_chats_api.domain.profile.ContactPublicProfileSource
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
@@ -130,6 +131,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.profile.TrUAPIContactPublicProfileSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -248,6 +250,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductExternalExtensionProvider(impl: ProductExternalExtensionProvider): ExternalExtensionProvider
+
+    @Binds
+    @IntoSet
+    fun bindTrUAPIContactPublicProfileSource(impl: TrUAPIContactPublicProfileSource): ContactPublicProfileSource
 
     @Binds
     @IntoSet

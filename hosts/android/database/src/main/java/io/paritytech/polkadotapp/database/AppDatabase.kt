@@ -144,7 +144,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 71,
+    version = 72,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -285,6 +285,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 69, to = 70, spec = Migration69To70Spec::class),
         // Add chat_requests delivery state (deliveryStatus, deliveredVia, lastDeliveredPeriod)
         AutoMigration(from = 70, to = 71),
+        // Add contacts public profile avatar (profileAvatarUri, profileAvatarCid, profileCheckedAt)
+        AutoMigration(from = 71, to = 72),
     ]
 )
 @TypeConverters(

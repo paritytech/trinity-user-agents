@@ -64,6 +64,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallRe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SyncContactProfileUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -97,6 +98,7 @@ class ChatFeedInteractor @Inject internal constructor(
     private val attachmentMetaBuilder: AttachmentMetaBuilder,
     private val attachmentFileStorage: AttachmentFileStorage,
     private val hopNodeUrlProvider: HopNodeUrlProvider,
+    private val syncContactProfileUseCase: SyncContactProfileUseCase,
 ) {
     fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean): InitiateCallResult {
         val activeCall = callStateTracker.getActiveCall()
@@ -273,6 +275,12 @@ class ChatFeedInteractor @Inject internal constructor(
 
     fun setChatInactive() {
         chatActiveTracker.clear()
+    }
+
+    suspend fun refreshContactProfile(chatId: ChatId): Result<Unit> {
+        val contactId = chatId.contactOrNull()?.contactAccountId ?: return Result.success(Unit)
+        return contactsRepository.getContactResult(contactId)
+            .flatMap { contact -> syncContactProfileUseCase.sync(contact, force = true) }
     }
 
     fun getChatConfig(chatRequest: OpenChatRequest): Flow<ChatConfig> {
