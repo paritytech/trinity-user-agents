@@ -209,4 +209,3 @@ struct AssetDetailsView: View {
         }
     #endif
 }
-

@@ -299,7 +299,10 @@ impl RuntimeServices {
 	/// Install the host's top-up engine. Set-once; returns whether this call
 	/// installed it.
 	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.top_up_platform.set(platform).is_ok()
+		let installed = self.top_up_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's top-up engine, when one is installed.
@@ -310,7 +313,10 @@ impl RuntimeServices {
 	/// Install the host's payment engine. Set-once; returns whether this
 	/// call installed it.
 	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.payment_platform.set(platform).is_ok()
+		let installed = self.payment_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's payment engine, when one is installed.
