@@ -62,6 +62,13 @@ playground, run `yarn dev` in `playground/` and open `http://localhost:3000`.
 The dev server answers `localhost` only. To reach it by another host name, such as a tunnel, start it with
 `WEB_SIGNING_ALLOWED_HOSTS=name.example npm run dev` (a comma list). A static build needs no such setting.
 
+The dev server also answers the identity backend's public username search on its own origin, because the backend sends
+no CORS headers: `GET /__username-search?network=<id>&prefix=<text>[&limit=<n>][&cursor=<c>]`.
+`username-search-plugin.ts` sends `prefix`, `limit` and `cursor` only to `/api/v1/usernames/search` on the
+`identityBackend` of the network named, with no headers from the page, and passes the backend's answer and its errors on
+as they are. Other parameters, other methods and requests from another machine are refused. A static build has no such
+route.
+
 `http://localhost:5180/?product=<url>&productId=<id>` fills in the address bar and product id. The product opens only
 when you press Enter or choose **Open**.
 
@@ -334,6 +341,12 @@ yet known to interoperate with the app in every respect.
   (kind 1) and device changes (kinds 17 and 18) are read and acknowledged but not shown or kept, as the apps do not show
   them. Reactions, leaving, blocking, files and calls are below. Other message kinds show as a placeholder with their
   kind number.
+- **New chat.** **+** opens the host's [contact picker](#contacts), the one products open, titled **New chat** and
+  naming no product. Choosing someone the user already chats with opens that conversation. Choosing anyone else opens
+  **Send request to …** with an optional first message; only that button sends a version 1 request, through the
+  provider's own start, with the person's account. Closing the picker leaves the screen as it was, and a choice made
+  after the session changed is dropped. Only a provider that can start a chat (the host's Nova chat) offers **+**; a
+  chat product run as a worker does not. There is no QR scanner, and an account id cannot be typed.
 - **Reactions.** A reaction (kind 4) or its removal (kind 5) names a message and an emoji and is not a bubble. The host
   keeps one emoji per side and emoji on a message, as both apps key it. The user keeps one emoji per message, as the iOS
   app does: a new one is sent, then the old one is removed; the same one again removes it. Reactions are sent with the
@@ -577,22 +590,40 @@ goes nowhere but this list.
 
 The host serves TrUAPI Contacts (`src/contacts.ts`): `contacts.pick` opens a picker the host draws, and the core turns
 the person the user chose into a contact handle, as `docs/design/contacts-pick-end-to-end.md` describes. A product gets
-the handle only, never the list, a name or an account. No permission is asked: choosing someone is the consent.
+the handle only, never the list, a name or an account, and decides itself what to do with it: a chat product might open
+an invitation, a payment product a transfer. Choosing someone only answers the pick. No permission is asked: choosing
+someone is the consent.
 
 - **Who is offered.** The session's chat contacts, from the providers that offer them (`ChatProvider.contacts`). Today
   that is Nova chat: its accepted contacts, not requests either side has not accepted yet, as on the native hosts, and
   not people the user blocked or conversations the user left. Blocking or leaving tells the core, as any contact leaving
   does. Product rooms and chat products offer none, because their peers are what a product says they are, and a contact
   can become a payment recipient.
-- **Outcomes.** The picker names the requesting product and lists each contact as the host names them, with a short
-  account. Choosing one answers `Picked`; Cancel or Escape answers `Dismissed`; a session with no contacts answers
-  `NoContacts` and draws nothing. A contact that leaves while the picker is open is not an answer.
+- **Outcomes.** The picker names the requesting product and lists each contact by the name the host knows them by, those
+  chatted with most recently first (by their last message, where the provider keeps one), then the rest. A search field
+  filters the list by name, ignoring case; a name no contact has shows "No contact by that name." Choosing one answers
+  `Picked`; Cancel, Escape or a tap outside answers `Dismissed`. A session with no contacts still gets the picker, to
+  find someone by username, so the host never answers `NoContacts`. A contact that leaves while the picker is open is
+  not an answer.
+- **Finding people by username.** What is typed is also looked up by username (`src/username-directory.ts`), once typing
+  pauses. On a dev server on this machine it searches by prefix, a page of 20 at a time, through the dev server's
+  [username search route](#run-it) for the tab's network. Elsewhere, as in a build, there is no index, and what is typed
+  is read on chain as a whole username (Asset Hub and People), so a person is found only by their exact username. People
+  found who are neither contacts nor blocked show under **Not in your contacts**, by username, with Show more for the
+  next page. Choosing one from the index checks first that the username names the same account on chain, since the index
+  is a listing and not a proof; if it does not, the sheet says so and nothing is picked. Then the pick answers `Picked`
+  as for a contact. The person is not saved anywhere and does not become a contact. Text that cannot be a username is
+  not sent, a newer query cancels the one in flight, closing the picker cancels it, and after the index asks to wait
+  nothing is sent until the wait is over. A failure says why and keeps what was found.
 - **Resolving handles.** When a transaction names a handle, the core asks the host which contact it hashes to
   (BLAKE2b-256 keyed with the session's handle key over the account) and checks the answer itself. The host tells the
-  core when a contact leaves, including when the session ends, so a handle it cached stops resolving.
-- **Not served.** A contact list a product can read, labels for a picked handle, inviting someone who is not a contact
-  yet, and contacts from a worker's own chat. Paying a picked contact goes through the core's transaction path, which
-  the browser test does not reach.
+  core when a contact leaves, including when the session ends, so a handle it cached stops resolving. A person picked by
+  username is remembered in this page only, so their handle keeps resolving after the core forgets its cache; it names
+  nobody after a reload, a session change, or once the user blocks them, and a transaction naming it then fails with
+  `UnknownContact` until the product asks for a pick again. A blocked person is never picked.
+- **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username, and
+  contacts from a worker's own chat. Paying a picked contact goes through the core's transaction path, which the browser
+  test does not reach.
 
 ### Differences from the native hosts
 
@@ -838,7 +869,7 @@ opens, so the light client reaches no chain. It checks that:
   contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming the product
   and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is neither the
   account nor the name, the same handle again for the same person and another for the other; Cancel and Escape answer
-  `Dismissed`; and a wallet with no contacts gets `NoContacts` with no picker drawn;
+  `Dismissed`; and a wallet with no contacts still gets the picker, with no one listed, and Escape answers `Dismissed`;
 - a chat product's worker, built from `browser/chat-product-worker.ts`, with a synthetic wallet and every socket closed,
   runs through the same loader and core and records where TrUAPI stops it: its conversations show as rooms in the one
   list, but it has to push all its history and the host keeps the last 200 of 210 messages and never asks for a page;
@@ -891,11 +922,14 @@ synthetic chat product on the other side of the bridge in the page, synthetic da
 host refused, and checks one list across providers, paging on scroll, sender names and the user's own messages, status
 changes, a retried message staying one message, a product room's custom card, buttons, reaction and non-`https` file,
 the chat product answering while another room is open, unread cleared only for messages on screen, a product restart and
-a new session. It also checks the user's reactions in a Nova conversation and a product room, blocking, unblocking and
-leaving, a generated image sent and fetched through a HOP node held in the page, and audio and video calls over real
-WebRTC to a second call manager in the same page, with generated media (a WebAudio tone and a canvas), not a camera or
-microphone, and every track stopped when the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off,
-so its candidates carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+a new session. It checks New chat through the host's contact picker over a test username index: Cancel changes nothing,
+a username that names another account on chain is not chosen, a contact opens their chat, anyone else opens a request
+that the provider is asked to send only on Send, once, and a choice made after the session changed is dropped. It also
+checks the user's reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated
+image sent and fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call
+manager in the same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every
+track stopped when the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates
+carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -925,6 +959,8 @@ a project path, the inspector's rendering, and layout on narrow screens.
   decodes them, and `memory-rpc.ts` is the in-memory store tests use. `src/chat-screen.ts` draws the Chat screen,
   `src/chat-diagnostics-view.ts` the inspector's Chat tab and `src/chat-transport-view.ts` an event's payload layers.
 - `src/contacts.ts`: the contact picker and handle lookup.
+- `src/username-directory.ts`: finding people by username for the contact picker.
+- `src/username-search.ts`, `username-search-plugin.ts`: the dev server's username search route.
 - `src/notifications.ts`, `src/notifications-screen.ts`, `src/notifications-demo.ts`: the Notifications prototype.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,

@@ -255,7 +255,10 @@ describe("Nova chat provider", () => {
       ),
     ]);
     const provider = new NovaChatProvider(fakeEngine(snapshot).engine);
-    expect(provider.contacts()).toEqual([{ account: ADA, name: "ada.01" }]);
+    // The picker lists the most recent chats first, by their last message.
+    expect(provider.contacts()).toEqual([
+      { account: ADA, name: "ada.01", lastActiveAt: 1 },
+    ]);
   });
 
   test("a blocked contact leaves the list and the picker, and shows under blocked", async () => {
@@ -271,7 +274,10 @@ describe("Nova chat provider", () => {
       ADA,
     ]);
     expect(provider.blocked().map((summary) => summary.id)).toEqual([BOB]);
-    expect(provider.contacts()).toEqual([{ account: ADA, name: "ada.01" }]);
+    // The picker lists the most recent chats first, by their last message.
+    expect(provider.contacts()).toEqual([
+      { account: ADA, name: "ada.01", lastActiveAt: 1 },
+    ]);
     expect(provider.composer(BOB)).toEqual({
       kind: "blocked",
       reason: "You blocked this person.",

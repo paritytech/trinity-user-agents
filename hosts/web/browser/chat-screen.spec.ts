@@ -115,6 +115,94 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("chat screen over providers", () => {
   test(
+    "New chat opens the host's contact picker: a contact opens their chat, anyone else a request sent only when asked",
+    async () => {
+      const { context, page, outside } = await open();
+      const picker = page.locator("dialog.prompt", { hasText: "New chat" });
+      const search = picker.getByRole("searchbox");
+      const found = picker.locator(".prompt-lookup");
+      const startedChats = () =>
+        harness(page, (chat) =>
+          chat.asked().filter((line) => line.startsWith("nova startChat")),
+        );
+      try {
+        await row(page, `nova/0x${"4b".repeat(32)}`).waitFor();
+
+        // The picker, not a screen of its own: the contacts, here Kim, and no product named.
+        await page.click('[aria-label="New chat"]');
+        await picker.waitFor();
+        expect(
+          await picker.locator(".prompt-list button").allInnerTexts(),
+        ).toEqual(["kim.01"]);
+        expect(await picker.locator(".prompt-from").count()).toBe(0);
+        expect(await page.locator(".chat-new").count()).toBe(0);
+
+        // Cancel leaves the list as it was.
+        await page.keyboard.press("Escape");
+        await picker.waitFor({ state: "detached" });
+        expect(await page.locator(".chat-list").count()).toBe(1);
+
+        // Someone whose username names another account on chain is not chosen.
+        await page.click('[aria-label="New chat"]');
+        await search.fill("eve");
+        await found.getByRole("button", { name: /^eve\.02\b/ }).click();
+        await found
+          .getByText(
+            "On chain, eve.02 names another account than the index lists.",
+          )
+          .waitFor();
+
+        // Kim is a contact: listed once, and choosing her opens her chat.
+        await search.fill("kim");
+        await found.getByText("No one else by that username.").waitFor();
+        await picker.getByRole("button", { name: /^kim\.01\b/ }).click();
+        await page
+          .locator(".chat-composer, [data-message-id]")
+          .first()
+          .waitFor();
+        await back(page);
+
+        // Zed is not: choosing him opens a request to him and sends nothing.
+        await page.click('[aria-label="New chat"]');
+        await search.fill("zed");
+        await found.getByRole("button", { name: /^zed\.01\b/ }).click();
+        await picker.waitFor({ state: "detached" });
+        const send = page.locator('[data-action="start-chat"]');
+        expect(await send.innerText()).toBe("Send request to zed.01");
+        await screenshot(page, "new-chat-request");
+        expect(await startedChats()).toEqual([]);
+
+        // Sending goes through the provider, with Zed's account, once.
+        await page.fill('[data-focus="welcome"]', "hello");
+        await send.click();
+        await page
+          .locator(".chat-error", { hasText: "Not in this test." })
+          .waitFor();
+        expect(await startedChats()).toEqual([
+          `nova startChat 0x${"7e".repeat(32)} hello`,
+        ]);
+        await back(page);
+
+        // A choice made after the session changed is not an answer.
+        await page.click('[aria-label="New chat"]');
+        await search.fill("zed");
+        const zed = found.getByRole("button", { name: /^zed\.01\b/ });
+        await zed.waitFor();
+        await harness(page, (chat) => chat.newSession());
+        await zed.click();
+        await picker.waitFor({ state: "detached" });
+        expect(await page.locator(".chat-new").count()).toBe(0);
+        expect(await page.locator(".chat-list").count()).toBe(1);
+        expect(await startedChats()).toHaveLength(1);
+        expect(outside).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "shows every provider's conversations in one list, with each provider's own steps",
     async () => {
       const { context, page, outside } = await open();

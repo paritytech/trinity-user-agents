@@ -686,7 +686,6 @@ export class NovaChatProvider implements ChatProvider {
   }
 
   readonly start: StartChat = {
-    placeholder: "Username, such as name.01, or a 0x account id",
     blocked: () => {
       if (this.snapshot.status.state !== "listening") return "Not connected.";
       return this.snapshot.canSend === false ? "No statement allowance." : null;
@@ -734,10 +733,14 @@ export class NovaChatProvider implements ChatProvider {
   contacts(): ChatContact[] {
     return this.snapshot.contacts
       .filter((contact) => contact.state === "active" && !contact.blocked)
-      .map((contact) => ({
-        account: contact.account,
-        name: displayName(contact),
-      }));
+      .map((contact) => {
+        const last = contact.messages.at(-1)?.at;
+        return {
+          account: contact.account,
+          name: displayName(contact),
+          ...(last === undefined ? {} : { lastActiveAt: last }),
+        };
+      });
   }
 
   account(): ProviderAccount {

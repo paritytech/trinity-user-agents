@@ -90,6 +90,12 @@ import { demoNotifications } from "./notifications-demo.js";
 import { NotificationsScreen } from "./notifications-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { HostContacts, chooseContact } from "./contacts.js";
+import {
+  exactUsernameDirectory,
+  routeDirectory,
+} from "./username-directory.js";
+import { chainDirectory, lookupOwner } from "./chat/directory.js";
+import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import { accountProofs } from "./account-proofs.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
@@ -270,11 +276,51 @@ const chatInbox = new ChatInbox({
   log,
   chatV2,
 });
-/** The contact picker products open, over the session's chat contacts. */
+/** The account `username` names on this network's chains, or null. */
+async function usernameOwner(username: string): Promise<HexString | null> {
+  const access = chainAccess;
+  if (access === null) throw new Error("the chain is not connected");
+  const owner = await lookupOwner(
+    chainDirectory(access.chain, access.genesis),
+    username,
+  );
+  return owner === null ? null : (bytesToHex(owner) as HexString);
+}
+/**
+ * Where the contact picker finds people by username: this network's username
+ * index, through the dev server's route on this machine; else, as in a
+ * build, the chain by exact username.
+ */
+const usernameDirectory =
+  import.meta.env.DEV &&
+  demoAllowed(true, window.location.hostname) &&
+  activeNetwork.identityBackend !== null
+    ? routeDirectory({
+        base: BASE,
+        network: activeNetwork.id,
+        owner: usernameOwner,
+      })
+    : exactUsernameDirectory(usernameOwner);
+/**
+ * The contact picker, over the session's chat contacts: the one products
+ * open with `contacts.pick` and Chat's New chat opens.
+ */
 const hostContacts = new HostContacts({
   list: () => chatInbox.contacts(),
   onChange: (listener) => chatInbox.onChange(listener),
-  choose: chooseContact,
+  choose: (asker, contacts, blocked) =>
+    chooseContact(asker, contacts, usernameDirectory, blocked),
+  // A Nova conversation's id is the person's account.
+  blocked: () =>
+    chatInbox
+      .providers()
+      .flatMap((provider) => provider.blocked?.() ?? [])
+      .map((conversation) => conversation.id)
+      .filter((id): id is HexString => /^0x[0-9a-fA-F]{64}$/.test(id)),
+  onSessionChange: (listener) =>
+    chatInbox.onChange((change) => {
+      if (change.type === "session") listener();
+    }),
   removed: () => runtime?.notifyContactsChanged(),
   log,
 });
@@ -300,6 +346,7 @@ const chatScreen = new ChatScreen(
           localChatDemo.start();
         },
       },
+  () => hostContacts.choose({ title: "New chat" }),
 );
 /**
  * The Notifications screen, a prototype the dev server offers on this machine
