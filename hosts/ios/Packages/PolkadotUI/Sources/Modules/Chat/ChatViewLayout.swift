@@ -13,7 +13,7 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
 
     private let chatInputHostView = ChatInputHostView()
     private let scrollDownButton = ScrollToBottomButton()
-    private let scrollToReactionButton = ScrollToReactionButton()
+    let scrollToReactionButton = ScrollToReactionButton()
     private var currentInputViewHeight: CGFloat = 0
     private var currentKeyboardHeight: CGFloat = 0
 
@@ -43,6 +43,8 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
 
     private var isInitialScrollDone = false
     private var isAutoScrolling = false
+    private var scrollAnchor: ScrollAnchor?
+    private var contentSizeObservation: NSKeyValueObservation?
     private var pendingSendScroll = false
     private var scrollDownButtonVisible = false
     private var scrollToReactionButtonVisible = false
@@ -60,6 +62,10 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         collectionView.backgroundColor = .clear
         collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = self
+        contentSizeObservation = collectionView.observe(\.contentSize, options: [.old, .new]) { [weak self] _, change in
+            guard change.oldValue != change.newValue else { return }
+            self?.restoreScrollAnchor()
+        }
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
@@ -422,6 +428,11 @@ private extension ChatViewLayout {
 
     // MARK: - Scrolling Helpers
 
+    private enum ScrollAnchor {
+        case bottom
+        case item(ItemIdentifierType, UICollectionView.ScrollPosition)
+    }
+
     private struct AutoScrollResult {
         let closure: (() -> Void)?
         let isInitialScrolling: Bool
@@ -465,7 +476,7 @@ private extension ChatViewLayout {
         // On initial scroll: prioritize firstUnreadMessageIdentifier
         if !isInitialScrollDone,
            let firstUnreadMessageIdentifier = viewModel?.firstUnreadMessageIdentifier {
-            scrollTo(itemIdentifier: firstUnreadMessageIdentifier, animated: animated)
+            scrollTo(itemIdentifier: firstUnreadMessageIdentifier, animated: animated, position: .centeredVertically)
             return
         }
 
@@ -502,19 +513,40 @@ private extension ChatViewLayout {
         if animated {
             isAutoScrolling = true
         }
+        scrollAnchor = .bottom
         collectionView.scrollToItem(at: lastIndexPath, at: .bottom, animated: animated)
     }
 
     func scrollTo(
         itemIdentifier: ItemIdentifierType,
         animated: Bool,
-        position: UICollectionView.ScrollPosition = .top
+        position: UICollectionView.ScrollPosition
     ) {
         guard let indexPath = dataSource.indexPath(for: itemIdentifier) else { return }
         if animated {
             isAutoScrolling = true
         }
+        scrollAnchor = .item(itemIdentifier, position)
         collectionView.scrollToItem(at: indexPath, at: position, animated: animated)
+    }
+
+    /// Cells size themselves after they appear, and a product widget grows from a
+    /// placeholder to its card well after the scroll that put it on screen. Until
+    /// the user scrolls, the list stays on whatever the last programmatic scroll
+    /// targeted instead of drifting with the content above it.
+    ///
+    /// An animated scroll in flight is left to land first, because a non-animated
+    /// scroll would cut it short and turn it into a jump.
+    private func restoreScrollAnchor() {
+        guard !isAutoScrolling else { return }
+        switch scrollAnchor {
+        case .bottom:
+            scrollToBottom(animated: false)
+        case let .item(itemIdentifier, position):
+            scrollTo(itemIdentifier: itemIdentifier, animated: false, position: position)
+        case nil:
+            break
+        }
     }
 
     private func updateScrollDownButtonVisibility() {
@@ -690,11 +722,18 @@ extension ChatViewLayout: UICollectionViewDelegate {
 
     public func scrollViewDidEndScrollingAnimation(_: UIScrollView) {
         isAutoScrolling = false
+        restoreScrollAnchor()
         updateScrollDownButtonVisibility()
     }
 
     public func scrollViewWillBeginDragging(_: UIScrollView) {
         isAutoScrolling = false
+        scrollAnchor = nil
+    }
+
+    public func scrollViewShouldScrollToTop(_: UIScrollView) -> Bool {
+        scrollAnchor = nil
+        return true
     }
 
     public func collectionView(
