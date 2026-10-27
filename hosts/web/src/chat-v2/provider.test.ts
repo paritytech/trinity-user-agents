@@ -417,3 +417,59 @@ describe("the chat v2 draft provider", () => {
     expect(provider.conversations()).toEqual([]);
   });
 });
+
+describe("a conversation the host starts", () => {
+  const ADA = `0x${"ad".repeat(32)}` as const;
+  const LIN = `0x${"11".repeat(32)}` as const;
+
+  /**
+   * A chat product with contact rooms that answers every start with
+   * `roomId`, after declaring that room's contact as `contact`, if any.
+   */
+  async function starting(roomId: string, contact?: `0x${string}`) {
+    const host = new ChatV2Host({
+      media: () => null,
+      contactRooms: () => true,
+      log: () => {},
+    });
+    const channel = new MessageChannel();
+    host.connect(PRODUCT, messagePortBridge(channel.port2));
+    const product = chatV2Over(messagePortBridge(channel.port1));
+    product.onStartConversation(async (_request, send) => {
+      await product.createRoom({
+        roomId,
+        metadata: { name: roomId, description: "Direct" },
+        config: {
+          productSource: true,
+          reactionDetails: false,
+          participants: true,
+          messageActions: false,
+          reportSeen: true,
+        },
+        preview: { order: "Timestamp" },
+      });
+      if (contact !== undefined)
+        await product.setRoomContact({
+          roomId,
+          contact: { account: contact, state: "Outgoing" },
+        });
+      send({ roomId });
+    });
+    const provider = new ChatV2Provider(PRODUCT, host, Date.now, {
+      start: { reference: () => "reference", blocked: () => null },
+    });
+    await settle();
+    return provider.start!;
+  }
+
+  test("only a room the product declared with the person chosen is an answer", async () => {
+    const refused = "The product did not open a conversation with this person.";
+    await expect((await starting("ada")).start(ADA, "")).rejects.toThrow(
+      refused,
+    );
+    await expect((await starting("ada", LIN)).start(ADA, "")).rejects.toThrow(
+      refused,
+    );
+    expect(await (await starting("ada", ADA)).start(ADA, "")).toBe("ada");
+  });
+});

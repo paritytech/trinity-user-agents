@@ -362,13 +362,11 @@ export class ChatV2Provider implements ChatProvider {
         if (answer.isErr()) throw new Error(refusalText(answer.error));
         const roomId = answer.value.roomId;
         const room = this.room(roomId);
-        // The product names the room's contact; only that person's room is an answer.
-        if (
-          room?.contact !== undefined &&
-          room.contact.account !== account.toLowerCase()
-        )
+        // The product names the room's contact; only a room it declared with
+        // that person is an answer.
+        if (room?.contact?.account !== account.toLowerCase())
           throw new Error(
-            "The product opened a conversation with someone else.",
+            "The product did not open a conversation with this person.",
           );
         return roomId;
       },
