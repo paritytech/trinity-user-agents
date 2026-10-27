@@ -2764,7 +2764,7 @@ body[data-surface="test-product"] .stage-empty {
 
 .test-product {
   position: absolute;
-  inset: 0;
+  inset: 0 0 var(--dock-space);
   z-index: 1;
   background: #0b0c0f;
 }
@@ -4535,8 +4535,9 @@ body[data-search="open"] .product-slot::after {
 }
 
 /*
- * The Docklet floats over the app, as in the app: a product runs under its
- * glass, full-bleed. Host screens end above it.
+ * The Docklet floats over the app. Host screens and a product's frame end
+ * above it, so nothing of a product is under its glass: a product in a
+ * frame gets no inset it could use to keep clear by itself.
  */
 .product-frame {
   --dock-bottom: max(
@@ -4544,11 +4545,16 @@ body[data-search="open"] .product-slot::after {
     calc(var(--safe-bottom, 0px) - 7px),
     calc(env(safe-area-inset-bottom) - 7px)
   );
-  --dock-space: calc(var(--dock-bottom) + 70px);
+  /* The 62 px bar, and the Pill that rises 10 px above it. */
+  --dock-space: calc(var(--dock-bottom) + 72px);
 }
 
 .chat-screen,
 .pocket-screen {
+  padding-bottom: var(--dock-space);
+}
+
+.product-frame[data-app-chrome="true"] .product-slot {
   padding-bottom: var(--dock-space);
 }
 
