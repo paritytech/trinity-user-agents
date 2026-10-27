@@ -3059,7 +3059,7 @@ body[data-dev-side="right"] .devtools-resize,
 .devtools-side {
   display: flex;
   gap: 2px;
-  padding: 2px;
+  padding: 3px;
   border-radius: 999px;
   background: var(--well);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -3291,11 +3291,22 @@ body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
   box-shadow: none;
 }
 
-/* Round 28 px buttons: the panel's pill-button padding would leave the icon no room. */
+/*
+ * The panel's pill-button padding would leave these icons no room. Hide is a
+ * 28 px circle; the side switch is a segmented control like the Preview
+ * tab's, each segment a 36 x 26 pill, so the selected one reads as a segment
+ * and not as a switch's knob.
+ */
 .devtools .devtools-side button,
 .devtools .devtools-close {
   min-height: 0;
   padding: 0;
+}
+
+.devtools .devtools-side button {
+  width: 36px;
+  height: 26px;
+  border-radius: 999px;
 }
 
 .devtools .devtools-tabs button:not([aria-selected="true"]),
