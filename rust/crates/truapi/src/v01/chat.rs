@@ -411,6 +411,9 @@ pub struct ChatRoomMetadata {
 	pub name: String,
 	/// One or more lines the host shows in the room header.
 	pub description: Option<String>,
+	/// An icon that replaces the icon of `create_room`, with the same rules.
+	/// An empty string removes the icon. `None` keeps the current icon.
+	pub icon: Option<String>,
 }
 
 /// The badge the chat list shows on a room.
@@ -780,6 +783,11 @@ pub enum ChatFeedUpdate {
 	/// or ended its call. The host draws it again with this content in the same
 	/// place, and does not mark it edited.
 	Replaced(ChatMessage),
+	/// A message is gone. The host removes it from the room.
+	Deleted {
+		/// The message.
+		message_id: String,
+	},
 }
 
 /// Request to push one change to the messages of a room.
@@ -804,8 +812,8 @@ pub enum HostChatUpdateFeedError {
 	DuplicateMessage,
 	/// The text is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New` from `"user"`, or `Edited` of a message
-	/// the product did not write.
+	/// In a room the host stores: `New` from `"user"`, or `Edited` or `Deleted`
+	/// of a message the product did not write.
 	NotOwner,
 	/// The product pushed updates to this room too often.
 	RateLimited,
@@ -930,6 +938,11 @@ pub enum ChatUserAction {
 	/// answers this action with `Unsupported` and does not send it to the
 	/// product. A later change gives it the payment as a `CoinPaymentCheque`.
 	SendPayment,
+	/// The user deleted a message.
+	DeleteMessage {
+		/// The message.
+		message_id: String,
+	},
 }
 
 /// Host request that tells the product what the user did.
