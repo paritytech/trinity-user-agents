@@ -272,8 +272,10 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		self.runtime.set_funding_platform(Arc::new(FundingCallbackPlatform {
+			funding: callbacks,
+			services: Arc::downgrade(self.runtime.services()),
+		}))
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -294,15 +296,6 @@ impl NativeTrUApiHostRuntime {
 		intent: String,
 	) -> Option<crate::host_logic::funding::FundingSession> {
 		self.runtime.funding_session(&intent)
-	}
-
-	/// Session `intent`'s progress: the steps for its direction and rail
-	/// with when each was reached, and the provider's references.
-	pub fn funding_progress(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.runtime.funding_progress(&intent)
 	}
 
 	/// Whether a provider still works on any funding session, read from

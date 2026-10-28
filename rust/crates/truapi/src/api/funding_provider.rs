@@ -1,15 +1,15 @@
 //! Unified [`FundingProvider`] trait.
 
 use crate::{
-	CallContext, CallError, Subscription,
+	CallContext, CallError,
 	versioned::funding_provider::{
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignItem,
-		ProductFundingAssignRequest, ProductFundingCancelError, ProductFundingCancelItem,
-		ProductFundingCancelRequest, ProductFundingQuoteError, ProductFundingQuoteItem,
-		ProductFundingQuoteRequest, ProductFundingSettleCancelError,
-		ProductFundingSettleCancelItem, ProductFundingSettleCancelRequest,
+		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignRequest,
+		ProductFundingAssignResponse, ProductFundingCancelError, ProductFundingCancelRequest,
+		ProductFundingCancelResponse, ProductFundingQuoteError, ProductFundingQuoteRequest,
+		ProductFundingQuoteResponse, ProductFundingSettleCancelError,
+		ProductFundingSettleCancelRequest, ProductFundingSettleCancelResponse,
 	},
 	wire, wire_trait,
 };
@@ -17,10 +17,8 @@ use crate::{
 /// Serve the funding sessions the user chooses this provider for.
 ///
 /// The core calls the provider's worker to hand it sessions and cancels, and
-/// each call takes one answer item: the worker sends it and nothing after,
-/// and the core ends the call once it has it. The worker calls the core to
-/// report progress. The core decides `Delivered` and `Released` itself, from
-/// the top-ups and payments the worker names.
+/// awaits one answer to each. The worker calls the core to report progress. The core decides
+/// `Delivered` and `Released` itself, from the top-ups and payments the worker names.
 ///
 /// When the worker connects, the core assigns it every session it still
 /// serves, then repeats any cancel or cancel settlement it never answered.
@@ -31,79 +29,87 @@ use crate::{
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {
 	/// Price an ask for the host's quote list, or say why the provider will
-	/// not. The core asks every provider and drops an answer later than 10
-	/// seconds. The worker answers with one item.
+	/// not. The core asks every provider and drops a call that has not
+	/// answered within 10 seconds.
 	///
 	/// ```ts
-	/// truapi.fundingProvider.onQuote(({ ask }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onQuote(({ ask }) => {
 	///   console.log("asked to price:", ask.amount);
-	///   send({ tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } });
+	///   return ok({ tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 0)]
-	fn quote(
+	async fn quote(
 		&self,
 		_cx: &CallContext,
 		_request: ProductFundingQuoteRequest,
-	) -> Subscription<ProductFundingQuoteItem, CallError<ProductFundingQuoteError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductFundingQuoteResponse, CallError<ProductFundingQuoteError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Take a session the user chose this provider for, or resume one after
 	/// the worker restarted: `last_update` says where it stopped. The worker
-	/// answers with one item once it holds the session.
+	/// answers once it holds the session.
 	///
 	/// ```ts
-	/// truapi.fundingProvider.onAssign(({ session }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onAssign(({ session }) => {
 	///   console.log("assigned:", session.intent);
-	///   send(undefined);
+	///   return ok(undefined);
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 1)]
-	fn assign(
+	async fn assign(
 		&self,
 		_cx: &CallContext,
 		_request: ProductFundingAssignRequest,
-	) -> Subscription<ProductFundingAssignItem, CallError<ProductFundingAssignError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductFundingAssignResponse, CallError<ProductFundingAssignError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Stop a session the user wants to cancel. Before money moved the
 	/// provider answers `Stopped`; after, `Offer` or `Refused`.
 	///
 	/// ```ts
-	/// truapi.fundingProvider.onCancel(({ intent }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onCancel(({ intent }) => {
 	///   console.log("cancel:", intent);
-	///   send({ tag: "Stopped", value: undefined });
+	///   return ok({ tag: "Stopped", value: undefined });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 2)]
-	fn cancel(
+	async fn cancel(
 		&self,
 		_cx: &CallContext,
 		_request: ProductFundingCancelRequest,
-	) -> Subscription<ProductFundingCancelItem, CallError<ProductFundingCancelError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductFundingCancelResponse, CallError<ProductFundingCancelError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Hear whether the user accepted the provider's cancel offer. On
 	/// `Accepted` the provider returns the refund and reports `Failed`; on
-	/// `Declined` it carries on. The worker answers with one item once it
-	/// has the decision.
+	/// `Declined` it carries on. The worker answers once it has the
+	/// decision.
 	///
 	/// ```ts
-	/// truapi.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onSettleCancel(({ intent, decision }) => {
 	///   console.log("cancel decision:", intent, decision.tag);
-	///   send(undefined);
+	///   return ok(undefined);
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 3)]
-	fn settle_cancel(
+	async fn settle_cancel(
 		&self,
 		_cx: &CallContext,
 		_request: ProductFundingSettleCancelRequest,
-	) -> Subscription<ProductFundingSettleCancelItem, CallError<ProductFundingSettleCancelError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductFundingSettleCancelResponse, CallError<ProductFundingSettleCancelError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Report progress on a session assigned to the calling provider.
