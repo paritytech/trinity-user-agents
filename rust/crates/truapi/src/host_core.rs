@@ -1803,7 +1803,8 @@ impl ProductRuntimeControl {
 
 	/// Tell the product what the user did in a room it keeps, and take its
 	/// answer. The core refuses an action for a room that does not set
-	/// `product_source` without asking the product.
+	/// `product_source` without asking the product, and answers a payment with
+	/// `Unsupported`.
 	pub fn chat_user_action(
 		&self,
 		request: truapi::latest::ProductChatUserActionRequest,
@@ -1814,6 +1815,11 @@ impl ProductRuntimeControl {
 		>,
 		ProductRuntimeError,
 	> {
+		// This version carries no payment, so a payment never reaches the
+		// product. A later change gives `SendPayment` a `CoinPaymentCheque`.
+		if matches!(request.action, truapi::latest::ChatUserAction::SendPayment) {
+			return Ok(truapi::Subscription::interrupted(truapi::CallError::Unsupported));
+		}
 		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
 		self.chat_query(
 			room_id.clone(),
@@ -4676,6 +4682,30 @@ mod tests {
 		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(page)));
 		assert_eq!(futures::executor::block_on(query.next()), None);
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	}
+
+	// This version carries no payment, so the core answers a payment itself
+	// and the product does not get it.
+	#[test]
+	fn a_payment_is_unsupported_and_does_not_reach_the_product() {
+		let (runtime, sink) = chat_query_runtime(truapi::latest::ChatRoomConfig {
+			product_source: true,
+			..Default::default()
+		});
+		let mut query = runtime
+			.control()
+			.chat_user_action(truapi::latest::ProductChatUserActionRequest {
+				room_id: "support".to_string(),
+				action: truapi::latest::ChatUserAction::SendPayment,
+			})
+			.expect("may be asked");
+
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert_eq!(
+			query.poll_next_unpin(&mut cx),
+			core::task::Poll::Ready(Some(Err(truapi::CallError::Unsupported)))
+		);
+		assert!(sent_frames(&sink).is_empty());
 	}
 
 	// A product answers no more than the host asked for, and the core refuses
