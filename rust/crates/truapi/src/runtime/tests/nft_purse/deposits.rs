@@ -244,14 +244,14 @@ fn refund_refusal(error: v01::NftPurseRefundError) -> CallError<HostNftPurseRefu
 /// finalized block.
 fn finalize_waiting_moves(purses: &Purses) {
 	let db = purses.services.core_db().unwrap();
-	let finalize = |tx: &rusqlite::Transaction<'_>| {
+	let finalized = db.write(|tx| {
 		tx.execute(
 			"UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE status = 'PENDING_SUBMISSION'",
 			[],
 		)?;
 		Ok(())
-	};
-	block_on(db.write(finalize)).unwrap();
+	});
+	block_on(finalized).unwrap();
 }
 
 /// The keys the deposit of `cheque` moved its items into, in its order.

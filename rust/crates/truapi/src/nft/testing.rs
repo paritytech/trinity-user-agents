@@ -150,10 +150,13 @@ pub fn insert_item_row(db: &Db, key: ItemKey, index: u32) {
 pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Vec<ItemKey> {
 	let count = NonZeroU32::new(count).expect("count is positive");
 	let keys = block_on(ledger.allocate_items(purse, count)).expect("items are allocated");
-	let holding = |(index, key): (usize, &ItemKey)| {
-		(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
-	};
-	let holdings = keys.iter().enumerate().map(holding).collect();
+	let holdings = keys
+		.iter()
+		.enumerate()
+		.map(|(index, key)| {
+			(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
+		})
+		.collect();
 	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
 	keys
 }
@@ -186,9 +189,9 @@ pub fn fail_transfer(db: &Db, id: DurableTxId) {
 
 /// Runs `statement` with the transfer `id` as its one parameter.
 fn update_transfer(db: &Db, id: DurableTxId, statement: &'static str) {
-	let update = move |tx: &rusqlite::Transaction<'_>| {
+	let written = db.write(move |tx| {
 		tx.execute(statement, [id.0])?;
 		Ok(())
-	};
-	block_on(db.write(update)).expect("status is written");
+	});
+	block_on(written).expect("status is written");
 }

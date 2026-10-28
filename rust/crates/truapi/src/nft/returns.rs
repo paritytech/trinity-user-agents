@@ -1,7 +1,7 @@
 //! Returns: moves that bring the items an import landed back to the keys
 //! they came from.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, Transaction};
 
@@ -15,14 +15,13 @@ use super::{
 };
 use crate::{
 	durable,
-	durable::{DurableTxId, DurableTxState, PolicyParams, group_exists},
+	durable::{DurableTxState, PolicyParams, group_exists},
 	store::DbError,
 	unix_time::current_unix_secs,
 };
 
 /// A return of the items the import `import` landed, registered as
 /// `operation`.
-#[derive(Clone)]
 pub struct ReturnRequest {
 	/// The operation the return forms.
 	pub operation: OperationKey,
@@ -30,61 +29,99 @@ pub struct ReturnRequest {
 	pub import: OperationKey,
 }
 
-/// The items of a return, by their keys in our purse.
+/// The answer to a started return. Each item is named by its key in our purse.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StartedReturn {
-	/// The items a move was registered for.
+	/// The items that a move was registered for.
 	pub started: Vec<ItemKey>,
-	/// The items the import landed that are consumed already, so stay.
+	/// The items that the import landed but something consumed since. They
+	/// stay where they are.
 	pub unavailable: Vec<ItemKey>,
 }
 
-/// An item an import landed that nothing consumed since.
+/// An item that an import landed and that nothing consumed since.
 pub struct ReturnableItem {
 	/// Its key in our purse.
 	pub key: ItemKey,
-	/// Where that key sits.
+	/// The slot of that key.
 	pub slot: ItemSlot,
-	/// The key it came from, which it goes back to.
+	/// The key it came from. The return moves it back there.
 	pub origin: ItemKey,
 }
 
-/// Works out, inside the registration write, one move for each of the
-/// [`returnable_items`] of `request`, back to the key it came from.
+/// What a return of an import would move, read without checking that the
+/// return may start.
+pub struct ReturnItems {
+	/// The moves of the import.
+	pub import: Vec<DurableTxState>,
+	/// The items to move back, in the order the import moved them.
+	pub available: Vec<ReturnableItem>,
+	/// The items that the import landed but something consumed since.
+	pub unavailable: Vec<ItemKey>,
+}
+
+impl ReturnItems {
+	/// Checks that a return of these items may start as `operation`. Refuses,
+	/// in this order, when the import does not exist or is no import, while
+	/// any of its moves can still land or fail, when `operation` exists
+	/// already, and when no item is available.
+	pub fn validate_start(
+		&self,
+		conn: &Connection,
+		operation: &OperationKey,
+	) -> Result<(), StartOperationError> {
+		validate_settled_import(&self.import)?;
+		validate_return_is_new(conn, operation)?;
+		if self.available.is_empty() {
+			return Err(StartOperationError::NothingIdle);
+		}
+		Ok(())
+	}
+
+	/// The answer to a return that registered a move for every available item.
+	pub fn into_started(self) -> StartedReturn {
+		let started = self.available.iter().map(|item| item.key).collect();
+		StartedReturn { started, unavailable: self.unavailable }
+	}
+}
+
+/// Works out, inside the registration write, one move for each available
+/// item of `request`, back to the key it came from. Refuses as
+/// [`ReturnItems::validate_start`] does.
 pub fn plan_returns(
 	tx: &Transaction<'_>,
 	request: &ReturnRequest,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
+	let items = validated_return_items(tx, request)?;
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	Ok(returnable_items(tx, request)?
-		.iter()
-		.map(|item| return_params(item, give_up_after))
-		.collect())
+	Ok(items.available.iter().map(|item| return_params(item, give_up_after)).collect())
 }
 
-/// The items the import of `request` landed that nothing consumed, in the
-/// import's order. Refuses, in this order, when no import exists under that
-/// key, while any of its moves can still land or fail, when the return
-/// exists, and when no landed item is unconsumed.
-pub fn returnable_items(
+/// Reads the items of `request` and checks that the return may start, as
+/// [`ReturnItems::validate_start`] does.
+pub fn validated_return_items(
 	conn: &Connection,
 	request: &ReturnRequest,
-) -> Result<Vec<ReturnableItem>, StartOperationError> {
-	let import = durable::group(conn, &nft_domain(), request.import.group())?;
-	validate_settled_import(&import)?;
-	validate_return_is_new(conn, &request.operation)?;
-	let moves = progress_of(import)?;
-	let items = unconsumed_landed_items(conn, &finalized_moves(moves))?;
-	if items.is_empty() {
-		return Err(StartOperationError::NothingIdle);
-	}
+) -> Result<ReturnItems, StartOperationError> {
+	let items = read_return_items(conn, &request.import)?;
+	items.validate_start(conn, &request.operation)?;
 	Ok(items)
 }
 
-/// Checks that `import` is an import, every move of it signed with an
-/// imported secret, and that each of its moves finalized or failed. Any
-/// other operation under the key, such as a revoke or a rebalance, is no
-/// import.
+/// Reads what a return of `import` would move. The import's items that
+/// landed in a finalized block are available if nothing consumed them, and
+/// unavailable otherwise.
+pub fn read_return_items(conn: &Connection, import: &OperationKey) -> Result<ReturnItems, DbError> {
+	let import = durable::group(conn, &nft_domain(), import.group())?;
+	let landed = filter_landed_finalized(progress_of(import.clone())?);
+	let available = unconsumed_landed_items(conn, &landed)?;
+	let unavailable = consumed_landed_keys(&landed, &available);
+	Ok(ReturnItems { import, available, unavailable })
+}
+
+/// Checks that every move of `import` is signed with an imported secret,
+/// and that each of them finalized or failed. A revoke or a rebalance under
+/// the same key is no import.
 fn validate_settled_import(import: &[DurableTxState]) -> Result<(), StartOperationError> {
 	if import.is_empty() || !import.iter().all(is_import_move) {
 		return Err(StartOperationError::ImportNotFound);
@@ -113,13 +150,14 @@ fn validate_return_is_new(
 }
 
 /// The moves of `moves` that landed in a finalized block.
-fn finalized_moves(moves: Vec<TransferProgress>) -> Vec<TransferProgress> {
+fn filter_landed_finalized(moves: Vec<TransferProgress>) -> Vec<TransferProgress> {
 	let finalized = TransferState::Landed { finalized: true };
 	moves.into_iter().filter(|transfer| transfer.state == finalized).collect()
 }
 
-/// The keys `landed` minted that nothing consumed since, each with its slot
-/// and the key it came from, in the order of `landed`.
+/// The keys that the moves `landed` minted and that nothing consumed since.
+/// Each comes with its slot and the key it came from, in the order of
+/// `landed`.
 fn unconsumed_landed_items(
 	conn: &Connection,
 	landed: &[TransferProgress],
@@ -136,6 +174,16 @@ fn unconsumed_landed_items(
 		.collect())
 }
 
+/// The keys that the moves `landed` minted and that are not in `available`.
+fn consumed_landed_keys(landed: &[TransferProgress], available: &[ReturnableItem]) -> Vec<ItemKey> {
+	let available: BTreeSet<ItemKey> = available.iter().map(|item| item.key).collect();
+	landed
+		.iter()
+		.map(|transfer| transfer.minted)
+		.filter(|minted| !available.contains(minted))
+		.collect()
+}
+
 /// The params of moving whatever the key of `item` holds back to the key it
 /// came from, given up at `give_up_after`.
 fn return_params(item: &ReturnableItem, give_up_after: u64) -> PolicyParams {
@@ -149,36 +197,6 @@ fn return_params(item: &ReturnableItem, give_up_after: u64) -> PolicyParams {
 	.into()
 }
 
-/// The items the return's registered moves take, in registration order,
-/// and the finalized items of the import they leave out.
-pub fn started_return(
-	tx: &Transaction<'_>,
-	request: &ReturnRequest,
-) -> Result<StartedReturn, DbError> {
-	let own = durable::group(tx, &nft_domain(), request.operation.group())?;
-	let started: Vec<ItemKey> =
-		progress_of(own)?.into_iter().map(|transfer| transfer.consumed).collect();
-	let import = durable::group(tx, &nft_domain(), request.import.group())?;
-	let import_moves = progress_of(import)?;
-	let unavailable = finalized_moves(import_moves)
-		.into_iter()
-		.map(|transfer| transfer.minted)
-		.filter(|minted| !started.contains(minted))
-		.collect();
-	Ok(StartedReturn { started, unavailable })
-}
-
-/// Records that the move with each id of `ids` spends the item at the same
-/// position of `started`.
-pub fn record_return_inputs(
-	tx: &Transaction<'_>,
-	started: &[ItemKey],
-	ids: &[DurableTxId],
-) -> Result<(), DbError> {
-	let inputs: Vec<_> = started.iter().copied().zip(ids.iter().copied()).collect();
-	dao::insert_inputs(tx, &inputs)
-}
-
 #[cfg(test)]
 mod tests {
 	use futures::executor::block_on;
@@ -186,7 +204,7 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		durable::RegistrationError,
+		durable::{DurableTxId, RegistrationError},
 		nft::{
 			HandoffRequest, HandoffTag, HeldItem, ImportRequest, NftLedger, PurseId, PurseTag,
 			TransferDestinations, TransferRequest,
@@ -259,6 +277,18 @@ mod tests {
 		block_on(imported.ledger.hand_off(request, |_| Ok::<_, ()>(()))).unwrap();
 	}
 
+	/// Starts moving `key` out to a foreign key, under an operation of its own.
+	fn transfer_out(imported: &Imported, key: ItemKey) {
+		hold(imported, key);
+		let transfer = TransferRequest {
+			operation: refund(9),
+			from: PURSE,
+			items: [key].into(),
+			destinations: TransferDestinations::Foreign(ItemKey([0xee; 32])),
+		};
+		block_on(imported.ledger.start_transfers(transfer)).unwrap();
+	}
+
 	fn refused_with(
 		result: Result<StartedReturn, RegistrationError<StartOperationError>>,
 	) -> StartOperationError {
@@ -316,20 +346,28 @@ mod tests {
 	fn an_item_moved_out_by_a_finalized_transfer_is_reported_unavailable() {
 		let deposited = deposited();
 		let moved = deposited.minted[1];
-		hold(&deposited, moved);
-		let transfer = TransferRequest {
-			operation: refund(9),
-			from: PURSE,
-			items: [moved].into(),
-			destinations: TransferDestinations::Foreign(ItemKey([0xee; 32])),
-		};
-		block_on(deposited.ledger.start_transfers(transfer)).unwrap();
+		transfer_out(&deposited, moved);
 		finalize_transfer(&deposited.db, DurableTxId(3));
 
 		let started = start_return(&deposited, refund(2)).unwrap();
 
 		let expected =
 			StartedReturn { started: vec![deposited.minted[0]], unavailable: vec![moved] };
+		assert_eq!(started, expected);
+	}
+
+	/// A move out that can still land may take the item, so returning it
+	/// too would race that move.
+	#[test]
+	fn an_item_with_a_live_transfer_out_is_reported_unavailable() {
+		let deposited = deposited();
+		let moving = deposited.minted[1];
+		transfer_out(&deposited, moving);
+
+		let started = start_return(&deposited, refund(2)).unwrap();
+
+		let expected =
+			StartedReturn { started: vec![deposited.minted[0]], unavailable: vec![moving] };
 		assert_eq!(started, expected);
 	}
 
@@ -377,15 +415,7 @@ mod tests {
 	#[test]
 	fn a_return_of_an_operation_that_is_no_import_is_refused() {
 		let deposited = deposited();
-		let moved = deposited.minted[1];
-		hold(&deposited, moved);
-		let transfer = TransferRequest {
-			operation: refund(9),
-			from: PURSE,
-			items: [moved].into(),
-			destinations: TransferDestinations::Foreign(ItemKey([0xee; 32])),
-		};
-		block_on(deposited.ledger.start_transfers(transfer)).unwrap();
+		transfer_out(&deposited, deposited.minted[1]);
 		finalize_transfer(&deposited.db, DurableTxId(3));
 		let request = ReturnRequest { operation: refund(2), import: refund(9) };
 

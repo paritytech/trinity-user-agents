@@ -91,7 +91,7 @@ pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool 
 
 /// The idempotency key of the operation `domain` names for cheque `id`, as
 /// products derive it to observe a revoke or a refund.
-pub fn cheque_operation_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+pub fn cheque_idempotency_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
 	let preimage = [domain, &id.0].concat();
 	NftPurseIdempotencyKey(blake2_256(&preimage))
 }

@@ -20,8 +20,7 @@ use super::{
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims},
 	returns::{
-		ReturnRequest, StartedReturn, plan_returns, record_return_inputs, returnable_items,
-		started_return,
+		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
 	},
 	scarcity::TRANSFER_POLICY,
 };
@@ -143,9 +142,10 @@ impl NftLedger {
 		let installation = self.current_installation().await?;
 		let items = request.items.clone();
 		let planned = self.planned_transfers(request, installation);
-		let record =
-			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &items, ids);
-		self.durable.execute_with(planned, record).await.map(|_| ())
+		self.durable
+			.execute_with(planned, move |tx, ids| record_inputs(tx, items, ids))
+			.await
+			.map(|_| ())
 	}
 
 	/// The installation new keys are allocated under now.
@@ -235,17 +235,20 @@ impl NftLedger {
 		request: ReturnRequest,
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
 		let group = request.operation.group().clone();
-		let recorded = request.clone();
+		let import = request.import.clone();
 		let policy = PolicyId::new(TRANSFER_POLICY);
 		let planned = DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
 			plan_returns(tx, &request)
 		});
-		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
-			let started = started_return(tx, &recorded)?;
-			record_return_inputs(tx, &started.started, ids)?;
-			Ok(started)
-		};
-		self.durable.execute_with(planned, record).await.map(|(_, started)| started)
+		self.durable
+			.execute_with(planned, move |tx, ids| {
+				// The moves' inputs are not recorded yet, so this reads the items the plan moved.
+				let started = read_return_items(tx, &import)?.into_started();
+				record_inputs(tx, started.started.iter().copied(), ids)?;
+				Ok(started)
+			})
+			.await
+			.map(|(_, started)| started)
 	}
 
 	/// The slots of the items [`Self::start_returns`] would move for
@@ -255,8 +258,8 @@ impl NftLedger {
 		&self,
 		request: ReturnRequest,
 	) -> Result<Vec<ItemSlot>, StartOperationError> {
-		let items = self.db.read(move |conn| Ok(returnable_items(conn, &request))).await??;
-		Ok(items.into_iter().map(|item| item.slot).collect())
+		let items = self.db.read(move |conn| Ok(validated_return_items(conn, &request))).await??;
+		Ok(items.available.into_iter().map(|item| item.slot).collect())
 	}
 
 	/// `plan` as a durable request whose moves are planned in its write.

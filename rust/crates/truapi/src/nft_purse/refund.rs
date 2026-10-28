@@ -1,16 +1,16 @@
 //! Refunds: returning the items of a deposited cheque to the cheque's keys.
 
-use truapi::latest::{HostNftPurseRefundResponse, NftPurseChequeId, NftPurseIdempotencyKey};
+use truapi::latest::{HostNftPurseRefundResponse, NftPurseChequeId};
 
 use super::{
 	NftPurses,
 	deposit::deposit_operation,
 	item_key,
-	operation::{cheque_operation_key, operation_key},
+	operation::{cheque_idempotency_key, operation_key},
 };
 use crate::{
 	durable::RegistrationError,
-	nft::{PurseId, ReturnRequest, StartOperationError},
+	nft::{OperationKey, PurseId, ReturnRequest, StartOperationError},
 	platform::ProductId,
 };
 
@@ -59,12 +59,12 @@ impl NftPurses {
 /// The return of `depositor`'s deposit of cheque `id`, under its refund key.
 fn refund_request(depositor: &ProductId, id: &NftPurseChequeId) -> ReturnRequest {
 	ReturnRequest {
-		operation: operation_key(depositor, refund_key(id)),
+		operation: refund_operation(depositor, id),
 		import: deposit_operation(depositor, id),
 	}
 }
 
-/// The idempotency key the refund of cheque `id` is observed under.
-fn refund_key(id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
-	cheque_operation_key(REFUND_KEY_DOMAIN, id)
+/// The operation `depositor`'s refund of cheque `id` is registered as.
+fn refund_operation(depositor: &ProductId, id: &NftPurseChequeId) -> OperationKey {
+	operation_key(depositor, cheque_idempotency_key(REFUND_KEY_DOMAIN, id))
 }

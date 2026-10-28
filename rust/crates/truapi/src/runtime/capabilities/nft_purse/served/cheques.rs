@@ -121,7 +121,7 @@ impl ProductRuntimeHost {
 		let purses = self.connection.nft_purses()?;
 		let depositor = self.connection.product_id();
 		let id = request.cheque_id;
-		let drain = drain_to_confirm(&purses, depositor, &id).await?;
+		let drain = refund_confirmation_info(&purses, depositor, &id).await?;
 		self.confirm_drain(cx, drain, latest::HostNftPurseRefundError::Denied).await?;
 		purses.refund(depositor, &id).await.map_err(refund_failure)
 	}
@@ -130,7 +130,7 @@ impl ProductRuntimeHost {
 /// The drain the user confirms for a refund of `depositor`'s cheque `id`,
 /// refusing early what the refund would refuse, so the user is not asked
 /// for nothing.
-async fn drain_to_confirm(
+async fn refund_confirmation_info(
 	purses: &NftPurses,
 	depositor: &ProductId,
 	id: &latest::NftPurseChequeId,

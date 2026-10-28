@@ -174,10 +174,10 @@ pub fn allocate_destinations(
 /// position of `items`.
 pub fn record_inputs(
 	tx: &Transaction<'_>,
-	items: &BTreeSet<ItemKey>,
+	items: impl IntoIterator<Item = ItemKey>,
 	ids: &[DurableTxId],
 ) -> Result<(), StartOperationError> {
-	let inputs: Vec<_> = items.iter().copied().zip(ids.iter().copied()).collect();
+	let inputs: Vec<_> = items.into_iter().zip(ids.iter().copied()).collect();
 	Ok(dao::insert_inputs(tx, &inputs)?)
 }
 

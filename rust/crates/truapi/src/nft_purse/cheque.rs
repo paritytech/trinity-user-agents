@@ -7,20 +7,20 @@ use parity_scale_codec::{Decode, Encode};
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
 	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-	NftPurseIdempotencyKey, NftPurseItemKey, X25519PublicKey,
+	NftPurseItemKey, X25519PublicKey,
 };
 use zeroize::Zeroizing;
 
 use super::{
 	NftPurses,
-	operation::{cheque_operation_key, operation_key},
+	operation::{cheque_idempotency_key, operation_key},
 };
 use crate::{
 	durable::RegistrationError,
 	host_logic::x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	nft::{
-		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret, PurseId,
-		ReclaimRequest, StartOperationError,
+		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret,
+		OperationKey, PurseId, ReclaimRequest, StartOperationError,
 	},
 	platform::ProductId,
 };
@@ -78,15 +78,15 @@ impl NftPurses {
 		creator: &ProductId,
 		id: &NftPurseChequeId,
 	) -> Result<(), RegistrationError<StartOperationError>> {
-		let operation = operation_key(creator, revoke_key(id));
+		let operation = revoke_operation(creator, id);
 		let tag = handoff_tag(creator, id);
 		self.ledger.start_reclaims(ReclaimRequest { operation, tag }).await
 	}
 }
 
-/// The idempotency key the revoke of cheque `id` is observed under.
-fn revoke_key(id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
-	cheque_operation_key(REVOKE_KEY_DOMAIN, id)
+/// The operation `creator`'s revoke of cheque `id` is registered as.
+fn revoke_operation(creator: &ProductId, id: &NftPurseChequeId) -> OperationKey {
+	operation_key(creator, cheque_idempotency_key(REVOKE_KEY_DOMAIN, id))
 }
 
 /// The tag that names the handoff of the cheque `id` by `creator`, so cheque
