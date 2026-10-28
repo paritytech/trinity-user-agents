@@ -2005,7 +2005,7 @@ fn room_request(room_id: &str) -> truapi::latest::HostChatCreateRoomRequest {
 }
 
 fn room_metadata() -> truapi::latest::ChatRoomMetadata {
-	truapi::latest::ChatRoomMetadata { name: "Support".to_string(), description: None }
+	truapi::latest::ChatRoomMetadata { name: "Support".to_string(), description: None, icon: None }
 }
 
 fn room_config() -> truapi::latest::ChatRoomConfig {
