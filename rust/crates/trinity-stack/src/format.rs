@@ -37,8 +37,7 @@ pub enum Schemes {
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
 	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
-	/// label in front of its host. Browsers send `localhost` and its subdomains to loopback without
-	/// asking DNS, so a local gateway needs no literal address.
+	/// label in front of its host and so cannot be a literal address.
 	Gateway,
 }
 
