@@ -409,6 +409,12 @@ impl HostCallbacks for EventCallbacks {
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 	}
+
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+		Ok(crate::platform::ExtensionVersionMap::default())
+	}
 	async fn local_storage_read(
 		&self,
 		_key: String,
@@ -2241,6 +2247,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
+
+		async fn transaction_extension_versions(
+			&self,
+		) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+			Ok(crate::platform::ExtensionVersionMap::default())
+		}
 		async fn local_storage_read(
 			&self,
 			_key: String,
@@ -2409,6 +2421,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
+		}
+
+		async fn transaction_extension_versions(
+			&self,
+		) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+			Ok(crate::platform::ExtensionVersionMap::default())
 		}
 		async fn local_storage_read(
 			&self,
@@ -3165,6 +3183,24 @@ fn a_card_title_accepts_what_a_card_id_refuses() {
 		"\u{2615}\u{fe0f} Coffee"
 	);
 	assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
+}
+
+/// A host screening a room icon itself gets the answer the core's own
+/// `create_room` would give, so a product cannot pass one path and fail the
+/// other.
+#[test]
+fn a_chat_icon_is_screened_as_create_room_screens_it() {
+	assert_eq!(screen_chat_icon("  ".to_string()).unwrap(), "");
+	assert_eq!(
+		screen_chat_icon("data:image/png;base64,iVBORw0KGgo=".to_string()).unwrap(),
+		"data:image/png;base64,iVBORw0KGgo="
+	);
+	assert_eq!(
+		screen_chat_icon("https://example.invalid".to_string()).unwrap(),
+		"https://example.invalid/"
+	);
+	assert!(screen_chat_icon("data:image/svg+xml,<svg onload=alert(1)>".to_string()).is_err());
+	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
 }
 
 /// Both sides NFC-normalize, so a host that compares raw bytes against what

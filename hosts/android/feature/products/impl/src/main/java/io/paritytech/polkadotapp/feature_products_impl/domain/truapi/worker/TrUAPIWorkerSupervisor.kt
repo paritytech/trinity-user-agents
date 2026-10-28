@@ -143,7 +143,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {
             webViewRuntime.initialize()
-            bootstrapInstaller.installerFor(setOf(workerScript.baseUrl))
+            bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
         }.getOrElse { return Result.failure(it) }
         provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
 

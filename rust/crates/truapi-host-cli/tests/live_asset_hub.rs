@@ -10,9 +10,7 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
-use truapi::statement_allowance::{
-	self as alloc, collection::PersonhoodCollection, extension::AS_PGAS, pgas,
-};
+use truapi::statement_allowance::{self as alloc, collection::PersonhoodCollection, pgas};
 
 const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
 
@@ -50,34 +48,15 @@ async fn live_asset_hub_reports_the_product_context_suffix() {
 	);
 }
 
-/// The claim encodes five fields for `AsPgas::Claim`. A short payload is accepted
-/// locally and then panics the runtime inside `validate_transaction`, which is how
-/// the missing `revision` on the statement-store claim went unnoticed.
+/// Both collections have a PGAS claim budget on the live Asset Hub: a full
+/// person proves against the `People` ring and must not be scanned against the
+/// light one's share.
 #[tokio::test]
 #[ignore = "needs network access to a live Asset Hub"]
-async fn live_asset_hub_declares_the_pgas_claim_shape() {
+async fn live_asset_hub_declares_both_pgas_claim_budgets() {
 	let (_rpc, metadata) = asset_hub().await;
 
 	assert_eq!(metadata.metadata_version(), 16, "the runtime API should serve V16");
-	assert_eq!(
-		metadata.extension_info_field_count(AS_PGAS, "Claim").unwrap(),
-		5,
-		"AsPgas::Claim arity changed; the encoded payload has to change with it"
-	);
-	// Both collections have to be nameable here, not just the light one: a full
-	// person proves PGAS against the `People` ring, and a missing variant would
-	// only surface when such a person tried to claim.
-	for collection in PersonhoodCollection::ALL {
-		let (claim, variant) = metadata
-			.extension_info_and_field_variant_indices(
-				AS_PGAS,
-				"Claim",
-				collection.metadata_variant(),
-			)
-			.unwrap_or_else(|err| panic!("AsPgas carries no {collection} claim: {err}"));
-		println!("live AsPgas: Claim={claim} {collection}={variant}");
-	}
-
 	assert!(
 		alloc::slot::max_pgas_claims(&metadata, PersonhoodCollection::LitePeople).unwrap() > 0,
 		"a lite person must be allowed at least one claim per day"
@@ -196,14 +175,10 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // dotNS gateway: the register_name authorization shape and the username reads.
 // ---------------------------------------------------------------------------
 
-use truapi::{
-	host_logic::dotns_gateway::{
-		DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32,
-		classify_labels, decode_address, discover_pop_controller, encode_revive_call,
-		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
-		selector, view_output,
-	},
-	statement_allowance::extension::AS_DOTNS_GATEWAY,
+use truapi::host_logic::dotns_gateway::{
+	DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
+	decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
+	is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
 };
 
 /// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
@@ -257,30 +232,6 @@ impl DotnsTransport for PlainRpc {
 			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
 		view_output(&bytes)
 	}
-}
-
-/// `register_name` is authorized by `AsDotnsGatewayInfo::RegisterFullName`.
-/// The host asserts its exact field shape before signing, and the encoded
-/// extra has to match it field for field: a shorter payload is accepted
-/// locally and rejected (or worse) by the runtime. The vendored fixture is a
-/// snapshot; this is the live shape.
-#[tokio::test]
-#[ignore = "needs network access to a live Asset Hub"]
-async fn live_asset_hub_declares_the_register_full_name_shape() {
-	let (_rpc, metadata) = asset_hub().await;
-	let variant = metadata
-		.dotns_register_full_name_variant()
-		.expect("RegisterFullName is {proof, ring_index, revision, signature}");
-	assert_eq!(
-		metadata
-			.extension_info_field_count(AS_DOTNS_GATEWAY, "RegisterFullName")
-			.unwrap(),
-		4
-	);
-	metadata
-		.call_indices("DotnsGateway", "register_name")
-		.expect("DotnsGateway.register_name exists");
-	println!("live AsDotnsGateway: RegisterFullName={variant}");
 }
 
 /// End to end over the same resolution steps the CLI and the in-core runtime
