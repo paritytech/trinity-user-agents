@@ -178,6 +178,21 @@ const call: T.ChatMessage = {
     request: false,
 };
 
+const custom: T.ChatMessage = {
+    messageId: "x1",
+    origin: { participantId: "contact" },
+    timestamp: 1_700_000_000_000n,
+    body: {
+        tag: "Custom",
+        value: { message: { messageType: "poll", payload: "0x0102" }, alt: "A poll" },
+    },
+    status: "Sent",
+    replyTo: undefined,
+    editedAt: undefined,
+    reactions: [],
+    request: false,
+};
+
 const preview: T.ChatRoomPreview = {
     timestamp: 5n,
     badge: { tag: "UnreadCount", value: { count: 3 } },
@@ -302,6 +317,17 @@ describe("chat extension v2 frames", () => {
                     T.VersionedHostChatUpdateFeedRequest.enc({
                         tag: "V1",
                         value: { roomId: "room", update: { tag: "Replaced", value: call } },
+                    }),
+                ),
+            ],
+            [
+                "11.update_feed.custom",
+                frame(
+                    W.CHAT_UPDATE_FEED,
+                    MESSAGE_TYPE_REQUEST,
+                    T.VersionedHostChatUpdateFeedRequest.enc({
+                        tag: "V1",
+                        value: { roomId: "room", update: { tag: "New", value: custom } },
                     }),
                 ),
             ],
