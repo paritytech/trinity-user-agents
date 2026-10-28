@@ -94,7 +94,7 @@ sequenceDiagram
   H->>C: rail, asset, country
   C->>W: quote (every provider, 10 s deadline)
   W-->>C: Quoted
-  C->>H: funding_quotes_changed: rows Pending → Quoted | Unavailable{Refused | Timeout}, best; re-asked every 60 s
+  C->>H: funding_quotes_changed: rows Pending → Quoted | Unavailable(Refused or Timeout), best · re-asked every 60 s
   H->>C: select_funding_provider
   C->>W: assign
   W->>C: presentFrame
