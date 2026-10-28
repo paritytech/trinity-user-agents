@@ -37,6 +37,19 @@ struct ProductMessageCacheTests {
         #expect(cached?.seenMessageId == "m3")
     }
 
+    /// The next open of the room must not show a message that the product deleted.
+    @Test func aDeleteTakesTheMessageOutOfTheCachedPage() async {
+        let cache = ProductMessageCache()
+        await cache.store(entry([message(1), message(2), message(3)]), productId: productId, roomId: roomId)
+
+        await cache.apply(.deleted(messageId: "m2"), productId: productId, roomId: roomId)
+        await cache.apply(.deleted(messageId: "m9"), productId: productId, roomId: roomId)
+
+        let cached = await cache.entry(productId: productId, roomId: roomId)
+        #expect(cached?.messages.map(\.messageId) == ["m1", "m3"])
+        #expect(cached?.next == "0")
+    }
+
     @Test func aNewMessageWithAKnownIdReplacesIt() async {
         let cache = ProductMessageCache()
         await cache.store(entry([message(1), message(2)]), productId: productId, roomId: roomId)

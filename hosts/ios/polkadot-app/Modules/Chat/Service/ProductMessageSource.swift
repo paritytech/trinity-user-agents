@@ -248,6 +248,8 @@ actor ProductMessageSource: ChatMessageSourcing {
             modify(messageId) { $0.adjustReaction(emoji, by: participantId, placed: false) }
         case let .statusChanged(messageId, status):
             modify(messageId) { $0.status = status }
+        case let .deleted(messageId):
+            remove(messageId)
         }
 
         emit()

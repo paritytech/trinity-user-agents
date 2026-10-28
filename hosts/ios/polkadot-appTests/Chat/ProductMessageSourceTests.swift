@@ -244,6 +244,18 @@ struct ProductMessageSourceTests {
         #expect(sent.status == .outgoing(.delivered))
         #expect(sent.origin == .user)
     }
+
+    /// A deleted message leaves the window. A message that the window does not hold changes nothing.
+    @Test func aDeleteTakesTheMessageOutOfTheWindow() async {
+        let history = ProductRoomHistory(count: 5)
+        let source = makeSource(ScriptedProductChatQuerying(page: history.answer))
+        await open(source)
+
+        await source.apply(.deleted(messageId: "m2"))
+        await source.apply(.deleted(messageId: "gone"))
+
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m1", "m3", "m4"])
+    }
 }
 
 // MARK: - Helpers
