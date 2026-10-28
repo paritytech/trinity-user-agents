@@ -630,9 +630,24 @@ fn apply_feed(
 			stored.message.body = body.clone();
 			stored.message.edited_at = Some(*edited_at);
 		},
-		// Drawn again in place; an edit mark comes only from an edit.
+		// Drawn again in place; an edit mark comes only from an edit. In the
+		// host's store a replacement keeps its author, as an edit does.
 		ChatFeedUpdate::Replaced(message) => {
+			if persist && stored.message.origin.participant_id == USER {
+				return Err(HostChatUpdateFeedError::NotOwner);
+			}
+			let origin = stored.message.origin.clone();
 			stored.message = message.clone();
+			if persist {
+				stored.message.origin = origin;
+			}
+		},
+		// The user reacts in the host's store only through the host.
+		ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
+		ChatFeedUpdate::ReactionRemoved { participant_id, .. }
+			if persist && participant_id == USER =>
+		{
+			return Err(HostChatUpdateFeedError::NotOwner);
 		},
 		ChatFeedUpdate::ReactionPlaced { participant_id, emoji, .. } => {
 			stored.react(participant_id, emoji, true, persist);
@@ -1527,7 +1542,7 @@ mod tests {
 			),
 			Err(HostChatUpdateFeedError::NotOwner)
 		);
-		for participant_id in ["p1", USER, "p1", "p2"] {
+		for participant_id in ["p1", "p1", "p2", "p3"] {
 			let update = ChatFeedUpdate::ReactionPlaced {
 				message_id: "p-1".to_string(),
 				participant_id: participant_id.to_string(),
@@ -1535,6 +1550,19 @@ mod tests {
 			};
 			feed(&host, "support", update, true).expect("a reaction is stored");
 		}
+		assert_eq!(
+			feed(
+				&host,
+				"support",
+				ChatFeedUpdate::ReactionPlaced {
+					message_id: "p-1".to_string(),
+					participant_id: USER.to_string(),
+					emoji: "+1".to_string(),
+				},
+				true
+			),
+			Err(HostChatUpdateFeedError::NotOwner)
+		);
 		feed(
 			&host,
 			"support",
@@ -1566,7 +1594,7 @@ mod tests {
 		// One per participant, the repeat of p1 counted once.
 		assert_eq!(
 			stored["reactions"],
-			json!([{ "emoji": "+1", "count": 2, "reactedByUser": true }])
+			json!([{ "emoji": "+1", "count": 2, "reactedByUser": false }])
 		);
 
 		// A call that ended is drawn again in place, without an edit mark.
@@ -1584,6 +1612,21 @@ mod tests {
 		assert_eq!(replaced["message"]["body"]["text"], "Audio call, ended");
 		assert_eq!(replaced["message"]["editedAt"], Value::Null);
 		assert_eq!(replaced["message"]["reactions"], json!([]));
+		// A replacement keeps the author it replaces, and the user's words
+		// stay the user's.
+		feed(&host, "support", ChatFeedUpdate::Replaced(message("p-1", "p2", "")), true)
+			.expect("replaced");
+		let replaced = drain(&mut events).pop().expect("the replace event");
+		assert_eq!(replaced["message"]["origin"], PRODUCT);
+		assert_eq!(
+			feed(
+				&host,
+				"support",
+				ChatFeedUpdate::Replaced(message(&user.message_id, PRODUCT, "not yours")),
+				true
+			),
+			Err(HostChatUpdateFeedError::NotOwner)
+		);
 		assert_eq!(
 			feed(&host, "support", ChatFeedUpdate::Replaced(message("p-9", PRODUCT, "")), true),
 			Err(HostChatUpdateFeedError::UnknownMessage)
@@ -1597,7 +1640,7 @@ mod tests {
 			.into_iter()
 			.filter(|line| line["kind"] == "feed")
 			.collect();
-		assert_eq!(feed_lines.len(), 9, "only the updates the host applied");
+		assert_eq!(feed_lines.len(), 10, "only the updates the host applied");
 		assert_eq!(feed_lines[0]["update"], "New");
 		assert_eq!(feed_lines[0]["messageId"], "p-1");
 		assert_eq!(feed_lines[0]["persist"], true);
