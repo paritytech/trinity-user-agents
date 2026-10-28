@@ -18,6 +18,7 @@ use super::{
 		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
+	reclaim::{ReclaimRequest, plan_reclaims},
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
@@ -201,6 +202,23 @@ impl NftLedger {
 		let planned = self.planned_imports(request.plan(), installation);
 		self.durable.execute_with(planned, |_, _| Ok(())).await?;
 		Ok(())
+	}
+
+	/// Registers, under `request.operation`, one move for each key handed off
+	/// under `request.tag` that has no move yet or whose latest move failed,
+	/// each into a fresh key of the purse it was handed off from. Registers
+	/// nothing when every key is moving or moved. Each move waits for its key
+	/// to hold an NFT for up to 30 minutes from now.
+	pub async fn start_reclaims(
+		&self,
+		request: ReclaimRequest,
+	) -> Result<(), RegistrationError<StartOperationError>> {
+		let installation = self.current_installation().await?;
+		let group = request.operation.group().clone();
+		let planned = self.planned_in_write(group, installation, move |tx, keys| {
+			plan_reclaims(tx, &request, keys)
+		});
+		self.durable.execute_with(planned, |_, _| Ok(())).await.map(|_| ())
 	}
 
 	/// `plan` as a durable request whose moves are planned in its write.

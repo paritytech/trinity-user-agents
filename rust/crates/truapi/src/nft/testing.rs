@@ -1,11 +1,12 @@
 //! A ledger for tests, over a fixed installation and fixed entropy.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
+	holding::HeldItem,
 	imported_secrets::ImportedSecretStore,
 	keys::{
 		ImportedItemKey, ItemIndex, ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner,
@@ -14,7 +15,7 @@ use super::{
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
 	purse::PurseId,
-	scarcity::TRANSFER_POLICY,
+	scarcity::{TRANSFER_POLICY, TransferParams},
 };
 use crate::{
 	durable::{
@@ -142,4 +143,42 @@ pub fn insert_item_row(db: &Db, key: ItemKey, index: u32) {
 		Ok(())
 	};
 	block_on(db.write(insert)).expect("item row is written");
+}
+
+/// Allocates `count` keys in `purse` and records each as holding instance
+/// 100, 101, ..., so they are idle there.
+pub fn allocate_held_items(ledger: &NftLedger, purse: PurseId, count: u32) -> Vec<ItemKey> {
+	let count = NonZeroU32::new(count).expect("count is positive");
+	let keys = block_on(ledger.allocate_items(purse, count)).expect("items are allocated");
+	let holding = |(index, key): (usize, &ItemKey)| {
+		(*key, Some(HeldItem { collection: 1, item: 1, instance: 100 + index as u64 }))
+	};
+	let holdings = keys.iter().enumerate().map(holding).collect();
+	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
+	keys
+}
+
+/// The params of every registered transfer, in registration order.
+pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
+	let stored = |conn: &rusqlite::Connection| {
+		let mut statement = conn.prepare("SELECT policy_params FROM durable_tx ORDER BY id")?;
+		let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0))?;
+		Ok(rows.collect::<Result<Vec<_>, _>>()?)
+	};
+	let rows = block_on(db.read(stored)).expect("params are read");
+	rows.into_iter()
+		.map(|params| TransferParams::try_from(&PolicyParams(params)).expect("params decode"))
+		.collect()
+}
+
+/// Marks the transfer `id` as failed, as a rejection would.
+pub fn fail_transfer(db: &Db, id: DurableTxId) {
+	let update = move |tx: &rusqlite::Transaction<'_>| {
+		tx.execute(
+			"UPDATE durable_tx SET status = 'FAILURE', failure_kind = 'REJECTED' WHERE id = ?1",
+			[id.0],
+		)?;
+		Ok(())
+	};
+	block_on(db.write(update)).expect("status is written");
 }

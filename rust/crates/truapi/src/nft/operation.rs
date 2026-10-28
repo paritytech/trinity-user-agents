@@ -64,6 +64,9 @@ pub enum StartOperationError {
 	/// The item is handed off or spent by a live transaction.
 	#[error("item {} is in use", hex::encode(.0.0))]
 	ItemUnavailable(ItemKey),
+	/// No key was handed off under the tag.
+	#[error("no key was handed off under this tag")]
+	TagNotFound,
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),

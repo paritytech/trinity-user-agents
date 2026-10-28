@@ -16,6 +16,7 @@ mod ledger;
 mod live;
 mod operation;
 mod purse;
+mod reclaim;
 mod scarcity;
 mod standing;
 #[cfg(test)]

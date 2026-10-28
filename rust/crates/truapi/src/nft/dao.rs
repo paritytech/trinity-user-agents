@@ -203,6 +203,21 @@ pub fn insert_handoffs(
 	Ok(())
 }
 
+const HANDOFF_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
+	item.installation AS installation, item.idx AS idx
+	FROM nft_consumption AS spent JOIN nft_item AS item ON item.key = spent.key
+	WHERE spent.kind = 'HANDOFF' AND spent.handoff_tag = :tag ORDER BY item.idx";
+
+/// Every key handed off under `tag`, with its slot, ordered by slot.
+pub fn handoff_keys(
+	conn: &Connection,
+	tag: &HandoffTag,
+) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+	let mut statement = conn.prepare_cached(HANDOFF_KEYS)?;
+	let rows = statement.query_map(named_params! { ":tag": tag.0 }, keyed_slot_from_row)?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
 const PURSE_OF: &str = "SELECT purse FROM nft_item WHERE key = :key";
 
 /// The purse `key` belongs to, if it is one of ours.
@@ -252,12 +267,17 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 		return Ok((key, KeyStanding::Spent));
 	}
 	let instance: i64 = row.get("instance")?;
+	let (_, slot) = keyed_slot_from_row(row)?;
+	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+}
+
+fn keyed_slot_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, ItemSlot)> {
 	let slot = ItemSlot {
 		purse: PurseId(row.get("purse")?),
 		installation: InstallationId(row.get("installation")?),
 		index: ItemIndex(row.get("idx")?),
 	};
-	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+	Ok((ItemKey(row.get("key")?), slot))
 }
 
 fn purse_record(row: &Row<'_>) -> rusqlite::Result<PurseRecord> {
