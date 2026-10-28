@@ -460,13 +460,6 @@ pub struct ChatRoomPreview {
 	/// The number of reactions of the contact of the room that the user did
 	/// not see yet.
 	pub unseen_reactions: u32,
-	/// The newest call message of the room, a `Call` body with its record, when it
-	/// is not already `last_message`. `None`: the room has no call, or its newest
-	/// call is `last_message`. Each host applies its native rule. iOS shows the
-	/// call as the last message when its newest event (the close, else the answer)
-	/// is newer than `last_message`. Android keeps `last_message`.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
-	pub last_call: Option<ChatMessage>,
 }
 
 /// The parts of a room the product serves itself. A field at its default
