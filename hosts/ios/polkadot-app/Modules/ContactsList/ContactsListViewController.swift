@@ -92,20 +92,15 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
 
 private extension ContactsListViewController {
     func setupBarItems() {
-        let action = UIAction { [weak self] _ in
-            self?.presenter.showScanPanel()
-        }
-
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: .add24,
-            primaryAction: action
-        )
-
-        navigationItem.rightBarButtonItem?.accessibilityId(AccessibilityID.Chats.newChatButton)
         titleView?.accessibilityId(AccessibilityID.Chats.title)
     }
 
     func addHandlers() {
+        rootView.newChatButton.accessibilityId(AccessibilityID.Chats.newChatButton)
+        rootView.newChatHandler = { [weak self] in
+            self?.presenter.showScanPanel()
+        }
+
         rootView.contactSelectionHandler = { [weak self] id in
             self?.presenter.openChat(contactIdentifier: id)
         }

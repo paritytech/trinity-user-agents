@@ -4,7 +4,15 @@ internal import SnapKit
 public final class ContactsListViewLayout: DiffableCollectionViewProviderView<String, String> {
     private lazy var separatorConfiguration: SeparatorContentConfiguration = createSeparatorConfiguration()
 
-    public var addToContactsHandler: (() -> Void)?
+    public let newChatButton = DSIconButton(
+        style: .secondary,
+        shape: .pill,
+        size: .medium,
+        icon: UIImage(resource: .icon24Plus),
+        glass: true
+    )
+
+    public var newChatHandler: (() -> Void)?
     public var incomingRequestsHeaderTapHandler: (() -> Void)?
 
     public var contactSelectionHandler: ((String) -> Void)?
@@ -26,6 +34,17 @@ public final class ContactsListViewLayout: DiffableCollectionViewProviderView<St
         addSubview(collectionView)
         collectionView.snp.makeConstraints {
             $0.directionalEdges.equalToSuperview()
+        }
+
+        collectionView.contentInset.bottom = Self.newChatButtonBottomInset + newChatButton.intrinsicContentSize.height
+
+        newChatButton.onTap = { [weak self] in
+            self?.newChatHandler?()
+        }
+        addSubview(newChatButton)
+        newChatButton.snp.makeConstraints {
+            $0.trailing.equalToSuperview().inset(Self.newChatButtonTrailingInset)
+            $0.bottom.equalTo(safeAreaLayoutGuide.snp.bottom).inset(Self.newChatButtonBottomInset)
         }
     }
 
@@ -80,6 +99,8 @@ public extension ContactsListViewLayout {
 
 private extension ContactsListViewLayout {
     static let incomingRequestCellId: String = "incoming_requests_header"
+    static let newChatButtonTrailingInset: CGFloat = 22
+    static let newChatButtonBottomInset: CGFloat = 16
 
     // Aligns separator with the DSChatListItem text column:
     //   12pt outer padding + 64pt avatar + 12pt avatar↔content spacing = 88pt
@@ -155,10 +176,6 @@ private extension ContactsListViewLayout {
         applySnapshot(sections: [
             sectionProvider
         ])
-    }
-
-    @objc func handleHeaderTap() {
-        addToContactsHandler?()
     }
 }
 
