@@ -15,7 +15,7 @@ import type {
 import type { HostFundingStatusSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
-// The cases make their requests in the order `scripts/battery.sh` scripts the
+// The cases make their requests in the order `e2e/cli/battery.sh` scripts the
 // host's outcomes: deliver:900, release:500, fail, dismiss.
 
 const WAIT_MS = 15_000;

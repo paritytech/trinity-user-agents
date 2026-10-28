@@ -1,4 +1,4 @@
-// Product script for `scripts/chain-head-failure-cause-e2e.sh`, which describes
+// Product script for `e2e/cli/chain-head-failure-cause.sh`, which describes
 // the check.
 
 const STORAGE_METHOD = "remote_chain_head_storage";

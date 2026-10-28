@@ -7,13 +7,15 @@
 #                                                        signing host this script starts
 #
 # Usage:
-#   scripts/battery.sh                    # both phases
-#   scripts/battery.sh --signing-host     # direct phase only
-#   scripts/battery.sh --pairing-host     # paired phase only
-#   scripts/battery.sh --pocket-host      # Pocket phase only
-#   scripts/battery.sh --funding-host     # funding phase only, on a test-host build
-#   scripts/battery.sh --release          # build and run the release binary
-#   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
+#   e2e/cli/battery.sh                    # both phases
+#   e2e/cli/battery.sh --signing-host     # direct phase only
+#   e2e/cli/battery.sh --pairing-host     # paired phase only
+#   e2e/cli/battery.sh --chat-host        # Chat content-screening phase only
+#   e2e/cli/battery.sh --pocket-host      # Pocket phase only
+#   e2e/cli/battery.sh --funding-host     # funding phase only, on a test-host build
+#   e2e/cli/battery.sh --release          # build and run the release binary
+#   e2e/cli/battery.sh --product-id <id>  # serve another product (default truapi-playground.dot)
+#   e2e/cli/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
 # Environment:
 #   E2E_LIVE_CHAIN=1              widen routing to endpoints the preset carries
@@ -39,7 +41,8 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SELF="$ROOT/e2e/cli/$(basename "$0")"
 cd "$ROOT"
 
 # Homebrew LLVM on DYLD_LIBRARY_PATH makes rustc and rustdoc load a mismatched
@@ -66,7 +69,7 @@ RUN_POCKET=0
 RUN_FUNDING=0
 
 usage() {
-  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$SELF"
 }
 
 while [ $# -gt 0 ]; do

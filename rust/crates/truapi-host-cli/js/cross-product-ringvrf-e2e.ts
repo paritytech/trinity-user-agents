@@ -17,7 +17,7 @@
 // key resolves a ring on the People chain.
 //
 // The runner serves one product per host process, so
-// `scripts/cross-product-ringvrf-e2e.sh` invokes this once per phase with
+// `e2e/cli/cross-product-ringvrf.sh` invokes this once per phase with
 // `E2E_PHASE` set, pointing every run at the same `--base-path` so the key
 // registered in one is there for the next.
 //

@@ -14,7 +14,7 @@
 # phases return was written by a process that has already exited.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 fixtures="rust/crates/truapi-host-cli/js/fixtures"

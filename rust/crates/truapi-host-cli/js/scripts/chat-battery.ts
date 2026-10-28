@@ -2,7 +2,7 @@
 // Chat content screening against a real host, over the real wire.
 //
 // Run via:
-//   scripts/battery.sh --chat-host
+//   e2e/cli/battery.sh --chat-host
 //
 // which starts a signing host with `--execution-kind worker`, so the product
 // connection opens as a Worker execution and the CLI's in-memory chat host is

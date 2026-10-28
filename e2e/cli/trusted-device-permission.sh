@@ -10,7 +10,7 @@
 # front of it rather than whatever binary is installed.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 script="rust/crates/truapi-host-cli/js/trusted-device-permission-e2e.ts"

@@ -2,7 +2,7 @@
 // check for paritytech/platform-bugs#82.
 //
 // A trusted product gets device permissions without a prompt. Any other
-// product is asked once. `scripts/trusted-device-permission-e2e.sh` runs this
+// product is asked once. `e2e/cli/trusted-device-permission.sh` runs this
 // as one product of each kind, with `--auto-accept` and `TRUAPI_APPROVALS_LOG`,
 // so every prompt the host raised is a line in that file by the time the call
 // that raised it resolves.
@@ -17,7 +17,7 @@ const DEVICE_PROMPT = "approved device permission";
 const log = process.env.TRUAPI_APPROVALS_LOG;
 assert(
   log,
-  "TRUAPI_APPROVALS_LOG is not set; run scripts/trusted-device-permission-e2e.sh",
+  "TRUAPI_APPROVALS_LOG is not set; run e2e/cli/trusted-device-permission.sh",
 );
 const trusted = process.env.E2E_TRUSTED === "1";
 const transcript = () =>

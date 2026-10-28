@@ -6,7 +6,7 @@
 # Read-only; nothing is written on chain.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 script="rust/crates/truapi-host-cli/js/chain-head-failure-cause-e2e.ts"
