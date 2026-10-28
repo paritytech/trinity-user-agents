@@ -34,6 +34,23 @@ public extension DotnsGatewayPallet {
         public var chatKey: Data? {
             lite?.chat?.wrappedValue
         }
+
+        public func listedLabel(among labels: Set<Data>, assigned: Set<Data>) -> Data? {
+            if let full = full?.label {
+                let cachedLabels = [full, lite?.label].compactMap { $0 }
+                return cachedLabels.contains(where: labels.contains) ? full : nil
+            }
+            guard let lite = lite?.label else {
+                return nil
+            }
+            let assignedFull = assigned.filter(Self.isFullPersonLabel).min { $0.lexicographicallyPrecedes($1) }
+            return assignedFull ?? (labels.contains(lite) ? lite : nil)
+        }
+
+        private static func isFullPersonLabel(_ label: Data) -> Bool {
+            let letters = UInt8(ascii: "a") ... UInt8(ascii: "z")
+            return !label.isEmpty && label.count <= 32 && label.allSatisfy(letters.contains)
+        }
     }
 
     /// One account's name record together with the account it was read for.

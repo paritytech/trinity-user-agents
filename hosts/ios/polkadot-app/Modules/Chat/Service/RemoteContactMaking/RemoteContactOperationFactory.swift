@@ -39,28 +39,29 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
             .searchUsernameWrapper(for: UsernameRequestModel(prefix: query))
             .asyncExecute()
 
-        let usernamesByAccountId = try models
-            .filter { $0.status != .failed }
-            .reduce(into: [AccountId: Set<Data>]()) { usernamesByAccountId, model in
-                let accountId = try model.accountId.toAccountId()
-                usernamesByAccountId[accountId, default: []].insert(Data(model.username.value.utf8))
-            }
+        let modelsByAccountId = try Dictionary(grouping: models.filter { $0.status != .failed }) {
+            try $0.accountId.toAccountId()
+        }
 
         let accountNames = try await dotnsGatewayOperationMaker.accountNames(
-            for: Array(usernamesByAccountId.keys),
+            for: Array(modelsByAccountId.keys),
             blockHash: nil
         )
 
         // we could have broken records during mapping here
-        return accountNames
-            .filter { accountName in
-                guard let usernames = usernamesByAccountId[accountName.accountId] else {
-                    return false
-                }
-
-                return accountName.record.hasAnyUsername(in: usernames)
+        return accountNames.compactMap { accountName in
+            guard
+                let models = modelsByAccountId[accountName.accountId],
+                let label = accountName.record.listedLabel(
+                    among: Self.labels(of: models),
+                    assigned: Self.labels(of: models.filter { $0.status == .assigned })
+                )
+            else {
+                return nil
             }
-            .compactMap { try? Chat.RemoteContact(accountName: $0) }
+
+            return try? Chat.RemoteContact(accountName: accountName, usernameLabel: label)
+        }
     }
 
     func fetch(by accountId: AccountId) async throws -> Chat.RemoteContact? {
@@ -74,9 +75,8 @@ extension RemoteContactOperationFactory: RemoteContactOperationMaking {
     }
 }
 
-private extension DotnsGatewayPallet.AccountNameRecord {
-    func hasAnyUsername(in usernames: Set<Data>) -> Bool {
-        let onChainUsernames = [lite?.label, full?.label].compactMap { $0 }
-        return onChainUsernames.contains { usernames.contains($0) }
+private extension RemoteContactOperationFactory {
+    static func labels(of models: [UsernameResponseModel]) -> Set<Data> {
+        Set(models.map { Data($0.username.value.utf8) })
     }
 }

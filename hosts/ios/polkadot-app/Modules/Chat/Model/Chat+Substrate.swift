@@ -10,15 +10,19 @@ extension Chat.RemoteContact {
     }
 
     init(accountName: DotnsGatewayPallet.AccountNameWithAccountId) throws {
+        let usernameLabel = try accountName.record.username.mapOrThrow(RemoteError.invalidUsername)
+
+        try self.init(accountName: accountName, usernameLabel: usernameLabel)
+    }
+
+    init(accountName: DotnsGatewayPallet.AccountNameWithAccountId, usernameLabel: Data) throws {
         let chatKeyData = try accountName.record.chatKey.mapOrThrow(RemoteError.missingChatKey)
 
         let chatPublicKey = try Chat.OnChainEncryptionIdentifier
             .fromScaleEncoded(chatKeyData)
             .localPublicKey
 
-        let usernameData = try accountName.record.username.mapOrThrow(RemoteError.invalidUsername)
-
-        let username = try String(data: usernameData, encoding: .utf8).mapOrThrow(
+        let username = try String(data: usernameLabel, encoding: .utf8).mapOrThrow(
             RemoteError.invalidUsername
         )
 
