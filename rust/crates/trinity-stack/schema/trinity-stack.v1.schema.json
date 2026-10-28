@@ -113,7 +113,7 @@
           },
           {
             "if": { "properties": { "kind": { "const": "web-gateway" } } },
-            "then": { "properties": { "urls": { "items": { "pattern": "^(https://|http://localhost[:/])" } } } }
+            "then": { "properties": { "urls": { "items": { "pattern": "^(https://|http://localhost(:[0-9]+)?/)" } } } }
           },
           {
             "if": { "properties": { "kind": { "const": "stun" } } },
