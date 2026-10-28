@@ -19,9 +19,12 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingStatus
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import java.math.BigInteger
 import uniffi.truapi.FundingDirection as CoreFundingDirection
@@ -106,13 +109,42 @@ class AppFundingHostBridgeTest {
         val changed = withTimeout(1_000) {
             bridge.changedSessions()
                 .onSubscription {
-                    bridge.fundingSessionChanged("intent", HostFundingStatusSubscribeItem.InProgress(expiresAt = null))
+                    bridge.fundingSessionChanged("intent", HostFundingStatusSubscribeItem.InProgress(expiresAt = null), null)
                 }
                 .first()
         }
 
         assertEquals("intent", changed)
     }
+
+    // The funding screens draw what the core last handed over; a session the core keeps only as a summary has none.
+    @Test
+    fun `a session change keeps the progress it carries`() {
+        val inProgress = HostFundingStatusSubscribeItem.InProgress(expiresAt = null)
+
+        bridge.fundingSessionChanged("intent", inProgress, progress(FundingStatus.ConvertingToCash))
+        val kept = bridge.progress("intent")?.status
+        bridge.fundingSessionChanged("intent", inProgress, null)
+
+        assertEquals(FundingStatus.ConvertingToCash to null, kept to bridge.progress("intent"))
+    }
+
+    private fun progress(status: FundingStatus) = FundingProgress(
+        steps = emptyList(),
+        band = FundingBand.CONVERTING,
+        lastHeardAtMs = null,
+        failedAtMs = null,
+        transactionId = null,
+        reference = null,
+        deposit = null,
+        mismatch = null,
+        retrying = false,
+        payout = null,
+        refunded = null,
+        status = status,
+        longerAtMs = null,
+        moneyMoved = true,
+    )
 
     private suspend fun present() = bridge.presentFunding(null, "intent", CoreFundingDirection.IN, null)
 }

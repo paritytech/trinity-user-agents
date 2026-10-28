@@ -20,9 +20,11 @@ import timber.log.Timber
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.U128
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import uniffi.truapi.FundingDirection as CoreFundingDirection
@@ -34,6 +36,7 @@ class AppFundingHostBridge @Inject constructor(
     private val overlay: Lazy<FundingOverlay>,
     private val countryDetector: DeviceCountryDetector,
 ) : FundingHostBridge {
+    private val latestProgress = ConcurrentHashMap<String, FundingProgress>()
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -90,9 +93,13 @@ class AppFundingHostBridge @Inject constructor(
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
-    override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
+    override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
+        if (progress == null) latestProgress.remove(intent) else latestProgress[intent] = progress
         changedSessions.tryEmit(intent)
     }
+
+    /** The progress the core last handed over with session [intent]'s change. */
+    fun progress(intent: String): FundingProgress? = latestProgress[intent]
 
     override fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
         Timber.tag("truapi.funding").d("quotes %s: best %s, %d rows", intent, quotes.best, quotes.rows.size)
