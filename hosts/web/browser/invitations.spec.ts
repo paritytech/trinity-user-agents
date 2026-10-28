@@ -21,14 +21,11 @@ import {
   closeTools,
   openTools,
   type DevTab,
-  useTestAccount,
+  useInvitationDemo,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
-/** A BIP-39 test vector phrase. It holds nothing. */
-const PHRASE =
-  "letter advice cage absurd amount doctor acoustic avoid letter advice cage above";
 
 let browser: Browser;
 let host: RunningHost;
@@ -93,11 +90,11 @@ async function setMenu(
 }
 
 /**
- * Account → the test account → Sign in, or Sign out of it with "". The tab
- * reloads as that user; nothing opens.
+ * More → Invitation demo → the user, or Off with "". The tab reloads as that
+ * user; nothing opens.
  */
 async function actAs(page: Page, user: string): Promise<void> {
-  await useTestAccount(page, user === "" ? null : user);
+  await useInvitationDemo(page, user === "" ? null : user);
   await ready(page);
   if (user !== "")
     await page
@@ -241,10 +238,10 @@ describe("invitations between test users", () => {
         // with no wallet, and opens nothing until asked: Example Chat shows in
         // Browse once opened from More.
         expect(await alice.locator("#test-user-marker").innerText()).toBe(
-          "Test account · Alice",
+          "Invitation demo · Alice",
         );
         expect(await alice.locator("#session").innerText()).toContain(
-          "Signed in as Alice (test account)",
+          "Signed in as Alice (invitation demo)",
         );
         expect(await alice.locator(".test-product iframe").count()).toBe(0);
         expect(await alice.getAttribute("body", "data-surface")).toBe("chat");
@@ -261,7 +258,7 @@ describe("invitations between test users", () => {
         );
         // Bob's tab has not opened it; Accept below opens it for him.
         expect(await bob.locator(".test-product iframe").count()).toBe(0);
-        expect(await alice.inputValue("#wallet")).toBe("test-account:alice");
+        expect(await alice.inputValue("#invitation-demo")).toBe("alice");
         await screenshot(alice, "alice-example-chat");
 
         // The host's own picker chooses; the product gets an opaque reference.
@@ -475,7 +472,7 @@ describe("invitations between test users", () => {
   );
 
   test(
-    "one picker signs in to a wallet or a test account, and switching leaves the saved wallet and its data alone",
+    "a test account signs in as any wallet does, and the invitation demo stays apart from it",
     async () => {
       const { context, outside, errors, open } = await session();
       try {
@@ -484,19 +481,32 @@ describe("invitations between test users", () => {
         const sessionLine = page.locator("#session");
         const signedIn = (text: string) =>
           sessionLine.filter({ hasText: text }).waitFor({ state: "attached" });
-        /** What Chat's empty screen says. */
+        /** What Chat's empty screen says, or null when it shows none. */
         const chatNote = async () => {
           await setMenu(page, false);
           await page.click(dockTab("chat"));
           await page.click('#chat-tabs [data-chat-tab="chats"]');
-          return page.locator("#chat-screen .chat-empty-title").innerText();
+          const title = page.locator("#chat-screen .chat-empty-title");
+          return (await title.count()) === 0
+            ? null
+            : await title.first().innerText();
+        };
+        const chatRuns = () =>
+          page.waitForFunction(
+            () =>
+              document.querySelector<HTMLElement>("#chat-screen")?.dataset
+                .chatEngine !== "off",
+          );
+        const rootKey = async () =>
+          (await sessionLine.innerText()).split(" · ")[1];
+        const workerStatus = async () => {
+          await setMenu(page, true, "product");
+          return page.locator("#worker-status").innerText();
         };
 
-        // Signed out, Chat asks to sign in, and the picker offers the test
-        // accounts and no wallet.
+        // Signed out: the picker offers the test accounts as wallets.
         expect(await chatNote()).toBe("Sign in to chat");
         await setMenu(page, true);
-        expect(await sessionLine.innerText()).toBe("Signed out");
         expect(
           await page
             .locator('#wallet optgroup[label="Test accounts"] option')
@@ -506,64 +516,45 @@ describe("invitations between test users", () => {
           "Bob (test account)",
           "Carol (test account)",
         ]);
-        // What a test account is shows only while one is picked: the first
-        // one is, with no wallet saved.
         const about = page.locator("#test-accounts-about");
-        expect(await page.inputValue("#wallet")).toBe("test-account:alice");
         expect(await about.isHidden()).toBe(false);
 
-        // Alice: one account, shown as a test account, with Sign out and no Forget.
-        await actAs(page, "alice");
+        // Alice signs in without a reload and runs as a wallet: Chat, workers
+        // and the Account status, with Sign out and no Forget.
+        await page.selectOption("#wallet", "test-account:alice");
+        await page.click("#sign-in");
         await signedIn("Signed in as Alice (test account)");
-        expect(await marker.innerText()).toBe("Test account · Alice");
+        expect(await marker.isHidden()).toBe(true);
+        await chatRuns();
+        expect(await chatNote()).not.toBe("Sign in to chat");
+        expect(await workerStatus()).not.toContain("Sign in with a wallet");
         await setMenu(page, true);
-        expect(await page.inputValue("#wallet")).toBe("test-account:alice");
         expect(await page.locator("#sign-out").isVisible()).toBe(true);
         expect(await page.locator("#forget").isHidden()).toBe(true);
-        // Account status is about the account the core derived from the
-        // phrase, never the fixture account other test accounts know Alice by.
-        const status = page.locator("#account-status");
-        expect(await status.isHidden()).toBe(false);
-        await status.locator("summary").click();
-        const rows = page.locator("#account-status-rows");
-        await rows.filter({ hasText: "Root key" }).waitFor();
-        const rootKey = (await sessionLine.innerText()).split(" · ")[1]!;
-        const statusText = await rows.innerText();
-        expect(statusText).toContain(rootKey);
-        expect(statusText).not.toMatch(/0xa1a1|a1a1…/);
-        expect(statusText).not.toContain("alice.example");
-        await status.locator("summary").click();
-        // Chat says it is off for a test account, not that the tab is signed out.
-        expect(await chatNote()).toBe("Chat is off for test accounts");
+        expect(await page.locator("#account-status").isHidden()).toBe(false);
+        const aliceKey = await rootKey();
         // A reload keeps it.
         await page.reload();
         await ready(page);
         await signedIn("Signed in as Alice (test account)");
-        expect(await chatNote()).toBe("Chat is off for test accounts");
+        await chatRuns();
 
-        // Sign out leaves the tab signed out, with no wallet signed in for it.
-        await actAs(page, "");
-        expect(await marker.isHidden()).toBe(true);
-        await page.reload();
-        await ready(page);
-        expect(await sessionLine.innerText()).toBe("Signed out");
-        expect(await chatNote()).toBe("Sign in to chat");
-
-        // Import a wallet: it signs in as a wallet, not a test account.
+        // The same phrase imported is the same account on the same path.
         await setMenu(page, true);
         await page
           .locator("#import")
           .evaluate((details) => ((details as HTMLDetailsElement).open = true));
-        await page.fill("#wallet-name", "Fixture wallet");
-        await page.fill("#mnemonic", PHRASE);
+        await page.fill("#wallet-name", "Imported Alice");
+        await page.fill(
+          "#mnemonic",
+          "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge",
+        );
         await page.click("#add-wallet");
-        await signedIn("Signed in as Fixture wallet");
-        const walletLine = await sessionLine.innerText();
+        await signedIn("Signed in as Imported Alice");
+        expect(await rootKey()).toBe(aliceKey);
+        await chatRuns();
+        expect(await workerStatus()).not.toContain("Sign in with a wallet");
         const walletId = await page.inputValue("#wallet");
-        expect(await about.isHidden()).toBe(true);
-        await page.selectOption("#wallet", "test-account:carol");
-        expect(await about.isHidden()).toBe(false);
-        await page.selectOption("#wallet", walletId);
         expect(await about.isHidden()).toBe(true);
         const saved = await page.evaluate(() =>
           localStorage.getItem("truapi-web-signing-host:wallets:v1"),
@@ -571,13 +562,27 @@ describe("invitations between test users", () => {
         await menuAction(page, "notifications-demo-seed");
         await eventually(() => badge(page), 4);
 
-        // Switch to Bob: his own session, none of the wallet's Inbox.
+        // The invitation demo is chosen in More and is not an account: its
+        // made-up Bob gets no chat or workers, and none of the wallet's Inbox.
         await actAs(page, "bob");
-        await signedIn("Signed in as Bob (test account)");
-        expect((await sessionLine.innerText()).split(" · ")[1]).not.toBe(
-          walletLine.split(" · ")[1],
-        );
+        await signedIn("Signed in as Bob (invitation demo)");
+        expect(await marker.innerText()).toBe("Invitation demo · Bob");
+        expect(await chatNote()).toBe("Chat is off in the invitation demo");
+        expect(await workerStatus()).toContain("Sign in with a wallet");
         expect(await badge(page)).toBe(0);
+        await setMenu(page, true);
+        expect(
+          await page
+            .locator("#wallet option")
+            .evaluateAll((options) =>
+              options.map((option) => (option as HTMLOptionElement).value),
+            ),
+        ).toEqual([
+          walletId,
+          "test-account:alice",
+          "test-account:bob",
+          "test-account:carol",
+        ]);
 
         // Clearing Bob's invitations asks first, and Cancel keeps them.
         await page.evaluate(() =>
@@ -606,19 +611,24 @@ describe("invitations between test users", () => {
           clear.getByRole("button", { name: "Clear", exact: true }).click(),
         ]);
         await ready(page);
-        await signedIn("Signed in as Bob (test account)");
+        await signedIn("Signed in as Bob (invitation demo)");
         expect(
           (await bobKeys()).filter((key) => !key.includes(":product:")),
         ).toEqual([]);
 
-        // Back to the wallet from the same picker: the saved wallet and its
-        // Inbox are as they were.
+        // Sign out leaves the demo signed out, with no wallet signed in for it.
+        await setMenu(page, true);
+        await Promise.all([page.waitForEvent("load"), page.click("#sign-out")]);
+        await ready(page);
+        expect(await sessionLine.innerText()).toBe("Signed out");
+        expect(await marker.isHidden()).toBe(true);
+        expect(await chatNote()).toBe("Sign in to chat");
+
+        // The imported wallet comes back as it was, with its Inbox.
         await setMenu(page, true);
         await page.selectOption("#wallet", walletId);
-        await Promise.all([page.waitForEvent("load"), page.click("#sign-in")]);
-        await ready(page);
-        await signedIn("Signed in as Fixture wallet");
-        expect(await marker.isHidden()).toBe(true);
+        await page.click("#sign-in");
+        await signedIn("Signed in as Imported Alice");
         expect(
           await page.evaluate(() =>
             localStorage.getItem("truapi-web-signing-host:wallets:v1"),

@@ -454,30 +454,35 @@ const devSession =
         log: linesFor("host"),
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
-/** The made-up user this tab acts as instead of a wallet, if any. */
+/** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
-// A test account's session starts no chat engine, so Chat is off rather than signed out.
+// The demo's session starts no chat engine, so Chat is off rather than signed out.
 if (testUser !== null)
   chatScreen.setNoChat({
-    title: "Chat is off for test accounts",
-    body: "Chat starts only for a wallet. Sign in with a wallet in Account to chat. The Inbox still gets invitations.",
+    title: "Chat is off in the invitation demo",
+    body: "Sign in to an account in Account to chat. The Inbox still gets invitations.",
   });
-/** The account picker's value for a test account, kept apart from wallet ids. */
-const TEST_ACCOUNT = "test-account:";
-const testAccountId = (value: string): string | null =>
-  value.startsWith(TEST_ACCOUNT) ? value.slice(TEST_ACCOUNT.length) : null;
-/** The picker's value for the account this tab is signed in to, or null. */
+/** The wallets built into a dev server from public test phrases. */
+const testAccounts = devSession?.accounts ?? [];
+/** A wallet by id: an imported one, or a test account. */
+function findWallet(id: string): Wallet | undefined {
+  return wallets.find(id) ?? testAccounts.find((wallet) => wallet.id === id);
+}
+const isTestAccount = (id: string): boolean =>
+  testAccounts.some((wallet) => wallet.id === id);
+/** What the picker counts as signed in: the wallet, or the invitation demo. */
+const DEMO = "invitation-demo";
 function activeAccount(): string | null {
-  if (testUser !== null) return `${TEST_ACCOUNT}${testUser.id}`;
+  if (testUser !== null) return DEMO;
   return walletSession.active?.id ?? null;
 }
 /**
- * Leave the test account for `wallet`: the reload signs the tab in to it, as
- * any reload does the tab's wallet.
+ * Leave the invitation demo for `wallet`: the reload signs the tab in to it,
+ * as any reload does the tab's wallet.
  */
-function leaveTestAccountFor(wallet: Wallet): void {
+function leaveDemoFor(wallet: Wallet): void {
   sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
-  devSession?.useAccount(null);
+  devSession?.useDemo(null);
 }
 /**
  * The people the signed-in wallet blocked in Chat. The host's chat record
@@ -826,17 +831,16 @@ let importMode: WalletMode | null = null;
 function renderWalletPanel(): void {
   const selected = walletSelect.value;
   const panel = walletPanel({
-    saved: savedCount + (devSession?.accounts.length ?? 0),
+    saved: savedCount + testAccounts.length,
     activeId: activeAccount(),
-    selectedId:
-      wallets.has(selected) || testAccountId(selected) !== null ? selected : "",
+    selectedId: findWallet(selected) === undefined ? "" : selected,
   });
   walletSelect.hidden = !panel.showPicker;
   signInButton.hidden = !panel.showSignIn;
   signOutButton.hidden = !panel.showSignOut;
   // A test account is not saved, so there is nothing to forget.
   forgetButton.hidden = !panel.showForget || !wallets.has(selected);
-  testAccountsAbout.hidden = testAccountId(selected) === null;
+  testAccountsAbout.hidden = !isTestAccount(selected);
   walletActions.hidden = !(
     panel.showSignIn ||
     panel.showSignOut ||
@@ -860,7 +864,6 @@ function renderWallets(): void {
         wallet.id,
       ),
   );
-  const testAccounts = devSession?.accounts ?? [];
   if (testAccounts.length === 0) walletSelect.replaceChildren(...walletOptions);
   else {
     const group = (label: string, options: HTMLOptionElement[]) => {
@@ -875,13 +878,15 @@ function renderWallets(): void {
         : [group("Your wallets", walletOptions)]),
       group(
         "Test accounts",
-        testAccounts.map(
-          (account) =>
-            new Option(
-              `${account.name} (test account)`,
-              `${TEST_ACCOUNT}${account.id}`,
-            ),
-        ),
+        testAccounts.map((wallet) => {
+          // A test account's id says nothing, so until it has signed in its
+          // name alone tells it apart.
+          const info = walletInfo.get(wallet.id, activeNetwork.id);
+          return new Option(
+            info === undefined ? wallet.name : walletLabel(wallet, info),
+            wallet.id,
+          );
+        }),
       ),
     );
   }
@@ -893,11 +898,7 @@ function renderWallets(): void {
   if (problem !== loggedWalletProblem && problem !== null)
     activity.record({ category: "session", action: problem, failed: true });
   loggedWalletProblem = problem;
-  if (
-    saved.some((wallet) => wallet.id === selected) ||
-    testAccounts.some((account) => `${TEST_ACCOUNT}${account.id}` === selected)
-  )
-    walletSelect.value = selected;
+  if (findWallet(selected) !== undefined) walletSelect.value = selected;
   savedCount = saved.length;
   renderControls();
 }
@@ -1667,11 +1668,11 @@ function renderSession(state: AuthState): void {
     case "Connected": {
       const { publicKey, identityAccountId, fullUsername, liteUsername } =
         state.value;
-      // A test account's name is the one the picker shows; any username the
-      // public phrase's account holds is not the test account's.
+      // The demo user's name is made up; any username the public phrase's
+      // account holds is not the demo user's.
       const name =
         testUser !== null
-          ? `${testUser.name} (test account)`
+          ? `${testUser.name} (invitation demo)`
           : (fullUsername ??
             liteUsername ??
             walletSession.active?.name ??
@@ -1694,19 +1695,14 @@ function renderSession(state: AuthState): void {
 }
 
 signInButton.addEventListener("click", () => {
-  const test = testAccountId(walletSelect.value);
-  if (test !== null) {
-    devSession?.useAccount(test);
-    return;
-  }
-  const wallet = wallets.find(walletSelect.value);
+  const wallet = findWallet(walletSelect.value);
   if (!wallet) return;
-  if (testUser !== null) leaveTestAccountFor(wallet);
+  if (testUser !== null) leaveDemoFor(wallet);
   else void walletSession.signIn(wallet);
 });
 
 signOutButton.addEventListener("click", () => {
-  if (testUser !== null) devSession?.useAccount(null);
+  if (testUser !== null) devSession?.useDemo(null);
   else void walletSession.signOut();
 });
 
@@ -1738,7 +1734,7 @@ importForm.addEventListener("submit", (event) => {
     importDetails.open = false;
     renderWallets();
     walletSelect.value = wallet.id;
-    if (testUser !== null) leaveTestAccountFor(wallet);
+    if (testUser !== null) leaveDemoFor(wallet);
     else void walletSession.signIn(wallet);
   } catch (error) {
     activity.record({
@@ -2125,9 +2121,7 @@ async function boot(): Promise<void> {
 
   const tabWallet =
     testUser === null
-      ? wallets.find(
-          sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "",
-        )
+      ? findWallet(sessionStorage.getItem(tabWalletKey(activeNetwork.id)) ?? "")
       : undefined;
   if (tabWallet) {
     walletSelect.value = tabWallet.id;

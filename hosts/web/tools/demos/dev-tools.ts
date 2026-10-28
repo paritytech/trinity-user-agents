@@ -32,8 +32,10 @@ import {
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
+import type { Wallet } from "../../src/platform/wallets.js";
 import {
   TEST_USERS,
+  testAccountWallet,
   chatContactsOf,
   fixtureIdentity,
   setTabTestUser,
@@ -46,21 +48,22 @@ import {
 
 /**
  * DEV ONLY. The test accounts the Account tab's picker offers beside saved
- * wallets, the session each one runs, and the More tab's Developer section.
- * Only a dev server on this machine loads this module.
+ * wallets, the invitation demo, and the More tab's Developer section. Only a
+ * dev server on this machine loads this module.
  *
- * A tab signed in to a test account acts as a test user instead of a
- * wallet. The core signs it in with a public test phrase, so products get a
- * real session, real handles from `contacts.pick` and real prompts. The
- * phrase's account is a real account that anyone can sign as; the host
- * registers and funds nothing for it, and its Account status reads what the
- * chain records. Its fixture account, handle and contacts are made up. None
- * of the wallet session's services start: no chat, worker or registration. The host's
- * contact picker lists the test account's contacts, and invitations between
- * tabs use fixture contacts and identities and the local simulated delivery,
- * which starts with the session so requests arrive. Example Chat, the test
- * accounts' demo product, opens only when asked: from More, or to accept an
- * invitation. Its Close ends it.
+ * A test account is a wallet built into the dev server from a public test
+ * phrase. It signs in and runs as any imported wallet does; anyone can sign
+ * as it, and the host registers and funds nothing for it.
+ *
+ * The invitation demo is apart from them, chosen in More: a tab acts as a
+ * made-up user (Alice, Bob or Carol) whose contacts, identity credentials
+ * and handle are fixtures, and invitations between tabs go through the local
+ * simulated delivery. The core signs the demo user in with its public test
+ * phrase under a storage scope of its own, so products get a real session,
+ * real handles from `contacts.pick` and real prompts. None of the wallet
+ * session's services start, so fixture contacts never reach chat, workers or
+ * a transaction. Example Chat, the demo's product, opens only when asked:
+ * from More, or to accept an invitation. Its Close ends it.
  */
 
 export interface DevToolsDeps {
@@ -89,23 +92,17 @@ export interface DevToolsDeps {
   log(line: string): void;
 }
 
-/** A test account the Account tab's picker offers beside saved wallets. */
-export interface TestAccount {
-  id: string;
-  name: string;
-}
-
 export interface DevSession {
-  /** The test account this tab is signed in to, or null for the normal wallet session. */
+  /** The invitation demo user this tab acts as, or null for the normal wallet session. */
   testUser: TestUser | null;
-  /** Every test account, for the account picker. */
-  accounts: readonly TestAccount[];
+  /** The wallets built from the public test phrases, for the account picker. */
+  accounts: readonly Wallet[];
   /**
-   * Sign this tab in to test account `id`, ending its wallet session, or out
-   * of the test account with null, back to the tab's wallet if one is set.
+   * Start the invitation demo as `id` in this tab, ending its wallet
+   * session, or leave it with null, back to the tab's wallet if one is set.
    * Either reloads the tab.
    */
-  useAccount(id: string | null): void;
+  useDemo(id: string | null): void;
   /** The Notifications scope of the test user, or null. */
   notificationsScope: string | null;
   /** The test user's contacts, for the host's contact picker, or null. */
@@ -181,21 +178,22 @@ const CONNECT_TIMEOUT_MS = 15_000;
 export function startDevTools(deps: DevToolsDeps): DevSession {
   const testUser = tabTestUser(sessionStorage);
   const session = testUser === null ? null : startTestUser(deps, testUser);
-  drawSection(deps, testUser, session);
+  const useDemo = (id: string | null) => {
+    if (id !== null) deps.leaveWalletSession();
+    setTabTestUser(sessionStorage, id);
+    window.location.reload();
+  };
+  drawSection(deps, testUser, session, useDemo);
   deps.marker.hidden = testUser === null;
   if (testUser !== null) {
-    deps.marker.textContent = `Test account · ${testUser.name}`;
+    deps.marker.textContent = `Invitation demo · ${testUser.name}`;
     deps.marker.title =
       "A made-up user signed in with a public test phrase. Invitations go only to other tabs of this browser.";
   }
   return {
     testUser,
-    accounts: TEST_USERS.map(({ id, name }) => ({ id, name })),
-    useAccount: (id) => {
-      if (id !== null) deps.leaveWalletSession();
-      setTabTestUser(sessionStorage, id);
-      window.location.reload();
-    },
+    accounts: TEST_USERS.map(testAccountWallet),
+    useDemo,
     notificationsScope:
       testUser === null
         ? null
@@ -451,14 +449,30 @@ function drawSection(
   deps: DevToolsDeps,
   testUser: TestUser | null,
   session: TestUserSession | null,
+  useDemo: (id: string | null) => void,
 ): void {
   deps.about.append(
     el(
       "p",
       "note",
-      "A test account signs in with a public recovery phrase, so anyone can sign as it: keep nothing of value on it. Account status shows what the chain records for its account. The name other test accounts see it by, its contacts and its invitations are made up, and invitations reach only other tabs of this browser.",
+      "A test account signs in with a public recovery phrase and works as any wallet does. Anyone can sign as it, so keep nothing of value on it. Account status shows what the chain records for it.",
     ),
   );
+
+  const demoSelect = el("select");
+  demoSelect.id = "invitation-demo";
+  demoSelect.append(
+    new Option("Off", ""),
+    ...TEST_USERS.map((user) => new Option(user.name, user.id)),
+  );
+  demoSelect.value = testUser?.id ?? "";
+  demoSelect.title =
+    "Act as a made-up user with fixture contacts, and send invitations between tabs of this browser. Switching reloads the tab.";
+  demoSelect.addEventListener("change", () =>
+    useDemo(demoSelect.value || null),
+  );
+  const demoLabel = el("label", "", "Invitation demo");
+  demoLabel.htmlFor = demoSelect.id;
 
   const store = deps.notifications;
   const addSamples = button(
@@ -476,7 +490,7 @@ function drawSection(
   store.onChange(renderSamples);
   renderSamples();
 
-  const rows: HTMLElement[] = [];
+  const rows: HTMLElement[] = [demoLabel, demoSelect];
   if (session !== null) {
     const exampleRow = el("div", "row");
     const openExample = button("", "open-example-chat", () => {

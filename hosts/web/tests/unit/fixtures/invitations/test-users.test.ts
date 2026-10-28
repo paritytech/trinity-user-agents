@@ -4,6 +4,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {
   TEST_USERS,
   chatContactsOf,
+  testAccountWallet,
   testUserEntropy,
   testUserScope,
 } from "../../../../fixtures/invitations/test-users.js";
@@ -21,6 +22,19 @@ describe("test users", () => {
       "test-user:bob",
       "test-user:carol",
     ]);
+  });
+
+  // A test account is the phrase's account under a scope of its own, so it
+  // shares no stored state with the invitation demo of the same name.
+  test("each is also a wallet, under a storage scope apart from the demo's", () => {
+    const [alice] = TEST_USERS;
+    const wallet = testAccountWallet(alice!);
+    expect({ ...wallet, entropy: [...wallet.entropy] }).toEqual({
+      id: "test-account:alice",
+      name: "Alice (test account)",
+      entropy: [...testUserEntropy(alice!)],
+    });
+    expect(wallet.id).not.toBe(testUserScope(alice!));
   });
 
   test("Alice has two contacts to choose from; each list names others only, by made-up accounts", () => {
