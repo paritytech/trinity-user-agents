@@ -12,7 +12,13 @@ use url::{Url, form_urlencoded};
 
 /// The app's own URL scheme, which its host routes such as `pair` and
 /// `pocket` live under.
-const APP_SCHEME: &str = "polkadotapp";
+pub const APP_SCHEME: &str = "polkadotapp";
+
+/// The internal URL scheme under which hosts serve product content.
+pub const PRODUCT_SCHEME: &str = "polkadot";
+
+const HTTP_SCHEME: &str = "http";
+const HTTPS_SCHEME: &str = "https";
 
 /// The host a Pocket deeplink names. Every dotNS product name ends in a TLD,
 /// so no product can take it.
@@ -110,7 +116,7 @@ impl ProductLink {
 	/// Accept direct and share URLs only on the explicitly configured network.
 	pub fn parse(input: &str, network_suffix: &str) -> Option<Self> {
 		let parsed = parse_with_explicit_https(input.trim())?;
-		if !matches!(parsed.scheme(), "http" | "https" | "polkadot") ||
+		if !matches!(parsed.scheme(), HTTP_SCHEME | HTTPS_SCHEME | APP_SCHEME | PRODUCT_SCHEME) ||
 			parsed.port().is_some() ||
 			!parsed.username().is_empty() ||
 			parsed.password().is_some()
@@ -125,7 +131,7 @@ impl ProductLink {
 		}
 		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
 		let path = route.to_string() + &suffix(&parsed);
-		let canonical_url = format!("https://{identifier}{path}");
+		let canonical_url = format!("{HTTPS_SCHEME}://{identifier}{path}");
 		Some(Self { identifier, path, canonical_url })
 	}
 }
@@ -139,7 +145,7 @@ pub fn product_share_hosts() -> Vec<String> {
 }
 
 fn join_url(scheme: &str, host: &str, path: &str) -> String {
-	if path.is_empty() { format!("{scheme}{host}") } else { format!("{scheme}{host}/{path}") }
+	if path.is_empty() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}/{path}") }
 }
 
 /// Classify a URL the way the host navigation handler does: try the Pocket
@@ -180,7 +186,7 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 	if let Ok(direct) = Url::parse(input) {
 		return Some(direct);
 	}
-	Url::parse(&format!("https://{input}")).ok()
+	Url::parse(&format!("{HTTPS_SCHEME}://{input}")).ok()
 }
 
 /// Recognize the host's own Pocket deeplink, `polkadotapp://pocket` with an
@@ -263,11 +269,7 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 /// - `Some(Reject)` for a dotNS URL with port or userinfo
 /// - `None` when the input isn't a dotNS URL (caller falls through to localhost / external)
 fn classify_dotns(input: &str) -> Option<NavigateDecision> {
-	let parsed = if input.starts_with("polkadot://") {
-		Url::parse(input).ok()?
-	} else {
-		parse_with_explicit_https(input)?
-	};
+	let parsed = parse_with_explicit_https(input)?;
 
 	let hostname = parsed.host_str()?;
 	if !is_dotns_domain(hostname) {
@@ -285,14 +287,17 @@ fn classify_dotns(input: &str) -> Option<NavigateDecision> {
 		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
 	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("polkadot://", identifier.as_str(), &path);
+	let canonical_url = join_url(PRODUCT_SCHEME, identifier.as_str(), &path);
 	Some(NavigateDecision::DotName { identifier, path, canonical_url })
 }
 
 /// Recognize `localhost[:port]` URLs, with or without an explicit scheme.
 fn classify_localhost(input: &str) -> Option<NavigateDecision> {
-	let with_scheme =
-		if input.starts_with("localhost") { format!("http://{input}") } else { input.to_string() };
+	let with_scheme = if input.starts_with("localhost") {
+		format!("{HTTP_SCHEME}://{input}")
+	} else {
+		input.to_string()
+	};
 
 	let parsed = Url::parse(&with_scheme).ok()?;
 	if parsed.host_str()? != "localhost" {
@@ -308,7 +313,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 		.parse::<ProductId>()
 		.expect("localhost with an optional u16 port is a valid product id; qed");
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("http://", host.as_str(), &path);
+	let canonical_url = join_url(HTTP_SCHEME, host.as_str(), &path);
 	Some(NavigateDecision::Localhost { host, path, canonical_url })
 }
 
@@ -316,7 +321,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 /// a [`NavigateDecision::Reject`] so dangerous schemes (`javascript:`,
 /// `data:`, `file:`, `vbscript:`, ...) cannot reach `Platform::navigate_to`.
 const ALLOWED_EXTERNAL_SCHEMES: &[&str] =
-	&["http", "https", "mailto", "tel", "sms", "maps", "polkadotapp"];
+	&[HTTP_SCHEME, HTTPS_SCHEME, "mailto", "tel", "sms", "maps", APP_SCHEME];
 
 /// Mirrors `normalizeUrl`: prepend `https://` if missing, otherwise pass the
 /// URL through as its canonical string form. Returns `Err(reason)` for an
@@ -383,6 +388,7 @@ mod tests {
 			("browse.dot", "/"),
 			("https://browse.dot/", "/"),
 			("polkadot://browse.dot", "/"),
+			("polkadotapp://browse.dot/onboarding?ref=abc#intro", "/onboarding?ref=abc#intro"),
 			("browse.dot.li/#/onboarding", "/#/onboarding"),
 			("browse.dot/onboarding?ref=abc", "/onboarding?ref=abc"),
 			("http://browse.dot.li?q=1#fragment", "/?q=1#fragment"),
@@ -411,6 +417,9 @@ mod tests {
 			"https://browse.dot:8443/path",
 			"https://user@browse.dot.li/path",
 			"javascript://browse.dot",
+			"file://browse.dot",
+			"otherwallet://browse.dot",
+			"polkadotapp://pocket",
 			"https://invalid_name.dot.li",
 			"https://dot.li",
 			"https://stg.revx.dev/editor?mod=other.dot",
@@ -439,7 +448,7 @@ mod tests {
 		Expected::Decision(NavigateDecision::DotName {
 			identifier: ProductId::for_test(identifier),
 			path: path.to_string(),
-			canonical_url: join_url("polkadot://", identifier, path),
+			canonical_url: join_url("polkadot", identifier, path),
 		})
 	}
 
@@ -470,7 +479,7 @@ mod tests {
 		Expected::Decision(NavigateDecision::Localhost {
 			host: ProductId::for_test(host),
 			path: path.to_string(),
-			canonical_url: join_url("http://", host, path),
+			canonical_url: join_url("http", host, path),
 		})
 	}
 

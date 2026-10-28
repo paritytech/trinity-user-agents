@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.exploreProd
 import androidx.core.net.toUri
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -150,7 +149,7 @@ class ExploreProductsViewModel @Inject constructor(
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
             onDeeplinkNavigation = { destination ->
                 dotNsTldProvider.currentTldOrNull()
-                    ?.let { tld -> productIdFromUrl(destination.asWebUri(), tld) }
+                    ?.let { tld -> productIdFromUrl(destination, tld) }
                     ?.onSuccess(::onProductSelected)
                     ?.logFailure("Explore navigateTo: not a product url $destination")
             },

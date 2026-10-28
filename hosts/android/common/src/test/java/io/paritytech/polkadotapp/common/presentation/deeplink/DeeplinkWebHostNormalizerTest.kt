@@ -4,16 +4,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.appDeeplinkScheme
 import uniffi.truapi.productShareHosts
 import java.io.File
 
 class DeeplinkWebHostNormalizerTest {
     @Test
-    fun `every supported share domain reaches the app through its intent filters`() {
+    fun `supported share domains and the app scheme reach the app through its intent filters`() {
         val manifest = File("../app/src/main/AndroidManifest.xml").readText()
         val hosts = productShareHosts().flatMap { listOf(it, "*.$it") }
+        val schemes = Regex("""android:scheme="([^"]+)"""").findAll(manifest).map { it.groupValues[1] }.toSet()
 
         hosts.forEach { host -> assertTrue(host, manifest.contains("android:host=\"$host\"")) }
+        assertEquals(setOf("https", appDeeplinkScheme()), schemes)
     }
 
     @Test

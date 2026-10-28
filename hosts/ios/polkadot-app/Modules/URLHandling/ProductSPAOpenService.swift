@@ -1,5 +1,6 @@
 import Foundation
 import Products
+import func TrUAPIHost.appDeeplinkScheme
 
 final class ProductSPAOpenService {
     private let moduleNavigator: ModuleNavigating
@@ -18,7 +19,7 @@ extension ProductSPAOpenService: URLHandlingServiceProtocol {
     func handle(url: URL) -> Bool {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         if let scheme = components.scheme, AppConfig.DeepLink.isKnownScheme(scheme) {
-            components.scheme = "https"
+            components.scheme = appDeeplinkScheme()
         }
         guard let destination = components.url, let page = hostProvider.page(url: destination) else { return false }
 

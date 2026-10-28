@@ -1,4 +1,5 @@
 import SwiftUI
+import func TrUAPIHost.appDeeplinkScheme
 
 /// Cards typed in by hand, for driving a product's Pocket before it
 /// publishes a manifest.
@@ -67,7 +68,7 @@ struct DebugPocketCardsView: View {
 
             Section("Open") {
                 ForEach(viewModel.cards) { card in
-                    Text(verbatim: "polkadotapp://pocket/add?product=\(card.productId)&card=\(card.cardId)")
+                    Text(verbatim: "\(appDeeplinkScheme())://pocket/add?product=\(card.productId)&card=\(card.cardId)")
                         .font(.caption)
                         .textSelection(.enabled)
                 }

@@ -67,6 +67,18 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
 }
 
+/// The canonical app scheme used for deeplinks and native handoffs.
+#[uniffi::export]
+pub fn app_deeplink_scheme() -> String {
+	dotns::APP_SCHEME.to_owned()
+}
+
+/// The internal scheme under which native hosts serve product content.
+#[uniffi::export]
+pub fn product_content_scheme() -> String {
+	dotns::PRODUCT_SCHEME.to_owned()
+}
+
 /// The `@parity/truapi-host` release this core was built from, which the
 /// native host packages share.
 #[uniffi::export]

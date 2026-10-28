@@ -100,8 +100,10 @@ Both native hosts use Rust's `ProductExecutionKind` for executable selection and
 its label mapping for manifest discriminators.
 Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
 Product links require an explicitly supplied network suffix; both direct names
-and `.li` links must match it. iOS propagates product-resolution errors before
-loading content, while valid products without a manifest use their base name.
+and `.li` links must match it. Rust defines the `polkadotapp` deeplink and
+`polkadot` content schemes shared by both native hosts. iOS propagates
+product-resolution errors before loading content, while valid products without
+a manifest use their base name.
 Rust's reserved identity constructors return `ProductId` directly from the
 validated network suffix.
 

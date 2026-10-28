@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productContentScheme
 import Foundation
 import WebKit
 import UniformTypeIdentifiers
@@ -8,8 +9,6 @@ enum ProductScriptSchemeHandlerError: Error {
 }
 
 public final class ProductScriptSchemeHandler: NSObject {
-    public static let scheme = "polkadot"
-
     private let productId: ProductId
     private let entryRelativePath: String
     private let productFileProvider: ProductFileProviding
@@ -26,7 +25,7 @@ public final class ProductScriptSchemeHandler: NSObject {
 
     public func getBaseUrl() -> URL? {
         var components = URLComponents()
-        components.scheme = Self.scheme
+        components.scheme = productContentScheme()
         components.host = productId.rawValue
         components.path = "/"
         return components.url

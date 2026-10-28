@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productContentScheme
 @testable import polkadot_app
 import Products
 import SDKLogger
@@ -185,7 +186,7 @@ private extension ProductsScriptExecutor {
                     ],
                     hostWindowProvider: { nil },
                     urlSchemeHandlers: [
-                        ProductScriptSchemeHandler.scheme: schemeHandler
+                        productContentScheme(): schemeHandler
                     ],
                     settings: WKWebViewJSEngineSettings(usesPersistentLocalStorage: false),
                     logger: Logger.shared

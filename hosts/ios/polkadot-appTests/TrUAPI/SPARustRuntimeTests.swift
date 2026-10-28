@@ -141,7 +141,7 @@ struct SPARustRuntimeTests {
         let url = try await runtime.start(with: engine)
 
         #expect(resolver.resolvedNames == ["test.dot"])
-        #expect(url.scheme == ProductScriptSchemeHandler.scheme)
+        #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
         #expect(engine.initializedScripts[0]
