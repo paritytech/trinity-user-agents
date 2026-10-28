@@ -42,6 +42,7 @@ final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
                     do {
                         for try await cards in try runtimeProvider.sharedRuntime().pocketCards() {
                             continuation.yield(cards.map(Self.entry))
+                            attempt = 0
                         }
                     } catch {
                         logger.warning("[pocket] the collection could not be followed, asking again: \(error)")

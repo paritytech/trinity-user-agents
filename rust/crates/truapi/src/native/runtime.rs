@@ -1072,7 +1072,7 @@ impl NativeProductExecution {
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
 		let card_id = match &request.context {
-			v01::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
+			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
 			_ => None,
 		};
 		let stream = control.render(request)?;

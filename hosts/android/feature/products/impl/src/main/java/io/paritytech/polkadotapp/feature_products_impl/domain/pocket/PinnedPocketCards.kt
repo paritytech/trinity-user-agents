@@ -48,7 +48,7 @@ class AssetPinnedPocketCards @Inject constructor(
     private val bundledFaces = ConcurrentHashMap<String, RendererNode>()
     private val bundledImages by lazy { context.assets.list("pocket").orEmpty().map { "pocket/$it" }.toSet() }
 
-    override fun cards(tld: DotNsTld): List<PocketCard> = definitions.map { it.toCard(it.backingProduct(tld)).card }
+    override fun cards(tld: DotNsTld): List<PocketCard> = definitions.map { it.card(it.backingProduct(tld)) }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? {
         val definition = definitions.firstOrNull { it.cardId == key.cardId.value } ?: return null
@@ -66,12 +66,14 @@ class AssetPinnedPocketCards @Inject constructor(
         return backingProduct(tld) == productId
     }
 
+    private fun Definition.card(backing: ProductId) = PocketCard(
+        key = PocketCardKey(backing, PocketCardId(cardId)),
+        title = context.getString(titleRes),
+        privileged = true,
+    )
+
     private fun Definition.toCard(backing: ProductId) = CachedPocketCard(
-        card = PocketCard(
-            key = PocketCardKey(backing, PocketCardId(cardId)),
-            title = context.getString(titleRes),
-            privileged = true,
-        ),
+        card = card(backing),
         face = bundledFace(cardId),
     )
 

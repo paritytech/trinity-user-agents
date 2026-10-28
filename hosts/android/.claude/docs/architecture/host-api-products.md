@@ -327,14 +327,14 @@ user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigat
 `PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:
-- `PocketCollection` — `observeCards()` and user removal. One pinned card, Humanity on the personhood product
-  (`AssetPinnedPocketCards`), is a constant with a bundled face; added cards live in Room (`pocket_cards`) with the
-  face they were approved with. Balance and Scarcity are not pinned: the products behind them publish no Pocket
-  cards, and the host already draws its own native cards for that ground. The newest face a product streams is kept
-  for every card,
-  pinned ones included, so a card wears what its product last drew rather than the bundled placeholder at cold start. It is
-  stored in the core's own encoding of the tree (`encodeRendererNode`, `pocket_card_faces.face`), so it reads back as
-  the tree that was drawn.
+- `PocketCollection` — `observeCards()` and user removal, backed by the collection the core keeps in its database
+  (`CorePocketCardRepository` over the runtime's `pocketCards()`, `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`). One pinned card, Humanity on the personhood product (`AssetPinnedPocketCards`), is handed to the
+  core in `HostRuntimeConfig.pinnedPocketCards` and has a bundled face; added cards are stored with the face they were
+  approved with. Balance and Scarcity are not pinned: the products behind them publish no Pocket cards, and the host
+  already draws its own native cards for that ground. The core keeps the newest face of every card, pinned ones
+  included, from each Pocket card render, so a card wears what its product last drew rather than the bundled
+  placeholder at cold start.
 - `PocketCardOpenRequests` — the card a deeplink asked the Pocket tab to expand. A link can arrive before the tab has
   been shown, so the request is held until the Pocket screen finds the card in its collection, and cleared there.
 - `PocketFaceSource.observeFace(key)` — the cached face first, then every tree the product streams; `sendAction`
@@ -352,14 +352,13 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
-  `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
+  `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
   down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
   `RenderContext.PocketCard`, retries the first `render` while the worker's client is still connecting, and publishes
-  renderer actions. Both callbacks of `ProductPocketHostBridge` run on the core's dispatcher thread: the list is a
-  snapshot, and a removal completes inline and answers `Removed`, `Absent` or `Privileged`, because the core reads the
-  list again right after and republishes it.
+  renderer actions. The core serves a product's Pocket calls from its own collection, so the worker's execution takes
+  no Pocket callback.
 - Deeplinks are classified by the core's `parse_navigate` behind `PocketDeeplinkParser`; card ids and titles are
   screened at manifest load by the core's `screenPocketCardId` and `screenPocketCardTitle`.
 

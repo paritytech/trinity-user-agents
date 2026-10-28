@@ -22,6 +22,7 @@ use crate::{
 	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
 	store::{Db, DbError},
 	time::Timer,
+	unix_time::current_unix_millis,
 };
 
 /// A card the host pins: listed first, and removable by nobody.
@@ -111,7 +112,7 @@ impl PocketCards {
 					":card": card_id,
 					":title": title,
 				})?;
-				upsert_face(tx, &product_id, &card_id, &face)
+				upsert_face(tx, &product_id, &card_id, &face, current_unix_millis())
 			})
 			.await
 	}
@@ -162,30 +163,38 @@ impl PocketCards {
 		}))
 	}
 
-	/// Keeps `face` as the card's newest, if the card is in the Pocket.
+	/// Keeps `face`, drawn at `drawn_at` unix milliseconds, as the card's
+	/// newest, if the card is in the Pocket and no later face is kept.
 	pub async fn keep_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
 		face: RendererNode,
+		drawn_at: u64,
 	) -> Result<(), DbError> {
-		self.db.write(move |tx| upsert_face(tx, &product_id, &card_id, &face)).await
+		self.db
+			.write(move |tx| upsert_face(tx, &product_id, &card_id, &face, drawn_at))
+			.await
 	}
 
-	/// Keeps the newest of `faces` as the card's face: at once, then at most
-	/// every [`FACE_WRITE_INTERVAL`], and once more after `faces` ends.
+	/// Keeps the newest of `faces`, each with the unix milliseconds it was
+	/// drawn at, as the card's face: at once, then at most every
+	/// [`FACE_WRITE_INTERVAL`], and once more after `faces` ends.
 	pub async fn keep_faces(
 		&self,
 		product_id: ProductId,
 		card_id: String,
-		mut faces: UnboundedReceiver<RendererNode>,
+		mut faces: UnboundedReceiver<(RendererNode, u64)>,
 		timer: Arc<dyn Timer>,
 	) {
-		while let Some(mut face) = faces.next().await {
+		while let Some(mut drawn) = faces.next().await {
 			while let Ok(newer) = faces.try_recv() {
-				face = newer;
+				drawn = newer;
 			}
-			if let Err(error) = self.keep_face(product_id.clone(), card_id.clone(), face).await {
+			let (face, drawn_at) = drawn;
+			if let Err(error) =
+				self.keep_face(product_id.clone(), card_id.clone(), face, drawn_at).await
+			{
 				tracing::warn!(%error, card_id, "a Pocket face was not kept");
 			}
 			timer.sleep(FACE_WRITE_INTERVAL).await;
@@ -257,21 +266,24 @@ const DELETE: &str = "DELETE FROM pocket_card WHERE product_id = :product AND ca
 const FACE: &str =
 	"SELECT face FROM pocket_card_face WHERE product_id = :product AND card_id = :card";
 
-const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face)
-	SELECT :product, :card, :face WHERE EXISTS
+const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face, drawn_at)
+	SELECT :product, :card, :face, :drawn_at WHERE EXISTS
 		(SELECT 1 FROM pocket_card WHERE product_id = :product AND card_id = :card)
-	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face";
+	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face, drawn_at = excluded.drawn_at
+		WHERE excluded.drawn_at >= pocket_card_face.drawn_at";
 
 fn upsert_face(
 	tx: &Transaction<'_>,
 	product_id: &ProductId,
 	card_id: &str,
 	face: &RendererNode,
+	drawn_at: u64,
 ) -> Result<(), DbError> {
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
 		":face": face.encode(),
+		":drawn_at": drawn_at,
 	})?;
 	Ok(())
 }

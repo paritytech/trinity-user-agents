@@ -1884,12 +1884,10 @@ export interface Permissions {
 }
 
 /**
- * Host-implemented adapter through which product Pocket calls reach the
- * host's card collection. Optional: a host that omits it leaves Pocket
- * requests answered `Unsupported`. See `OptionalPlatform`.
- *
- * The host owns the collection: it decides which cards are privileged and
- * keeps each card's newest face. A face does not cross this boundary.
+ * Adapter through which product Pocket calls reach the card collection.
+ * Optional: a host that omits it leaves Pocket requests answered
+ * `Unsupported`. See `OptionalPlatform`. Native hosts are served by the
+ * core's own collection in its database.
  */
 export interface PocketPlatform {
   /**
