@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta
+      id="viewport-meta"
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
@@ -774,6 +775,24 @@
         </section>
         <section class="dev-group preview-narrow">
           <p class="note">Under 900 px the app always fills the window.</p>
+        </section>
+        <section
+          class="dev-group preview-device"
+          aria-labelledby="device-title"
+        >
+          <h2 id="device-title">This device</h2>
+          <button id="fullscreen" type="button" aria-pressed="false" hidden>
+            Full screen
+          </button>
+          <label class="check" for="zoom-lock">
+            <input id="zoom-lock" type="checkbox" />
+            Lock page zoom
+          </label>
+          <p id="device-status" class="note" aria-live="polite"></p>
+          <p class="note">
+            The lock asks the browser not to zoom the page. Some browsers, and
+            accessibility settings, still allow it.
+          </p>
         </section>
       </div>
       <section
