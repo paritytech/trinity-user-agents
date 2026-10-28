@@ -640,6 +640,15 @@ pub enum ChatMessageBody {
 	Call(ChatCallRecord),
 	/// A payment.
 	Payment(ChatPaymentRecord),
+	/// A message the product draws through `Renderer::render`, with a
+	/// `ChatMessage` render context.
+	Custom {
+		/// The type and payload that the renderer receives.
+		message: ChatCustomMessage,
+		/// One line that describes the message in previews, reply quotes and
+		/// notifications. `None` leaves the host its own placeholder.
+		alt: Option<String>,
+	},
 }
 
 /// How many participants reacted to a message with one emoji.
