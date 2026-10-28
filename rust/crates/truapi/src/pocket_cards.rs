@@ -203,9 +203,14 @@ impl PocketCards {
 				},
 				() = interval => {},
 			}
-			if interval.is_terminated() &&
-				let Some(drawn) = newest.take()
-			{
+			if !interval.is_terminated() {
+				continue;
+			}
+			// A face already queued is newer than the one in hand.
+			while let Ok(newer) = faces.try_recv() {
+				newest = Some(newer);
+			}
+			if let Some(drawn) = newest.take() {
 				self.keep_newest(&product_id, &card_id, drawn).await;
 				interval = timer.sleep(FACE_WRITE_INTERVAL).fuse();
 			}
