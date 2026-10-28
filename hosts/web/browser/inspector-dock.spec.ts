@@ -212,11 +212,52 @@ describe("the developer tools", () => {
         expect(frame.top).toBeGreaterThanOrEqual(stage.top);
         expect(frame.bottom).toBeLessThanOrEqual(stage.bottom);
 
-        // Both inspector views fill the same tools.
-        await page.click('[data-inspector-view="chat"]');
-        expect((await box(page, "#chat-diagnostics")).width).toBe(1420);
-        await page.click('[data-inspector-view="wire"]');
-        expect((await box(page, "#inspector-mount")).width).toBe(1420);
+        // The inspector's three views, in order, fill the same tools, and the
+        // arrow keys move between them.
+        expect(
+          await page
+            .locator("[data-inspector-view]")
+            .evaluateAll((tabs) => tabs.map((tab) => tab.textContent?.trim())),
+        ).toEqual(["Activity", "TrUAPI", "Chat"]);
+        for (const [view, panel] of [
+          ["activity", "#activity-inspector"],
+          ["chat", "#chat-diagnostics"],
+          ["wire", "#inspector-mount"],
+        ] as const) {
+          await page.click(`[data-inspector-view="${view}"]`);
+          expect((await box(page, panel)).width).toBe(1420);
+          expect(
+            await page
+              .locator("#inspector > [role=tabpanel], #inspector-mount")
+              .evaluateAll(
+                (panels) =>
+                  panels.filter((shown) => !(shown as HTMLElement).hidden)
+                    .length,
+              ),
+          ).toBe(1);
+        }
+        // The Activity view holds what was logged before it was first shown.
+        await page.keyboard.press("ArrowLeft");
+        await page
+          .locator('[data-inspector-view="activity"][aria-selected="true"]')
+          .waitFor();
+        expect(
+          await page.evaluate(
+            () => (document.activeElement as HTMLElement).dataset.inspectorView,
+          ),
+        ).toBe("activity");
+        await page.locator("#log .activity-row").first().waitFor();
+        await page.keyboard.press("ArrowLeft");
+        await page
+          .locator('[data-inspector-view="chat"][aria-selected="true"]')
+          .waitFor();
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("ArrowRight");
+        await page
+          .locator('[data-inspector-view="wire"][aria-selected="true"]')
+          .waitFor();
+        // More no longer holds a log.
+        expect(await page.locator("#dev-more #log").count()).toBe(0);
 
         // The top edge sets the height; the app shrinks to make room.
         const frameBefore = await box(page, "#product-frame");

@@ -15,6 +15,7 @@ import type {
 } from "@parity/truapi";
 import { ask, type PromptChoice } from "./prompt.js";
 import { describeReview, formatValue } from "./reviews.js";
+import type { ActivitySink } from "../platform/activity.js";
 import type { HostStorage } from "../platform/storage.js";
 import type { Network } from "../platform/network.js";
 import { constant, subscription } from "../platform/subscription.js";
@@ -22,7 +23,7 @@ import { constant, subscription } from "../platform/subscription.js";
 export interface HostCallbackOptions {
   network: Network;
   storage: HostStorage;
-  log: (text: string) => void;
+  activity: ActivitySink;
   onAuthState: (state: AuthState) => void;
   /**
    * Handle a product's request to open `url`: inside the host for a product
@@ -46,6 +47,13 @@ export interface HostCallbackOptions {
   contacts?: Required<ContactsPlatform>;
 }
 
+/** How the log names each answer to a permission. */
+const DECISION_LABELS: Record<PermissionDecision, string> = {
+  Deny: "Permission denied",
+  AllowOnce: "Permission allowed once",
+  AllowAlways: "Permission always allowed",
+};
+
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
   { label: "Deny", value: "Deny", tone: "cancel" },
   { label: "Allow once", value: "AllowOnce" },
@@ -66,7 +74,7 @@ export function createHostCallbacks(
   const {
     network,
     storage,
-    log,
+    activity,
     onAuthState,
     navigate,
     onNetworkAsked,
@@ -84,47 +92,69 @@ export function createHostCallbacks(
   let nextNotificationId = 1;
   let nextOperationId = 1;
 
-  const decide = (title: string, product: ProductContext, detail: string) =>
-    ask({
+  const decide = async (
+    title: string,
+    product: ProductContext,
+    detail: string,
+    category: "products" | "network",
+  ) => {
+    const decision = await ask({
       title,
       from: product.productId,
       fields: [{ label: "Permission", value: detail, mono: true }],
       choices: DECISIONS,
       dismissed: "Deny" as PermissionDecision,
     });
+    activity({
+      category,
+      action: DECISION_LABELS[decision],
+      subject: product.productId,
+      details: [{ label: "Permission", value: detail }],
+    });
+    return decision;
+  };
 
   return {
     navigation: {
-      navigateTo(url) {
-        log(`navigate to ${url}`);
-        return navigate(url);
-      },
+      navigateTo: (url) => navigate(url),
     },
 
     notifications: {
-      pushNotification(request) {
+      pushNotification(_request) {
         const id = nextNotificationId++;
-        log(`notification ${id}: ${request.text}`);
+        // The text is the product's message to the user, so it is not logged.
+        activity({
+          category: "products",
+          action: "Notification posted",
+          details: [{ label: "Id", value: String(id) }],
+        });
         return Promise.resolve({ id });
       },
       cancelNotification(id) {
-        log(`notification ${id} cancelled`);
+        activity({
+          category: "products",
+          action: "Notification cancelled",
+          details: [{ label: "Id", value: String(id) }],
+        });
         return Promise.resolve();
       },
     },
 
     permissions: {
       devicePermission: (product, request) =>
-        decide("Device permission", product, request).finally(
+        decide("Device permission", product, request, "products").finally(
           onPermissionDecided,
         ),
       remotePermission: (product, request) => {
         const detail = describePermission(request.permission);
         if (request.permission.tag === "Remote")
           onNetworkAsked?.(request.permission.value.domains);
-        return decide("Remote permission", product, detail).finally(
-          onPermissionDecided,
-        );
+        return decide(
+          "Remote permission",
+          product,
+          detail,
+          request.permission.tag === "Remote" ? "network" : "products",
+        ).finally(onPermissionDecided);
       },
     },
 
@@ -142,7 +172,14 @@ export function createHostCallbacks(
 
     auth: {
       authStateChanged(state) {
-        log(`auth state ${state.tag}`);
+        activity({
+          category: "session",
+          action: "Core session",
+          subject: state.tag,
+          ...(state.tag === "LoginFailed"
+            ? { note: state.value.reason, failed: true }
+            : {}),
+        });
         onAuthState(state);
       },
     },

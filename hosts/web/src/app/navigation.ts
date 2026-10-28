@@ -30,6 +30,7 @@ import {
 import { openProduct, type OpenProduct } from "../products/product.js";
 import { notOpenableText, type Opened } from "../products/status.js";
 import type { FrameTap } from "../products/tap.js";
+import type { ActivityDetail, ActivitySink } from "../platform/activity.js";
 import type { NetworkConfig } from "../platform/network-config.js";
 import { tabProductKey } from "../platform/network-choice.js";
 import type { PocketCardKey } from "../pocket/faces.js";
@@ -95,7 +96,7 @@ export interface NavigationDeps {
     productId: string;
     entered: boolean;
   }): void;
-  log(text: string): void;
+  activity: ActivitySink;
 }
 
 /** Where an app that belongs to no destination is held. */
@@ -109,6 +110,10 @@ export function scopeOf(address: Address): string {
 /** A message for an error thrown here, without the `Error:` prefix. */
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+/** How the log names a product: the name it was opened by, else its id. */
+const productName = (product: OpenProduct, how: Opened | null): string =>
+  how?.via === "name" ? how.address : product.productId;
 
 /**
  * The product in front of the stage and the ones running behind it: which
@@ -235,10 +240,10 @@ export class ProductNavigation {
     void this.deps.serial(async () => {
       if (key === "front") {
         if (this.front === null) return;
-        const name = this.front.productId;
+        const closed = this.closedActivity(this.front, this.how);
         this.closeProduct();
         sessionStorage.removeItem(tabProductKey(this.deps.network.id));
-        this.deps.log(`closed ${name}`);
+        this.deps.activity(closed);
         return;
       }
       const entry = this.held.get(key);
@@ -246,9 +251,11 @@ export class ProductNavigation {
       entry.product.dispose();
       this.held.delete(key);
       const back = DESTINATIONS.find((known) => known === key) ?? null;
-      this.deps.log(
-        `closed ${entry.product.productId}, which ran behind${isProductDestination(back) ? ` ${DESTINATION_LABELS[back]}` : ""}`,
-      );
+      const closed = this.closedActivity(entry.product, entry.opened);
+      this.deps.activity({
+        ...closed,
+        note: `It ran behind${isProductDestination(back) ? ` ${DESTINATION_LABELS[back]}` : " as an app"}.`,
+      });
       this.deps.render();
     });
   }
@@ -256,10 +263,25 @@ export class ProductNavigation {
   /** Close the product in front, as the Product tab's Close does. */
   closeFront(): void {
     void this.deps.serial(async () => {
+      const closed =
+        this.front === null ? null : this.closedActivity(this.front, this.how);
       this.closeProduct();
       sessionStorage.removeItem(tabProductKey(this.deps.network.id));
-      this.deps.log("closed the product");
+      if (closed !== null) this.deps.activity(closed);
     });
+  }
+
+  /** The log's event for closing `product`. */
+  private closedActivity(product: OpenProduct, how: Opened | null) {
+    return {
+      category: "products" as const,
+      action: "Closed",
+      subject: productName(product, how),
+      details: [
+        { label: "Product id", value: product.productId },
+        { label: "Execution", value: product.executionKind },
+      ],
+    };
   }
 
   /**
@@ -421,17 +443,32 @@ export class ProductNavigation {
     try {
       parsed = parseTypedAddress(address, this.deps.network);
     } catch (error) {
-      this.report(errorText(error));
+      this.report(errorText(error), address);
       return;
     }
     const { id } = effectiveProductIdFor(parsed, "");
     await this.openResolved(runtime, parsed, id, false);
   }
 
-  /** Say `text` on the status line and in the log. */
-  private report(text: string): void {
+  /**
+   * Say on the status line that `subject` did not open, and log it with the
+   * `reason`, which is the status line's text unless given apart.
+   */
+  private report(
+    text: string,
+    subject: string,
+    reason = text,
+    details?: ActivityDetail[],
+  ): void {
     this.deps.statusLine.textContent = text;
-    this.deps.log(text);
+    this.deps.activity({
+      category: "products",
+      action: "Not opened",
+      subject,
+      note: reason,
+      failed: true,
+      ...(details === undefined ? {} : { details }),
+    });
   }
 
   /**
@@ -443,13 +480,33 @@ export class ProductNavigation {
     const network = this.deps.network;
     const where = resolveNavigation(url, network);
     if (where.kind === "external") {
+      this.deps.activity({
+        category: "products",
+        action: "Navigate requested",
+        subject: where.url,
+        note: "Opened in a new browser tab.",
+      });
       window.open(where.url, "_blank", "noopener,noreferrer");
       return Promise.resolve();
     }
     if (where.kind === "refused") {
-      this.deps.log(`navigation refused: ${where.reason}`);
+      this.deps.activity({
+        category: "products",
+        action: "Navigate refused",
+        subject: url,
+        note: where.reason,
+        failed: true,
+      });
       return Promise.reject(new Error(where.reason));
     }
+    this.deps.activity({
+      category: "products",
+      action: "Navigate requested",
+      subject: where.address,
+      ...(url === where.address
+        ? {}
+        : { details: [{ label: "Asked for", value: url }] }),
+    });
     // The host has taken the request once it is queued. What it opens is
     // reported in the menu and the log, not back to the product.
     const known = destinationOf(where.address, this.addresses, network);
@@ -460,7 +517,7 @@ export class ProductNavigation {
         try {
           parsed = parseTypedAddress(where.address, network);
         } catch (error) {
-          this.report(errorText(error));
+          this.report(errorText(error), where.address);
           return;
         }
         const { id } = effectiveProductIdFor(parsed, "");
@@ -608,7 +665,13 @@ export class ProductNavigation {
           onSandboxStatus: (state, detail) => {
             if (state === "error") {
               this.deps.loading.finish(op);
-              this.deps.log(`sandbox could not start the product: ${detail}`);
+              this.deps.activity({
+                category: "products",
+                action: "Sandbox failed",
+                subject: productId,
+                note: detail,
+                failed: true,
+              });
             }
             if (!inFront()) return;
             this.sandbox = `${state === "error" ? SANDBOX_FAILED : "Sandbox:"} ${detail}`;
@@ -646,15 +709,36 @@ export class ProductNavigation {
           );
       }
       this.deps.render();
-      this.deps.log(
-        target.via === "name"
-          ? `opened ${target.address} as ${productId} (${executionKind}) from ${target.url.href}`
-          : `opened ${target.url.href} as ${productId}`,
-      );
+      this.deps.activity({
+        category: "products",
+        action: "Opened",
+        subject: target.via === "name" ? target.address : productId,
+        details: [
+          {
+            label: "Product id",
+            value: entered ? `${productId} (entered, not verified)` : productId,
+          },
+          { label: "Execution", value: executionKind },
+          ...(target.via === "name"
+            ? [
+                { label: "Record", value: target.record ?? "" },
+                { label: "Content", value: target.cid ?? "" },
+                { label: "Loader", value: target.url.href },
+              ]
+            : [{ label: "URL", value: target.url.href }]),
+        ].filter(({ value }) => value !== ""),
+      });
     } catch (error) {
       this.deps.loading.finish(op);
       this.report(
         `Could not open ${target.url.href} as ${productId}: ${errorText(error)}`,
+        target.via === "name" ? target.address : productId,
+        errorText(error),
+        [
+          { label: "Product id", value: productId },
+          { label: "Execution", value: executionKind },
+          { label: "URL", value: target.url.href },
+        ],
       );
     }
   }
@@ -676,7 +760,14 @@ export class ProductNavigation {
         widget = await resolveWidget(key.productId, network);
       } catch (error) {
         status.textContent = errorText(error);
-        this.deps.log(`pocket: ${key.cardId} not opened: ${errorText(error)}`);
+        this.deps.activity({
+          category: "products",
+          action: "Widget not opened",
+          subject: key.productId,
+          note: errorText(error),
+          failed: true,
+          details: [{ label: "Card", value: key.cardId }],
+        });
         return;
       }
       if (this.where !== "pocket") {
@@ -685,9 +776,12 @@ export class ProductNavigation {
       }
       status.textContent = "";
       if (widget.fromBaseName)
-        this.deps.log(
-          `pocket: ${key.productId} publishes no widget; its base name's content runs as the Widget, as the iOS host serves it`,
-        );
+        this.deps.activity({
+          category: "products",
+          action: "Widget from base name",
+          subject: key.productId,
+          note: `${key.productId} publishes no widget; its base name's content runs as the Widget, as the iOS host serves it.`,
+        });
       this.leaveFront();
       this.where = null;
       sessionStorage.removeItem(tabProductKey(network.id));
@@ -743,7 +837,10 @@ export class ProductNavigation {
       target = await this.resolveTarget(address, productId);
     } catch (error) {
       this.deps.loading.finish(op);
-      this.report(errorText(error));
+      this.report(
+        errorText(error),
+        address.kind === "name" ? address.name : address.url.href,
+      );
       return;
     }
     await this.openTarget(

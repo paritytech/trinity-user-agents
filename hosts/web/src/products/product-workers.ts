@@ -1,6 +1,7 @@
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { FrameTap } from "./tap.js";
+import type { ActivitySink } from "../platform/activity.js";
 import type { NetworkConfig } from "../platform/network-config.js";
 import { openProduct, type OpenProduct } from "./product.js";
 import { archiveCacheName, fileKey } from "./loader/files.js";
@@ -54,7 +55,7 @@ export interface ProductWorkersDeps {
   base: string;
   storage: Storage;
   tap(channel: string): FrameTap | undefined;
-  log(text: string): void;
+  activity: ActivitySink;
   /**
    * Workers the host adds for every wallet on a network, before any the user
    * adds, as the native app places a product's room by default. They run
@@ -406,6 +407,7 @@ export class ProductWorkers {
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
               running.state = { state: "failed", reason: detail };
+              this.failed(name, detail);
               this.changed();
             }
           },
@@ -426,14 +428,33 @@ export class ProductWorkers {
           record: worker.record,
           cid: worker.cid,
         };
-      this.deps.log(`worker ${name} started from ${worker.record}`);
+      this.deps.activity({
+        category: "workers",
+        action: "Started",
+        subject: name,
+        details: [
+          { label: "Record", value: worker.record },
+          { label: "Content", value: worker.cid },
+          { label: "Entry", value: worker.manifest.entrypoint },
+        ],
+      });
     } catch (error) {
       if (!current()) return;
       running.refusals = new Map();
       running.state = { state: "failed", reason: errorText(error) };
-      this.deps.log(`worker ${name}: ${errorText(error)}`);
+      this.failed(name, errorText(error));
     }
     this.changed();
+  }
+
+  private failed(name: string, reason: string): void {
+    this.deps.activity({
+      category: "workers",
+      action: "Failed",
+      subject: name,
+      note: reason,
+      failed: true,
+    });
   }
 
   private stop(name: string): void {
@@ -445,6 +466,11 @@ export class ProductWorkers {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();
       running.handle = null;
+      this.deps.activity({
+        category: "workers",
+        action: "Stopped",
+        subject: name,
+      });
     }
     for (const url of running.images.values()) URL.revokeObjectURL(url);
     running.images.clear();

@@ -813,6 +813,16 @@
             <button
               type="button"
               role="tab"
+              data-inspector-view="activity"
+              aria-selected="false"
+              aria-controls="activity-inspector"
+              tabindex="-1"
+            >
+              Activity
+            </button>
+            <button
+              type="button"
+              role="tab"
               data-inspector-view="wire"
               aria-selected="true"
               aria-controls="inspector-mount"
@@ -825,6 +835,7 @@
               data-inspector-view="chat"
               aria-selected="false"
               aria-controls="chat-diagnostics"
+              tabindex="-1"
             >
               Chat
             </button>
@@ -832,6 +843,15 @@
           <p id="inspector-note" class="note">
             Frames stay in this tab and may carry sensitive payloads.
           </p>
+        </div>
+        <div
+          id="activity-inspector"
+          class="activity-inspector"
+          role="tabpanel"
+          aria-label="Activity"
+          hidden
+        >
+          <ol id="log"></ol>
         </div>
         <div id="inspector-mount" class="inspector-mount"></div>
         <div
@@ -873,11 +893,6 @@
           hidden
         >
           <h2 id="developer-title">Dev server only</h2>
-        </section>
-
-        <section class="dev-group" aria-labelledby="log-title">
-          <h2 id="log-title">Log</h2>
-          <ol id="log" class="log"></ol>
         </section>
       </div>
     </section>
