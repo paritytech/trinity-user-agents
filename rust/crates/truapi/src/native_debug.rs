@@ -98,8 +98,7 @@ pub enum DebugSinkError {
 /// the browser host sends.
 pub struct WsDebugSink {
 	outbound: mpsc::Sender<QueuedFrame>,
-	dropped: Arc<AtomicU64>,
-	pending_dropped: Arc<AtomicU64>,
+	drops: Arc<DropCounts>,
 	queued_bytes: Arc<AtomicUsize>,
 }
 
@@ -110,6 +109,26 @@ pub struct WsDebugSink {
 struct QueuedFrame {
 	line: String,
 	shed: u64,
+}
+
+/// Frames lost on the way to the debugger, shared by the sink and its writer.
+#[derive(Default)]
+struct DropCounts {
+	/// Lifetime total, for logging and [`WsDebugSink::dropped`].
+	total: AtomicU64,
+	/// Drops not yet stamped on an envelope; the next one carries them.
+	pending: AtomicU64,
+}
+
+impl DropCounts {
+	/// Account for one lost frame: `carried` drops had been drained onto the
+	/// envelope that never made it, so they go back on the pending count
+	/// alongside this one and ride the next envelope instead. Returns the new
+	/// lifetime total, for logging.
+	fn count(&self, carried: u64) -> u64 {
+		self.pending.fetch_add(carried + 1, Ordering::Relaxed);
+		self.total.fetch_add(1, Ordering::Relaxed) + 1
+	}
 }
 
 /// The wire envelope, matching the debugger's `parseWireMessage` / ingest
@@ -216,41 +235,30 @@ impl WsDebugSink {
 		}
 
 		let (outbound, inbox) = mpsc::channel::<QueuedFrame>(QUEUE_CAPACITY);
-		let dropped = Arc::new(AtomicU64::new(0));
-		let pending_dropped = Arc::new(AtomicU64::new(0));
+		let drops = Arc::new(DropCounts::default());
 		let queued_bytes = Arc::new(AtomicUsize::new(0));
 		tokio::spawn(writer_loop(
 			url.to_string(),
 			addrs,
 			inbox,
-			Arc::clone(&dropped),
-			Arc::clone(&pending_dropped),
+			Arc::clone(&drops),
 			Arc::clone(&queued_bytes),
 		));
-		Ok(Arc::new(Self { outbound, dropped, pending_dropped, queued_bytes }))
+		Ok(Arc::new(Self { outbound, drops, queued_bytes }))
 	}
 
 	/// Number of frames dropped because the outbound queue was full (debugger
 	/// absent or slower than the observed session). Never affects the session.
 	pub fn dropped(&self) -> u64 {
-		self.dropped.load(Ordering::Relaxed)
+		self.drops.total.load(Ordering::Relaxed)
 	}
 
 	/// The count waiting to ride the next envelope. Test-only: the re-add in
-	/// [`Self::count_drop`] is load-bearing and is otherwise only observable
+	/// [`DropCounts::count`] is load-bearing and is otherwise only observable
 	/// through a live socket, which makes it easy to leave untested.
 	#[cfg(test)]
 	fn pending_dropped(&self) -> u64 {
-		self.pending_dropped.load(Ordering::Relaxed)
-	}
-
-	/// Account for one lost frame: `carried` drops had been drained onto the
-	/// envelope that never made it, so they go back on the pending count
-	/// alongside this one and ride the next envelope instead. Returns the new
-	/// lifetime total, for logging.
-	fn count_drop(&self, carried: u64) -> u64 {
-		self.pending_dropped.fetch_add(carried + 1, Ordering::Relaxed);
-		self.dropped.fetch_add(1, Ordering::Relaxed) + 1
+		self.drops.pending.load(Ordering::Relaxed)
 	}
 }
 
@@ -260,9 +268,9 @@ impl DebugSink for WsDebugSink {
 		// Drain the drops accumulated since the previous envelope and stamp them
 		// on this one, as the web link does: a shed frame must reach the debugger
 		// as a counted gap in the link, not as a host that never answered. If
-		// this envelope is itself lost, `count_drop` puts the count back so it
+		// this envelope is itself lost, `DropCounts::count` puts the count back so it
 		// rides the next one.
-		let shed = self.pending_dropped.swap(0, Ordering::Relaxed);
+		let shed = self.drops.pending.swap(0, Ordering::Relaxed);
 		let message = WireMessage {
 			v: WIRE_ENVELOPE_VERSION,
 			codec: WIRE_CODEC_VERSION,
@@ -275,7 +283,7 @@ impl DebugSink for WsDebugSink {
 			dropped: shed,
 		};
 		let Ok(line) = serde_json::to_string(&message) else {
-			self.count_drop(shed);
+			self.drops.count(shed);
 			return;
 		};
 		// Byte budget on top of the channel's count cap: one frame can be MBs, so
@@ -289,7 +297,7 @@ impl DebugSink for WsDebugSink {
 		if self.queued_bytes.fetch_add(len, Ordering::Relaxed) + len > MAX_QUEUE_BYTES {
 			// This reservation pushed us past the budget: back it out and drop.
 			self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
-			let dropped = self.count_drop(shed);
+			let dropped = self.drops.count(shed);
 			debug!("truapi debug sink: byte budget full, frame dropped (total {dropped})");
 			return;
 		}
@@ -298,7 +306,7 @@ impl DebugSink for WsDebugSink {
 			// (never the session); count it and log so the gap is attributable to
 			// the link, not to the host.
 			self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
-			let dropped = self.count_drop(shed);
+			let dropped = self.drops.count(shed);
 			debug!("truapi debug sink: outbound queue full, frame dropped (total {dropped})");
 		}
 	}
@@ -336,16 +344,13 @@ async fn writer_loop(
 	url: String,
 	addrs: Vec<SocketAddr>,
 	mut inbox: mpsc::Receiver<QueuedFrame>,
-	dropped: Arc<AtomicU64>,
-	pending_dropped: Arc<AtomicU64>,
+	drops: Arc<DropCounts>,
 	queued_bytes: Arc<AtomicUsize>,
 ) {
 	let mut pauses = RECONNECT_PAUSES;
 	loop {
 		if let Some(stream) = dial(url.as_str(), &addrs).await &&
-			forward(stream, &mut inbox, &mut pauses, &dropped, &pending_dropped, &queued_bytes)
-				.await
-				.is_break()
+			forward(stream, &mut inbox, &mut pauses, &drops, &queued_bytes).await.is_break()
 		{
 			return;
 		}
@@ -363,8 +368,7 @@ async fn forward(
 	stream: WebSocketStream<TcpStream>,
 	inbox: &mut mpsc::Receiver<QueuedFrame>,
 	pauses: &mut Backoff,
-	dropped: &AtomicU64,
-	pending_dropped: &AtomicU64,
+	drops: &DropCounts,
 	queued_bytes: &AtomicUsize,
 ) -> ControlFlow<()> {
 	let (mut write, mut read) = stream.split();
@@ -374,27 +378,17 @@ async fn forward(
 	loop {
 		tokio::select! {
 			queued = inbox.recv() => {
-				// All senders dropped: the sink is gone, so is the host. Done.
 				let Some(QueuedFrame { line, shed }) = queued else {
 					return ControlFlow::Break(());
 				};
-				// Off the queue now: release its bytes from the budget
-				// before the (moving) send so the counter can't drift.
 				queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
 				if write.send(Message::Text(line)).await.is_err() {
 					debug!("truapi debug sink: socket closed, reconnecting");
-					// The in-flight line is lost across this reconnect.
-					dropped.fetch_add(1, Ordering::Relaxed);
-					// It carried `shed` earlier drops that therefore
-					// never reached the debugger: make them pending
-					// again (with this frame) so the next delivered
-					// envelope still reports the whole gap.
-					pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
+					drops.count(shed);
 					return ControlFlow::Continue(());
 				}
-				// Reset backoff only on a *delivered* frame, so an
-				// accept-then-close server still backs off instead of spinning
-				// on zero-delay reconnects.
+				// Only a delivered frame resets, so an accept-then-close server
+				// still backs off instead of spinning on zero-delay reconnects.
 				pauses.reset();
 			}
 			inbound = read.next() => {
@@ -545,7 +539,7 @@ mod tests {
 	}
 
 	/// A drop that happens while an earlier drop is still pending must ADD to the
-	/// pending count, not replace it. `count_drop(carried)` re-adds the `carried`
+	/// pending count, not replace it. `DropCounts::count(carried)` re-adds the `carried`
 	/// drops that had already been drained onto the envelope now being discarded -
 	/// without that, the first drop is silently swallowed and the wire reports one
 	/// loss where two happened.
@@ -556,16 +550,15 @@ mod tests {
 	///
 	/// Covers the BUDGET path only. Two sibling invariants remain uncovered, stated
 	/// here rather than left to be rediscovered:
-	///   - `writer_loop`'s reconnect re-add (`pending_dropped.fetch_add(shed + 1)`) is the same
-	///     invariant on the socket-death path. Reaching it needs a live socket killed while an
-	///     envelope carrying a shed count is in flight; mutating that `shed + 1` to `1` passes
-	///     today.
+	///   - `forward`'s reconnect re-add (`drops.count(shed)`) is the same invariant on the
+	///     socket-death path. Reaching it needs a live socket killed while an envelope carrying a
+	///     shed count is in flight; passing `0` instead of `shed` passes today.
 	///   - the byte budget's `>` boundary. Hitting exactly `MAX_QUEUE_BYTES` needs a frame sized
 	///     against base64 plus JSON overhead; `>` vs `>=` passes today.
 	///   - the ATOMICITY of the re-add. `emit` always swaps pending to 0 before calling
-	///     `count_drop`, so this test never observes a non-zero pending and `fetch_add` -> `store`
-	///     passes. `store` would clobber a concurrent re-add from `writer_loop`, which is the whole
-	///     reason it is `fetch_add`.
+	///     `DropCounts::count`, so this test never observes a non-zero pending and `fetch_add` ->
+	///     `store` passes. `store` would clobber a concurrent re-add from `forward`, which is the
+	///     whole reason it is `fetch_add`.
 
 	#[tokio::test]
 	async fn a_drop_while_one_is_pending_accumulates_rather_than_replaces() {
