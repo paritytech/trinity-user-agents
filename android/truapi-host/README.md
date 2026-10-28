@@ -64,8 +64,9 @@ configuration update in the embedding app's package upgrade.
 Product identities use `uniffi.truapi.ProductId`. Construct values with
 `ProductId.parse("browse.dot")` or `ProductId.fromName("browse", "dot")`.
 Both call Rust for validation and normalization and return `Result<ProductId>`.
-Invalid input produces a failure
-containing `ProductIdException`; callers choose recovery or propagation. Kotlin owns
+The instance methods `executable(kind)` and `owner()` also return
+`Result<ProductId>`. Invalid input produces a failure containing
+`ProductIdException`; callers choose recovery or propagation. Kotlin owns
 the resulting immutable string value; equality, hashing and display do not
 call Rust. Use `.value` at text or persistence boundaries. Android navigation
 uses an app-owned `Parceler<ProductId>` that restores values through `parse`.

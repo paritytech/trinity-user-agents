@@ -22,7 +22,7 @@ class HostPlacedProductsTest {
 
     private val hostPlacedProducts = HostPlacedProducts(context, tldProvider)
 
-    private val jollity = Product(ReservedProductIds.game(tld).getOrThrow(), "Jollity", icon = null)
+    private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
 
     // The Jollity leg of #562: a build has to carry the game's chat with no add, install or
     // discover step. A TLD persisted by a previous process costs no chain read, so the game's

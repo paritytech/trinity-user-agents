@@ -153,6 +153,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         kind: ExecutableKind,
     ): Result<ProductExecutable?> {
         val host = ProductManifest.hostOf(productId, kind)
+            .getOrElse { return Result.failure(it) }
 
         return dotNsResolver.getMetadataEntry(host.value, ProductManifest.EXECUTABLE_RECORD_KEY)
             .logFailure("Failed to read executable record for $host")

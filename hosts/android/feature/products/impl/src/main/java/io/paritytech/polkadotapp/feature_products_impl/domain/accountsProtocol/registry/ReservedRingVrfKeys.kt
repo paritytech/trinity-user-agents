@@ -35,18 +35,18 @@ class ReservedRingVrfKeys @Inject constructor(
     private val chainRegistry: ChainRegistry,
     private val dotNsTldProvider: DotNsTldProvider,
 ) {
-    suspend fun isReserved(handle: ProductAccountId): Result<Boolean> = runCancellableCatching {
-        handle.productId == personhoodId().getOrThrow() &&
+    suspend fun isReserved(handle: ProductAccountId): Boolean {
+        return handle.productId == personhoodId() &&
             (handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX)
     }
 
-    private suspend fun personhoodId(): Result<ProductId> {
+    private suspend fun personhoodId(): ProductId {
         return ReservedProductIds.personhood(dotNsTldProvider.getTldRetrying())
     }
 
-    /** Fails when the network's reserved identity or ring cannot be resolved. */
+    /** Fails when the reserved ring cannot be resolved. */
     suspend fun entriesOf(owner: ProductId): Result<List<ReservedRingVrfKeyEntry>> = runCancellableCatching {
-        if (owner != personhoodId().getOrThrow()) return@runCancellableCatching emptyList()
+        if (owner != personhoodId()) return@runCancellableCatching emptyList()
 
         val peopleChain = chainRegistry.peopleChain()
         val chainId = chainRegistry.knownChains.people

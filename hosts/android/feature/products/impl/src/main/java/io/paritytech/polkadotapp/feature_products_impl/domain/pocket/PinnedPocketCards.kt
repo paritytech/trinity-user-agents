@@ -46,7 +46,7 @@ class AssetPinnedPocketCards @Inject constructor(
     private class Definition(
         val cardId: String,
         @StringRes val titleRes: Int,
-        val backingProduct: (DotNsTld) -> Result<ProductId>,
+        val backingProduct: (DotNsTld) -> ProductId,
     )
 
     private val definitions = listOf(
@@ -77,13 +77,13 @@ class AssetPinnedPocketCards @Inject constructor(
     private fun Definition.backs(productId: ProductId): Boolean {
         val tld = DotNsTld.parse(productId.value.substringAfter('.', missingDelimiterValue = "")) ?: return false
 
-        return backingProduct(tld).getOrNull() == productId
+        return backingProduct(tld) == productId
     }
 
     private suspend fun load(): List<CachedPocketCard> {
         val tld = dotNsTldProvider.getTldRetrying()
 
-        return definitions.map { it.toCard(it.backingProduct(tld).getOrThrow()) }
+        return definitions.map { it.toCard(it.backingProduct(tld)) }
     }
 
     private fun Definition.toCard(backing: ProductId) = CachedPocketCard(

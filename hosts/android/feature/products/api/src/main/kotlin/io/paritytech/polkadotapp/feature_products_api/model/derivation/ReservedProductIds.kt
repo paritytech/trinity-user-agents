@@ -11,11 +11,11 @@ import uniffi.truapi.ProductId
  * network-specific product providers (individuality#1300).
  */
 object ReservedProductIds {
-    fun game(tld: DotNsTld): Result<ProductId> = ProductId.fromName("dim2", tld.value)
+    fun game(tld: DotNsTld): ProductId = ProductId.fromName("dim2", tld.value).getOrThrow()
 
-    fun funding(tld: DotNsTld): Result<ProductId> = ProductId.fromName("fund", tld.value)
+    fun funding(tld: DotNsTld): ProductId = ProductId.fromName("fund", tld.value).getOrThrow()
 
-    fun lightPersonIdentity(tld: DotNsTld): Result<ProductId> = ProductId.fromName("uid", tld.value)
+    fun lightPersonIdentity(tld: DotNsTld): ProductId = ProductId.fromName("uid", tld.value).getOrThrow()
 
-    fun personhood(tld: DotNsTld): Result<ProductId> = ProductId.fromName("peopl", tld.value)
+    fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
 }

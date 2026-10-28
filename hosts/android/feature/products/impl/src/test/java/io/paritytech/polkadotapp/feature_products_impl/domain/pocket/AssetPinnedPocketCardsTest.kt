@@ -48,7 +48,7 @@ class AssetPinnedPocketCardsTest {
         val cards = pinnedCards()
 
         assertEquals(1, cards.size)
-        assertEquals(ReservedProductIds.personhood(tld).getOrThrow(), cards.single().card.key.productId)
+        assertEquals(ReservedProductIds.personhood(tld), cards.single().card.key.productId)
         assertEquals("humanity", cards.single().card.key.cardId.value)
     }
 
@@ -81,13 +81,13 @@ class AssetPinnedPocketCardsTest {
         val cards = bundledImages()
 
         assertTrue(paths.isNotEmpty())
-        paths.forEach { assertTrue("not shipped: $it", cards.bundlesImage(ReservedProductIds.personhood(tld).getOrThrow(), it)) }
+        paths.forEach { assertTrue("not shipped: $it", cards.bundlesImage(ReservedProductIds.personhood(tld), it)) }
     }
 
     @Test
     fun `the app's images stay on the card's own product and its own folder`() {
         val cards = bundledImages()
-        val personhood = ReservedProductIds.personhood(tld).getOrThrow()
+        val personhood = ReservedProductIds.personhood(tld)
 
         assertFalse(cards.bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp"))
         listOf("pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp").forEach {
@@ -122,12 +122,12 @@ class AssetPinnedPocketCardsTest {
         whenever(assets.open("pocket/humanity.json")).thenReturn(bundledHumanityFace.inputStream())
         whenever(context.getString(anyInt())).thenReturn("Humanity")
         val neverAnswers: DotNsTldProvider = mock()
-        val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld).getOrThrow(), PocketCardId("humanity"))
+        val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
         val cards = AssetPinnedPocketCards(context, neverAnswers)
 
         assertEquals(pinnedKey, cards.pinned(pinnedKey)?.card?.key)
         assertNull(cards.pinned(PocketCardKey(ProductId.parse("game.testnet").getOrThrow(), PocketCardId("humanity"))))
-        assertNull(cards.pinned(PocketCardKey(ReservedProductIds.personhood(tld).getOrThrow(), PocketCardId("loyalty"))))
+        assertNull(cards.pinned(PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("loyalty"))))
     }
 }

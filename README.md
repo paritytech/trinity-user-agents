@@ -94,7 +94,8 @@ string without parsing or loading WASM. Rust validates IDs at the host boundary.
 Swift's `try ProductId("my-product.dot")` and Kotlin's
 `ProductId.parse("my-product.dot")` call Rust once. Kotlin also provides
 `ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
-so callers explicitly handle invalid input. Both platforms
+so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
+`owner()` methods expose their failures the same way. Both platforms
 own the resulting immutable values. Browser hosts can use their existing worker
 runtime's `parseProductId` method for the same validation and normalization.
 Native callers use Rust for product names, executable ownership and share-link parsing.
@@ -109,6 +110,8 @@ content loading on resolution errors or missing executables. Products without
 a manifest explicitly serve their app from the base name.
 Rust's reserved identity constructors return `ProductId` directly from the
 validated network suffix.
+The Android app's fixed reserved identities also return `ProductId` directly;
+an unsupported configured network is a bug and fails the internal unwrap.
 
 The transport retries iframe bootstrap until the host channel arrives and rejects unanswered
 requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` to override it.

@@ -14,14 +14,17 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExt
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.ProductId
+import uniffi.truapi.ProductIdException
 
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
-    private val jollity = Product(ReservedProductIds.game(tld).getOrThrow(), "Jollity", icon = null)
+    private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
     private val playground = Product(ProductId.parse("truapi-playground.paseo").getOrThrow(), "TrUAPI Playground", icon = null)
 
     private val integrationRepository: ProductIntegrationRepository = mockk()
@@ -47,7 +50,7 @@ class ProductExternalExtensionProviderTest {
     }
 
     @Test
-    fun `an unsupported reserved identity does not remove installed chat extensions`() = runTest {
+    fun `an unsupported configured network is not silently omitted from host chats`() {
         val context: Context = mockk(relaxed = true)
         val tldProvider: DotNsTldProvider = mockk {
             every { currentTldOrNull() } returns DotNsTld.parse("test")!!
@@ -59,9 +62,9 @@ class ProductExternalExtensionProviderTest {
         )
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
 
-        val extensions = provider.observeExtensions().first().map { it as ProductChatExtension }
-
-        assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
+        assertThrows(ProductIdException::class.java) {
+            runBlocking { provider.observeExtensions().first() }
+        }
     }
 
     // Unioned rather than written to the product tables, as Pocket does with its pinned card:

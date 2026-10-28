@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.parseProductLink
-import uniffi.truapi.productIdOwner
 import javax.inject.Inject
 
 /** Resolves the published executable archive, including explicit base-host apps without a manifest. */
@@ -20,7 +19,7 @@ class ProductServingHostResolver @Inject constructor(
     suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): Result<String> = runCancellableCatching {
         val tld = dotNsTldProvider.getTld().getOrThrow()
         val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@runCancellableCatching requestHost
-        val productId = productIdOwner(identifier)
+        val productId = identifier.owner().getOrThrow()
         if (identifier != productId) return@runCancellableCatching identifier.value
 
         val resolved = resolveProductUseCase.resolve(productId).getOrThrow()
