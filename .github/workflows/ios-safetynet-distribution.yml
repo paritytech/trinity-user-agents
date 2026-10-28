@@ -7,12 +7,10 @@ name: Safetynet Distribution
 # Configs/base.safetynet.xcconfig.
 #
 # This is the only workflow here that builds Safetynet: the leg in
-# ios-nightly-distribution.yml is held, because Safetynet ships from the app repository.
-# It deliberately does not reuse ios-build-distribute.yml: that workflow's security gate
-# fails any workflow_dispatch
-# not triggered by github-actions[bot], which is exactly the human-triggered case here.
-# The scope is correspondingly narrower — one variant, no release PR,
-# no release notification.
+# ios-nightly.yml is held, because Safetynet ships from the app repository.
+# It deliberately does not reuse ios-build-distribute.yml, which refuses the
+# Safetynet configuration for the same reason. The scope is correspondingly
+# narrower — one variant, no release PR, no release notification.
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.source_branch }}
@@ -51,20 +49,24 @@ jobs:
     # TestFlight build number the production record depends on.
     #
     # This workflow calls the distribute action directly rather than through
-    # ios-build-distribute.yml, so it does not inherit that workflow's
-    # github-actions[bot] check and nothing else would stop a hand-started run.
+    # ios-build-distribute.yml, so it does not inherit that workflow's check of
+    # who started the upload, and nothing else would stop a hand-started run.
     #
     # Removing this is part of the cutover, tracked on #764.
     if: false
     name: Build and distribute Safetynet
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     timeout-minutes: 120
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.source_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install

@@ -193,6 +193,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
+    }
+
     func authStateChanged(state: AuthState) {
         let details =
             switch state {
@@ -307,6 +311,17 @@ extension RemotePermission {
         case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
         case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
         case .balanceAccess: [.balanceAccess]
+        case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        }
+    }
+}
+
+extension NftPurseOwner {
+    /// The owning product, or `nil` for purses of the user's own account.
+    var productId: String? {
+        switch self {
+        case let .product(productId): productId
+        case .root: nil
         }
     }
 }

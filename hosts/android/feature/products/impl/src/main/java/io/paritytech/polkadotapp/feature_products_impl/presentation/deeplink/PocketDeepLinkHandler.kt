@@ -6,11 +6,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
-import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
@@ -18,7 +19,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollec
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
-import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isPocketTarget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplink
@@ -31,9 +31,8 @@ import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
- * `polkadotapp://<product>.<tld>/-/pocket/{add,open}?card=<id>`, and `/-/pocket` alone for the
- * collection. The first segment `-` is reserved for host-handled targets, so the product App handler
- * leaves these alone.
+ * `polkadotapp://pocket/{add,open}?product=<id>&card=<id>`, and `polkadotapp://pocket` alone for the collection, from a
+ * product's `navigateTo` or from outside the app alike.
  */
 internal class PocketDeepLinkHandler @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
@@ -43,44 +42,46 @@ internal class PocketDeepLinkHandler @Inject constructor(
     private val collection: PocketCollection,
     private val cardOpenRequests: PocketCardOpenRequests,
     private val gate: ProductDeepLinkGate,
+    private val accountRepository: AccountRepository,
     private val router: ProductsRouter,
     @param:ApplicationContext private val context: Context,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
+        if (!isPocketLink(data.scheme, data.host)) return false
+        val card = parser.parse(data.toString()) as? PocketDeeplink.Card ?: return true
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
-        if (!DotNsUtils.isDotDomain(data.asWebUri(), tld) || !data.isPocketTarget()) return false
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
         // reachable here as through any other dotNS link.
-        return gate.opens(ProductId.fromUrl(data.asWebUri(), tld).getOrNull())
+        return gate.opens(ProductId.fromString(card.productHost, tld).getOrNull())
     }
 
     /**
-     * The reserved target belongs to the host whether or not the link under it is well formed, so a
-     * malformed one is answered here rather than left to open the product's own page.
+     * A link to the Pocket belongs to the host whether or not it is well formed, so a malformed one
+     * is answered here rather than dropped.
      */
     private fun malformed(data: Uri): DeeplinkProcessingOutcome {
-        Timber.w("pocket: %s is under the reserved target but is not a Pocket link", data)
+        Timber.w("pocket: %s names the Pocket but is not a Pocket link the core reads", data)
 
         return DeeplinkProcessingOutcome.ShowMessage(context.getString(RCommon.string.pocket_deeplink_malformed))
     }
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
-        dotNsTldProvider.getTld().flatMap { tld ->
-            val normalized = DotNsUtils.normalize(data.asWebUri(), tld)
-                ?: return@flatMap Result.failure(IllegalArgumentException("Not a $tld domain: $data"))
-            val deeplink = parser.parse(normalized.toString()) ?: return@flatMap Result.success(malformed(data))
-
-            ProductId.fromString(deeplink.productHost, tld).flatMap { productId -> dispatch(productId, deeplink) }
+        when (val deeplink = parser.parse(data.toString())) {
+            null -> Result.success(malformed(data))
+            PocketDeeplink.Collection -> openCollection()
+            is PocketDeeplink.Card -> dotNsTldProvider.getTld()
+                .flatMap { tld -> ProductId.fromString(deeplink.productHost, tld) }
+                .flatMap { productId -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId))) }
         }
     }
 
-    private suspend fun dispatch(productId: ProductId, deeplink: PocketDeeplink): Result<DeeplinkProcessingOutcome> =
-        when (deeplink) {
-            is PocketDeeplink.Collection -> Result.success(DeeplinkProcessingOutcome.Navigate { router.openWalletTab() })
-            is PocketDeeplink.Card -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)))
-        }
+    private suspend fun openCollection(): Result<DeeplinkProcessingOutcome> = runCancellableCatching {
+        accountRepository.awaitAccountsInitialized()
+
+        DeeplinkProcessingOutcome.Navigate { router.openWalletTab() }
+    }
 
     private suspend fun dispatchCard(key: PocketCardKey): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }

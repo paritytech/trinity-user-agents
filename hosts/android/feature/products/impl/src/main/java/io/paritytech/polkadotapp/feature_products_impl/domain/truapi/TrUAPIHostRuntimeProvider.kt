@@ -5,9 +5,7 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
-import uniffi.truapi.ProductExecutionConfig
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
@@ -17,7 +15,9 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -41,15 +41,18 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import uniffi.truapi.AuthState
+import uniffi.truapi.ExtensionVersionMap
+import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
-import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -73,9 +76,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
+    private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val authTokenStore: EncryptedAuthTokenStore,
+    private val installations: CurrentInstallationProvider,
+    private val extensionVersions: TrUAPIExtensionVersions,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -122,8 +129,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts.
+        // window where the host lists no contacts or answers payments Unsupported.
         runtime.setContacts(contactsBridge)
+        paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         runtime.setAuthTokens(authTokenStore)
         observeContactRemovals(runtime)
@@ -132,6 +140,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             onClosed = runtime::notifyChainClosed,
         )
         observeAppLifecycle()
+        scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
     }
 
@@ -222,7 +231,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
+        override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
             val demand = when (transition) {
                 WorkerTransition.START -> WorkerDemand.START
                 WorkerTransition.STOP -> WorkerDemand.STOP
@@ -234,6 +243,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override fun durableWorkChanged(pending: Boolean) {
             if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
+
+        // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
+        override suspend fun currentInstallation(): ByteArray =
+            installations.awaitBackedUp().getOrThrow().value.value
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
@@ -260,6 +273,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             }
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
+
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
 
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 

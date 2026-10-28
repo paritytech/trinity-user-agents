@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.25.0"
+version = "0.27.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -88,10 +88,11 @@ wasm-signing-host = ["runtime"]
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime"]
+mock = ["runtime", "dep:strum"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
+strum = { workspace = true, optional = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
@@ -104,7 +105,7 @@ scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
 # wasm host perform, so these are not target-gated.
 frame-metadata = { workspace = true, features = ["std", "current", "decode"], optional = true }
-scale-info = { workspace = true, features = ["decode"], optional = true }
+scale-info = { workspace = true, features = ["decode", "derive"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
@@ -159,6 +160,7 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 
 [dev-dependencies]
 scale-info = { workspace = true, features = ["std"] }
+strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"
@@ -191,6 +193,8 @@ wasm-bindgen-test = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
 tempfile = { workspace = true }
+# Live chain tests reach a node over WebSocket.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 socket2 = { workspace = true }

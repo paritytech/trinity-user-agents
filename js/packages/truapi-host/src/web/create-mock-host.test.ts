@@ -416,7 +416,7 @@ describe("createMockHost control surface", () => {
     // deliberate limit.
     expect(
       () => (host.payment as unknown as { setBalance: unknown }).setBalance,
-    ).toThrow(/no host implements them/);
+    ).toThrow(/bridge cannot carry the payment platforms/);
     expect(
       () => (host.coinPayment as unknown as { transfer: unknown }).transfer,
     ).toThrow(/no host implements them/);

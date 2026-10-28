@@ -127,6 +127,22 @@ export type AuthState =
   | { tag: "Authenticating"; value?: undefined };
 
 /**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export interface ChainExtensionVersion {
+  /**
+   * Genesis hash of the chain.
+   */
+  genesisHash: Bytes32;
+
+  /**
+   * The pipeline's number in the chain's metadata.
+   */
+  extensionVersion: number;
+}
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -310,6 +326,17 @@ export type ExpandedCardFaceOutcome =
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
+
+/**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export interface ExtensionVersionMap {
+  /**
+   * One entry per V5 chain.
+   */
+  chains: Array<ChainExtensionVersion>;
+}
 
 /**
  * How the user left the funding overlay.
@@ -806,6 +833,18 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
+  (): S.Codec<ChainExtensionVersion> =>
+    S.Struct({
+      genesisHash: Bytes32,
+      extensionVersion: S.u8,
+    }) as S.Codec<ChainExtensionVersion>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -935,6 +974,17 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
+  (): S.Codec<ExtensionVersionMap> =>
+    S.Struct({
+      chains: S.Vector(ChainExtensionVersion),
+    }) as S.Codec<ExtensionVersionMap>,
 );
 
 /**
@@ -1331,7 +1381,11 @@ export interface AuthTokenPlatform {
  * the figure the host checks a payment against. Optional: a host that omits
  * it leaves balance subscriptions answered `Unsupported`.
  *
- * The core asks for the product's balance access before calling here.
+ * The balance is the user's, per purse, not the product's: every product
+ * following a purse sees the same figure. The core asks for the product's
+ * balance access before calling here, and checks it again before passing on
+ * each balance the stream emits, so a revoked grant ends the stream with
+ * `PermissionDenied`.
  */
 export interface BalancePlatform {
   /**
@@ -1637,6 +1691,18 @@ export interface ExpandedCardHost {
 }
 
 /**
+ * Which chains the host builds as V5 general transactions. The core builds
+ * its own extrinsics the same way, so both agree on every chain.
+ */
+export interface ExtrinsicVersionHost {
+  /**
+   * The chains the host builds as V5, each with its pipeline. A host that
+   * never builds V5 lists none.
+   */
+  transactionExtensionVersions?(): Promise<ExtensionVersionMap>;
+}
+
+/**
  * Feature-support probing. The host answers whether it can service a given
  * capability (currently scoped to per-chain support).
  */
@@ -1906,7 +1972,8 @@ export interface PocketPlatform {
  */
 export interface PreimageHost {
   /**
-   * Emits current value/miss immediately, then future updates.
+   * Emits current value/miss immediately, then future updates. `key` is
+   * the blake2b-256 digest of the preimage.
    */
   lookupPreimage(
     key: Uint8Array,
@@ -2087,6 +2154,7 @@ export interface HostCallbacks {
   notifications: Notifications;
   permissions: Permissions;
   features: Features;
+  extrinsicVersion: ExtrinsicVersionHost;
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
@@ -2109,6 +2177,7 @@ export interface RequiredHostCallbacks {
   notifications: Required<Notifications>;
   permissions: Required<Permissions>;
   features: Required<Features>;
+  extrinsicVersion: Required<ExtrinsicVersionHost>;
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;

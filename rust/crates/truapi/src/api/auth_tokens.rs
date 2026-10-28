@@ -19,7 +19,7 @@ use crate::{
 /// own tokens, and the host drops them all when the user signs out. A product
 /// without a session is answered `Denied`, and a host that cannot keep tokens
 /// `Unsupported`.
-#[wire_trait(id = 26)]
+#[wire_trait(id = 27)]
 #[crate::async_trait]
 pub trait AuthTokens: Send + Sync {
 	/// Keep a token for one of the product's services, replacing any already

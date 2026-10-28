@@ -155,8 +155,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// per chain role. Invoked on the dispatcher thread; must return promptly.
     func supportedChains() throws -> HostChainSet
 
-    /// Observe demand on a product's worker crossing zero. `.start` means run
-    /// the worker now, `.stop` that nothing wants it any more. Every
+    /// The chains this host builds as V5 general transactions, each with its
+    /// transaction extension pipeline; every other chain is built as V4. The
+    /// core builds its own extrinsics the same way. Defaults to none.
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap
+
+    /// Request a product worker transition. `.start` means run the worker now;
+    /// `.stop` means it is no longer needed and may stop. Every
     /// transition arrives here in ledger order, the ones the app asks for by
     /// taking a reference of its own included.
     ///
@@ -169,7 +174,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
-    func workerDemandChanged(productId: String, transition: WorkerTransition)
+    func requestWorkerTransition(productId: String, transition: WorkerTransition)
 
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
@@ -195,10 +200,16 @@ public protocol HostBridge: AnyObject, Sendable {
     /// While `pending` is true, keep a background task running that awaits
     /// ``TrUAPIHostRuntime/runDurableRecovery()``; false means nothing needs
     /// it. Reported on change, starting with the state the runtime finds at
-    /// launch. Runtime-wide, like `workerDemandChanged`, and arrives on a
+    /// launch. Runtime-wide, like `requestWorkerTransition`, and arrives on a
     /// core thread: hand it off rather than blocking. Defaults to a no-op
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
+
+    /// The 32-byte id of the current app installation, created on first use.
+    /// NFT purse item keys are derived under it, so it must be the id the
+    /// host registers for recovery. Runtime-wide, like `durableWorkChanged`.
+    /// Defaults to a rejection for a host that keeps no installation id.
+    func currentInstallation() async throws -> Data
 
     /// Scoped key-value storage for the Rust core.
     var storage: HostStorageBackend { get }
@@ -442,9 +453,15 @@ public extension HostBridge {
         )
     }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        ExtensionVersionMap(chains: [])
+    }
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func currentInstallation() async throws -> Data {
+        throw HostRejection.Rejected(reason: "this host keeps no installation id")
+    }
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
     func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
@@ -737,8 +754,8 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {
-        bridge.workerDemandChanged(productId: productId, transition: transition)
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+        bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
 
     func devicePaired(device: PairedSsoPeer) {
@@ -747,6 +764,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func durableWorkChanged(pending: Bool) {
         bridge.durableWorkChanged(pending: pending)
+    }
+
+    func currentInstallation() async throws -> Data {
+        try await withHostRejection {
+            try await bridge.currentInstallation()
+        }
     }
 
     func navigateTo(url: String) async throws {
@@ -884,6 +907,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func supportedChains() throws -> HostChainSet {
         try withHostRejection {
             try bridge.supportedChains()
+        }
+    }
+
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try await withHostRejection {
+            try await bridge.transactionExtensionVersions()
         }
     }
 
@@ -1046,8 +1075,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s top-up `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) {
-        inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
+        try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's payment engine. Set-once; answers whether this call
@@ -1062,8 +1091,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s payment `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) {
-        inner.notifyPaymentStatus(productId: productId, id: id, status: status)
+    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
+        try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's balance view. Set-once; answers whether this call
@@ -1120,7 +1149,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Take one reference on the product's worker for a modality holder that
     /// is on screen or in flight. The first one reports `.start` to
-    /// ``HostBridge/workerDemandChanged(productId:transition:)``, which is
+    /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
     /// where the host starts the worker. Pair every call with one
     /// ``releaseWorker(productId:)``.
     public func acquireWorker(productId: String) {

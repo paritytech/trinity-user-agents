@@ -60,10 +60,51 @@ struct TrUAPIWorkerManagerTests {
         try await execution(of: "game.paseo", in: manager)
         let running = try #require(builder.executions["game.paseo"])
         manager.demandChanged(productId: "game.paseo", transition: .stop)
-        try await withTimeout(.seconds(5)) { await running.awaitClose() }
+        try await withTimeout(.hangGuard) { await running.awaitClose() }
 
         #expect(running.closeCallCount == 1)
         #expect(running.stopWsBridgeCallCount == 1)
+    }
+
+    /// iOS kills a worker's content process while the app is in the background,
+    /// and the script dies with it. The core keeps counting the references that
+    /// wanted the worker, so it never sends another start: unless the manager
+    /// boots a fresh worker itself, chat and Pocket faces for the product stay
+    /// dead until the app restarts.
+    @Test
+    func bootsAFreshWorkerWhenItsEngineDies() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        let dead = try #require(builder.executions["game.paseo"])
+        try #require(builder.engines["game.paseo"]).terminate()
+        try await withTimeout(.hangGuard) { await dead.awaitClose() }
+        let rebooted = try await execution(of: "game.paseo", in: manager)
+
+        #expect(rebooted !== dead)
+        #expect(builder.built == ["game.paseo", "game.paseo"])
+    }
+
+    /// An engine of a worker that was already stopped can still die afterwards.
+    /// Rebooting it would run a worker nobody holds a reference to, and the core
+    /// would never send the stop that clears it.
+    @Test
+    func doesNotRebootAWorkerThatWasStopped() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        let engine = try #require(builder.engines["game.paseo"])
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
+        try await noExecution(of: "game.paseo", in: manager)
+        engine.terminate()
+        try await barrier(manager)
+
+        #expect(builder.built == ["game.paseo", "barrier.paseo"])
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
     }
 
     /// A worker whose engine fails once it is already in the running map must
@@ -183,7 +224,7 @@ struct TrUAPIWorkerManagerTests {
         manager.demandChanged(productId: "game.paseo", transition: .stop)
         try await barrier(manager)
         await builder.clock.resumeSleep(for: .milliseconds(80))
-        try await withTimeout(.seconds(5)) { await booting.awaitClose() }
+        try await withTimeout(.hangGuard) { await booting.awaitClose() }
 
         #expect(manager.currentExecution(of: "game.paseo") == nil)
         #expect(booting.closeCallCount == 1)
@@ -269,7 +310,7 @@ struct TrUAPIWorkerManagerTests {
         try await collection.add(streak, face: .nil)
         // The add can land before the bridge starts republishing, in which case
         // the opening list already holds it and no second list is sent.
-        let told = try await withTimeout(.seconds(5)) { () async -> [String] in
+        let told = try await withTimeout(.hangGuard) { () async -> [String] in
             while let cards = await running.awaitPocketCardNotification() {
                 let ids = cards.map(\.cardId)
                 if ids.contains("streak") { return ids.sorted() }
@@ -302,7 +343,7 @@ private func execution(
     of productId: ProductId,
     in manager: TrUAPIWorkerManager
 ) async throws -> TrUAPIProductExecutionProtocol {
-    try await withTimeout(.seconds(5)) {
+    try await withTimeout(.hangGuard) {
         for try await execution in manager.executions(of: productId) {
             if let execution { return execution }
         }
@@ -313,7 +354,7 @@ private func execution(
 /// Waits for the product's worker to be cleared, failing rather than hanging if it never is.
 private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManager) async throws {
     struct StreamEnded: Error {}
-    try await withTimeout(.seconds(5)) {
+    try await withTimeout(.hangGuard) {
         for try await execution in manager.executions(of: productId) where execution == nil {
             return
         }

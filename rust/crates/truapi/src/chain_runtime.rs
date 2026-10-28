@@ -33,7 +33,7 @@ use std::{
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-use crate::platform::JsonRpcConnection;
+use crate::platform::{ChainProvider, JsonRpcConnection};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -74,7 +74,14 @@ use truapi::v01::{
 
 use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
 
+mod runtime_call_cache;
+mod runtime_call_client;
+
+use runtime_call_cache::RuntimeCallCache;
+use runtime_call_client::RuntimeCallClient;
+
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
+const CONNECT_METHOD: &str = "remote_chain_connect";
 /// Method tag for failures building or using the legacy Subxt client.
 const LEGACY_CONNECTION: &str = "legacy_connection";
 
@@ -156,6 +163,9 @@ pub struct LegacyConnection {
 	pub backend: Arc<LegacyBackend<SubstrateConfig>>,
 	/// Legacy methods the backend does not expose, such as the best block hash.
 	pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
+	/// Raw JSON-RPC client, for legacy subscriptions neither of the above
+	/// offers, such as `state_subscribeStorage`.
+	pub raw_rpc_client: RpcClient,
 }
 
 /// Classification of framework-level chain failures separate from JSON-RPC
@@ -222,13 +232,10 @@ impl RuntimeFailure {
 	}
 
 	/// Re-tag this failure under `method`, preserving its kind and nesting
-	/// the original reason (when one exists) for diagnostics.
+	/// the original method and reason so the caller still sees where it
+	/// failed.
 	fn reclassify(&self, method: &'static str) -> RuntimeFailure {
-		RuntimeFailure {
-			kind: self.kind,
-			method,
-			reason: self.reason.as_ref().map(|_| self.reason()),
-		}
+		RuntimeFailure { kind: self.kind, method, reason: Some(self.reason()) }
 	}
 }
 
@@ -242,6 +249,37 @@ pub trait RuntimeChainProvider: Send + Sync {
 		&self,
 		genesis_hash: Vec<u8>,
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
+}
+
+/// Adapter from a host's [`ChainProvider`] into the [`RuntimeChainProvider`]
+/// surface the chain runtime expects.
+pub struct HostChainProvider {
+	provider: Arc<dyn ChainProvider>,
+}
+
+impl HostChainProvider {
+	/// Opens connections through `provider`.
+	pub fn new(provider: Arc<dyn ChainProvider>) -> Self {
+		Self { provider }
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeChainProvider for HostChainProvider {
+	async fn connect(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+		let genesis_hash: [u8; 32] = genesis_hash.try_into().map_err(|genesis_hash: Vec<u8>| {
+			RuntimeFailure::host_failure(
+				"remote_chain_connect",
+				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
+			)
+		})?;
+		self.provider.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
+			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
+		})
+	}
 }
 
 /// Which caller a chain connection belongs to.
@@ -302,6 +340,9 @@ pub struct ChainRuntime {
 	/// Mints the sequence above. One counter for every scope, so no two
 	/// callers can be handed the same operation id.
 	next_transaction_operation_id: Arc<AtomicU64>,
+	/// Runtime call outputs every connection shares, so the products and the
+	/// core download the runtime metadata of a chain once between them.
+	runtime_calls: RuntimeCallCache,
 }
 
 #[derive(Clone)]
@@ -344,6 +385,7 @@ impl ChainRuntime {
 			follow_intents: Arc::new(Mutex::new(HashMap::new())),
 			transaction_operations: Arc::new(Mutex::new(HashMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
+			runtime_calls: RuntimeCallCache::default(),
 		}
 	}
 
@@ -884,8 +926,7 @@ impl ChainRuntime {
 		let key = self.connection_key(genesis_hash);
 		let setup = {
 			let mut scopes = self.connections.lock().unwrap();
-			let connections =
-				scopes.get_mut(&self.scope).ok_or_else(|| RuntimeFailure::unavailable(method))?;
+			let connections = scopes.get_mut(&self.scope).ok_or_else(|| scope_released(method))?;
 			match connections.get(&key) {
 				Some(ConnectionEntry::Ready(connection)) if !connection.is_closed() => {
 					return Ok(connection.clone());
@@ -898,27 +939,25 @@ impl ChainRuntime {
 					let scope = self.scope;
 					let setup_key = key.clone();
 					let genesis_hash = genesis_hash.to_owned();
+					let runtime_calls = self.runtime_calls.clone();
 					let identity = Arc::new(());
 					let setup_identity = identity.clone();
 					let setup: ConnectionSetup = async move {
-						let result = provider
-							.connect(genesis_hash.clone())
-							.await
-							.map(|rpc| ChainConnection::new(rpc, spawner, genesis_hash));
-						let registry = registry
-							.upgrade()
-							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let result = provider.connect(genesis_hash.clone()).await.map(|rpc| {
+							ChainConnection::new(rpc, spawner, genesis_hash, runtime_calls)
+						});
+						let registry =
+							registry.upgrade().ok_or_else(|| scope_released(CONNECT_METHOD))?;
 						let mut scopes = registry.lock().unwrap();
-						let connections = scopes
-							.get_mut(&scope)
-							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let connections =
+							scopes.get_mut(&scope).ok_or_else(|| scope_released(CONNECT_METHOD))?;
 						let Some(ConnectionEntry::Connecting { identity, .. }) =
 							connections.get(&setup_key)
 						else {
-							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+							return Err(connection_superseded());
 						};
 						if !Arc::ptr_eq(identity, &setup_identity) {
-							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+							return Err(connection_superseded());
 						}
 						match &result {
 							Ok(connection) => {
@@ -954,11 +993,11 @@ impl ChainRuntime {
 		cancelled: Arc<AtomicBool>,
 	) -> Result<(), RuntimeFailure> {
 		if cancelled.load(Ordering::SeqCst) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		let connection = self.connection_for(FOLLOW_METHOD, &request.genesis_hash).await?;
 		if cancelled.load(Ordering::SeqCst) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		// Record this subscriber's sender before kicking off (or joining) the
 		// single-flight setup so events route to it regardless of which caller
@@ -971,7 +1010,7 @@ impl ChainRuntime {
 		);
 		if connection.follow_cancelled_or_missing(&local_follow_id) {
 			connection.unfollow(&local_follow_id);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		connection.ensure_remote_follow(local_follow_id, request.with_runtime).await?;
 		Ok(())
@@ -1119,10 +1158,14 @@ impl ConnectionEntry {
 }
 
 struct ChainConnection {
-	/// This connection's handle on the host's socket. Both this and the clone
-	/// inside `methods` count, so the socket closes once every holder is gone.
+	/// The handle of this connection on the host socket. Every clone of it
+	/// counts, including the ones inside `runtime_call_client` and `methods`,
+	/// so the socket closes once every holder is gone.
 	rpc_client: HostRpcClient,
-	/// Typed `chainHead_v1` calls over the same client.
+	/// The same client, with the runtime calls every connection to the chain
+	/// makes alike answered from the shared cache.
+	runtime_call_client: RuntimeCallClient,
+	/// Typed `chainHead_v1` calls over `runtime_call_client`.
 	methods: ChainHeadRpcMethods<TruapiRpcConfig>,
 	spawner: Spawner,
 	/// Host-configured genesis hash this connection was opened for; pins the
@@ -1147,11 +1190,19 @@ struct ChainConnection {
 }
 
 impl ChainConnection {
-	fn new(rpc: Arc<dyn JsonRpcConnection>, spawner: Spawner, genesis_hash: Vec<u8>) -> Arc<Self> {
+	fn new(
+		rpc: Arc<dyn JsonRpcConnection>,
+		spawner: Spawner,
+		genesis_hash: Vec<u8>,
+		runtime_calls: RuntimeCallCache,
+	) -> Arc<Self> {
 		let rpc_client = HostRpcClient::new(rpc, spawner.clone());
-		let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc_client.clone()));
+		let runtime_call_client =
+			RuntimeCallClient::new(rpc_client.clone(), genesis_hash.clone(), runtime_calls);
+		let methods = ChainHeadRpcMethods::new(RpcClient::new(runtime_call_client.clone()));
 		Arc::new(Self {
 			rpc_client,
+			runtime_call_client,
 			methods,
 			spawner,
 			genesis_hash,
@@ -1216,8 +1267,10 @@ impl ChainConnection {
 	) -> Result<SubxtConnection, RuntimeFailure> {
 		const METHOD: &str = "subxt_connection";
 		let config = self.chain_config(METHOD)?;
+		// Subxt waits only for a call to finish, never retrying an inaccessible
+		// one, so it must not wait on a download another caller may give up.
 		let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
-			.build(RpcClient::new(self.rpc_client.clone()));
+			.build(RpcClient::new(self.runtime_call_client.without_waiting()));
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
@@ -1278,7 +1331,8 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
-		let built = LegacyConnection { client, backend, methods: LegacyRpcMethods::new(rpc) };
+		let methods = LegacyRpcMethods::new(rpc.clone());
+		let built = LegacyConnection { client, backend, methods, raw_rpc_client: rpc };
 		Ok(self.legacy_connection.lock().unwrap().get_or_insert(built).clone())
 	}
 
@@ -1388,7 +1442,7 @@ impl ChainConnection {
 		with_runtime: bool,
 	) -> Result<String, RuntimeFailure> {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
 			return Ok(remote_follow_id);
@@ -1456,7 +1510,7 @@ impl ChainConnection {
 	) -> Result<String, RuntimeFailure> {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
 			self.remove_follow(&local_follow_id);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		let mut follow = self.methods.chainhead_v1_follow(with_runtime).await.map_err(|err| {
 			self.remove_follow(&local_follow_id);
@@ -1472,7 +1526,7 @@ impl ChainConnection {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
 			self.remove_follow(&local_follow_id);
 			drop(follow);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 
 		let (abort, abort_registration) = AbortHandle::new_pair();
@@ -1505,7 +1559,7 @@ impl ChainConnection {
 		};
 
 		if !self.attach_remote_follow(&local_follow_id, remote_follow_id.clone(), abort) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 
 		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
@@ -1807,10 +1861,22 @@ fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
 	reason.contains("Invalid operation id") && reason.contains("-32602")
 }
 
+fn scope_released(method: &'static str) -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(method, "chain connections were released")
+}
+
+fn connection_superseded() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, "connection setup was superseded")
+}
+
+fn follow_closed() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(FOLLOW_METHOD, "follow subscription was closed")
+}
+
 fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
-			RuntimeFailure::unavailable(method)
+			RuntimeFailure::unavailable_with_reason(method, error.to_string())
 		},
 		error => RuntimeFailure::host_failure(method, error.to_string()),
 	}
@@ -2020,6 +2086,7 @@ mod tests {
 	use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
 	use async_trait::async_trait;
 	use futures::stream;
+	use parity_scale_codec::Encode;
 	use parking_lot::{Condvar, Mutex as ParkingMutex};
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -3191,7 +3258,7 @@ mod tests {
 
 		assert_eq!(
 			(completed, connections_empty, follow.next().now_or_never()),
-			(Some(()), true, Some(Some(Err(RuntimeFailure::unavailable(FOLLOW_METHOD)))),),
+			(Some(()), true, Some(Some(Err(scope_released(FOLLOW_METHOD)))),),
 			"closing the product must reject follow setup queued before teardown",
 		);
 	}
@@ -3228,7 +3295,11 @@ mod tests {
 			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
 		assert_eq!(
 			(failed, retried, provider.inner.connect_calls.load(Ordering::SeqCst)),
-			(Err(RuntimeFailure::unavailable("retry")), Ok(()), 1),
+			(
+				Err(RuntimeFailure::unavailable_with_reason("retry", "remote_chain_connect")),
+				Ok(()),
+				1
+			),
 		);
 	}
 
@@ -3274,6 +3345,70 @@ mod tests {
 		};
 		assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
 		assert!(err.reason().contains("method not found"), "unexpected reason: {}", err.reason());
+	}
+
+	/// A product only sees the reason string, so a transport that closes under
+	/// a chain-head call must say so instead of naming just the method.
+	#[test]
+	fn a_closed_transport_names_its_cause_on_the_call_and_the_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let mut follow = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+		notification_sender(&provider)
+			.unbounded_send(
+				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
+					.to_string(),
+			)
+			.unwrap();
+		assert!(matches!(
+			futures::executor::block_on(follow.next()),
+			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+		));
+		let storage_runtime = runtime.clone();
+		let storage = std::thread::spawn(move || {
+			futures::executor::block_on(storage_runtime.remote_chain_head_storage(
+				RemoteChainHeadStorageRequest {
+					genesis_hash: vec![0u8; 32],
+					follow_subscription_id: "local-follow".to_string(),
+					hash: vec![1u8; 32],
+					items: vec![StorageQueryItem {
+						key: vec![0xaa],
+						query_type: StorageQueryType::Value,
+					}],
+					child_trie: None,
+				},
+			))
+		});
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_storage"))
+		});
+
+		provider.sender.lock().unwrap().take();
+
+		let cause = "RPC error: client error: json-rpc connection closed: RPC error: client error: json-rpc response stream ended";
+		let storage_failure =
+			storage.join().unwrap().map(|_| ()).map_err(|failure| failure.reason());
+		let follow_failures: Vec<String> = futures::executor::block_on(
+			follow.filter_map(|item| core::future::ready(item.err())).collect::<Vec<_>>(),
+		)
+		.into_iter()
+		.map(|failure| failure.reason())
+		.collect();
+		assert_eq!(
+			(storage_failure, follow_failures),
+			(
+				Err(format!("remote_chain_head_storage: {cause}")),
+				vec![format!("remote_chain_head_follow: {cause}")]
+			),
+		);
 	}
 
 	#[test]
@@ -3476,5 +3611,826 @@ mod tests {
 			},
 			other => panic!("expected Valid, got {other:?}"),
 		}
+	}
+
+	/// The block every scripted follow reports as finalized.
+	const RUNTIME_BLOCK: [u8; 32] = [0x11; 32];
+	/// A later block that runs the same code as `RUNTIME_BLOCK`.
+	const LATER_BLOCK: [u8; 32] = [0x22; 32];
+	/// A block after a runtime upgrade.
+	const UPGRADED_BLOCK: [u8; 32] = [0x33; 32];
+	const SHARED_GENESIS: [u8; 32] = [0xab; 32];
+
+	/// The hash of the runtime code at `block` on a chain upgraded at
+	/// `UPGRADED_BLOCK`.
+	fn code_hash_with_upgrade(block: &[u8]) -> Option<[u8; 32]> {
+		Some(if block == UPGRADED_BLOCK { [0xc2; 32] } else { [0xc1; 32] })
+	}
+
+	fn follow_event(result: Value) -> String {
+		follow_event_on("REMOTE-FOLLOW", result)
+	}
+
+	fn follow_event_on(subscription: &str, result: Value) -> String {
+		serde_json::json!({
+			"jsonrpc": "2.0",
+			"method": "chainHead_v1_followEvent",
+			"params": {"subscription": subscription, "result": result},
+		})
+		.to_string()
+	}
+
+	fn call_done_event(operation_id: &str) -> String {
+		follow_event(serde_json::json!({
+			"event": "operationCallDone",
+			"operationId": operation_id,
+			"output": "0x0102",
+		}))
+	}
+
+	/// A node whose follows start at `RUNTIME_BLOCK`, whose blocks follow
+	/// [`code_hash_with_upgrade`], and whose calls start as `call-<n>`. With
+	/// `answer_calls` each call is reported done right after it starts.
+	fn runtime_call_node(answer_calls: bool) -> Arc<ScriptedProvider> {
+		runtime_call_node_with(answer_calls, code_hash_with_upgrade)
+	}
+
+	/// As [`runtime_call_node`], with `code_hash` giving the hash of the runtime
+	/// code at each block, or none when the node cannot tell.
+	fn runtime_call_node_with(
+		answer_calls: bool,
+		code_hash: fn(&[u8]) -> Option<[u8; 32]>,
+	) -> Arc<ScriptedProvider> {
+		Arc::new(ScriptedProvider::with_frames(runtime_call_frames(answer_calls, code_hash)))
+	}
+
+	/// As [`runtime_call_node`] reporting every call done, except that the
+	/// first request for each method in `unanswered` gets no reply, so the test
+	/// can answer it later.
+	fn runtime_call_node_withholding(unanswered: &[&'static str]) -> Arc<ScriptedProvider> {
+		let answer = runtime_call_frames(true, code_hash_with_upgrade);
+		let unanswered = Mutex::new(unanswered.to_vec());
+		Arc::new(ScriptedProvider::with_frames(move |request| {
+			let mut unanswered = unanswered.lock().unwrap();
+			match unanswered.iter().position(|method| request.contains(method)) {
+				Some(first) => {
+					unanswered.remove(first);
+					Vec::new()
+				},
+				None => answer(request),
+			}
+		}))
+	}
+
+	/// The frames the node of [`runtime_call_node_with`] answers a request with.
+	fn runtime_call_frames(
+		answer_calls: bool,
+		code_hash: fn(&[u8]) -> Option<[u8; 32]>,
+	) -> impl Fn(&str) -> Vec<String> + Send + Sync + 'static {
+		let calls = Arc::new(AtomicUsize::new(0));
+		move |request| {
+			let id = extract_id(request).unwrap();
+			let request: Value = serde_json::from_str(request).unwrap();
+			match request["method"].as_str() {
+				Some("chainHead_v1_follow") => {
+					vec![
+						format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#),
+						follow_event(serde_json::json!({
+							"event": "initialized",
+							"finalizedBlockHashes": [format!("0x{}", hex::encode(RUNTIME_BLOCK))],
+							"finalizedBlockRuntime": {"type": "valid", "spec": {
+								"specName": "people",
+								"implName": "people",
+								"specVersion": 1,
+								"implVersion": 1,
+								"transactionVersion": 1,
+								"apis": {},
+							}},
+						})),
+					]
+				},
+				Some("chainHead_v1_call") => {
+					let operation_id = format!("call-{}", calls.fetch_add(1, Ordering::SeqCst) + 1);
+					let started = format!(
+						r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"result":"started","operationId":"{operation_id}"}}}}"#
+					);
+					let mut frames = vec![started];
+					if answer_calls {
+						frames.push(call_done_event(&operation_id));
+					}
+					frames
+				},
+				Some("chainHead_v1_stopOperation") => {
+					vec![format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":null}}"#)]
+				},
+				Some("state_getStorageHash") => {
+					let block = request["params"][1].as_str().unwrap().trim_start_matches("0x");
+					let result = match code_hash(&hex::decode(block).unwrap()) {
+						Some(hash) => format!(r#""0x{}""#, hex::encode(hash)),
+						None => "null".to_string(),
+					};
+					vec![format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":{result}}}"#)]
+				},
+				_ => Vec::new(),
+			}
+		}
+	}
+
+	type FollowItems = BoxStream<'static, Result<RemoteChainHeadFollowItem, RuntimeFailure>>;
+
+	/// The next item of `follow` that `pick` accepts, if one arrives within
+	/// `within`.
+	fn next_matching(
+		follow: &mut FollowItems,
+		within: Duration,
+		pick: impl Fn(&RemoteChainHeadFollowItem) -> bool,
+	) -> Option<RemoteChainHeadFollowItem> {
+		futures::executor::block_on(async {
+			let deadline = futures_timer::Delay::new(within).fuse();
+			pin_mut!(deadline);
+			loop {
+				let next = follow.next().fuse();
+				pin_mut!(next);
+				futures::select! {
+					item = next => match item {
+						Some(Ok(item)) if pick(&item) => return Some(item),
+						Some(_) => {},
+						None => return None,
+					},
+					() = deadline => return None,
+				}
+			}
+		})
+	}
+
+	fn is_call_end(item: &RemoteChainHeadFollowItem) -> bool {
+		matches!(
+			item,
+			RemoteChainHeadFollowItem::OperationCallDone { .. } |
+				RemoteChainHeadFollowItem::OperationInaccessible { .. }
+		)
+	}
+
+	/// A product scope following the shared chain, once its follow has started.
+	/// Products follow one after another, so the first owns the first
+	/// connection the node opened.
+	fn following_product(core: &ChainRuntime, instance: u64) -> (ChainRuntime, FollowItems) {
+		let product = core.for_product(instance);
+		let mut follow = product.remote_chain_head_follow(
+			format!("c{instance}:follow"),
+			RemoteChainHeadFollowRequest {
+				genesis_hash: SHARED_GENESIS.to_vec(),
+				with_runtime: true,
+			},
+		);
+		next_matching(&mut follow, Duration::from_secs(5), |item| {
+			matches!(item, RemoteChainHeadFollowItem::Initialized { .. })
+		})
+		.expect("the follow starts");
+		(product, follow)
+	}
+
+	fn call(product: &ChainRuntime, instance: u64, function: &str, block: [u8; 32]) -> String {
+		call_with(product, instance, function, block, vec![15, 0, 0, 0])
+	}
+
+	fn call_with(
+		product: &ChainRuntime,
+		instance: u64,
+		function: &str,
+		block: [u8; 32],
+		call_parameters: Vec<u8>,
+	) -> String {
+		let response = futures::executor::block_on(product.remote_chain_head_call(call_request(
+			instance,
+			function,
+			block,
+			call_parameters,
+		)))
+		.expect("the call starts");
+		match response.operation {
+			OperationStartedResult::Started { operation_id } => operation_id,
+			OperationStartedResult::LimitReached => panic!("the call was refused"),
+		}
+	}
+
+	fn call_request(
+		instance: u64,
+		function: &str,
+		block: [u8; 32],
+		call_parameters: Vec<u8>,
+	) -> RemoteChainHeadCallRequest {
+		RemoteChainHeadCallRequest {
+			genesis_hash: SHARED_GENESIS.to_vec(),
+			follow_subscription_id: format!("c{instance}:follow"),
+			hash: block.to_vec(),
+			function: function.to_string(),
+			call_parameters,
+		}
+	}
+
+	fn output_of(follow: &mut FollowItems) -> Option<RemoteChainHeadFollowItem> {
+		next_matching(follow, Duration::from_secs(5), is_call_end)
+	}
+
+	fn call_done(operation_id: &str) -> Option<RemoteChainHeadFollowItem> {
+		Some(RemoteChainHeadFollowItem::OperationCallDone {
+			operation_id: operation_id.to_string(),
+			output: vec![1, 2],
+		})
+	}
+
+	fn node_requests(provider: &ScriptedProvider, method: &str) -> usize {
+		provider
+			.sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains(method))
+			.count()
+	}
+
+	/// The id of the first request for `method`, once the node has it.
+	fn request_sent(provider: &ScriptedProvider, method: &str) -> String {
+		wait_for_sent(provider, |sent| sent.iter().any(|request| request.contains(method)))
+			.iter()
+			.find(|request| request.contains(method))
+			.and_then(|request| extract_id(request))
+			.expect("the request reaches the node")
+	}
+
+	/// Every product runtime holds its own connection, and each asks for the
+	/// metadata when it starts. One download serves them all, and a product that
+	/// asks once it has landed is answered from memory.
+	#[test]
+	fn products_share_one_metadata_download() {
+		let provider = runtime_call_node(true);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		let (third, mut third_follow) = following_product(&core, 3);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let first_output = output_of(&mut first_follow);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_output = output_of(&mut second_follow);
+		let third_operation = call(&third, 3, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let third_output = output_of(&mut third_follow);
+
+		assert_eq!(
+			(
+				first_output,
+				second_output,
+				third_output,
+				node_requests(&provider, "chainHead_v1_call")
+			),
+			(
+				call_done(&first_operation),
+				call_done(&second_operation),
+				call_done(&third_operation),
+				1
+			)
+		);
+	}
+
+	/// A product that asks while the download is still on its way waits for it
+	/// instead of starting a second one over the same slow link.
+	#[test]
+	fn a_caller_during_the_download_waits_for_it() {
+		let provider = runtime_call_node(false);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		notification_sender(&provider)
+			.unbounded_send(call_done_event(&first_operation))
+			.unwrap();
+
+		assert_eq!(
+			(
+				output_of(&mut first_follow),
+				output_of(&mut second_follow),
+				node_requests(&provider, "chainHead_v1_call")
+			),
+			(call_done(&first_operation), call_done(&second_operation), 1)
+		);
+	}
+
+	/// A runtime call that reads state can answer differently at every block,
+	/// so each product still asks the node.
+	#[test]
+	fn a_call_that_reads_state_is_never_shared() {
+		let provider = runtime_call_node(true);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "AccountNonceApi_account_nonce", RUNTIME_BLOCK);
+		let first_output = output_of(&mut first_follow);
+		let second_operation = call(&second, 2, "AccountNonceApi_account_nonce", RUNTIME_BLOCK);
+		let second_output = output_of(&mut second_follow);
+
+		assert_eq!(
+			(first_output, second_output, node_requests(&provider, "chainHead_v1_call")),
+			(call_done(&first_operation), call_done(&second_operation), 2)
+		);
+	}
+
+	/// A chain-head client asks for the metadata at the first block its follow
+	/// reports, so products that started at different blocks of one runtime
+	/// still share the download.
+	#[test]
+	fn blocks_of_one_runtime_share_one_download() {
+		let provider = runtime_call_node(true);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let first_output = output_of(&mut first_follow);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", LATER_BLOCK);
+		let second_output = output_of(&mut second_follow);
+
+		assert_eq!(
+			(first_output, second_output, node_requests(&provider, "chainHead_v1_call")),
+			(call_done(&first_operation), call_done(&second_operation), 1)
+		);
+	}
+
+	/// The metadata of one runtime is not the metadata of another, so a block
+	/// after an upgrade asks the node again.
+	#[test]
+	fn blocks_of_different_runtimes_never_share() {
+		let provider = runtime_call_node(true);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let first_output = output_of(&mut first_follow);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", UPGRADED_BLOCK);
+		let second_output = output_of(&mut second_follow);
+
+		assert_eq!(
+			(first_output, second_output, node_requests(&provider, "chainHead_v1_call")),
+			(call_done(&first_operation), call_done(&second_operation), 2)
+		);
+	}
+
+	/// Without the hash of the runtime code at the block, nothing tells which
+	/// runtime answers the call, so it goes to the node.
+	#[test]
+	fn a_block_whose_code_cannot_be_read_is_never_shared() {
+		let provider = runtime_call_node_with(true, |_| None);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let first_output = output_of(&mut first_follow);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_output = output_of(&mut second_follow);
+
+		assert_eq!(
+			(first_output, second_output, node_requests(&provider, "chainHead_v1_call")),
+			(call_done(&first_operation), call_done(&second_operation), 2)
+		);
+	}
+
+	/// When the product whose call is the download stops it, the products
+	/// waiting on it are told to retry instead of waiting for an answer that
+	/// never comes.
+	#[test]
+	fn stopping_the_download_releases_its_waiters() {
+		let provider = runtime_call_node(false);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, _first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		futures::executor::block_on(first.remote_chain_head_stop_operation(
+			RemoteChainHeadStopOperationRequest {
+				genesis_hash: SHARED_GENESIS.to_vec(),
+				follow_subscription_id: "c1:follow".to_string(),
+				operation_id: first_operation,
+			},
+		))
+		.expect("the stop goes through");
+
+		assert_eq!(
+			output_of(&mut second_follow),
+			Some(RemoteChainHeadFollowItem::OperationInaccessible {
+				operation_id: second_operation
+			})
+		);
+	}
+
+	/// The node reports the end of an operation on the follow it was made on,
+	/// so once that follow ends the download made on it never lands. The
+	/// products waiting on it are told to retry.
+	#[test]
+	fn a_follow_ending_during_the_download_releases_its_waiters() {
+		let provider = runtime_call_node(false);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+
+		drop(first_follow);
+
+		assert_eq!(
+			output_of(&mut second_follow),
+			Some(RemoteChainHeadFollowItem::OperationInaccessible {
+				operation_id: second_operation
+			})
+		);
+	}
+
+	/// A follow can end while its download still waits for the reply that
+	/// names the operation. That download never lands either, so the products
+	/// waiting on it are told to retry.
+	#[test]
+	fn a_follow_ending_before_the_node_names_the_download_releases_its_waiters() {
+		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
+		let download = request_sent(&provider, "chainHead_v1_call");
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+
+		drop(first_follow);
+		request_sent(&provider, "chainHead_v1_unfollow");
+		notification_sender(&provider)
+			.unbounded_send(format!(
+				r#"{{"jsonrpc":"2.0","id":"{download}","result":{{"result":"started","operationId":"call-1"}}}}"#
+			))
+			.unwrap();
+
+		assert_eq!(
+			output_of(&mut second_follow),
+			Some(RemoteChainHeadFollowItem::OperationInaccessible {
+				operation_id: second_operation
+			})
+		);
+	}
+
+	/// Closing a product drops the calls it has in flight, which can be while its
+	/// download still waits for the reply that names the operation. That download
+	/// never lands either, so the products waiting on it are told to retry.
+	#[test]
+	fn a_call_dropped_before_the_node_names_the_download_releases_its_waiters() {
+		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, _first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		let (abort, registration) = AbortHandle::new_pair();
+		std::thread::spawn(move || {
+			let request =
+				call_request(1, "Metadata_metadata_at_version", RUNTIME_BLOCK, vec![15, 0, 0, 0]);
+			futures::executor::block_on(Abortable::new(
+				first.remote_chain_head_call(request),
+				registration,
+			))
+		});
+		request_sent(&provider, "chainHead_v1_call");
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+
+		abort.abort();
+
+		assert_eq!(
+			output_of(&mut second_follow),
+			Some(RemoteChainHeadFollowItem::OperationInaccessible {
+				operation_id: second_operation
+			})
+		);
+	}
+
+	/// A follow can also end while a call on it reads the hash of the runtime
+	/// code. That call reaches the node as no download at all, so a product
+	/// that asks next downloads the metadata itself instead of waiting.
+	#[test]
+	fn a_call_on_a_follow_that_ended_is_never_waited_on() {
+		let provider =
+			runtime_call_node_withholding(&["state_getStorageHash", "chainHead_v1_call"]);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
+		let code_hash_read = request_sent(&provider, "state_getStorageHash");
+		drop(first_follow);
+		request_sent(&provider, "chainHead_v1_unfollow");
+		notification_sender(&provider)
+			.unbounded_send(format!(
+				r#"{{"jsonrpc":"2.0","id":"{code_hash_read}","result":"0x{}"}}"#,
+				hex::encode([0xc1; 32])
+			))
+			.unwrap();
+		request_sent(&provider, "chainHead_v1_call");
+
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+
+		assert_eq!(
+			(output_of(&mut second_follow), node_requests(&provider, "chainHead_v1_call")),
+			(call_done(&second_operation), 2)
+		);
+	}
+
+	/// A product that stops an operation the cache answers for has nothing to
+	/// stop at the node, and stops getting the answer.
+	#[test]
+	fn stopping_a_cached_operation_never_reaches_the_node() {
+		let provider = runtime_call_node(false);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+
+		let first_operation = call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		futures::executor::block_on(second.remote_chain_head_stop_operation(
+			RemoteChainHeadStopOperationRequest {
+				genesis_hash: SHARED_GENESIS.to_vec(),
+				follow_subscription_id: "c2:follow".to_string(),
+				operation_id: second_operation,
+			},
+		))
+		.expect("the stop goes through");
+		notification_sender(&provider)
+			.unbounded_send(call_done_event(&first_operation))
+			.unwrap();
+
+		assert_eq!(
+			(
+				output_of(&mut first_follow),
+				next_matching(&mut second_follow, Duration::from_millis(300), is_call_end),
+				node_requests(&provider, "chainHead_v1_stopOperation")
+			),
+			(call_done(&first_operation), None, 0)
+		);
+	}
+
+	/// A node that serves the bulletin fixture runtime over chainHead, to a
+	/// Subxt client as much as to products, with every follow starting at
+	/// `RUNTIME_BLOCK` under a subscription id of its own.
+	fn subxt_node() -> Arc<ScriptedProvider> {
+		subxt_node_with(|_, _| true)
+	}
+
+	/// As [`subxt_node`], where the m-th call the node gets starts as
+	/// `call-<m>`, and a call of `function` on the n-th follow finishes only
+	/// when `answers(n, function)` holds.
+	fn subxt_node_with(answers: fn(usize, &str) -> bool) -> Arc<ScriptedProvider> {
+		let follows = Arc::new(AtomicUsize::new(0));
+		let calls = Arc::new(AtomicUsize::new(0));
+		Arc::new(ScriptedProvider::with_frames(move |request| {
+			let id = extract_id(request).unwrap();
+			let request: Value = serde_json::from_str(request).unwrap();
+			let reply = |result: Value| {
+				serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+			};
+			let params = &request["params"];
+			match request["method"].as_str() {
+				Some("chainHead_v1_follow") => {
+					let follow = format!("follow-{}", follows.fetch_add(1, Ordering::SeqCst) + 1);
+					vec![
+						reply(serde_json::json!(follow)),
+						follow_event_on(
+							&follow,
+							serde_json::json!({
+								"event": "initialized",
+								"finalizedBlockHashes": [format!("0x{}", hex::encode(RUNTIME_BLOCK))],
+								"finalizedBlockRuntime": {"type": "valid", "spec": {
+									"specName": "bulletin",
+									"implName": "bulletin",
+									"specVersion": 1,
+									"implVersion": 1,
+									"transactionVersion": 1,
+									"apis": {},
+								}},
+							}),
+						),
+					]
+				},
+				Some("chainHead_v1_header") => {
+					let header = subxt::config::substrate::SubstrateHeader::<H256> {
+						parent_hash: H256::zero(),
+						number: 1,
+						state_root: H256::zero(),
+						extrinsics_root: H256::zero(),
+						digest: Default::default(),
+					};
+					vec![reply(serde_json::json!(format!("0x{}", hex::encode(header.encode()))))]
+				},
+				Some("chainHead_v1_call") => {
+					let follow = params[0].as_str().unwrap();
+					let follow_number: usize =
+						follow.trim_start_matches("follow-").parse().unwrap();
+					let function = params[2].as_str().unwrap();
+					let operation = format!("call-{}", calls.fetch_add(1, Ordering::SeqCst) + 1);
+					let started =
+						reply(serde_json::json!({"result": "started", "operationId": operation}));
+					if !answers(follow_number, function) {
+						return vec![started];
+					}
+					vec![started, subxt_call_done(follow, &operation, function)]
+				},
+				Some("state_getStorageHash") => {
+					vec![reply(serde_json::json!(format!("0x{}", hex::encode([0xc1; 32]))))]
+				},
+				Some("chainHead_v1_unpin" | "chainHead_v1_stopOperation") => {
+					vec![reply(Value::Null)]
+				},
+				_ => Vec::new(),
+			}
+		}))
+	}
+
+	/// The event reporting the call `operation` of `function` on `follow` done,
+	/// with the output the bulletin fixture gives.
+	fn subxt_call_done(follow: &str, operation: &str, function: &str) -> String {
+		let output = crate::host_internal::extrinsic::tests::bulletin_runtime_call(function)
+			.expect("the fixture answers every call Subxt makes to load the runtime");
+		follow_event_on(
+			follow,
+			serde_json::json!({
+				"event": "operationCallDone",
+				"operationId": operation,
+				"output": format!("0x{}", hex::encode(output)),
+			}),
+		)
+	}
+
+	/// Whether `client` loads the runtime at the current block within five
+	/// seconds, so a load that never finishes fails one test instead of hanging
+	/// the rest.
+	fn runtime_loads(client: &OnlineClient<SubstrateConfig>) -> bool {
+		futures::executor::block_on(async {
+			let load = client.at_current_block().fuse();
+			let deadline = futures_timer::Delay::new(Duration::from_secs(5)).fuse();
+			pin_mut!(load, deadline);
+			futures::select! {
+				loaded = load => loaded.is_ok(),
+				() = deadline => false,
+			}
+		})
+	}
+
+	/// The core builds transactions with a Subxt client on a connection of its
+	/// own. Once a product has downloaded the metadata, that client loads the
+	/// runtime from memory instead of downloading it again over the same link.
+	#[test]
+	fn the_core_reuses_metadata_a_product_downloaded() {
+		let provider = subxt_node();
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (product, mut product_follow) = following_product(&core, 1);
+		call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+		output_of(&mut product_follow).expect("the product gets the metadata");
+
+		let client =
+			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
+		let loaded = runtime_loads(&client);
+
+		assert_eq!((loaded, node_requests(&provider, "Metadata_metadata_at_version")), (true, 1));
+	}
+
+	/// Subxt never retries a call the node reports inaccessible, so the client
+	/// of the core must not wait on a download a product may give up. It
+	/// downloads on its own instead.
+	#[test]
+	fn the_core_never_waits_on_a_download_in_flight() {
+		let provider = subxt_node_with(|follow, _| follow != 1);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (product, _product_follow) = following_product(&core, 1);
+		call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+
+		let client =
+			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
+		let loaded = runtime_loads(&client);
+
+		assert_eq!((loaded, node_requests(&provider, "Metadata_metadata_at_version")), (true, 2));
+	}
+
+	/// When the download a product owns stalls, the core downloads alongside
+	/// it, and the first output to land answers the products waiting.
+	#[test]
+	fn a_download_alongside_a_stalled_one_answers_its_waiters() {
+		let provider = subxt_node_with(|follow, _| follow != 1);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, _first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		call_with(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+		let waiting =
+			call_with(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+
+		let client =
+			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
+		let loaded = runtime_loads(&client);
+
+		assert_eq!(
+			(
+				loaded,
+				is_call_end_for(&output_of(&mut second_follow), &waiting),
+				node_requests(&provider, "Metadata_metadata_at_version")
+			),
+			(true, true, 2)
+		);
+	}
+
+	/// The core loads the runtime when it first builds a transaction, which can
+	/// be while the products start. A product that asks during that download
+	/// waits for it instead of starting a second one over the same link.
+	#[test]
+	fn a_product_during_the_core_download_waits_for_it() {
+		let provider = subxt_node_with(|follow, function| {
+			follow != 1 || function != "Metadata_metadata_at_version"
+		});
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let client =
+			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
+		std::thread::spawn(move || futures::executor::block_on(client.at_current_block()).is_ok());
+		request_sent(&provider, "Metadata_metadata_at_version");
+		let core_download = format!("call-{}", node_requests(&provider, "chainHead_v1_call"));
+		let (product, mut product_follow) = following_product(&core, 1);
+
+		let operation =
+			call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+		let downloads = node_requests(&provider, "Metadata_metadata_at_version");
+		notification_sender(&provider)
+			.unbounded_send(subxt_call_done(
+				"follow-1",
+				&core_download,
+				"Metadata_metadata_at_version",
+			))
+			.unwrap();
+
+		assert_eq!(
+			(downloads, is_call_end_for(&output_of(&mut product_follow), &operation)),
+			(1, true)
+		);
+	}
+
+	/// A node may report an operation done before the reply that names it. The
+	/// download still counts, and the product waiting on it gets the output.
+	#[test]
+	fn a_download_reported_before_its_reply_still_answers_its_waiters() {
+		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let (first, mut first_follow) = following_product(&core, 1);
+		let (second, mut second_follow) = following_product(&core, 2);
+		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
+		let download = request_sent(&provider, "chainHead_v1_call");
+		let second_operation = call(&second, 2, "Metadata_metadata_at_version", RUNTIME_BLOCK);
+		let node = notification_sender(&provider);
+
+		node.unbounded_send(call_done_event("call-1")).unwrap();
+		let reported = output_of(&mut first_follow);
+		node.unbounded_send(format!(
+			r#"{{"jsonrpc":"2.0","id":"{download}","result":{{"result":"started","operationId":"call-1"}}}}"#
+		))
+		.unwrap();
+
+		assert_eq!(
+			(
+				reported,
+				output_of(&mut second_follow),
+				node_requests(&provider, "chainHead_v1_call")
+			),
+			(call_done("call-1"), call_done(&second_operation), 1)
+		);
+	}
+
+	/// When the core loads a runtime first, its download serves the products
+	/// that ask for the same metadata afterwards.
+	#[test]
+	fn products_reuse_metadata_the_core_downloaded() {
+		let provider = subxt_node();
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let client =
+			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
+		let loaded = runtime_loads(&client);
+		let (product, mut product_follow) = following_product(&core, 1);
+
+		let operation =
+			call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
+
+		assert_eq!(
+			(
+				loaded,
+				is_call_end_for(&output_of(&mut product_follow), &operation),
+				node_requests(&provider, "Metadata_metadata_at_version")
+			),
+			(true, true, 1)
+		);
+	}
+
+	fn is_call_end_for(item: &Option<RemoteChainHeadFollowItem>, operation: &str) -> bool {
+		matches!(
+			item,
+			Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
+		)
 	}
 }

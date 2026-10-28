@@ -2,17 +2,18 @@ name: host-playground e2e
 
 # Runs host-playground inside the iOS and Android host apps built from this commit.
 # See e2e/host-playground/README.md.
+# Each nightly calls this for its own platform and commit. on-label.yml calls
+# it for both platforms on a pull request labelled host-playground-e2e, never
+# one from a fork.
 on:
-  pull_request:
-    types: [labeled, synchronize]
   workflow_dispatch:
-  # Each nightly calls this for its own platform and commit.
   workflow_call:
     inputs:
       platform:
-        description: "android or ios"
-        required: true
+        description: "android or ios, or empty for both"
+        required: false
         type: string
+        default: ""
       ref:
         description: "Commit to test. Defaults to the calling run's commit."
         required: false
@@ -20,6 +21,13 @@ on:
         default: ""
       release_tag:
         description: "Nightly prerelease whose notes get the results."
+        required: false
+        type: string
+        default: ""
+      core_artifact:
+        description: >-
+          An artifact an earlier job in the calling run packed the in-tree iOS
+          core into, for the iOS leg. Empty builds the core here.
         required: false
         type: string
         default: ""
@@ -60,15 +68,8 @@ permissions:
 jobs:
   android:
     name: Android emulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      (inputs.platform == '' || inputs.platform == 'android')
-      && (github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'android'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
       group: host-playground-e2e-android-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -84,7 +85,7 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -176,7 +177,7 @@ jobs:
 
       - name: Upload the results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: host-playground-e2e-android
           path: ${{ env.OUT }}
@@ -185,20 +186,14 @@ jobs:
 
   ios:
     name: iOS simulator
-    # Only this label starts a pull request run, and never from a fork.
-    if: >-
-      (inputs.platform == '' || inputs.platform == 'ios')
-      && (github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
-              || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
-    # On the job, so a skipped run from another label never cancels this one.
+    if: inputs.platform == '' || inputs.platform == 'ios'
+    # On the job, so each platform and each nightly has a group of its own.
     concurrency:
       group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     continue-on-error: ${{ inputs.release_tag != '' }}
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue.
+    runs-on: parity-macos
     timeout-minutes: 150
     env:
       IOS_BUNDLE_ID: "io.parity.polkadotapp"
@@ -210,7 +205,9 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/mac-preflight
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -218,7 +215,14 @@ jobs:
         uses: ./hosts/ios/.github/actions/install
 
       - name: Bootstrap the in-tree core
+        if: inputs.core_artifact == ''
         uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Restore the in-tree core
+        if: inputs.core_artifact != ''
+        uses: ./.github/actions/restore-ios-core
+        with:
+          name: ${{ inputs.core_artifact }}
 
       - name: Configure Google services
         uses: ./hosts/ios/.github/actions/configure-google-services
@@ -286,7 +290,7 @@ jobs:
 
       - name: Upload the results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: host-playground-e2e-ios
           path: ${{ env.OUT }}
@@ -308,11 +312,11 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: host-playground-e2e-*
           path: ${{ runner.temp }}/e2e

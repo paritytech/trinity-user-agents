@@ -363,8 +363,8 @@ export type ChainStatus = "Idle" | "Connected" | "Disconnected";
  */
 const NOT_MODELLED_REASONS: Record<string, string> = {
   payment:
-    "the protocol declares payments but no host implements them; " +
-    "see docs/rfcs/0006-payments.md",
+    "payments are served only by native and Rust hosts, since the browser " +
+    "host-callback bridge cannot carry the payment platforms yet",
   coinPayment:
     "the protocol declares coin payments but no host implements them; " +
     "see docs/rfcs/0006-payments.md",
@@ -630,8 +630,9 @@ export interface MockHost {
    */
   statements: never;
   /**
-   * Payments, which TrUAPI declares but no host implements. Every access
-   * throws; see {@link notModeled}.
+   * Payments, which only native and Rust hosts serve: the browser bridge
+   * cannot carry the payment platforms yet. Every access throws; see
+   * {@link notModeled}.
    */
   payment: never;
   /** Coin payments, unimplemented in the same way as {@link MockHost.payment}. */
@@ -1198,6 +1199,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
+    // The mock builds every chain as V4, as the CLI host does.
+    extrinsicVersion: {
+      async transactionExtensionVersions() {
+        return { chains: [] };
+      },
+    },
     features: {
       async featureSupported() {
         if (faults.featureError) throw new Error(faults.featureError);
