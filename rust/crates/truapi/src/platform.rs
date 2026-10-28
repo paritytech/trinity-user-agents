@@ -742,7 +742,6 @@ pub fn validate_chat_room_preview(
 ) -> Result<ChatRoomPreview, ChatFieldError> {
 	Ok(ChatRoomPreview {
 		last_message: preview.last_message.map(validate_chat_message).transpose()?,
-		last_call: preview.last_call.map(validate_chat_message).transpose()?,
 		last_reaction: preview
 			.last_reaction
 			.map(|reaction| {
@@ -3071,7 +3070,6 @@ mod tests {
 				removed: false,
 			}),
 			unseen_reactions: 1,
-			last_call: None,
 		};
 		assert!(validate_chat_room_preview(preview(text_message("m1"))).is_ok());
 		assert_eq!(

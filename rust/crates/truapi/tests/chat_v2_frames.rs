@@ -154,7 +154,6 @@ fn frames() -> Vec<String> {
 			removed: true,
 		}),
 		unseen_reactions: 2,
-		last_call: Some(call()),
 	};
 	vec![
 		line(
