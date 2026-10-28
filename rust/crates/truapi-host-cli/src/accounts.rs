@@ -413,20 +413,7 @@ pub async fn inspect_imported_signer(
 	let identity = identity_from_mnemonic(&mnemonic, network.network_suffix)?;
 	let username = attestation::lookup_registered_username(network, &identity.entropy)
 		.await
-		.with_context(|| {
-			format!("look up the mnemonic's optional dotNS username on {}", network.id)
-		})?;
-	let username = match username {
-		Some(username) => Some(username),
-		None => attestation::lookup_backend_username(network, &identity.entropy, &identity.address)
-			.await
-			.with_context(|| {
-				format!(
-					"reverse-resolve the mnemonic's assigned identity-backend username on {}",
-					network.id
-				)
-			})?,
-	};
+		.with_context(|| format!("resolve the existing username on {}", network.id))?;
 	wait_for_ring_membership(network, &identity.entropy).await.with_context(|| {
 		let account = username.as_deref().unwrap_or(&identity.address);
 		format!("verify personhood ring membership for account {account:?} on {}", network.id)

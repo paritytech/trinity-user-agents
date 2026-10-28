@@ -1685,8 +1685,9 @@ async fn start_signing_host(
 			reserved_username: None,
 		})
 		.await?;
-		match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
-			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
+		match attestation::lookup_registered_username(network, &explicit_signer.entropy).await {
+			Ok(Some(user_id)) => explicit_signer.lite_username = Some(user_id),
+			Ok(None) => tracing::warn!("explicit signer has no resolvable dotNS username"),
 			Err(error) => {
 				tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
 			},

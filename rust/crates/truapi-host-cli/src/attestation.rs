@@ -402,7 +402,8 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 		.context("attested signer has no dotNS lite username")
 }
 
-/// Resolve an existing full-person or Lite dotNS identity when one exists.
+/// Resolve an existing full-person or Lite username, preferring its dotNS mirror.
+/// Without a mirror, use the backend's assigned record for this exact identity.
 /// An unlabeled account is a valid result and can still back a local session.
 pub async fn lookup_registered_username(
 	network: NetworkConfig,
@@ -411,8 +412,15 @@ pub async fn lookup_registered_username(
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
 	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
-	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.map(|identity| identity.primary_username().to_owned()))
+	let account = identity.public.to_bytes();
+	if let Some(identity) = reader.dotns_identity(&account).await? {
+		return Ok(Some(identity.primary_username().to_owned()));
+	}
+	lookup_backend_username(network, entropy, &product_public_key_to_address(account))
+		.await
+		.with_context(|| {
+			format!("reverse-resolve the assigned identity-backend username on {}", network.id)
+		})
 }
 
 #[derive(Deserialize)]

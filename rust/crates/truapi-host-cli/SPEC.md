@@ -1217,6 +1217,9 @@ Explicit mnemonic mode:
 - uses the raw BIP-39 entropy, not the PBKDF2 seed;
 - does not read or write an account record;
 - has no cached username;
+- resolves the current username with the same read-only dotNS-first,
+  assigned-identity-backend lookup as mnemonic import; an absent dotNS mirror
+  does not discard a registered username;
 - reports the session as `ephemeral`; and
 - disables commands that switch or import managed sessions.
 
