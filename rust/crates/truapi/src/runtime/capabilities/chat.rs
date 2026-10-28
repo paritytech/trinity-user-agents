@@ -17,16 +17,17 @@ use truapi::{
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
-			HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatDeleteRoomResponse,
-			HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
-			HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-			HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-			HostChatRoomError, HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse,
-			HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
-			HostChatSetRoomFooterResponse, HostChatSetRoomMetadataRequest,
-			HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewRequest,
-			HostChatSetRoomPreviewResponse, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-			HostChatUpdateFeedResponse,
+			HostChatCreateRoomResponse, HostChatDeleteRoomError, HostChatDeleteRoomRequest,
+			HostChatDeleteRoomResponse, HostChatListSubscribeError, HostChatListSubscribeItem,
+			HostChatListSubscribeRequest, HostChatPostMessageError, HostChatPostMessageRequest,
+			HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+			HostChatRegisterBotResponse, HostChatSetRoomConfigError, HostChatSetRoomConfigRequest,
+			HostChatSetRoomConfigResponse, HostChatSetRoomFooterError,
+			HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+			HostChatSetRoomMetadataError, HostChatSetRoomMetadataRequest,
+			HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewError,
+			HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
+			HostChatUpdateFeedRequest, HostChatUpdateFeedResponse,
 		},
 	},
 };
@@ -143,7 +144,7 @@ impl Chat for ProductRuntimeHost {
 		&self,
 		_cx: &CallContext,
 		request: HostChatSetRoomConfigRequest,
-	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatSetRoomConfigError>> {
 		let version = request.version();
 		let mut request = request.into_latest();
 		let result = async {
@@ -163,7 +164,7 @@ impl Chat for ProductRuntimeHost {
 		&self,
 		_cx: &CallContext,
 		request: HostChatSetRoomMetadataRequest,
-	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatSetRoomMetadataError>> {
 		let version = request.version();
 		let mut request = request.into_latest();
 		let result = async {
@@ -185,7 +186,7 @@ impl Chat for ProductRuntimeHost {
 		&self,
 		_cx: &CallContext,
 		request: HostChatSetRoomPreviewRequest,
-	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatSetRoomPreviewError>> {
 		let version = request.version();
 		let mut request = request.into_latest();
 		let result = async {
@@ -208,7 +209,7 @@ impl Chat for ProductRuntimeHost {
 		&self,
 		_cx: &CallContext,
 		request: HostChatDeleteRoomRequest,
-	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatDeleteRoomError>> {
 		let version = request.version();
 		let mut request = request.into_latest();
 		let result = async {
@@ -260,12 +261,47 @@ enum RoomRefusal {
 	Failed(String),
 }
 
-impl From<RoomRefusal> for latest::HostChatRoomError {
+// Only `set_room_preview` and `update_feed` ask for a rate limit, and a
+// delete of a room that does not exist succeeds before it reaches its error.
+impl From<RoomRefusal> for latest::HostChatSetRoomConfigError {
+	fn from(refusal: RoomRefusal) -> Self {
+		match refusal {
+			RoomRefusal::UnknownRoom => Self::UnknownRoom,
+			RoomRefusal::NotRoomHost => Self::NotRoomHost,
+			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
+			RoomRefusal::Failed(reason) => Self::Unknown { reason },
+		}
+	}
+}
+
+impl From<RoomRefusal> for latest::HostChatSetRoomMetadataError {
+	fn from(refusal: RoomRefusal) -> Self {
+		match refusal {
+			RoomRefusal::UnknownRoom => Self::UnknownRoom,
+			RoomRefusal::NotRoomHost => Self::NotRoomHost,
+			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
+			RoomRefusal::Failed(reason) => Self::Unknown { reason },
+		}
+	}
+}
+
+impl From<RoomRefusal> for latest::HostChatSetRoomPreviewError {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
 			RoomRefusal::UnknownRoom => Self::UnknownRoom,
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
 			RoomRefusal::RateLimited => Self::RateLimited,
+			RoomRefusal::Failed(reason) => Self::Unknown { reason },
+		}
+	}
+}
+
+impl From<RoomRefusal> for latest::HostChatDeleteRoomError {
+	fn from(refusal: RoomRefusal) -> Self {
+		match refusal {
+			RoomRefusal::NotRoomHost => Self::NotRoomHost,
+			RoomRefusal::UnknownRoom => Self::Unknown { reason: "unknown room".to_string() },
+			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -301,24 +337,24 @@ impl<E: From<RoomRefusal>> From<RoomRefusal> for CallError<E> {
 }
 
 /// Answer a room-changing call in the caller's version.
-fn answer_room_change<R>(
-	result: Result<(), CallError<latest::HostChatRoomError>>,
+fn answer_room_change<R, E: FromLatest>(
+	result: Result<(), CallError<E::Latest>>,
 	version: u8,
 	response: fn((), u8) -> R,
-) -> Result<R, CallError<HostChatRoomError>> {
+) -> Result<R, CallError<E>> {
 	result
 		.map(|()| response((), version))
 		.map_err(|error| from_latest_error(error, version))
 }
 
 /// Report a rejected field of a room-changing call.
-fn room_field_error(error: ChatFieldError) -> CallError<latest::HostChatRoomError> {
-	CallError::Domain(latest::HostChatRoomError::Unknown { reason: error.to_string() })
+fn room_field_error<E: From<RoomRefusal>>(error: ChatFieldError) -> CallError<E> {
+	RoomRefusal::Failed(error.to_string()).into()
 }
 
 /// Report a host failure of a room-changing call.
-fn room_host_error(error: latest::GenericError) -> CallError<latest::HostChatRoomError> {
-	CallError::Domain(latest::HostChatRoomError::Unknown { reason: error.reason })
+fn room_host_error<E: From<RoomRefusal>>(error: latest::GenericError) -> CallError<E> {
+	RoomRefusal::Failed(error.reason).into()
 }
 
 /// Report a rejected feed field, a size rejection of the content as the size
@@ -767,11 +803,15 @@ mod tests {
 
 		assert_eq!(
 			set_config("missing"),
-			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::UnknownRoom)))
+			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
+				latest::HostChatSetRoomConfigError::UnknownRoom
+			)))
 		);
 		assert_eq!(
 			set_config("lobby"),
-			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::NotRoomHost)))
+			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
+				latest::HostChatSetRoomConfigError::NotRoomHost
+			)))
 		);
 		assert_eq!(set_config(" support "), Ok(HostChatSetRoomConfigResponse::V1));
 		assert_eq!(chat.calls(), ["config support"]);
@@ -941,7 +981,9 @@ mod tests {
 		);
 		assert_eq!(
 			set("lobby", sourced),
-			Err(CallError::Domain(HostChatRoomError::V1(latest::HostChatRoomError::NotRoomHost)))
+			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
+				latest::HostChatSetRoomConfigError::NotRoomHost
+			)))
 		);
 		assert_eq!(chat.calls(), ["config support"]);
 	}
