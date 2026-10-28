@@ -463,6 +463,54 @@
         }
       }
     },
+    "load.status.downloading": {
+      "comment": "Status under the loader while a product's content downloads; the argument is the downloaded size",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(size)@"
+          }
+        }
+      }
+    },
+    "load.status.downloadingOf": {
+      "comment": "Status under the loader while a product's content downloads and its size is known; the arguments are the downloaded amount without a unit and the total size with its unit, e.g. 1.2 of 5.0 MB",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(downloaded)@ of %2$(total)@"
+          }
+        }
+      }
+    },
+    "load.status.retrying": {
+      "comment": "Status under the loader after a product's load failed and is being retried",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection is slow. Still trying…"
+          }
+        }
+      }
+    },
+    "load.status.waitingForNetwork": {
+      "comment": "Status under the loader while a product waits for the network to come back",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for network"
+          }
+        }
+      }
+    },
     "paymentRequest.title": {
       "extractionState": "manual",
       "localizations": {

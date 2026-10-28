@@ -866,4 +866,38 @@ describe("shared SDK connection failure timing", () => {
             status: "disconnected",
         });
     });
+
+    // An SDK that reopens a reset stream waits for a "connected" that follows a
+    // status that is not. That only finds the new connection if the status
+    // leaves "connected" between the reset and the reconnect; reopening on the
+    // old status would dial a host that is not listening yet.
+    it("reports a status other than connected between a stream's reset and the next connection", async () => {
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        let reopenedOn: { sockets: number; verified: boolean } | undefined;
+        client.theme.subscribe().subscribe({
+            error: (error) => {
+                if (!(error.cause instanceof ConnectionResetError)) return;
+                let lost = false;
+                fixture.connection.subscribeConnectionStatus((status) => {
+                    if (status !== "connected") lost = true;
+                    else if (lost && !reopenedOn)
+                        reopenedOn = {
+                            sockets: fixture.sockets.length,
+                            verified: fixture.statuses.at(-1) === "connected",
+                        };
+                });
+            },
+        });
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.sockets[0]!.sent.length === 2);
+
+        fixture.sockets[0]!.close();
+        expect(reopenedOn).toBeUndefined();
+        fixture.advance(0);
+        fixture.sockets[1]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+
+        expect(reopenedOn).toEqual({ sockets: 2, verified: true });
+    });
 });
