@@ -1002,8 +1002,8 @@ membership and can submit a test registration.
 When a managed session has saved pairings, Statement Store exhaustion does not
 mark its signer as exhausted or rotate to another identity. If there is no slot
 for another device, pairing fails and preserves the existing identity and
-pairings. Remove a paired device or wait for a new allowance period before
-trying again.
+pairings. Removing a paired device does not free its slot, so try again once
+the next UTC day starts a new allowance period.
 
 ## Manual use (two terminals)
 
