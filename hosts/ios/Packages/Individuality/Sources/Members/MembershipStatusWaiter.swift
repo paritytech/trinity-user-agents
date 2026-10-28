@@ -7,7 +7,8 @@ import SubstrateStorageSubscription
 
 public protocol MembershipStatusWaiting {
     /// The ring index once `input` is an included member the ring status covers, re-checked on every
-    /// change of its `Members` entry; nil when `timeout` passes first.
+    /// change of its `Members` entry. Waits until then or until the caller cancels.
+    func waitForStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex
     func waitForStatus(of input: MembershipStatusInput, timeout: Duration) async throws -> MembersPallet.RingIndex?
 }
 
@@ -42,16 +43,14 @@ public final class MembershipStatusWaiter: MembershipStatusWaiting, @unchecked S
     ) async throws -> MembersPallet.RingIndex? {
         do {
             return try await withTimeout(timeout, clock: clock) { [self] in
-                try await firstStatus(of: input)
+                try await waitForStatus(of: input)
             }
         } catch is TimeoutError {
             return nil
         }
     }
-}
 
-private extension MembershipStatusWaiter {
-    func firstStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex {
+    public func waitForStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex {
         let request = DoubleMapSubscriptionRequest(
             storagePath: MembersPallet.Storage.members(),
             localKey: "",
