@@ -8,18 +8,18 @@ public protocol ProductVersionCaching: Sendable {
 }
 
 public actor ProductVersionCache {
-    private let snapshot: DotNsRecordSnapshotProtocol
+    private let store: ProductVersionStoring
     private let storage: DotNsLocalStorage
     private let tldProvider: DotNsTldProviding
     private let resolverFactory: ProductResolverFactory
 
     public init(
-        snapshot: DotNsRecordSnapshotProtocol,
+        store: ProductVersionStoring,
         storage: DotNsLocalStorage,
         tldProvider: DotNsTldProviding,
         resolverFactory: ProductResolverFactory
     ) {
-        self.snapshot = snapshot
+        self.store = store
         self.storage = storage
         self.tldProvider = tldProvider
         self.resolverFactory = resolverFactory
@@ -32,25 +32,28 @@ extension ProductVersionCache: ProductVersionCaching {
         _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
 
         let manifest = try await resolverFactory.makeResolver(
-            metadataRepository: SnapshotProductMetadataRepository(snapshot: snapshot),
+            metadataRepository: SnapshotProductMetadataRepository(store: store),
             hostProvider: hostProvider
         ).resolveProductManifest(productId)
         let resolved = manifest.product
+        let contentHashes = store.version(of: resolved.id)?.contentHashes ?? [:]
 
-        let appContent = try content(of: resolved.appContentId)
+        let appContent = try content(of: resolved.appContentId, in: contentHashes)
         var contents = [resolved.appContentId: appContent]
 
         let optionalIds = [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier]
         for contentId in optionalIds.compactMap({ $0 }) where contents[contentId] == nil {
-            contents[contentId] = try? content(of: contentId)
+            contents[contentId] = try? content(of: contentId, in: contentHashes)
         }
 
         return ProductContent(resolved: resolved, records: manifest.records, contents: contents)
     }
 
     public func apply(_ version: ProductVersion) {
-        for (recordKey, record) in version.records {
-            snapshot.store(record, name: recordKey.name, key: recordKey.key)
+        do {
+            try store.save(version)
+        } catch {
+            resolverFactory.logger.error("Failed to store version of \(version.productId): \(error)")
         }
 
         for (name, hash) in version.contentHashes {
@@ -59,15 +62,13 @@ extension ProductVersionCache: ProductVersionCaching {
     }
 
     public func invalidate(_ version: ProductVersion) {
-        for recordKey in version.records.keys {
-            snapshot.remove(name: recordKey.name, key: recordKey.key)
-        }
+        store.remove(productId: version.productId)
     }
 }
 
 private extension ProductVersionCache {
-    func content(of name: String) throws -> DotNsResolvedContent {
-        guard let contentHash = storage.contentHashes.getContentHash(name: name) else {
+    func content(of name: String, in contentHashes: [String: String]) throws -> DotNsResolvedContent {
+        guard let contentHash = contentHashes[name] else {
             throw DotNsSnapshotError.contentHashNotSnapshotted(name: name)
         }
 

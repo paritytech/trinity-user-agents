@@ -7,14 +7,16 @@ public enum DotNsSnapshotError: Error, Equatable {
 }
 
 public struct SnapshotProductMetadataRepository: ProductMetadataRepositoryProtocol {
-    private let snapshot: DotNsRecordSnapshotProtocol
+    private let store: ProductVersionStoring
 
-    public init(snapshot: DotNsRecordSnapshotProtocol) {
-        self.snapshot = snapshot
+    public init(store: ProductVersionStoring) {
+        self.store = store
     }
 
     public func fetchMetadata(name: String, key: String) async throws -> String? {
-        switch snapshot.record(name: name, key: key) {
+        let version = store.version(of: ProductManifestRecords.baseName(of: name))
+
+        return switch version?.records[ProductVersion.RecordKey(name: name, key: key)] {
         case let .value(record):
             record
         case .absent:

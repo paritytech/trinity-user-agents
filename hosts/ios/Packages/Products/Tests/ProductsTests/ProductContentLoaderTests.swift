@@ -13,7 +13,8 @@ final class ProductContentLoaderTests {
     private let contentHash: Data
     private let updatedContentHash: Data
 
-    private let suiteName = "ProductContentLoaderTests.\(UUID().uuidString)"
+    private let versionsDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ProductContentLoaderTests-\(UUID().uuidString)")
     private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
     private let clock = ManualClock()
     private let contracts = StubDotNsContractApi()
@@ -27,7 +28,7 @@ final class ProductContentLoaderTests {
     }
 
     deinit {
-        UserDefaults().removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: versionsDirectory)
         contentHashCache.removeContentHash(name: productId)
     }
 
@@ -267,7 +268,6 @@ private extension ProductContentLoaderTests {
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
 
             let localStorage = DotNsLocalStorage(content: suite.storage, contentHashes: suite.contentHashCache)
-            let snapshot = try DotNsRecordSnapshot(defaults: #require(UserDefaults(suiteName: suite.suiteName)))
 
             loader = ProductContentLoader(
                 fetcher: ProductUpdateFetcher(
@@ -278,7 +278,7 @@ private extension ProductContentLoaderTests {
                     resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
                 ),
                 cache: ProductVersionCache(
-                    snapshot: snapshot,
+                    store: ProductVersionFileStore(directory: suite.versionsDirectory),
                     storage: localStorage,
                     tldProvider: StubTldProvider(),
                     resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())

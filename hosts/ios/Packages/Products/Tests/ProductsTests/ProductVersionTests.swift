@@ -11,7 +11,8 @@ final class ProductVersionTests {
     private static let workerHash = Data(repeating: 0xB1, count: 34)
     private static let updatedWorkerHash = Data(repeating: 0xB2, count: 34)
 
-    private let suiteName = "ProductVersionTests.\(UUID().uuidString)"
+    private let versionsDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ProductVersionTests-\(UUID().uuidString)")
     private let baseName = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
     private let contracts = StubDotNsContractApi()
     private let fetcher = StubCarFetcher()
@@ -19,7 +20,7 @@ final class ProductVersionTests {
     private let contentHashCache = ContentHashCache()
 
     deinit {
-        UserDefaults().removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: versionsDirectory)
         [baseName, appName, workerName].forEach(contentHashCache.removeContentHash(name:))
     }
 
@@ -190,14 +191,14 @@ private extension ProductVersionTests {
         contracts.set(contentHash: Self.workerHash, name: workerName)
     }
 
-    func makeSnapshot() throws -> DotNsRecordSnapshot {
-        try DotNsRecordSnapshot(defaults: #require(UserDefaults(suiteName: suiteName)))
+    func makeStore() -> ProductVersionFileStore {
+        ProductVersionFileStore(directory: versionsDirectory)
     }
 
     func makeCache(tldProvider: DotNsTldProviding = StubTldProvider(resolveError: Unreachable())) throws
         -> ProductVersionCache {
-        try ProductVersionCache(
-            snapshot: makeSnapshot(),
+        ProductVersionCache(
+            store: makeStore(),
             storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
             tldProvider: tldProvider,
             resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
