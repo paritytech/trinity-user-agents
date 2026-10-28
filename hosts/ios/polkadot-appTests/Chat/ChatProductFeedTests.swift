@@ -403,6 +403,19 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
             testDescription: "payment",
             body: .payment(ChatPaymentRecord(amount: "42", legacy: false)),
             content: .unsupported(nil)
+        ),
+        // The product draws a custom body, as it draws a custom message that it posts.
+        BodyCase(
+            testDescription: "custom",
+            body: .custom(message: ChatCustomMessage(messageType: "poll", payload: Data([1, 2])), alt: "A poll"),
+            content: .customRendered(
+                .init(
+                    decoderId: MessageDecoderIdentifier.product.rawValue,
+                    data: Data([1, 2]),
+                    identifier: "poll",
+                    alt: "A poll"
+                )
+            )
         )
     ]
 }
