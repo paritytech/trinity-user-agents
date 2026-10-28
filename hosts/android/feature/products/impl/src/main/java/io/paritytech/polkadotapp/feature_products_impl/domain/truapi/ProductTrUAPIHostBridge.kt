@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -42,6 +43,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -79,9 +81,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
+    private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -237,6 +241,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
+
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -303,6 +310,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val endpoint = opened.startWsBridge()
             observeAppTheme()
             observeAppLifecycle()
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }

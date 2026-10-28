@@ -21,6 +21,7 @@ export const CALLBACK_NAMES = [
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
+  "transactionExtensionVersions",
   "featureSupported",
   "supportedChains",
   "scheduleGameReminder",
@@ -76,6 +77,7 @@ function rawCallbacks(
     | "readCoreStorage"
     | "writeCoreStorage"
     | "clearCoreStorage"
+    | "transactionExtensionVersions"
     | "featureSupported"
     | "supportedChains"
     | "navigateTo"
@@ -106,6 +108,10 @@ function rawCallbacks(
     clearCoreStorage: (key) =>
       bridge.callbackRequest("clearCoreStorage", [key]) as ReturnType<
         Required<RawCallbacks>["clearCoreStorage"]
+      >,
+    transactionExtensionVersions: () =>
+      bridge.callbackRequest("transactionExtensionVersions", []) as ReturnType<
+        Required<RawCallbacks>["transactionExtensionVersions"]
       >,
     featureSupported: (request) =>
       bridge.callbackRequest("featureSupported", [request]) as ReturnType<

@@ -523,8 +523,9 @@ The script installs the shared browser container and publishes
 `window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
 stable client, sharing one WebSocket and one Rust execution. The container
 consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Interrupted calls
-fail, subscriptions end, and neither is replayed. Older SDKs use the compatibility
+same TCP port. After a disconnect, the SDK replaces the socket. Calls and
+subscriptions already sent fail and are not replayed. Calls not yet sent go out
+on the replacement once its handshake completes. Older SDKs use the compatibility
 `window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
 disconnect.
 Production builds must omit the tag.
