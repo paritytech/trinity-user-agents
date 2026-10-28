@@ -327,12 +327,9 @@ impl Chat for ProductRuntimeHost {
 						})
 					})?;
 				let persist = !config.product_source;
-				// In a room the host stores, the host's user writes only through the
-				// host, so a product cannot put words in the user's mouth.
-				if persist &&
-					let latest::ChatFeedUpdate::New(message) = &request.update &&
-					message.origin.participant_id == USER_PARTICIPANT_ID
-				{
+				// In a room the host stores, the host's user writes and reacts only
+				// through the host, so a product cannot put words in the user's mouth.
+				if persist && names_the_user(&request.update) {
 					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
 				}
 				platform
@@ -430,6 +427,22 @@ impl<E: From<RoomRefusal>> From<RoomRefusal> for CallError<E> {
 	fn from(refusal: RoomRefusal) -> Self {
 		CallError::Domain(refusal.into())
 	}
+}
+
+/// Whether `update` names the host's user as the author of a message or a
+/// reaction.
+fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
+	let participant_id = match update {
+		latest::ChatFeedUpdate::New(message) | latest::ChatFeedUpdate::Replaced(message) => {
+			&message.origin.participant_id
+		},
+		latest::ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
+		latest::ChatFeedUpdate::ReactionRemoved { participant_id, .. } => participant_id,
+		latest::ChatFeedUpdate::Edited { .. } | latest::ChatFeedUpdate::StatusChanged { .. } => {
+			return false;
+		},
+	};
+	participant_id == USER_PARTICIPANT_ID
 }
 
 /// Report a rejected field of a room-changing call.
@@ -837,18 +850,65 @@ mod tests {
 		assert_eq!(persisted, [("stored".to_string(), true), ("sourced".to_string(), false)]);
 	}
 
+	/// Every update that names an author: a new message, a replaced message,
+	/// and a reaction placed and removed.
+	fn updates_by(participant_id: &str) -> [latest::ChatFeedUpdate; 4] {
+		let latest::ChatFeedUpdate::New(message) = text_message(participant_id) else {
+			unreachable!("text_message builds a new message")
+		};
+		let reaction = |placed: bool| {
+			let message_id = "m1".to_string();
+			let participant_id = participant_id.to_string();
+			let emoji = "👍".to_string();
+			if placed {
+				latest::ChatFeedUpdate::ReactionPlaced { message_id, participant_id, emoji }
+			} else {
+				latest::ChatFeedUpdate::ReactionRemoved { message_id, participant_id, emoji }
+			}
+		};
+		[
+			latest::ChatFeedUpdate::New(message.clone()),
+			latest::ChatFeedUpdate::Replaced(message),
+			reaction(true),
+			reaction(false),
+		]
+	}
+
+	// The host's user writes and reacts only through the host, so in a room
+	// the host stores no update may name the user as its author. A host that
+	// trusted the core here would store words the user never wrote.
 	#[test]
 	fn a_product_cannot_write_as_the_user_in_a_room_the_host_keeps() {
 		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
 		let runtime = chat_runtime(chat.clone());
 
-		assert_eq!(
-			update_feed(&runtime, "stored", text_message("user")),
-			Err(CallError::Domain(HostChatUpdateFeedError::V1(
-				latest::HostChatUpdateFeedError::NotOwner
-			)))
-		);
+		for update in updates_by("user") {
+			assert_eq!(
+				update_feed(&runtime, "stored", update),
+				Err(CallError::Domain(HostChatUpdateFeedError::V1(
+					latest::HostChatUpdateFeedError::NotOwner
+				)))
+			);
+		}
 		assert!(chat.feed.lock().unwrap().is_empty());
+	}
+
+	// A room the product keeps reports what happens in it, the user's own
+	// messages and reactions included, so the host only shows them.
+	#[test]
+	fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
+		let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
+		let runtime = chat_runtime(chat.clone());
+		configure(
+			&chat,
+			"sourced",
+			latest::ChatRoomConfig { product_source: true, ..Default::default() },
+		);
+
+		for update in updates_by("user") {
+			update_feed(&runtime, "sourced", update).expect("a shown update");
+		}
+		assert_eq!(chat.feed.lock().unwrap().len(), 4);
 	}
 
 	#[test]
