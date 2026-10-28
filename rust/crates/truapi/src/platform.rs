@@ -614,9 +614,6 @@ pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
 /// The longest node URL of a [`ChatResource::Hop`].
 pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
 
-/// The length of each coin key of a chat payment: an sr25519 secret key.
-pub const CHAT_PAYMENT_COIN_KEY_BYTES: usize = 64;
-
 /// The most coins one chat payment carries.
 pub const CHAT_PAYMENT_COINS_MAX: usize = 1024;
 
@@ -635,13 +632,13 @@ pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserActio
 				timestamp,
 			}
 		},
-		ChatUserAction::SendPayment { message_id, timestamp, total_value, coin_keys } => {
-			validate_chat_payment_coin_keys(&coin_keys)?;
+		ChatUserAction::SendPayment { message_id, timestamp, total_value, sr25519_secret_keys } => {
+			validate_chat_payment_coin_keys(&sr25519_secret_keys)?;
 			ChatUserAction::SendPayment {
 				message_id: normalize_chat_identifier("messageId", &message_id)?,
 				timestamp,
 				total_value,
-				coin_keys,
+				sr25519_secret_keys,
 			}
 		},
 		action => action,
@@ -649,17 +646,14 @@ pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserActio
 }
 
 /// Validate the coin keys of a chat payment: at least one, at most
-/// [`CHAT_PAYMENT_COINS_MAX`], each an sr25519 secret key.
-pub fn validate_chat_payment_coin_keys(coin_keys: &[Vec<u8>]) -> Result<(), ChatFieldError> {
-	let field = "coinKeys";
+/// [`CHAT_PAYMENT_COINS_MAX`].
+pub fn validate_chat_payment_coin_keys(coin_keys: &[[u8; 64]]) -> Result<(), ChatFieldError> {
+	let field = "sr25519SecretKeys";
 	if coin_keys.is_empty() {
 		return Err(ChatFieldError::Empty { field });
 	}
 	if coin_keys.len() > CHAT_PAYMENT_COINS_MAX {
 		return Err(ChatFieldError::TooMany { field, limit: CHAT_PAYMENT_COINS_MAX });
-	}
-	if coin_keys.iter().any(|key| key.len() != CHAT_PAYMENT_COIN_KEY_BYTES) {
-		return Err(ChatFieldError::WrongLength { field, length: CHAT_PAYMENT_COIN_KEY_BYTES });
 	}
 	Ok(())
 }
@@ -669,10 +663,7 @@ fn validate_chat_media_resource(
 	field: &'static str,
 	resource: ChatResource,
 ) -> Result<ChatResource, ChatFieldError> {
-	let ChatResource::Hop { identifier, ticket, node, size } = &resource;
-	if identifier.len() != 32 || ticket.len() != 32 {
-		return Err(ChatFieldError::WrongLength { field, length: 32 });
-	}
+	let ChatResource::Hop { node, size, .. } = &resource;
 	if !node.starts_with("wss://") {
 		return Err(ChatFieldError::RejectedScheme { field });
 	}
@@ -1152,14 +1143,6 @@ pub enum ChatFieldError {
 	RejectedScheme {
 		/// Offending field name.
 		field: &'static str,
-	},
-	/// The field does not have the one length it must have.
-	#[display("{field} must be exactly {length} bytes")]
-	WrongLength {
-		/// Offending field name.
-		field: &'static str,
-		/// Required length.
-		length: usize,
 	},
 	/// The value is outside its accepted range.
 	#[display("{field} must be from {min} to {max}")]
@@ -2490,40 +2473,40 @@ mod tests {
 
 	#[test]
 	fn a_payment_the_user_sends_carries_one_message_id_and_real_coin_keys() {
-		let payment = |message_id: &str, coin_keys: Vec<Vec<u8>>| ChatUserAction::SendPayment {
-			message_id: message_id.to_string(),
-			timestamp: 1_763_164_800_000,
-			total_value: 5_000_000,
-			coin_keys,
-		};
-		let key = vec![7u8; CHAT_PAYMENT_COIN_KEY_BYTES];
+		let payment =
+			|message_id: &str, sr25519_secret_keys: Vec<[u8; 64]>| ChatUserAction::SendPayment {
+				message_id: message_id.to_string(),
+				timestamp: 1_763_164_800_000,
+				total_value: 5_000_000,
+				sr25519_secret_keys,
+			};
+		let key = [7u8; 64];
 
 		// The host tracks the payment under this id, so it is screened as an
 		// identifier like any message id.
 		assert_eq!(
-			validate_chat_user_action(payment(" pay-1 ", vec![key.clone()])),
-			Ok(payment("pay-1", vec![key.clone()]))
+			validate_chat_user_action(payment(" pay-1 ", vec![key])),
+			Ok(payment("pay-1", vec![key]))
 		);
 		assert_eq!(
-			validate_chat_user_action(payment("pay\u{200d}-1", vec![key.clone()])),
+			validate_chat_user_action(payment("pay\u{200d}-1", vec![key])),
 			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
 		);
-		// A payment with no coins, too many coins or a key that is no sr25519
-		// secret would reach the contact as a payment nobody can claim.
+		// A payment with no coins or too many coins would reach the contact as
+		// a payment nobody can claim.
 		assert_eq!(
 			validate_chat_user_action(payment("pay-1", Vec::new())),
-			Err(ChatFieldError::Empty { field: "coinKeys" })
+			Err(ChatFieldError::Empty { field: "sr25519SecretKeys" })
 		);
 		assert_eq!(
 			validate_chat_user_action(payment("pay-1", vec![key; CHAT_PAYMENT_COINS_MAX + 1])),
-			Err(ChatFieldError::TooMany { field: "coinKeys", limit: CHAT_PAYMENT_COINS_MAX })
-		);
-		assert_eq!(
-			validate_chat_user_action(payment("pay-1", vec![vec![7u8; 32]])),
-			Err(ChatFieldError::WrongLength { field: "coinKeys", length: 64 })
+			Err(ChatFieldError::TooMany {
+				field: "sr25519SecretKeys",
+				limit: CHAT_PAYMENT_COINS_MAX
+			})
 		);
 		// The keys spend the coins, so a logged action never shows them.
-		let printed = format!("{:?}", payment("pay-1", vec![vec![0xab; 64]]));
+		let printed = format!("{:?}", payment("pay-1", vec![[0xab; 64]]));
 		assert!(printed.contains("1 keys") && !printed.contains("171"), "{printed}");
 	}
 
@@ -2916,32 +2899,23 @@ mod tests {
 		}
 	}
 
-	fn hop(identifier: usize, node: &str, size: u64) -> ChatResource {
-		ChatResource::Hop {
-			identifier: vec![1; identifier],
-			ticket: vec![2; 32],
-			node: node.to_string(),
-			size,
-		}
+	fn hop(node: &str, size: u64) -> ChatResource {
+		ChatResource::Hop { identifier: [1; 32], ticket: [2; 32], node: node.to_string(), size }
 	}
 
 	// A node that is not `wss://` is not one the apps dial.
 	#[test]
 	fn a_hop_file_is_media_with_a_wss_node() {
-		let file = hop(32, "wss://hop.example", 1_000);
+		let file = hop("wss://hop.example", 1_000);
 		assert_eq!(validate_chat_media_resource("media", file.clone()), Ok(file));
 		assert_eq!(
-			validate_chat_media_resource("media", hop(31, "wss://hop.example", 1_000)),
-			Err(ChatFieldError::WrongLength { field: "media", length: 32 })
-		);
-		assert_eq!(
-			validate_chat_media_resource("media", hop(32, "https://hop.example", 1_000)),
+			validate_chat_media_resource("media", hop("https://hop.example", 1_000)),
 			Err(ChatFieldError::RejectedScheme { field: "media" })
 		);
 		assert!(
 			validate_chat_media_resource(
 				"media",
-				hop(32, "wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
+				hop("wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
 			)
 			.is_err()
 		);
@@ -2951,7 +2925,7 @@ mod tests {
 	fn a_message_carries_at_most_the_media_budget() {
 		let many = |count| ChatMessageBody::RichText {
 			text: None,
-			media: (0..count).map(|_| image_item(hop(32, "wss://hop.example", 1))).collect(),
+			media: (0..count).map(|_| image_item(hop("wss://hop.example", 1))).collect(),
 		};
 		assert!(validate_chat_message_body(many(CHAT_MEDIA_MAX)).is_ok());
 		assert_eq!(
