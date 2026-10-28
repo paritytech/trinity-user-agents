@@ -3,8 +3,9 @@
 // A host that knows only v2 must accept each v2 call of a product that uses
 // this client. The Rust test `truapi/tests/chat_v2_frames.rs` keeps one frame
 // for each leg of the v2 methods in `truapi/tests/snapshots/chat-v2-frames.txt`.
-// This test encodes request legs through the generated codecs and compares
-// them with that snapshot.
+// These tests encode the legs this client sends through the generated codecs
+// and the client itself, and compare them with that snapshot. They also give
+// the client the host's response frames and read the results it decodes.
 //
 // `createRoom`, `postMessage` and `setRoomFooter` keep the shapes of the first
 // SDK: a host injects this client into products built against that SDK, so
@@ -12,11 +13,12 @@
 
 import { readFileSync } from "node:fs";
 
-import type { Result } from "neverthrow";
+import type { Result, ResultAsync } from "neverthrow";
 import { describe, expect, it } from "bun:test";
 
 import { createTransport } from "./client.js";
 import { createClient } from "./generated/client.js";
+import type { CallErrorValue } from "./scale.js";
 import {
     MESSAGE_TYPE_REQUEST,
     MESSAGE_TYPE_START,
@@ -176,6 +178,56 @@ const call: T.ChatMessage = {
     request: false,
 };
 
+const preview: T.ChatRoomPreview = {
+    timestamp: 5n,
+    badge: { tag: "UnreadCount", value: { count: 3 } },
+    lastMessage: message,
+    lastReaction: {
+        emoji: "👍",
+        byUser: false,
+        message: undefined,
+        removed: true,
+    },
+    unseenReactions: 2,
+    lastCall: call,
+};
+
+/** The frame the snapshot keeps under `name`. */
+function pinned(name: string): string {
+    const frame = snapshot.get(name);
+    if (frame === undefined) {
+        throw new Error(`the snapshot has no frame named ${name}`);
+    }
+    return frame;
+}
+
+type Client = ReturnType<typeof createClient>;
+
+/**
+ * Make one call, check its request frame, then answer it with a response frame
+ * of the snapshot and give the result the client reads.
+ */
+async function answered<E>(
+    request: string,
+    response: string,
+    invoke: (client: Client) => ResultAsync<undefined, E>,
+): Promise<Result<undefined, E>> {
+    const { sent, client, receive } = recordingClient();
+    const result = invoke(client);
+    expect(sent).toEqual([pinned(request)]);
+    receive(pinned(response));
+    return await result;
+}
+
+/** Deliver a start frame of the snapshot to a product handler and give what the client sends back. */
+async function answering(start: string, install: (client: Client) => void): Promise<string[]> {
+    const { sent, client, receive } = recordingClient();
+    install(client);
+    receive(pinned(start));
+    await Promise.resolve();
+    return sent;
+}
+
 describe("chat extension v2 frames", () => {
     it("encodes the v2 request legs as the Rust snapshot pins them", () => {
         const legs: [string, string][] = [
@@ -260,27 +312,12 @@ describe("chat extension v2 frames", () => {
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatSetRoomPreviewRequest.enc({
                         tag: "V1",
-                        value: {
-                            roomId: "room",
-                            preview: {
-                                timestamp: 5n,
-                                badge: { tag: "UnreadCount", value: { count: 3 } },
-                                lastMessage: message,
-                                lastReaction: {
-                                    emoji: "👍",
-                                    byUser: false,
-                                    message: undefined,
-                                    removed: true,
-                                },
-                                unseenReactions: 2,
-                                lastCall: call,
-                            },
-                        },
+                        value: { roomId: "room", preview },
                     }),
                 ),
             ],
             [
-                "17.user_action.start",
+                "13.user_action.start",
                 frame(
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
@@ -302,7 +339,7 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
-                "17.user_action.accept",
+                "13.user_action.accept",
                 frame(
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
@@ -316,7 +353,7 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
-                "17.user_action.pay",
+                "13.user_action.pay",
                 frame(
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
@@ -338,7 +375,7 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
-                "31.set_room_config.request",
+                "7.set_room_config.request",
                 frame(
                     W.CHAT_SET_ROOM_CONFIG,
                     MESSAGE_TYPE_REQUEST,
@@ -379,6 +416,117 @@ describe("chat extension v2 frames", () => {
         expect(posted.sent).toEqual([snapshot.get("3.post_message.request_without_alt")]);
         posted.receive(snapshot.get("3.post_message.response")!);
         expect((await post)._unsafeUnwrap()).toEqual({ messageId: "m1" });
+    });
+
+    it("sends the v2 calls and reads the host's answers as the Rust snapshot pins them", async () => {
+        const metadata = { name: "Room", description: "About" };
+        const notRoomHost: CallErrorValue<T.VersionedHostChatRoomError> = {
+            tag: "Domain",
+            value: { tag: "V1", value: { tag: "NotRoomHost" } },
+        };
+        const notOwner: CallErrorValue<T.VersionedHostChatUpdateFeedError> = {
+            tag: "Domain",
+            value: { tag: "V1", value: { tag: "NotOwner" } },
+        };
+
+        const set = await answered(
+            "8.set_room_metadata.request",
+            "8.set_room_metadata.response",
+            (client) => client.chat.setRoomMetadata({ roomId: "room", metadata }),
+        );
+        expect(set._unsafeUnwrap()).toBeUndefined();
+        const refused = await answered(
+            "8.set_room_metadata.request",
+            "8.set_room_metadata.error",
+            (client) => client.chat.setRoomMetadata({ roomId: "room", metadata }),
+        );
+        expect(refused._unsafeUnwrapErr()).toEqual(notRoomHost);
+
+        const previewed = await answered(
+            "9.set_room_preview.request",
+            "9.set_room_preview.response",
+            (client) => client.chat.setRoomPreview({ roomId: "room", preview }),
+        );
+        expect(previewed._unsafeUnwrap()).toBeUndefined();
+
+        const deleted = await answered(
+            "10.delete_room.request",
+            "10.delete_room.response",
+            (client) => client.chat.deleteRoom({ roomId: "room" }),
+        );
+        expect(deleted._unsafeUnwrap()).toBeUndefined();
+
+        const update: T.ChatFeedUpdate = { tag: "New", value: message };
+        const fed = await answered("11.update_feed.request", "11.update_feed.response", (client) =>
+            client.chat.updateFeed({ roomId: "room", update }),
+        );
+        expect(fed._unsafeUnwrap()).toBeUndefined();
+        const notFed = await answered("11.update_feed.request", "11.update_feed.error", (client) =>
+            client.chat.updateFeed({ roomId: "room", update }),
+        );
+        expect(notFed._unsafeUnwrapErr()).toEqual(notOwner);
+
+        const configured = await answered(
+            "7.set_room_config.request",
+            "7.set_room_config.response",
+            (client) => client.chat.setRoomConfig({ roomId: "room", config }),
+        );
+        expect(configured._unsafeUnwrap()).toBeUndefined();
+    });
+
+    it("answers the host's queries with the frames the Rust snapshot pins", async () => {
+        expect(
+            await answering("12.messages_query.start", (client) =>
+                client.chat.onMessagesQuery((_query, send) =>
+                    send({ messages: [message], next: "c0" }),
+                ),
+            ),
+        ).toEqual([pinned("12.messages_query.receive")]);
+        expect(
+            await answering("12.messages_query.start", (client) =>
+                client.chat.onMessagesQuery((_query, _send, interrupt) =>
+                    interrupt({
+                        tag: "Domain",
+                        value: { tag: "V1", value: { tag: "NotAvailable" } },
+                    }),
+                ),
+            ),
+        ).toEqual([pinned("12.messages_query.error")]);
+
+        expect(
+            await answering("13.user_action.start", (client) =>
+                client.chat.onUserAction((_action, send) =>
+                    send({ tag: "MessageCreated", value: message }),
+                ),
+            ),
+        ).toEqual([pinned("13.user_action.receive")]);
+        expect(
+            await answering("13.user_action.accept", (client) =>
+                client.chat.onUserAction((_action, send) => send({ tag: "Acknowledged" })),
+            ),
+        ).toEqual([pinned("13.user_action.acknowledged")]);
+        expect(
+            await answering("13.user_action.pay", (client) =>
+                client.chat.onUserAction((_action, _send, interrupt) =>
+                    interrupt({
+                        tag: "Domain",
+                        value: { tag: "V1", value: { tag: "Rejected", value: { reason: "no" } } },
+                    }),
+                ),
+            ),
+        ).toEqual([pinned("13.user_action.error")]);
+
+        expect(
+            await answering("14.reactions_query.start", (client) =>
+                client.chat.onReactionsQuery((_query, send) =>
+                    send({
+                        reactions: [
+                            { participantId: "p1", emoji: "👍", timestamp: 1_700_000_000_000n },
+                        ],
+                    }),
+                ),
+            ),
+        ).toEqual([pinned("14.reactions_query.receive")]);
     });
 
     it("decodes the first requests of createRoom, setRoomFooter and postMessage", () => {

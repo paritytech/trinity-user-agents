@@ -5,7 +5,8 @@
 //! request, so a later method must not change the bytes of an earlier method.
 //! `tests/snapshots/chat-v2-frames.txt` holds one frame for each leg of the
 //! methods below, as the v2 wire encodes them. This test encodes the same values
-//! again and compares the bytes.
+//! again and compares the bytes. Each frame also decodes back to its value as
+//! the type of its leg, so the snapshot holds only bytes that a peer reads.
 //!
 //! A failure means that the change moved a v2 frame. That change breaks each
 //! product and host that exists: undo it and add a method. When the frames
@@ -16,20 +17,28 @@
 //! first Chat methods, because products built against the first SDK call them
 //! through the client the host injects.
 
-use std::{fs, path::PathBuf};
+use std::{fmt::Debug, fs, path::PathBuf};
 
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, DecodeAll, Encode};
 use truapi::{
+	CallError,
 	frame::{
-		MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START, Payload, ProtocolMessage,
+		MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_START,
+		Payload, ProtocolMessage,
 	},
 	generated::wire_table::{self, MethodIds},
 	v01, v02,
 	versioned::chat as versioned,
 };
 
-/// One line of the snapshot: a name, then the hex of the whole frame.
-fn line(name: &str, ids: MethodIds, message_type: u8, value: impl Encode) -> String {
+/// One line of the snapshot: a name, then the hex of the whole frame. The
+/// value is the type of its leg, and the frame must decode back to it.
+fn line<T: Encode + Decode + PartialEq + Debug>(
+	name: &str,
+	ids: MethodIds,
+	message_type: u8,
+	value: T,
+) -> String {
 	let frame = ProtocolMessage {
 		request_id: "p:1".to_string(),
 		payload: Payload {
@@ -39,12 +48,11 @@ fn line(name: &str, ids: MethodIds, message_type: u8, value: impl Encode) -> Str
 			value: value.encode(),
 		},
 	};
-	format!("{name} {}", hex::encode(frame.encode()))
-}
-
-/// A `Result::Ok` around a response payload, as a response leg carries it.
-fn ok<T: Encode>(value: T) -> Result<T, ()> {
-	Ok(value)
+	let bytes = frame.encode();
+	let decoded = ProtocolMessage::decode_all(&mut &bytes[..]).expect("decode the frame");
+	assert_eq!(decoded, frame, "{name}");
+	assert_eq!(T::decode_all(&mut &decoded.payload.value[..]), Ok(value), "{name}");
+	format!("{name} {}", hex::encode(bytes))
 }
 
 fn message() -> v01::ChatMessage {
@@ -145,9 +153,9 @@ fn frames() -> Vec<String> {
 			"0.create_room.response",
 			wire_table::CHAT_CREATE_ROOM,
 			MESSAGE_TYPE_RESPONSE,
-			ok(HostChatCreateRoomResponse::V1(v01::HostChatCreateRoomResponse {
-				status: v01::ChatRoomRegistrationStatus::Exists,
-			})),
+			Ok::<_, CallError<HostChatCreateRoomError>>(HostChatCreateRoomResponse::V1(
+				v01::HostChatCreateRoomResponse { status: v01::ChatRoomRegistrationStatus::Exists },
+			)),
 		),
 		line(
 			"1.register_bot.request",
@@ -163,9 +171,9 @@ fn frames() -> Vec<String> {
 			"1.register_bot.response",
 			wire_table::CHAT_REGISTER_BOT,
 			MESSAGE_TYPE_RESPONSE,
-			ok(HostChatRegisterBotResponse::V1(v01::HostChatRegisterBotResponse {
-				status: v01::ChatBotRegistrationStatus::New,
-			})),
+			Ok::<_, CallError<HostChatRegisterBotError>>(HostChatRegisterBotResponse::V1(
+				v01::HostChatRegisterBotResponse { status: v01::ChatBotRegistrationStatus::New },
+			)),
 		),
 		line(
 			"2.list_subscribe.start",
@@ -217,9 +225,9 @@ fn frames() -> Vec<String> {
 			"3.post_message.response",
 			wire_table::CHAT_POST_MESSAGE,
 			MESSAGE_TYPE_RESPONSE,
-			ok(HostChatPostMessageResponse::V2(v01::HostChatPostMessageResponse {
-				message_id: "m1".into(),
-			})),
+			Ok::<_, CallError<HostChatPostMessageError>>(HostChatPostMessageResponse::V2(
+				v01::HostChatPostMessageResponse { message_id: "m1".into() },
+			)),
 		),
 		line(
 			"4.action_subscribe.start",
@@ -252,7 +260,22 @@ fn frames() -> Vec<String> {
 			"6.set_room_footer.response",
 			wire_table::CHAT_SET_ROOM_FOOTER,
 			MESSAGE_TYPE_RESPONSE,
-			ok(HostChatSetRoomFooterResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomFooterError>>(HostChatSetRoomFooterResponse::V1),
+		),
+		line(
+			"7.set_room_config.request",
+			wire_table::CHAT_SET_ROOM_CONFIG,
+			MESSAGE_TYPE_REQUEST,
+			HostChatSetRoomConfigRequest::V1(v01::HostChatSetRoomConfigRequest {
+				room_id: room(),
+				config: config(),
+			}),
+		),
+		line(
+			"7.set_room_config.response",
+			wire_table::CHAT_SET_ROOM_CONFIG,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomConfigResponse::V1),
 		),
 		line(
 			"8.set_room_metadata.request",
@@ -264,6 +287,20 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
+			"8.set_room_metadata.response",
+			wire_table::CHAT_SET_ROOM_METADATA,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomMetadataResponse::V1),
+		),
+		line(
+			"8.set_room_metadata.error",
+			wire_table::CHAT_SET_ROOM_METADATA,
+			MESSAGE_TYPE_RESPONSE,
+			Err::<HostChatSetRoomMetadataResponse, _>(CallError::Domain(HostChatRoomError::V1(
+				v01::HostChatRoomError::NotRoomHost,
+			))),
+		),
+		line(
 			"9.set_room_preview.request",
 			wire_table::CHAT_SET_ROOM_PREVIEW,
 			MESSAGE_TYPE_REQUEST,
@@ -273,10 +310,22 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
+			"9.set_room_preview.response",
+			wire_table::CHAT_SET_ROOM_PREVIEW,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomPreviewResponse::V1),
+		),
+		line(
 			"10.delete_room.request",
 			wire_table::CHAT_DELETE_ROOM,
 			MESSAGE_TYPE_REQUEST,
 			HostChatDeleteRoomRequest::V1(v01::HostChatDeleteRoomRequest { room_id: room() }),
+		),
+		line(
+			"10.delete_room.response",
+			wire_table::CHAT_DELETE_ROOM,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatRoomError>>(HostChatDeleteRoomResponse::V1),
 		),
 		line(
 			"11.update_feed.request",
@@ -297,13 +346,21 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
+			"11.update_feed.response",
+			wire_table::CHAT_UPDATE_FEED,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatUpdateFeedError>>(HostChatUpdateFeedResponse::V1),
+		),
+		line(
 			"11.update_feed.error",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_RESPONSE,
-			Err::<(), _>(HostChatUpdateFeedError::V1(v01::HostChatUpdateFeedError::NotOwner)),
+			Err::<HostChatUpdateFeedResponse, _>(CallError::Domain(HostChatUpdateFeedError::V1(
+				v01::HostChatUpdateFeedError::NotOwner,
+			))),
 		),
 		line(
-			"16.messages_query.start",
+			"12.messages_query.start",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_START,
 			ProductChatMessagesQueryRequest::V1(v01::ProductChatMessagesQueryRequest {
@@ -313,7 +370,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"16.messages_query.receive",
+			"12.messages_query.receive",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_RESPONSE,
 			ProductChatMessagesQueryItem::V1(v01::ProductChatMessagesQueryItem {
@@ -322,7 +379,15 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"17.user_action.start",
+			"12.messages_query.error",
+			wire_table::CHAT_MESSAGES_QUERY,
+			MESSAGE_TYPE_INTERRUPT,
+			Err::<(), _>(CallError::Domain(ProductChatQueryError::V1(
+				v01::ProductChatQueryError::NotAvailable,
+			))),
+		),
+		line(
+			"13.user_action.start",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
 			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
@@ -336,7 +401,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"17.user_action.accept",
+			"13.user_action.accept",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
 			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
@@ -345,7 +410,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"17.user_action.pay",
+			"13.user_action.pay",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
 			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
@@ -359,7 +424,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"17.user_action.receive",
+			"13.user_action.receive",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,
 			ProductChatUserActionItem::V1(
@@ -367,7 +432,21 @@ fn frames() -> Vec<String> {
 			),
 		),
 		line(
-			"18.reactions_query.start",
+			"13.user_action.acknowledged",
+			wire_table::CHAT_USER_ACTION,
+			MESSAGE_TYPE_RESPONSE,
+			ProductChatUserActionItem::V1(v01::ProductChatUserActionItem::Acknowledged),
+		),
+		line(
+			"13.user_action.error",
+			wire_table::CHAT_USER_ACTION,
+			MESSAGE_TYPE_INTERRUPT,
+			Err::<(), _>(CallError::Domain(ProductChatUserActionError::V1(
+				v01::ProductChatUserActionError::Rejected { reason: "no".into() },
+			))),
+		),
+		line(
+			"14.reactions_query.start",
 			wire_table::CHAT_REACTIONS_QUERY,
 			MESSAGE_TYPE_START,
 			ProductChatReactionsQueryRequest::V1(v01::ProductChatReactionsQueryRequest {
@@ -376,7 +455,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"18.reactions_query.receive",
+			"14.reactions_query.receive",
 			wire_table::CHAT_REACTIONS_QUERY,
 			MESSAGE_TYPE_RESPONSE,
 			ProductChatReactionsQueryItem::V1(v01::ProductChatReactionsQueryItem {
@@ -386,21 +465,6 @@ fn frames() -> Vec<String> {
 					timestamp: 1_700_000_000_000,
 				}],
 			}),
-		),
-		line(
-			"31.set_room_config.request",
-			wire_table::CHAT_SET_ROOM_CONFIG,
-			MESSAGE_TYPE_REQUEST,
-			HostChatSetRoomConfigRequest::V1(v01::HostChatSetRoomConfigRequest {
-				room_id: room(),
-				config: config(),
-			}),
-		),
-		line(
-			"31.set_room_config.response",
-			wire_table::CHAT_SET_ROOM_CONFIG,
-			MESSAGE_TYPE_RESPONSE,
-			ok(HostChatSetRoomConfigResponse::V1),
 		),
 	]
 }
