@@ -16,6 +16,11 @@ extension ChainSocketCloseReason {
         return false
     }
 
+    var isPathLost: Bool {
+        if case .pathLost = self { return true }
+        return false
+    }
+
     var isConnectTimeout: Bool {
         if case .connectTimeout = self { return true }
         return false

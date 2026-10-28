@@ -19,9 +19,10 @@ final class SPASimplifiedViewLayout: UIView {
         return progressView
     }()
 
-    let loadStatusLabel: UILabel = {
-        let label = UILabel()
-        label.font = .bodyMedium.monospaced()
+    let loadStatusLabel: Label = {
+        let label = Label()
+        label.typography = .bodyMedium
+        label.usesMonospacedDigits = true
         label.textColor = .fgSecondary
         label.textAlignment = .center
         label.numberOfLines = 0

@@ -117,6 +117,8 @@ impl Permissions for WireShapePlatform {
 	}
 }
 
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
+
 #[truapi::platform::async_trait]
 impl Features for WireShapePlatform {
 	async fn feature_supported(
@@ -208,7 +210,7 @@ impl LocaleHost for WireShapePlatform {
 impl PreimageHost for WireShapePlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		Box::pin(stream::empty())
 	}

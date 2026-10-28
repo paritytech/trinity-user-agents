@@ -135,7 +135,8 @@ pub trait HostCallbacks: Send + Sync {
 	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Look up one preimage value by key. The native shim emits this as the
-	/// current item in its subscription stream.
+	/// current item in its subscription stream and calls again after a miss.
+	/// Return `None` if the fetch fails. An error ends the lookup.
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
 	/// Current host theme, named variant included. The native shim emits this
@@ -157,8 +158,14 @@ pub trait HostCallbacks: Send + Sync {
 	/// promptly.
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
-	/// Observe demand on a product's worker crossing zero. `Start` means the
-	/// host runs the worker now, `Stop` that nothing wants it any more. Every
+	/// The chains the host builds as V5 general transactions, each with its
+	/// transaction extension pipeline. A chain not listed is built as V4.
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
+
+	/// Request a product worker transition. `Start` means the host runs the
+	/// worker now; `Stop` means it is no longer needed and may stop. Every
 	/// transition arrives here, in ledger order: the ones the host asks for
 	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
 	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
@@ -172,7 +179,7 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
-	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition);
+	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// A device finished pairing with this signing host.
 	///

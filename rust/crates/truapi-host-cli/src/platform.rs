@@ -170,6 +170,7 @@ pub struct CliPlatform {
 	chain: WsChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
+	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -255,6 +256,7 @@ impl CliPlatform {
 		Arc::new(Self {
 			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
 			chains: network.host_chain_set(),
+			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
@@ -783,6 +785,15 @@ impl Permissions for CliPlatform {
 }
 
 #[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, api::GenericError> {
+		Ok(self.extension_versions.clone())
+	}
+}
+
+#[async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(
 		&self,
@@ -1023,7 +1034,7 @@ impl LocaleHost for CliPlatform {
 impl PreimageHost for CliPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		self.bulletin.subscribe(key)
 	}
