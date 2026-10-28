@@ -5,9 +5,12 @@
 # A fresh lite identity allocates an allowance for product A, then product B,
 # and fills the rest of the period with random accounts. One more
 # `alloc-check --submit` then replaces A's slot, the oldest, so A holds no slot
-# while B still holds its own. A renewal pass must report A as exhausted and B
-# as already allocated, and leave every slot as it was. A renewal that replaced
-# a slot would take one of the random accounts' allowances.
+# while B still holds its own. Neither product has been renewed before, so the
+# pass takes them in ledger order: A finds the period full, and B is reached
+# only by the scan that follows exhaustion. The pass must report A as exhausted
+# and B as already allocated, in that order, and leave every slot as it was. A
+# renewal that replaced a slot would take one of the random accounts'
+# allowances.
 #
 # This builds `truapi-host` from the checkout, so it always tests the code in
 # front of it rather than whatever binary is installed. The test needs a period
@@ -102,7 +105,9 @@ register_random
 before="$(slot_table)"
 
 echo "==> renewing"
-"$host" signing-host "${signer[@]}" --session "$name" exec '/renew' \
+# Debug for the renewal pass, whose per-target lines show the order it ran in.
+RUST_LOG="warn,truapi=info,truapi_host=info,truapi::runtime::statement_allowance::renewal=debug" \
+  "$host" signing-host "${signer[@]}" --session "$name" exec '/renew' \
   > "$state/renew.log" 2>&1
 after="$(slot_table)"
 
@@ -115,6 +120,13 @@ grep -q "label=\"product:$product_a\" reason=no free StatementStore slot" "$stat
   fail "product A was not reported as exhausted"
 grep -q '0 renewed · 1 fresh · 1 failed · 0 skipped' "$state/renew.log" ||
   fail "expected product B already allocated and product A exhausted"
+line_of() {
+  grep -n "$1" "$state/renew.log" | grep -F "label=\"product:$2\"" | head -1 | cut -d: -f1
+}
+a_line="$(line_of 'statement-store renewal failed' "$product_a")"
+b_line="$(line_of 'statement-store allowance already fresh' "$product_b")"
+[ -n "$a_line" ] && [ -n "$b_line" ] && [ "$b_line" -gt "$a_line" ] ||
+  fail "product B was not reached by the scan after the period filled"
 [ "$before" = "$after" ] || fail "renewal changed the slot table"
 
 echo "==> renewal full period e2e passed"
