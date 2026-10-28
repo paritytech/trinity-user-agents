@@ -6,15 +6,15 @@ import type {
   AccountNames,
   ChainDirectory,
   PeopleConsumer,
-} from "../../../../src/chat/directory.js";
+} from "../../../../src/chat/nova/directory.js";
 import {
   ChatEngine,
   WRITES_OFF,
   type HopService,
   type StatementStoreLike,
-} from "../../../../src/chat/engine.js";
+} from "../../../../src/chat/nova/engine.js";
 import { MemoryHopNode } from "../../../../fixtures/nova/hop-memory.js";
-import { HOP_MAX_FILE_BYTES } from "../../../../src/chat/hop.js";
+import { HOP_MAX_FILE_BYTES } from "../../../../src/chat/nova/hop.js";
 import * as sr25519 from "@scure/sr25519";
 import {
   bytes,
@@ -22,27 +22,27 @@ import {
   equalBytes,
   text,
   u64,
-} from "../../../../src/chat/codec.js";
-import { cryptoRandom } from "../../../../src/chat/crypto.js";
-import { ChatDiagnostics } from "../../../../src/chat/diagnostics.js";
-import { localNovaIdentity } from "../../../../src/chat/identity.js";
-import { ChatKeys } from "../../../../src/chat/keys.js";
-import { loadChatRecord } from "../../../../src/chat/store.js";
+} from "../../../../src/chat/nova/codec.js";
+import { cryptoRandom } from "../../../../src/chat/nova/crypto.js";
+import { ChatDiagnostics } from "../../../../tools/inspector/diagnostics.js";
+import { localNovaIdentity } from "../../../../src/chat/nova/identity.js";
+import { ChatKeys } from "../../../../src/chat/nova/keys.js";
+import { loadChatRecord } from "../../../../src/chat/nova/store.js";
 import {
   requestChannel,
   requestTopic,
   sealSession,
   sessionTopic,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 import {
   decodeStatement,
   encodeSigned,
   expiryAt,
-} from "../../../../src/chat/statement.js";
+} from "../../../../src/chat/nova/statement.js";
 import type {
   SubmitResult,
   TopicFilter,
-} from "../../../../src/chat/statement-store.js";
+} from "../../../../src/chat/nova/statement-store.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 
 /** Synthetic phrases from the BIP-39 test vectors. They hold nothing. */

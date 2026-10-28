@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Reader } from "../../../../src/chat/codec.js";
+import { Reader } from "../../../../src/chat/nova/codec.js";
 import {
   candidateLine,
   compactBig,
@@ -18,8 +18,11 @@ import {
   readCompactBig,
   setupSdp,
   RENEGOTIATION,
-} from "../../../../src/chat/call-wire.js";
-import { decodeMessage, encodeMessage } from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/call-wire.js";
+import {
+  decodeMessage,
+  encodeMessage,
+} from "../../../../src/chat/nova/protocol.js";
 
 const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
 

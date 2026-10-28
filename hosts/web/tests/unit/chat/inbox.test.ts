@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
-import { ChatDiagnostics } from "../../../src/chat/diagnostics.js";
-import { ChatInbox, type InboxChange } from "../../../src/chat-inbox.js";
-import { messagePortBridge } from "../../../src/chat-v2/contract.js";
-import { ChatV2Host } from "../../../src/chat-v2/host.js";
-import { chatV2Over } from "../../../src/chat-v2/product.js";
-import type { ChatSession } from "../../../src/nova-chat-provider.js";
-import { ProductChat, productChatKey } from "../../../src/product-chat.js";
+import { ChatDiagnostics } from "../../../tools/inspector/diagnostics.js";
+import { ChatInbox, type InboxChange } from "../../../src/chat/inbox.js";
+import { messagePortBridge } from "../../../src/chat/draft/contract.js";
+import { ChatV2Host } from "../../../src/chat/draft/host.js";
+import { chatV2Over } from "../../../src/chat/draft/product.js";
+import type { ChatSession } from "../../../src/chat/nova-provider.js";
+import { ProductChat, productChatKey } from "../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const worker = (productId: string): ProductContext => ({

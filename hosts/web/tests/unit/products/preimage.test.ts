@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { blake2b } from "@noble/hashes/blake2.js";
-import type { FetchLike } from "../../../src/archive/gateway.js";
-import { gatewayPreimages, preimageCid } from "../../../src/preimage.js";
+import type { FetchLike } from "../../../src/products/archive/gateway.js";
+import {
+  gatewayPreimages,
+  preimageCid,
+} from "../../../src/products/preimage.js";
 
 const GATEWAY = "https://gateway.example";
 const ICON = new TextEncoder().encode("synthetic icon bytes");

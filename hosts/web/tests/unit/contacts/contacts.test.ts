@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { HexString } from "@parity/truapi/scale";
 import type { ProductContext } from "@parity/truapi-host";
-import type { ChatContact } from "../../../src/chat-provider.js";
+import type { ChatContact } from "../../../src/chat/provider.js";
 import {
   type DiscoveryView,
   type ListedUser,
   fixtureDirectory,
-} from "../../../src/username-directory.js";
+} from "../../../src/contacts/username-directory.js";
 import {
   HostContacts,
   type PickedPerson,
@@ -14,8 +14,8 @@ import {
   contactHandle,
   lookupView,
   usernameLookup,
-} from "../../../src/contacts.js";
-import type { PromptLookupView } from "../../../src/prompt.js";
+} from "../../../src/contacts/contacts.js";
+import type { PromptLookupView } from "../../../src/app/prompt.js";
 
 const product: ProductContext = {
   productId: "pay.paseo",

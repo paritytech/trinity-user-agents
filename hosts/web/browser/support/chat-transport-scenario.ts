@@ -7,25 +7,25 @@
 import { bytesToHex } from "@parity/truapi/scale";
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { bytes, concat, text, u64 } from "../../src/chat/codec.js";
-import { aeadKey, cryptoRandom } from "../../src/chat/crypto.js";
-import type { ChatDiagnostics } from "../../src/chat/diagnostics.js";
-import type { ChainDirectory } from "../../src/chat/directory.js";
-import { ChatEngine } from "../../src/chat/engine.js";
-import { localNovaIdentity } from "../../src/chat/identity.js";
-import { ChatKeys, deriveChatSecret } from "../../src/chat/keys.js";
+import { bytes, concat, text, u64 } from "../../src/chat/nova/codec.js";
+import { aeadKey, cryptoRandom } from "../../src/chat/nova/crypto.js";
+import type { ChatDiagnostics } from "../../tools/inspector/diagnostics.js";
+import type { ChainDirectory } from "../../src/chat/nova/directory.js";
+import { ChatEngine } from "../../src/chat/nova/engine.js";
+import { localNovaIdentity } from "../../src/chat/nova/identity.js";
+import { ChatKeys, deriveChatSecret } from "../../src/chat/nova/keys.js";
 import { MemoryStatementRpc } from "../../fixtures/nova/memory-rpc.js";
 import {
   encodeSessionData,
   sealSessionPlaintext,
   sessionTopic,
-} from "../../src/chat/protocol.js";
+} from "../../src/chat/nova/protocol.js";
 import {
   encodeSigned,
   expiryAt,
   statementHash,
-} from "../../src/chat/statement.js";
-import { StatementStore } from "../../src/chat/statement-store.js";
+} from "../../src/chat/nova/statement.js";
+import { StatementStore } from "../../src/chat/nova/statement-store.js";
 import { MemoryStorage } from "../../tests/support/test-support.js";
 
 const ALICE =

@@ -11,7 +11,7 @@ import {
   routeDirectory,
   ss58Account,
   usernamePrefix,
-} from "../../../src/username-directory.js";
+} from "../../../src/contacts/username-directory.js";
 
 /** The public development account Alice, in its generic (42) and Polkadot (0) forms. */
 const DEV_ALICE = {

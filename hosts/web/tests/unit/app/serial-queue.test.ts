@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SerialQueue } from "../../../src/serial-queue.js";
+import { SerialQueue } from "../../../src/app/serial-queue.js";
 
 function deferred() {
   let resolve!: () => void;

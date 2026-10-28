@@ -11,7 +11,7 @@ import {
   readPeopleChain,
   readStorageValues,
   type RingMembership,
-} from "../../../src/people-chain.js";
+} from "../../../src/platform/people-chain.js";
 
 const CONSUMERS =
   "2111e0df19de9563b58301e5f7e0074311ab70ef474cf12409dfe509d5efe3b2";

@@ -3,7 +3,7 @@ import {
   versionSections,
   type BuildInfo,
   type RuntimeInfo,
-} from "../../../src/versions.js";
+} from "../../../src/app/versions.js";
 
 const BUILD: BuildInfo = {
   packages: {

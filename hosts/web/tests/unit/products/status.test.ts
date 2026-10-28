@@ -4,7 +4,7 @@ import {
   productStatusText,
   type Opened,
   type ProductView,
-} from "../../../src/product-status.js";
+} from "../../../src/products/status.js";
 
 const URL_OPENED: Opened = { address: "http://localhost:3000/", via: "url" };
 const NAME_OPENED: Opened = { address: "app.paseo", via: "name", kind: "car" };

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { NETWORKS } from "../../../src/network-config.js";
+import { NETWORKS } from "../../../src/platform/network-config.js";
 import {
   defaultAddresses,
   destinationOf,
   loadAddresses,
   resolveNavigation,
   saveAddress,
-} from "../../../src/shell.js";
+} from "../../../src/app/shell.js";
 
 const PASEO = NETWORKS.paseo;
 

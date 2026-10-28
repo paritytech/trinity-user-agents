@@ -1,7 +1,7 @@
 import type {
   HostNotification,
   NotificationStore,
-} from "../../src/notifications.js";
+} from "../../src/notifications/notifications.js";
 
 /**
  * DEV ONLY. Made-up notifications for the Notifications screen. The people

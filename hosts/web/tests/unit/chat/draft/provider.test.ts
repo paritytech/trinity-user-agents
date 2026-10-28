@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { ProviderEvent } from "../../../../src/chat-provider.js";
+import type { ProviderEvent } from "../../../../src/chat/provider.js";
 import {
   messagePortBridge,
   type ChatMessage,
   type ChatUserAction,
   type HostChatRoomEventsSubscribeItem,
   type ProductChatUserActionItem,
-} from "../../../../src/chat-v2/contract.js";
-import { ChatV2Host } from "../../../../src/chat-v2/host.js";
+} from "../../../../src/chat/draft/contract.js";
+import { ChatV2Host } from "../../../../src/chat/draft/host.js";
 import {
   chatV2Over,
   type ChatV2Product,
-} from "../../../../src/chat-v2/product.js";
-import { ChatV2Provider } from "../../../../src/chat-v2/provider.js";
+} from "../../../../src/chat/draft/product.js";
+import { ChatV2Provider } from "../../../../src/chat/draft/provider.js";
 
 const PRODUCT = "chat.paseo";
 

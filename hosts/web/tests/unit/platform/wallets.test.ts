@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { WalletStore } from "../../../src/wallets.js";
+import { WalletStore } from "../../../src/platform/wallets.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const KEY = "truapi-web-signing-host:wallets:v1";

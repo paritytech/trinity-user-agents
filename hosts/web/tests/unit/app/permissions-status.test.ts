@@ -4,7 +4,7 @@ import {
   permissionRows,
   queriesFor,
   type PermissionsView,
-} from "../../../src/permissions-status.js";
+} from "../../../src/app/permissions-status.js";
 
 const done = (
   statuses: Record<string, "Authorized" | "Denied" | "NotDetermined">,

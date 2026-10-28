@@ -4,7 +4,7 @@
  * `Worker` execution, and it speaks the Chat Extension v2 draft bridge. What
  * it sees is on `window.__chatProduct` for the test to read.
  */
-import { connectChatV2 } from "../../src/chat-v2/product.js";
+import { connectChatV2 } from "../../src/chat/draft/product.js";
 import { startSyntheticChatProduct } from "./synthetic-chat-product.js";
 
 const product = startSyntheticChatProduct(connectChatV2(), { stepMs: 50 });

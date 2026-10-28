@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
-import type { ChainDirectory } from "../../../src/chat/directory.js";
-import { HostNames } from "../../../src/host-names.js";
+import type { ChainDirectory } from "../../../src/chat/nova/directory.js";
+import { HostNames } from "../../../src/contacts/host-names.js";
 
 const ADA = `0x${"ad".repeat(32)}`;
 const NOBODY = `0x${"0b".repeat(32)}`;

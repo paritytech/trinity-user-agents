@@ -6,7 +6,7 @@ import {
   blake2b256,
   cryptoRandom,
   unseal,
-} from "../../../../src/chat/crypto.js";
+} from "../../../../src/chat/nova/crypto.js";
 import { MemoryHopNode } from "../../../../fixtures/nova/hop-memory.js";
 import {
   HOP_CHUNK_BYTES,
@@ -18,7 +18,7 @@ import {
   submitPayload,
   ticketKeys,
   type HopSender,
-} from "../../../../src/chat/hop.js";
+} from "../../../../src/chat/nova/hop.js";
 
 const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
 

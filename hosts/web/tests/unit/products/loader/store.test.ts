@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   archiveCacheName,
   completeKey,
-} from "../../../../src/sandbox/files.js";
-import { type Locks, storeArchive } from "../../../../src/sandbox/store.js";
+} from "../../../../src/products/loader/files.js";
+import {
+  type Locks,
+  storeArchive,
+} from "../../../../src/products/loader/store.js";
 
 const ORIGIN = "https://host.example";
 

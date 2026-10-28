@@ -6,7 +6,7 @@ import {
   draggedSize,
   initialViewport,
   loadCustomSize,
-} from "../../../src/viewport.js";
+} from "../../../tools/viewport.js";
 
 describe("the tab's first size", () => {
   // A new tab previews a phone, but a size the tab chose stays chosen.

@@ -4,7 +4,7 @@ import {
   fixtureCredential,
   publicIdentity,
 } from "../../../fixtures/invitations/fixture-identity.js";
-import { NotificationStore } from "../../../src/notifications.js";
+import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
 import {
   REPLY_SEAL,

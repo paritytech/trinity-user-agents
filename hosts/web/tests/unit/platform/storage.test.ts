@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { HostLocalStorageChangeItem } from "@parity/truapi";
-import { HostStorage } from "../../../src/storage.js";
+import { HostStorage } from "../../../src/platform/storage.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const bytes = (...values: number[]) => new Uint8Array(values);

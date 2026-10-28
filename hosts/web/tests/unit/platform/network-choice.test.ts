@@ -7,7 +7,7 @@ import {
   tabProductKey,
   tabWalletKey,
   type NetworkChoice,
-} from "../../../src/network-choice.js";
+} from "../../../src/platform/network-choice.js";
 
 const OFFERED: NetworkChoice[] = [
   { id: "alpha", label: "Alpha" },

@@ -11,8 +11,8 @@ const hostRoot = fileURLToPath(new URL(".", import.meta.url));
  * module, and the loader shares the same build.
  */
 const SCRIPTS: Record<string, string> = {
-  "truapi-sandbox/page.js": `${hostRoot}src/sandbox/page.ts`,
-  "sw.js": `${hostRoot}src/sandbox/sw.ts`,
+  "truapi-sandbox/page.js": `${hostRoot}src/products/loader/page.ts`,
+  "sw.js": `${hostRoot}src/products/loader/sw.ts`,
 };
 const LOADER_PAGE = "truapi-sandbox/index.html";
 
@@ -49,7 +49,7 @@ async function sandboxFile(
   if (path === LOADER_PAGE)
     return {
       type: "text/html; charset=utf-8",
-      body: readFileSync(`${hostRoot}src/sandbox/index.html`, "utf8"),
+      body: readFileSync(`${hostRoot}src/products/loader/index.html`, "utf8"),
     };
   const entry = SCRIPTS[path];
   return entry === undefined

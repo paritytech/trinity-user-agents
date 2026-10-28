@@ -18,21 +18,24 @@ import type { ProductContext } from "@parity/truapi-host";
 import type {
   ChatSnapshot,
   IncomingCallSignal,
-} from "../../src/chat/engine.js";
-import { CallManager } from "../../src/chat/call.js";
-import { decodeMessage, encodeMessage } from "../../src/chat/protocol.js";
-import type { ChatInboxView, InboxChange } from "../../src/chat-inbox.js";
-import type { ChatProvider } from "../../src/chat-provider.js";
-import { ChatScreen } from "../../src/chat-screen.js";
-import { HostContacts, chooseContact } from "../../src/contacts.js";
+} from "../../src/chat/nova/engine.js";
+import { CallManager } from "../../src/chat/nova/call.js";
+import { decodeMessage, encodeMessage } from "../../src/chat/nova/protocol.js";
+import type { ChatInboxView, InboxChange } from "../../src/chat/inbox.js";
+import type { ChatProvider } from "../../src/chat/provider.js";
+import { ChatScreen } from "../../src/chat/screen.js";
+import { HostContacts, chooseContact } from "../../src/contacts/contacts.js";
 import {
   type UsernameDirectory,
   fixtureDirectory,
-} from "../../src/username-directory.js";
-import { messagePortBridge } from "../../src/chat-v2/contract.js";
-import { ChatV2Host } from "../../src/chat-v2/host.js";
-import { chatV2Over, type ChatV2Product } from "../../src/chat-v2/product.js";
-import { ChatV2Provider } from "../../src/chat-v2/provider.js";
+} from "../../src/contacts/username-directory.js";
+import { messagePortBridge } from "../../src/chat/draft/contract.js";
+import { ChatV2Host } from "../../src/chat/draft/host.js";
+import {
+  chatV2Over,
+  type ChatV2Product,
+} from "../../src/chat/draft/product.js";
+import { ChatV2Provider } from "../../src/chat/draft/provider.js";
 import {
   startSyntheticChatProduct,
   type SyntheticChatProduct,
@@ -40,18 +43,18 @@ import {
 import {
   NovaChatProvider,
   type NovaEngine,
-} from "../../src/nova-chat-provider.js";
-import { ProductChat, productChatKey } from "../../src/product-chat.js";
+} from "../../src/chat/nova-provider.js";
+import { ProductChat, productChatKey } from "../../src/chat/product-chat.js";
 import {
   ProductRoomProvider,
   type RoomChannel,
-} from "../../src/product-room-provider.js";
+} from "../../src/chat/product-room-provider.js";
 import { MemoryStorage } from "../../tests/support/test-support.js";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import * as sr25519 from "@scure/sr25519";
-import { cryptoRandom } from "../../src/chat/crypto.js";
+import { cryptoRandom } from "../../src/chat/nova/crypto.js";
 import { MemoryHopNode } from "../../fixtures/nova/hop-memory.js";
-import { hopDownload, hopUpload } from "../../src/chat/hop.js";
+import { hopDownload, hopUpload } from "../../src/chat/nova/hop.js";
 
 /** The HOP node files go through in this page: in memory, with real sealing and checks. */
 const hopNode = new MemoryHopNode();

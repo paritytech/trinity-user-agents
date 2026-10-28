@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { NotificationStore, statusOf } from "../../../../src/notifications.js";
+import {
+  NotificationStore,
+  statusOf,
+} from "../../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import {
   addSamples,

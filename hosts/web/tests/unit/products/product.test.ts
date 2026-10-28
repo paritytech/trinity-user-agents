@@ -3,7 +3,7 @@ import {
   parseProductUrl,
   PRODUCT_FRAME_POLICY,
   productIdFor,
-} from "../../../src/product.js";
+} from "../../../src/products/product.js";
 
 describe("productIdFor", () => {
   // Two local dev servers are two products, so they must not share accounts,

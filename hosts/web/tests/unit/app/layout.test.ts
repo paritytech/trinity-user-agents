@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Layout } from "../../../src/layout.js";
+import { Layout } from "../../../src/app/layout.js";
 
 describe("Layout beside the app", () => {
   test("a toggle shows its view, and closes the tools when its view already shows", () => {

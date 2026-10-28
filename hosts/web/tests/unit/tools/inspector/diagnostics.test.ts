@@ -18,12 +18,12 @@ import {
   subscriptionEvent,
   TOPIC_ID_LIMIT,
   type ChatEventBody,
-} from "../../../../src/chat/diagnostics.js";
+} from "../../../../tools/inspector/diagnostics.js";
 import {
   CONTROL_TAGS,
   encodeMessage,
   messageKind,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 
 describe("chat diagnostics", () => {
   test("keeps at most its limit, oldest dropped first", () => {

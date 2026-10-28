@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { StageLoading, documentsBeforeProduct } from "../../../src/loading.js";
+import {
+  StageLoading,
+  documentsBeforeProduct,
+} from "../../../src/products/loading.js";
 
 function loading() {
   const shown: (string | null)[] = [];

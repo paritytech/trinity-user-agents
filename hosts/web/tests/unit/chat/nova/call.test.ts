@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { HexString } from "@parity/truapi/scale";
-import { CallManager, STALE_OFFER_MS } from "../../../../src/chat/call.js";
-import type { OutgoingCallSignal } from "../../../../src/chat/engine.js";
-import { callLine } from "../../../../src/nova-chat-provider.js";
+import { CallManager, STALE_OFFER_MS } from "../../../../src/chat/nova/call.js";
+import type { OutgoingCallSignal } from "../../../../src/chat/nova/engine.js";
+import { callLine } from "../../../../src/chat/nova-provider.js";
 
 const ADA = `0x${"aa".repeat(32)}` as HexString;
 const BOB = `0x${"bb".repeat(32)}` as HexString;

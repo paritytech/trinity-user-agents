@@ -9,7 +9,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, BrowserContext, Frame, Page } from "playwright-core";
-import { productLabel } from "../src/sandbox/mount.js";
+import { productLabel } from "../src/products/loader/mount.js";
 import {
   TEST_MNEMONIC,
   type PublishedApp,

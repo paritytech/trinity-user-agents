@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { HexString } from "@parity/truapi/scale";
-import type { ChatContact } from "../../../src/chat-provider.js";
-import type { PickedPerson } from "../../../src/contacts.js";
-import { SearchPeople } from "../../../src/search-people.js";
+import type { ChatContact } from "../../../src/chat/provider.js";
+import type { PickedPerson } from "../../../src/contacts/contacts.js";
+import { SearchPeople } from "../../../src/contacts/search-people.js";
 import {
   fixtureDirectory,
   type UsernameDirectory,
-} from "../../../src/username-directory.js";
+} from "../../../src/contacts/username-directory.js";
 
 const account = (byte: string) => `0x${byte.repeat(32)}` as HexString;
 const KIM = account("4b");

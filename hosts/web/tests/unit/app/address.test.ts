@@ -10,9 +10,9 @@ import {
   KNOWN_DOTNS_TLDS,
   normalizeAddress,
   parseAddress,
-} from "../../../src/address.js";
-import { parseProductUrl } from "../../../src/product.js";
-import { NETWORKS } from "../../../src/network-config.js";
+} from "../../../src/app/address.js";
+import { parseProductUrl } from "../../../src/products/product.js";
+import { NETWORKS } from "../../../src/platform/network-config.js";
 
 describe("normalizeAddress", () => {
   test("adds http to a bare host and port", () => {

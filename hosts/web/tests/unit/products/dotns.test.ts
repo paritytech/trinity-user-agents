@@ -16,8 +16,8 @@ import {
   resolveTextRecord,
   type ContentKind,
   type RpcCall,
-} from "../../../src/dotns.js";
-import { NETWORKS } from "../../../src/network-config.js";
+} from "../../../src/products/dotns.js";
+import { NETWORKS } from "../../../src/platform/network-config.js";
 
 /** The CID `dotkit asset-hub name resolve chat-spa-probe` printed. */
 const PROBE_CID = "bafybeihmnm4dydovrq5jle7qgnyswajzdlu3cuncws32p5phwithaomsbe";

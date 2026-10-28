@@ -30,7 +30,7 @@ import {
   toHex,
   utf8,
 } from "../../../src/invitations/sealing.js";
-import { NotificationStore } from "../../../src/notifications.js";
+import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
 import * as setup from "../../../fixtures/products/example-chat/setup.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";

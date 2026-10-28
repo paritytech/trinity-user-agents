@@ -6,44 +6,44 @@ import {
   CAPTURE_ITEM_BYTES,
   CAPTURE_ITEM_LIMIT,
   PayloadCapture,
-} from "../../../../src/chat/capture.js";
-import { bytes, concat, text, u64 } from "../../../../src/chat/codec.js";
+} from "../../../../tools/inspector/capture.js";
+import { bytes, concat, text, u64 } from "../../../../src/chat/nova/codec.js";
 import {
   aeadKey,
   cryptoRandom,
   type RandomBytes,
-} from "../../../../src/chat/crypto.js";
+} from "../../../../src/chat/nova/crypto.js";
 import {
   ChatDiagnostics,
   type ChatEvent,
-} from "../../../../src/chat/diagnostics.js";
-import type { ChainDirectory } from "../../../../src/chat/directory.js";
-import { ChatEngine } from "../../../../src/chat/engine.js";
-import { localNovaIdentity } from "../../../../src/chat/identity.js";
+} from "../../../../tools/inspector/diagnostics.js";
+import type { ChainDirectory } from "../../../../src/chat/nova/directory.js";
+import { ChatEngine } from "../../../../src/chat/nova/engine.js";
+import { localNovaIdentity } from "../../../../src/chat/nova/identity.js";
 import {
   decodePlaintextLayer,
   decodeStatementLayer,
-} from "../../../../src/chat/inspect.js";
+} from "../../../../tools/inspector/inspect.js";
 import {
   ChatKeys,
   deriveChatSecret,
   deriveIdentitySecret,
   miniSecret,
-} from "../../../../src/chat/keys.js";
+} from "../../../../src/chat/nova/keys.js";
 import { MemoryStatementRpc } from "../../../../fixtures/nova/memory-rpc.js";
 import {
   encodeSessionData,
   sealSessionPlaintext,
   sessionTopic,
   unsealSession,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 import {
   decodeStatement,
   encodeSigned,
   expiryAt,
   statementHash,
-} from "../../../../src/chat/statement.js";
-import { StatementStore } from "../../../../src/chat/statement-store.js";
+} from "../../../../src/chat/nova/statement.js";
+import { StatementStore } from "../../../../src/chat/nova/statement-store.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 
 /** Synthetic phrases from the BIP-39 test vectors. They hold nothing. */

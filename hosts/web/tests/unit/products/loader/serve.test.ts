@@ -5,7 +5,7 @@ import {
   archiveRequestPath,
   contentTypeOf,
   responseFor,
-} from "../../../../src/sandbox/serve.js";
+} from "../../../../src/products/loader/serve.js";
 
 describe("archivePath", () => {
   test("maps the root and directories to their index.html", () => {

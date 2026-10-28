@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { type Plugin, build } from "vite";
-import { cidToString } from "./src/archive/cid.js";
+import { cidToString } from "./src/products/archive/cid.js";
 import { Blocks, car } from "./fixtures/archive/builders.js";
 import {
   DEMO_WORKER_PATH,
@@ -9,7 +9,7 @@ import {
   LOOPBACK_HOSTNAMES,
   NOVA_WORKER_PATH,
   type DemoWorkerAnswer,
-} from "./src/chat-v2/local-demo-route.js";
+} from "./tools/demos/local-demo-route.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 
@@ -19,7 +19,7 @@ const WORKERS = [
     path: DEMO_WORKER_PATH,
     entry: "fixtures/products/chat-v2-product-worker.ts",
   },
-  { path: NOVA_WORKER_PATH, entry: "src/chat-worker/worker.ts" },
+  { path: NOVA_WORKER_PATH, entry: "src/chat/worker/worker.ts" },
   {
     path: EXAMPLE_CHAT_PATH,
     entry: "fixtures/products/example-chat/product.ts",
@@ -182,7 +182,7 @@ function serveDemo(base: string): Middleware {
 /**
  * The local chat workers, for the dev server only. It builds the synthetic
  * chat product's worker (`fixtures/products/chat-v2-product-worker.ts`) and the Nova
- * chat worker (`src/chat-worker/worker.ts`), packs each as an app archive,
+ * chat worker (`src/chat/worker/worker.ts`), packs each as an app archive,
  * describes them at {@link DEMO_WORKER_PATH} and {@link NOVA_WORKER_PATH},
  * and does the same for Example Chat, the test users' app, at
  * {@link EXAMPLE_CHAT_PATH}. It serves the archives' blocks, and only those, at `/ipfs/<cid>` as a

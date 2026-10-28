@@ -4,7 +4,7 @@ import {
   RecentProducts,
   isRecordable,
   matchRecents,
-} from "../../../src/recents.js";
+} from "../../../src/app/recents.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const entry = (address: string, productId = address, entered = false) => ({

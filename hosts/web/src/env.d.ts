@@ -1,4 +1,4 @@
-import type { BuildInfo } from "./versions.js";
+import type { BuildInfo } from "./app/versions.js";
 
 declare global {
   /** Injected by `vite.config.ts` from the files this build serves. */

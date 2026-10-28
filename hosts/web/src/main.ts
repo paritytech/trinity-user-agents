@@ -10,64 +10,64 @@ import {
   implicitSuffix,
   parseTypedAddress,
   type Address,
-} from "./address.js";
+} from "./app/address.js";
 import {
   accountStatusRows,
   abbreviate,
   productAllowanceRows,
   type ChainState,
   type ProductAllowanceView,
-} from "./account-status.js";
-import { allocationRecord } from "./allowance-ledger.js";
+} from "./app/account-status.js";
+import { allocationRecord } from "./platform/allowance-ledger.js";
 import {
   permissionRows,
   queriesFor,
   type PermissionsView,
-} from "./permissions-status.js";
-import { bindRecentsMenu } from "./address-recents.js";
-import { bindChrome } from "./chrome.js";
-import { copyInPage } from "./copy.js";
-import { bindDockResize } from "./dock-resize.js";
-import { resolveSource } from "./dotns.js";
-import { createFrameTap } from "./frame-tap.js";
-import { messagePortBridge } from "./chat-v2/contract.js";
-import { ChatV2Host } from "./chat-v2/host.js";
-import { LocalChatDemo, demoAllowed } from "./chat-v2/local-demo.js";
-import { identityPortOver } from "./chat-worker/identity-bridge.js";
+} from "./app/permissions-status.js";
+import { bindRecentsMenu } from "./app/address-recents.js";
+import { bindChrome } from "./app/chrome.js";
+import { copyInPage } from "./app/copy.js";
+import { bindDockResize } from "../tools/dock-resize.js";
+import { resolveSource } from "./products/dotns.js";
+import { createFrameTap } from "../tools/inspector/frame-tap.js";
+import { messagePortBridge } from "./chat/draft/contract.js";
+import { ChatV2Host } from "./chat/draft/host.js";
+import { LocalChatDemo, demoAllowed } from "../tools/demos/local-demo.js";
+import { identityPortOver } from "./chat/draft/identity-bridge.js";
 import {
   NOVA_WORKER_PRODUCT,
   NovaWorkerMode,
-} from "./chat-worker/worker-mode.js";
-import { sessionChatKeys } from "./nova-chat-provider.js";
-import { createHostCallbacks } from "./callbacks.js";
-import { gatewayPreimages } from "./preimage.js";
-import { connectNetwork, type Network } from "./network.js";
+} from "../tools/demos/worker-mode.js";
+import { sessionChatKeys } from "./chat/nova-provider.js";
+import { createHostCallbacks } from "./app/callbacks.js";
+import { gatewayPreimages } from "./products/preimage.js";
+import { connectNetwork, type Network } from "./platform/network.js";
 import {
   NETWORKS,
   networkConfig,
   type NetworkConfig,
-} from "./network-config.js";
-import { DEFAULT_NETWORK } from "./network-scope.js";
+} from "./platform/network-config.js";
+import { DEFAULT_NETWORK } from "./platform/network-scope.js";
 import {
   chosenNetwork,
   rememberNetwork,
   tabProductKey,
   tabWalletKey,
   type NetworkChoice,
-} from "./network-choice.js";
-import { ask, setPromptArea } from "./prompt.js";
-import { RecentProducts } from "./recents.js";
+} from "./platform/network-choice.js";
+import { ask, setPromptArea } from "./app/prompt.js";
+import { RecentProducts } from "./app/recents.js";
 import {
   readPeopleChain,
   type AccountReading,
   type AccountToRead,
-} from "./people-chain.js";
+} from "./platform/people-chain.js";
 import {
   readBalance,
   readProductAccount,
   type ProductChainState,
-} from "./product-chain.js";
-import { StageLoading, documentsBeforeProduct } from "./loading.js";
+} from "./app/product-chain.js";
+import { StageLoading, documentsBeforeProduct } from "./products/loading.js";
 import {
   DESTINATIONS,
   DESTINATION_LABELS,
@@ -78,68 +78,75 @@ import {
   saveAddress,
   type Destination,
   type DockAddresses,
-} from "./shell.js";
-import { drawPocket } from "./pocket-screen.js";
+} from "./app/shell.js";
+import { drawPocket } from "./pocket/screen.js";
 import {
   cardKey,
   cardLaunchPath,
   pinnedCards,
   pocketPlatform,
-} from "./pocket.js";
-import { PocketFaces, type PocketCardKey } from "./pocket-faces.js";
-import { bindProductCard } from "./pocket-card-view.js";
-import { bulletinImageUrl } from "./product-render.js";
-import { resolveWidget } from "./widget.js";
-import { ChatScreen } from "./chat-screen.js";
-import { bindWorkersMenu } from "./workers-menu.js";
-import { NotificationStore, notificationsKey } from "./notifications.js";
-import { NotificationsScreen } from "./notifications-screen.js";
-import { ChatTabs, type ChatTab } from "./chat-tabs.js";
-import { AppsShelf, type ShelfApp } from "./apps-shelf.js";
-import { ChatInbox } from "./chat-inbox.js";
-import { HostContacts, chooseContact, type PickedPerson } from "./contacts.js";
-import { HostNames } from "./host-names.js";
-import { blockedAccounts, chatRecordKey } from "./chat/store.js";
+} from "./pocket/pocket.js";
+import { PocketFaces, type PocketCardKey } from "./pocket/faces.js";
+import { bindProductCard } from "./pocket/card-view.js";
+import { bulletinImageUrl } from "./products/render.js";
+import { resolveWidget } from "./pocket/widget.js";
+import { ChatScreen } from "./chat/screen.js";
+import { bindWorkersMenu } from "./products/workers-menu.js";
+import {
+  NotificationStore,
+  notificationsKey,
+} from "./notifications/notifications.js";
+import { NotificationsScreen } from "./notifications/screen.js";
+import { ChatTabs, type ChatTab } from "./chat/tabs.js";
+import { AppsShelf, type ShelfApp } from "./app/apps-shelf.js";
+import { ChatInbox } from "./chat/inbox.js";
+import {
+  HostContacts,
+  chooseContact,
+  type PickedPerson,
+} from "./contacts/contacts.js";
+import { HostNames } from "./contacts/host-names.js";
+import { blockedAccounts, chatRecordKey } from "./chat/nova/store.js";
 import {
   exactUsernameDirectory,
   routeDirectory,
-} from "./username-directory.js";
-import { chainDirectory, lookupOwner } from "./chat/directory.js";
+} from "./contacts/username-directory.js";
+import { chainDirectory, lookupOwner } from "./chat/nova/directory.js";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
-import { accountProofs } from "./account-proofs.js";
-import { ProductChat, productChatKey } from "./product-chat.js";
-import { ProductWorkers } from "./product-workers.js";
-import { resolveWorker } from "./worker-manifest.js";
-import { mountChatDiagnostics } from "./chat-diagnostics-view.js";
-import { ChatDiagnostics } from "./chat/diagnostics.js";
-import { openProduct, type OpenProduct } from "./product.js";
+import { accountProofs } from "./chat/account-proofs.js";
+import { ProductChat, productChatKey } from "./chat/product-chat.js";
+import { ProductWorkers } from "./products/product-workers.js";
+import { resolveWorker } from "./products/worker-manifest.js";
+import { mountChatDiagnostics } from "../tools/inspector/chat-diagnostics-view.js";
+import { ChatDiagnostics } from "../tools/inspector/diagnostics.js";
+import { openProduct, type OpenProduct } from "./products/product.js";
 import {
   notOpenableText,
   productDetailsText,
   productStatusText,
   type Opened,
-} from "./product-status.js";
+} from "./products/status.js";
 import {
   hostBase,
   loaderUrl,
   mountScope,
   requireSecureHost,
-} from "./sandbox/mount.js";
-import { HostStorage, localStorageChanges } from "./storage.js";
-import { SerialQueue } from "./serial-queue.js";
-import { versionSections, type VersionRow } from "./versions.js";
-import { bindViewport } from "./viewport.js";
-import { SearchCard } from "./search-card.js";
-import { bindDeviceMode } from "./device-mode.js";
-import { SearchPeople } from "./search-people.js";
+} from "./products/loader/mount.js";
+import { HostStorage, localStorageChanges } from "./platform/storage.js";
+import { SerialQueue } from "./app/serial-queue.js";
+import { versionSections, type VersionRow } from "./app/versions.js";
+import { bindViewport } from "../tools/viewport.js";
+import { SearchCard } from "./app/search-card.js";
+import { bindDeviceMode } from "./app/device-mode.js";
+import { SearchPeople } from "./contacts/search-people.js";
 import {
   WalletPublicInfoStore,
   sessionUsernameFrom,
   usernameFrom,
   walletLabel,
-} from "./wallet-label.js";
-import { walletPanel, type WalletMode } from "./wallet-panel.js";
-import { WalletStore, type Wallet } from "./wallets.js";
+} from "./app/wallet-label.js";
+import { walletPanel, type WalletMode } from "./app/wallet-panel.js";
+import { WalletStore, type Wallet } from "./platform/wallets.js";
 
 const MAX_LOG_LINES = 500;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
@@ -438,7 +445,7 @@ bindWorkersMenu({
 const devSession =
   notifications === null
     ? null
-    : (await import("./dev-tools/dev-tools.js")).startDevTools({
+    : (await import("../tools/demos/dev-tools.js")).startDevTools({
         network: activeNetwork,
         base: BASE,
         notifications: notifications.store,
@@ -520,7 +527,7 @@ const hostContacts = new HostContacts({
 const engineSwitch =
   novaWorkerMode === null || devSession === null
     ? null
-    : (await import("./chat-worker/engine-switch.js")).drawEngineSwitch({
+    : (await import("../tools/demos/engine-switch.js")).drawEngineSwitch({
         section: element("developer"),
         signedIn: () => chatInbox.signedIn(),
         mode: () => novaWorkerMode.mode(),
@@ -533,7 +540,7 @@ const engineSwitch =
 const chatDemo =
   localChatDemo === null || devSession === null
     ? null
-    : (await import("./dev-tools/chat-demo.js")).drawChatDemo({
+    : (await import("../tools/demos/chat-demo.js")).drawChatDemo({
         section: element("developer"),
         signedIn: () => chatInbox.signedIn(),
         demo: {
@@ -2571,9 +2578,12 @@ async function boot(): Promise<void> {
     pocket: pocketPlatform(connection.networkSuffix),
     contacts: hostContacts.platform,
   });
-  const worker = new Worker(new URL("./core-worker.ts", import.meta.url), {
-    type: "module",
-  });
+  const worker = new Worker(
+    new URL("./platform/core-worker.ts", import.meta.url),
+    {
+      type: "module",
+    },
+  );
   runtime = await createWebWorkerPairingHostRuntime(worker, callbacks, {
     role: "signing",
     hostConfig: {

@@ -7,7 +7,7 @@ import {
   productLabel,
   requireSecureHost,
   walletKey,
-} from "../../../../src/sandbox/mount.js";
+} from "../../../../src/products/loader/mount.js";
 
 const CID = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
 const mount = {

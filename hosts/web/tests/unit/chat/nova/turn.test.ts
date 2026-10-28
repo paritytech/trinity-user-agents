@@ -12,8 +12,8 @@ import {
   type FetchLike,
   type ProofSource,
   type RingKey,
-} from "../../../../src/chat/turn.js";
-import { relayNote } from "../../../../src/nova-chat-provider.js";
+} from "../../../../src/chat/nova/turn.js";
+import { relayNote } from "../../../../src/chat/nova-provider.js";
 
 const GENESIS = `0x${"ab".repeat(32)}` as const;
 const ring = (collection: `0x${string}`): RingKey["rings"][number] => ({

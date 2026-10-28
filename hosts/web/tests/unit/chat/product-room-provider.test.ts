@@ -5,14 +5,14 @@ import type {
   ProductRendererRenderRequest,
 } from "@parity/truapi";
 import type { ProductContext, RenderSink } from "@parity/truapi-host";
-import type { ProviderEvent } from "../../../src/chat-provider.js";
-import { ProductChat, productChatKey } from "../../../src/product-chat.js";
+import type { ProviderEvent } from "../../../src/chat/provider.js";
+import { ProductChat, productChatKey } from "../../../src/chat/product-chat.js";
 import {
   ProductRoomProvider,
   USER_PEER,
   type RoomChannel,
-} from "../../../src/product-room-provider.js";
-import type { WorkerState } from "../../../src/product-workers.js";
+} from "../../../src/chat/product-room-provider.js";
+import type { WorkerState } from "../../../src/products/product-workers.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const PRODUCT = "game.paseo";

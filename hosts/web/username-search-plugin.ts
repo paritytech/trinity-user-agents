@@ -3,11 +3,11 @@ import { loopback } from "./chat-product-demo-plugin.js";
 import {
   USERNAME_SEARCH_PATH,
   searchUsernames,
-} from "./src/username-search.js";
+} from "./src/contacts/username-search.js";
 
 /**
  * The identity backend's username search on the dev server's own origin, at
- * {@link USERNAME_SEARCH_PATH} (`src/username-search.ts`). The page's headers,
+ * {@link USERNAME_SEARCH_PATH} (`src/contacts/username-search.ts`). The page's headers,
  * cookies included, are not passed on. Requests from or to another machine
  * are refused. A build does not include it.
  */

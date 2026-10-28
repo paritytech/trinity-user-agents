@@ -8,69 +8,69 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { ok } from "neverthrow";
-import { equalBytes } from "../../../../src/chat/codec.js";
-import { cryptoRandom, x25519Agree } from "../../../../src/chat/crypto.js";
-import { ChatDiagnostics } from "../../../../src/chat/diagnostics.js";
-import type { ChainDirectory } from "../../../../src/chat/directory.js";
-import { ChatEngine } from "../../../../src/chat/engine.js";
-import { localNovaIdentity } from "../../../../src/chat/identity.js";
+import { equalBytes } from "../../../../src/chat/nova/codec.js";
+import { cryptoRandom, x25519Agree } from "../../../../src/chat/nova/crypto.js";
+import { ChatDiagnostics } from "../../../../tools/inspector/diagnostics.js";
+import type { ChainDirectory } from "../../../../src/chat/nova/directory.js";
+import { ChatEngine } from "../../../../src/chat/nova/engine.js";
+import { localNovaIdentity } from "../../../../src/chat/nova/identity.js";
 import {
   ChatKeys,
   deriveChatSecret,
   deriveIdentitySecret,
-} from "../../../../src/chat/keys.js";
+} from "../../../../src/chat/nova/keys.js";
 import { MemoryStatementRpc } from "../../../../fixtures/nova/memory-rpc.js";
 import {
   requestChannel,
   requestTopic,
   responseChannel,
   sessionTopic,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 import {
   decodeStatement,
   verifyStatement,
-} from "../../../../src/chat/statement.js";
-import { StatementStore } from "../../../../src/chat/statement-store.js";
+} from "../../../../src/chat/nova/statement.js";
+import { StatementStore } from "../../../../src/chat/nova/statement-store.js";
 import {
   abbreviateAccount,
   chatRecordKey,
-} from "../../../../src/chat/store.js";
-import { ChatInbox } from "../../../../src/chat-inbox.js";
-import { messagePortBridge } from "../../../../src/chat-v2/contract.js";
-import { ChatV2Host } from "../../../../src/chat-v2/host.js";
-import { chatV2Over } from "../../../../src/chat-v2/product.js";
-import { ChatV2Provider } from "../../../../src/chat-v2/provider.js";
+} from "../../../../src/chat/nova/store.js";
+import { ChatInbox } from "../../../../src/chat/inbox.js";
+import { messagePortBridge } from "../../../../src/chat/draft/contract.js";
+import { ChatV2Host } from "../../../../src/chat/draft/host.js";
+import { chatV2Over } from "../../../../src/chat/draft/product.js";
+import { ChatV2Provider } from "../../../../src/chat/draft/provider.js";
 import {
   NOVA_PROVIDER_ID,
   type ChatSession,
-} from "../../../../src/nova-chat-provider.js";
-import { ProductChat } from "../../../../src/product-chat.js";
+} from "../../../../src/chat/nova-provider.js";
+import { ProductChat } from "../../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import {
   serveConversations,
   type ConversationEngine,
   type ReadMarks,
-} from "../../../../src/chat-worker/conversations.js";
+} from "../../../../src/chat/draft/conversations.js";
 import {
   connectNovaIdentity,
   refuseNovaIdentity,
   serveNovaIdentity,
   type IdentityEnvelope,
   type IdentityPort,
-} from "../../../../src/chat-worker/identity-bridge.js";
-import { novaConversations } from "../../../../src/chat-worker/nova-conversations.js";
+} from "../../../../src/chat/draft/identity-bridge.js";
+import { novaConversations } from "../../../../src/chat/worker/nova-conversations.js";
 import {
   ProductStorage,
   fromSignedStatement,
   toSignedStatement,
   truapiStatementStore,
-} from "../../../../src/chat-worker/truapi-ports.js";
+} from "../../../../src/chat/worker/truapi-ports.js";
 import {
   NOVA_WORKER_PRODUCT,
   NovaWorkerMode,
   START_REFERENCE_TTL_MS,
-} from "../../../../src/chat-worker/worker-mode.js";
-import { HostNames } from "../../../../src/host-names.js";
+} from "../../../../tools/demos/worker-mode.js";
+import { HostNames } from "../../../../src/contacts/host-names.js";
 
 /** Synthetic phrases from the BIP-39 test vectors. They hold nothing. */
 const ALICE =
