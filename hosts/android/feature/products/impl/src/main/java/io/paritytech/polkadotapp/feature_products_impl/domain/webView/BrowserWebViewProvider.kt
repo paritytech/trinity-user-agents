@@ -55,10 +55,10 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted private val navigationPolicy: NavigationPolicy,
     @Assisted private val allowIframes: Boolean,
     @Assisted private val scope: CoroutineScope,
-    @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
     @Assisted private val fixedProductId: ProductId?,
     @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
     @Assisted private val servedExecutable: ExecutableKind,
+    @Assisted("waitForInitialTheme") private val waitForInitialTheme: Boolean,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
     @AssistedFactory
     interface Factory {
@@ -67,10 +67,10 @@ class BrowserWebViewProvider @AssistedInject constructor(
             navigationPolicy: NavigationPolicy,
             allowIframes: Boolean,
             scope: CoroutineScope,
-            @Assisted("waitForInitialTheme") waitForInitialTheme: Boolean = false,
             fixedProductId: ProductId? = null,
             @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
             servedExecutable: ExecutableKind = ExecutableKind.APP,
+            @Assisted("waitForInitialTheme") waitForInitialTheme: Boolean = false,
         ): BrowserWebViewProvider
     }
 
