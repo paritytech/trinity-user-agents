@@ -18,7 +18,7 @@ import io.paritytech.polkadotapp.common.utils.progressStallReport.markRegion
 import io.paritytech.polkadotapp.feature_balances_api.data.type.TokenBalanceTypeRegistry
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_members_api.data.repository.RingRevisionUnavailableException
+import io.paritytech.polkadotapp.feature_members_api.data.repository.RingRevisionPrunedException
 import io.paritytech.polkadotapp.feature_people_api.domain.BandersnatchKeyResolver
 import io.paritytech.polkadotapp.feature_people_api.domain.PeopleCollection
 import io.paritytech.polkadotapp.feature_people_api.domain.useCase.ActivePeopleCollectionUseCase
@@ -88,11 +88,11 @@ class RealPgasClaimer @Inject constructor(
     private suspend fun submitClaim(ctx: ClaimContext, slotIndex: UInt, destinationAccountId: AccountId): Result<Unit> = diagnostics.markRegion(RCommon.string.stall_submitting_transaction) {
         Timber.i("picked free slotIndex=$slotIndex; submitting claim_pgas extrinsic")
         val first = submitClaimOnce(ctx, slotIndex, destinationAccountId)
-        val revisionError = first.exceptionOrNull()?.findInCauseChain<RingRevisionUnavailableException>()
+        val revisionError = first.exceptionOrNull()?.findInCauseChain<RingRevisionPrunedException>()
         val result = if (revisionError == null) {
             first
         } else {
-            Timber.w(revisionError, "Asset Hub lacks the proof's ring revision; rebuilding the proof once")
+            Timber.w(revisionError, "Asset Hub pruned the proof's ring revision; rebuilding the proof once")
             submitClaimOnce(ctx, slotIndex, destinationAccountId)
         }
         result.onSuccess { Timber.i("claim_pgas executed for slotIndex=$slotIndex") }

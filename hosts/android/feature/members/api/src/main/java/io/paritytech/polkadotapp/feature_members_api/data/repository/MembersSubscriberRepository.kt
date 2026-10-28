@@ -31,8 +31,8 @@ interface MembersSubscriberRepository {
     ): Flow<Result<WithRawValue<List<RingCommitmentRecord>?>>>
 }
 
-/** The subscriber cannot verify a proof against [revision]; rebuild it against the current ring. */
-class RingRevisionUnavailableException(val revision: RingRevision, message: String) : IllegalStateException(message)
+/** The subscriber holds a newer root than [revision] and will never verify it; rebuild the proof against the current ring. */
+class RingRevisionPrunedException(val revision: RingRevision, message: String) : IllegalStateException(message)
 
 suspend fun MembersSubscriberRepository.awaitRingRevision(
     chainId: ChainId,
@@ -54,7 +54,7 @@ suspend fun MembersSubscriberRepository.awaitRingRevision(
                         true
                     }
 
-                    RingRevisionStatus.PRUNED -> throw RingRevisionUnavailableException(
+                    RingRevisionStatus.PRUNED -> throw RingRevisionPrunedException(
                         revision,
                         "Revision $revision is no longer available on subscriber (held: $held)"
                     )
@@ -62,7 +62,7 @@ suspend fun MembersSubscriberRepository.awaitRingRevision(
                     RingRevisionStatus.PENDING -> false
                 }
             }
-    } ?: throw RingRevisionUnavailableException(revision, "Revision $revision not imported on subscriber within $wait")
+    } ?: error("Revision $revision not imported on subscriber within $wait")
 }
 
 enum class RingRevisionStatus { IMPORTED, PRUNED, PENDING }
