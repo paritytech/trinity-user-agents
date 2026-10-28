@@ -33,12 +33,11 @@ struct AssetPinnedPocketCards: PinnedPocketCards {
         self.tld = tld
     }
 
-    func cards() async -> [PocketCardEntry] {
+    func cards() -> [PocketCardEntry] {
         Self.definitions.map { $0.card(tld: tld) }
     }
 
-    /// Answers without awaiting: a removal arrives from the core on a thread it
-    /// cannot spare, and a key already names the product that must back it.
+    /// A key already names the product that must back it.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
         Self.definitions
             .first { $0.cardId == key.cardId.value && $0.backingProduct(tld) == key.productId }

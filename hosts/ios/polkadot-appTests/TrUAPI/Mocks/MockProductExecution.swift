@@ -19,10 +19,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var devicePermissionGranted = false
     private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
-    /// Card lists pushed to the product, in order, so a test can assert the
-    /// worker was told what it holds rather than only that it started.
-    private(set) var pocketCardNotifications: [[PocketCard]] = []
-
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
@@ -45,22 +41,17 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private var renderSignals: AsyncStream<Void>.AsyncIterator
     private let closeSignal: AsyncStream<Void>.Continuation
     private var closeSignals: AsyncStream<Void>.AsyncIterator
-    private let pocketCardSignal: AsyncStream<[PocketCard]>.Continuation
-    private var pocketCardSignals: AsyncStream<[PocketCard]>.AsyncIterator
     private let themeSignal: AsyncStream<Void>.Continuation
     private var themeSignals: AsyncStream<Void>.AsyncIterator
 
     init() {
         let (renders, renderContinuation) = AsyncStream.makeStream(of: Void.self)
         let (closes, closeContinuation) = AsyncStream.makeStream(of: Void.self)
-        let (cardLists, cardListContinuation) = AsyncStream.makeStream(of: [PocketCard].self)
         let (themes, themeContinuation) = AsyncStream.makeStream(of: Void.self)
         renderSignal = renderContinuation
         renderSignals = renders.makeAsyncIterator()
         closeSignal = closeContinuation
         closeSignals = closes.makeAsyncIterator()
-        pocketCardSignal = cardListContinuation
-        pocketCardSignals = cardLists.makeAsyncIterator()
         themeSignal = themeContinuation
         themeSignals = themes.makeAsyncIterator()
     }
@@ -73,11 +64,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// Returns once a `close` call has happened that no earlier call to this method consumed.
     func awaitClose() async {
         _ = await closeSignals.next()
-    }
-
-    /// Returns the next card list pushed to the product that no earlier call to this method consumed.
-    func awaitPocketCardNotification() async -> [PocketCard]? {
-        await pocketCardSignals.next()
     }
 
     /// Returns once a theme notification has happened that no earlier call to this method consumed.
@@ -163,10 +149,5 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func sessionChatIdentityKey() throws -> Data? {
         nil
-    }
-
-    func notifyPocketCardsChanged(cards: [PocketCard]) {
-        pocketCardNotifications.append(cards)
-        pocketCardSignal.yield(cards)
     }
 }

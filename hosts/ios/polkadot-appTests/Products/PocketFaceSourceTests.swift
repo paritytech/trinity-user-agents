@@ -6,15 +6,11 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-/// A product animating its card draws at frame rate. Keeping every face would
-/// serialise the whole tree into storage once per frame, on the path the screen
-/// is waiting on; keeping none would leave the card blank at cold start.
 struct PocketFaceSourceTests {
     @Test
-    func drawsEveryFaceButKeepsOnlyTheNewest() async throws {
-        let store = RecordingFaceStore()
+    func drawsEveryFaceTheProductDraws() async throws {
         let source = RealPocketFaceSource(
-            store: { store },
+            store: { NoFaceStore() },
             streams: RunningHandler(
                 StubFaceStreams(faces: ["one", "two", "three"].map { RendererNode.string(text: $0) })
             )
@@ -26,10 +22,6 @@ struct PocketFaceSourceTests {
         }
 
         #expect(drawn == ["one", "two", "three"])
-        // The first face is worth keeping at once; the two that follow it
-        // arrive inside one interval, so only the face the card settled on is
-        // written down after them.
-        #expect(await store.kept.compactMap(\.text) == ["one", "three"])
     }
 
     /// The wallet tab draws its cards before the collection has been reconciled
@@ -39,7 +31,7 @@ struct PocketFaceSourceTests {
     @Test
     func waitsForAHandlerThatIsNotRunningYet() async throws {
         let handlers = LateHandlers()
-        let source = RealPocketFaceSource(store: { RecordingFaceStore() }, streams: handlers)
+        let source = RealPocketFaceSource(store: { NoFaceStore() }, streams: handlers)
 
         let drawing = Task { () -> [String] in
             var drawn: [String] = []
@@ -79,9 +71,7 @@ private struct StubFaceStreams: PocketFaceStreaming {
     func send(action _: String, payload _: Data, for _: PocketCardKey) {}
 }
 
-private actor RecordingFaceStore: PocketCardStore {
-    private(set) var kept: [RendererNode] = []
-
+private actor NoFaceStore: PocketCardStore {
     func cards() async throws -> [PocketCardEntry] { [] }
 
     nonisolated func observeCards() -> AnyAsyncSequence<[PocketCardEntry]> {
@@ -93,10 +83,6 @@ private actor RecordingFaceStore: PocketCardStore {
     func add(_: PocketCardEntry, face _: RendererNode) async {}
 
     func face(for _: PocketCardKey) async -> RendererNode? { nil }
-
-    func cacheFace(_ face: RendererNode, for _: PocketCardKey) async {
-        kept.append(face)
-    }
 }
 
 /// A product whose handler is already drawing its cards.

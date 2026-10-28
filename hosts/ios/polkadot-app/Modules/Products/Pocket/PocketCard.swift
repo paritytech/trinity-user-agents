@@ -9,7 +9,7 @@ struct PocketCardKey: Hashable {
     let productId: ProductId
     let cardId: PocketCardId
 
-    /// Flat form the card is stored under, and the one CoreData keys rows by.
+    /// Flat form that names the card in one string.
     var storageId: String { "\(productId)/\(cardId.value)" }
 
     /// Where the card's product opens: its own page, told which card the user
@@ -72,18 +72,14 @@ protocol PocketCardStore: PocketCollection {
     /// The newest face held for `key`: the last one its product drew, or the
     /// bundled one for a host-placed card that has never drawn.
     func face(for key: PocketCardKey) async -> RendererNode?
-
-    /// Keeps the newest face a product drew, so the card has it offline and at
-    /// cold start.
-    func cacheFace(_ face: RendererNode, for key: PocketCardKey) async
 }
 
 /// The cards the host itself places: present on first run, removable by nobody.
 protocol PinnedPocketCards: Sendable {
-    func cards() async -> [PocketCardEntry]
+    /// The cards the runtime is started with.
+    func cards() -> [PocketCardEntry]
 
-    /// The host-placed card `key` names, if it names one. Answers without
-    /// awaiting: a removal arrives from the core on a thread it cannot spare.
+    /// The host-placed card `key` names, if it names one.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry?
 
     /// The face shipped with the app for a host-placed card.

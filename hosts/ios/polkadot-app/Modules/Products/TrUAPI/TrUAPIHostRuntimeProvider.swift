@@ -226,6 +226,9 @@ extension TrUAPIHostRuntimeProvider {
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
             networkSuffix: networkSuffix,
             databaseDirectory: databaseDirectory,
+            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards().map {
+                PinnedPocketCard(productId: $0.key.productId, cardId: $0.key.cardId.value, title: $0.title)
+            },
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername
         )
