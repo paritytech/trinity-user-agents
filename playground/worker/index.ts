@@ -26,6 +26,9 @@ const DIAGNOSIS_COMMAND = "!diagnose";
 const ECHO_COMMAND = "!echo";
 const RENDER_MESSAGE_TYPE = "truapi-chat-diagnosis";
 const BOT_ID = "truapi-diagnosis-bot";
+// A one-pixel PNG: the icon rules of `createRoom` accept an inline image.
+const DIAGNOSIS_ROOM_ICON =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const diagnosticRoomId = `${ROOM_ID}-diagnosis-${runId}`;
 const renderPayload = bytesToHex(
@@ -43,7 +46,9 @@ let finalReportPosted = false;
 type RenderInstance = {
   messageId: string;
   send: (node: RendererNode) => void;
-  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void;
+  interrupt: (
+    reason?: CallErrorValue<VersionedProductRendererRenderError>,
+  ) => void;
   disposed: boolean;
 };
 const activeRenderInstances = new Set<RenderInstance>();
@@ -241,6 +246,7 @@ async function runRoomDeclarationProbe(): Promise<void> {
       metadata: {
         name: `TrUAPI Diagnosis v2 ${runId}`,
         description: "Chat Extension v2",
+        icon: DIAGNOSIS_ROOM_ICON,
       },
     });
     if (metadata.isErr()) {
@@ -248,7 +254,7 @@ async function runRoomDeclarationProbe(): Promise<void> {
         `setRoomMetadata failed: ${JSON.stringify(metadata.error)}`,
       );
     }
-    done("replaced the name and the description");
+    done("replaced the name, the description and the icon");
 
     const preview = await chat.setRoomPreview({
       roomId,
@@ -295,7 +301,30 @@ async function runRoomDeclarationProbe(): Promise<void> {
         `updateFeed of a custom body failed: ${JSON.stringify(custom.error)}`,
       );
     }
-    done("stored a text and a custom message of the product");
+    const removable = await chat.updateFeed({
+      roomId,
+      update: {
+        tag: "New",
+        value: { ...message, messageId: "diagnosis-deleted" },
+      },
+    });
+    if (removable.isErr()) {
+      throw new Error(
+        `updateFeed of a message to delete failed: ${JSON.stringify(removable.error)}`,
+      );
+    }
+    const removed = await chat.updateFeed({
+      roomId,
+      update: { tag: "Deleted", value: { messageId: "diagnosis-deleted" } },
+    });
+    if (removed.isErr()) {
+      throw new Error(
+        `updateFeed of a deletion failed: ${JSON.stringify(removed.error)}`,
+      );
+    }
+    done(
+      "stored a text and a custom message of the product, and deleted a third message",
+    );
 
     const deleted = await chat.deleteRoom({ roomId });
     if (deleted.isErr()) {
@@ -357,7 +386,9 @@ async function ensureRoom(roomId: string, name: string): Promise<void> {
 function handleRenderRequest(
   request: ProductRendererRenderRequest,
   send: (node: RendererNode) => void,
-  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void,
+  interrupt: (
+    reason?: CallErrorValue<VersionedProductRendererRenderError>,
+  ) => void,
 ): () => void {
   if (request.context.tag !== "ChatMessage") {
     throw new Error(`unsupported renderer context: ${request.context.tag}`);
@@ -383,7 +414,12 @@ function handleRenderRequest(
     throw new Error("render request did not preserve the custom payload");
   }
 
-  const instance: RenderInstance = { messageId, send, interrupt, disposed: false };
+  const instance: RenderInstance = {
+    messageId,
+    send,
+    interrupt,
+    disposed: false,
+  };
   if (customMessageId) activateRenderInstance(instance);
   else pendingRenderInstances.add(instance);
   return () => {

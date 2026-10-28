@@ -314,6 +314,20 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
+                "11.update_feed.deleted",
+                frame(
+                    W.CHAT_UPDATE_FEED,
+                    MESSAGE_TYPE_REQUEST,
+                    T.VersionedHostChatUpdateFeedRequest.enc({
+                        tag: "V1",
+                        value: {
+                            roomId: "room",
+                            update: { tag: "Deleted", value: { messageId: "m1" } },
+                        },
+                    }),
+                ),
+            ],
+            [
                 "11.update_feed.custom",
                 frame(
                     W.CHAT_UPDATE_FEED,
@@ -386,6 +400,20 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
+                "13.user_action.delete",
+                frame(
+                    W.CHAT_USER_ACTION,
+                    MESSAGE_TYPE_START,
+                    T.VersionedProductChatUserActionRequest.enc({
+                        tag: "V1",
+                        value: {
+                            roomId: "room",
+                            action: { tag: "DeleteMessage", value: { messageId: "m1" } },
+                        },
+                    }),
+                ),
+            ],
+            [
                 "7.set_room_config.request",
                 frame(
                     W.CHAT_SET_ROOM_CONFIG,
@@ -430,7 +458,11 @@ describe("chat extension v2 frames", () => {
     });
 
     it("sends the v2 calls and reads the host's answers as the Rust snapshot pins them", async () => {
-        const metadata = { name: "Room", description: "About" };
+        const metadata = {
+            name: "Room",
+            description: "About",
+            icon: "https://icons.example/renamed.png",
+        };
         const notRoomHost: CallErrorValue<T.VersionedHostChatSetRoomMetadataError> = {
             tag: "Domain",
             value: { tag: "V1", value: { tag: "NotRoomHost" } },
