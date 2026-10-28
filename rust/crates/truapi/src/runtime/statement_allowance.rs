@@ -925,7 +925,8 @@ pub async fn register_statement_account_pooled(
 				target: params.target,
 				period: params.period,
 				network_suffix: params.network_suffix,
-				// A duplicate-submit retry rescans within this collection only.
+				// One collection per attempt. A duplicate-submit retry rescans it, and
+				// the loop below moves on to the next collection once it is full.
 				ring: &memberships[index],
 				reuse_existing: params.reuse_existing,
 				preselected,
@@ -946,7 +947,7 @@ pub async fn register_statement_account_pooled(
 		result = register(index, None).await;
 	}
 	result.map_err(|err| match err {
-		// The retry rescans one collection, so its own exhaustion names that
+		// Each attempt rescans one collection, so its exhaustion names that
 		// collection's share. Restate it as the device's pooled budget so the
 		// same error never means two different things to a caller.
 		StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }) => {
