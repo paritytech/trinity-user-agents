@@ -109,15 +109,6 @@ A single byte channel carries every call in both directions at once, so the two 
 
 #### Requests
 
-Either the host or the product can initiate a request. A host-initiated Rust
-`async fn` declares `Result<Response, CallError<Error>>`; its generated product
-handler returns one typed result. Both directions use the same `Request`,
-`Response`, and `Cancel` legs and response encoding. A cancellation fires the
-receiver's per-call cancellation signal, and its eventual response is
-`CallError::Cancelled`. It does not reverse side effects or force a handler to
-stop. The caller owns deadlines and retry policy. See the
-[request cancellation contract](../rfcs/request-cancellation.md).
-
 Every request expects exactly one response. Each Host or Product MUST send a response message for every request it receives, and the request and its response MUST share the same `requestId` — so the caller can match a reply to the call it made even with many calls in flight.
 
 If a receiver has no handler for an incoming `(trait, method)` pair, it MUST send a protocol-error frame addressed to `(255, 255)` with the same `requestId`, `message_type` set to `MESSAGE_TYPE_RESPONSE`, and payload `V1(UnsupportedMessage { trait_id, method_id })` — encoded as the four bytes `[0, 0, unsupported_trait, unsupported_method]` — one byte cannot name a pair, so the error that describes the envelope grew with it. The sender maps this method-independent response to its own pending request or subscription and reports a generic unsupported error. A receiver MUST NOT answer a protocol-error frame with another protocol error.
@@ -128,7 +119,7 @@ Hosts and Products released before this control frame was introduced still silen
 
 #### Subscription
 
-A subscription is not a one-shot call but an ongoing stream: the consumer asks once and then receives updates until it stops listening. Its four messages (`start`, `stop`, `interrupt`, and `receive`) all address the same `(trait, method)` pair (distinguished by the `message_type` byte in the outer envelope) and MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
+A subscription carries a stream of items: the consumer asks once and receives items until either side ends it. Its four messages (`start`, `stop`, `interrupt`, and `receive`) all address the same `(trait, method)` pair (distinguished by the `message_type` byte in the outer envelope) and MUST all share the same `requestId`, so a subscription handler can route every update and teardown signal to the right place.
 
 Each message has a defined role:
 
@@ -149,6 +140,24 @@ struct Subscriber {
   onInterrupt: fn(fn())
 }
 ```
+
+#### Host-initiated calls with one response
+
+A host-initiated Rust `async fn` returning `Result<Response, CallError<Error>>`
+uses subscription framing. Its generated Rust caller awaits the first result;
+the TypeScript handler returns a typed result. Success sends one `Receive` item,
+which the caller consumes before closing the subscription with `Stop`. Failure
+sends an `Interrupt` carrying the error. Success needs no separate completion
+frame, so the host cannot process completion before the item. Ending without an
+answer fails the call. Wire tables and decoders classify these methods as
+subscriptions.
+
+Dropping a pending call sends `Stop`. The product aborts the handler's signal and
+suppresses later output. A stop received before its start prevents the handler
+from running; duplicate live starts do not run it again. This uses subscription
+teardown rather than the terminal response required by
+[request cancellation](../rfcs/request-cancellation.md). Cancellation cannot undo
+side effects, and the caller owns deadlines and retry policy.
 
 ### Handshake
 

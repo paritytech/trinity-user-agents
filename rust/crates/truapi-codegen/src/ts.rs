@@ -535,7 +535,7 @@ fn generate_wire_table(api: &ApiDefinition, target_version: u32) -> Result<Strin
 			if !method_is_included(trait_def, method, &wrappers, target_version)? {
 				continue;
 			}
-			let wire_kind = match method.kind {
+			let wire_kind = match method.wire_kind() {
 				MethodKind::Request => "request",
 				MethodKind::Subscription => "subscription",
 			};
@@ -688,24 +688,17 @@ fn method_payload_signature(method: &MethodDef, types: &HashMap<&str, &TypeDef>)
 		let _ = write!(out, "{}:{sig},", param.name);
 	}
 	out.push_str("->");
-	match &method.return_type {
-		ReturnType::Result { ok, err } => {
-			let _ = write!(
-				out,
-				"res<{},{}>",
-				type_signature(ok, types, &mut Vec::new()),
-				type_signature(err, types, &mut Vec::new())
-			);
-		},
-		ReturnType::Subscription { item, interrupt } => {
-			let _ = write!(
-				out,
-				"sub<{},{}>",
-				type_signature(item, types, &mut Vec::new()),
-				type_signature(interrupt, types, &mut Vec::new())
-			);
-		},
-	}
+	let (response, error) = method.return_type.response_types();
+	let shape = match method.wire_kind() {
+		MethodKind::Request => "res",
+		MethodKind::Subscription => "sub",
+	};
+	let _ = write!(
+		out,
+		"{shape}<{},{}>",
+		type_signature(response, types, &mut Vec::new()),
+		type_signature(error, types, &mut Vec::new())
+	);
 	out
 }
 
@@ -1163,30 +1156,28 @@ fn generate_client_view(
 			services.push((service.trait_def, methods));
 		}
 	}
-	let has_subscriptions = services
-		.iter()
-		.any(|(_, methods)| methods.iter().any(|method| method.kind == MethodKind::Subscription));
+	let has_subscriptions = services.iter().any(|(_, methods)| {
+		methods.iter().any(|method| method.wire_kind() == MethodKind::Subscription)
+	});
 	let has_host_requests = services.iter().any(|(_, methods)| {
 		methods
 			.iter()
 			.any(|method| method.wire.host_initiated && method.kind == MethodKind::Request)
 	});
-	let has_host_subscriptions = services.iter().any(|(_, methods)| {
-		methods
-			.iter()
-			.any(|method| method.wire.host_initiated && method.kind == MethodKind::Subscription)
-	});
+	let has_host_methods = services
+		.iter()
+		.any(|(_, methods)| methods.iter().any(|method| method.wire.host_initiated));
 	let hex_import =
 		if uses_hex_string { "import type { HexString } from '../scale.js';" } else { "" };
 	let registration_import = [
-		has_host_subscriptions.then_some("HostInitiatedSubscriptionRegistration, "),
-		has_host_requests
-			.then_some("HostInitiatedRequestHandler, HostInitiatedRequestRegistration, "),
+		has_host_methods.then_some("HostInitiatedSubscriptionRegistration, "),
+		has_host_requests.then_some("HostInitiatedRequestHandler, "),
 	]
 	.into_iter()
 	.flatten()
 	.collect::<String>();
 	let method_ids_import = if has_subscriptions { "MethodIds, " } else { "" };
+	let request_adapter_import = if has_host_requests { ", hostRequestHandler" } else { "" };
 
 	let schema_hash = wire_schema_hash(api, target_version, codec_version)?;
 	let types_module = if internal { "internal" } else { "types" };
@@ -1199,7 +1190,7 @@ fn generate_client_view(
         import {{ ResultAsync, type Result }} from 'neverthrow';
         import * as S from '../scale.js';
         {hex_import}
-        import {{ SubscriptionError }} from '../transport.js';
+        import {{ SubscriptionError{request_adapter_import} }} from '../transport.js';
         import type {{ CallOptions, HostInitiatedSubscriptionHandler, {registration_import}{method_ids_import}ObservableLike, Observer, Subscription, TrUApiTransport }} from '../transport.js';
         import * as T from './{types_module}.js';
         import * as W from './wire-table.js';
@@ -1216,9 +1207,6 @@ fn generate_client_view(
 	if has_subscriptions {
 		write_subscription_helpers(&mut out);
 		write_observable_helper(&mut out);
-	}
-	if has_host_requests && !has_subscriptions {
-		writeln!(out, "const HOST_INITIATED_BUFFER_CAPACITY = 64;\n").unwrap();
 	}
 
 	for (trait_def, methods) in &services {
@@ -1388,32 +1376,22 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
 			};
 
 			let mut lines = Vec::new();
-			match (&method.kind, &method.return_type) {
-				(MethodKind::Request, ReturnType::Result { ok, err }) => {
-					let response_codec = leg_codec_expr(ok, &wrappers)?;
-					let error_codec = leg_error_codec_expr(err, &wrappers, &ctx)?;
-					lines.push(format!("    0: {request_decoder},"));
+			let (response, error) = method.return_type.response_types();
+			let response_codec = leg_codec_expr(response, &wrappers)?;
+			let error_codec = leg_error_codec_expr(error, &wrappers, &ctx)?;
+			lines.push(format!("    0: {request_decoder},"));
+			match method.wire_kind() {
+				MethodKind::Request => {
 					lines.push(format!(
 						"    1: (payload) => S.Result({response_codec}, {error_codec}).dec(payload),"
 					));
 				},
-				(MethodKind::Subscription, ReturnType::Subscription { item, interrupt }) => {
-					let item_codec = leg_codec_expr(item, &wrappers)?;
-					let error_codec = leg_error_codec_expr(interrupt, &wrappers, &ctx)?;
-					lines.push(format!("    0: {request_decoder},"));
-					lines.push(format!("    1: (payload) => {item_codec}.dec(payload),"));
+				MethodKind::Subscription => {
+					lines.push(format!("    1: (payload) => {response_codec}.dec(payload),"));
 					lines.push(format!(
 						"    2: (payload) => S.Result(S._void, {error_codec}).dec(payload),"
 					));
 					lines.push("    3: () => undefined,".to_string());
-				},
-				(kind, return_type) => {
-					bail!(
-						"Generator internal mismatch for method `{}`: kind {:?} does not match return type {:?}",
-						method.name,
-						kind,
-						return_type
-					);
 				},
 			}
 
@@ -1962,13 +1940,6 @@ fn host_registration_field(method: &MethodDef) -> String {
 	format!("#{}Registration", to_camel_case(&strip_prefix(&method.name)))
 }
 
-fn host_initiated_return_types(method: &MethodDef) -> (&TypeRef, &TypeRef) {
-	match &method.return_type {
-		ReturnType::Result { ok, err } => (ok, err),
-		ReturnType::Subscription { item, interrupt } => (item, interrupt),
-	}
-}
-
 fn host_request_inner_type(
 	ty: &TypeRef,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
@@ -1998,7 +1969,7 @@ fn emit_host_initiated_types(
 		anyhow::anyhow!("host-initiated method `{}` is not versioned", method.name)
 	})?;
 	let mut payload = emit_payload(&method.params, wrappers, Some(wire_version))?;
-	let (response_type, error_type) = host_initiated_return_types(method);
+	let (response_type, error_type) = method.return_type.response_types();
 	let mut response = emit_response(response_type, wrappers, Some(wire_version))?;
 	let error = emit_error_response(error_type, wrappers, Some(wire_version))?;
 	if method.kind == MethodKind::Request {
@@ -2019,13 +1990,9 @@ fn emit_host_initiated_field(
 ) -> Result<()> {
 	let (payload, response, error, _) =
 		emit_host_initiated_types(method, wrappers, target_version)?;
-	let kind = match method.kind {
-		MethodKind::Request => "Request",
-		MethodKind::Subscription => "Subscription",
-	};
 	writeln!(
 		out,
-		"  readonly {}: HostInitiated{kind}Registration<{}, {}, {}>;",
+		"  readonly {}: HostInitiatedSubscriptionRegistration<{}, {}, {}>;",
 		host_registration_field(method),
 		payload.inner_type_ts,
 		response.inner_type_ts,
@@ -2046,7 +2013,7 @@ fn emit_host_initiated_registration(
 	let (_, _, _, version) = emit_host_initiated_types(method, wrappers, target_version)?;
 	let ctx = CodecContext::default();
 	let wire_const = wire_const_name(&trait_def.name, &method.name);
-	let (response, error) = host_initiated_return_types(method);
+	let (response, error) = method.return_type.response_types();
 	let Some(request_name) = request_wrapper_name(method, wrappers) else {
 		bail!(
 			"host-initiated method `{}`: request parameter is not a recognized versioned wrapper",
@@ -2063,41 +2030,35 @@ fn emit_host_initiated_registration(
 	let response_codec = format!("T.{}", versioned_wrapper_ts_name(response_name));
 	let error_codec = leg_error_codec_expr(error, wrappers, &ctx)?;
 	let field = host_registration_field(method);
-	match method.kind {
-		MethodKind::Request => writedoc!(
-			out,
-			r#"
-            this.{field} = transport.registerHostInitiatedRequest({{
-              ids: W.{wire_const},
-              requestVersion: {version},
-              decodeRequest: (payload) => {{
+	let single_response = if method.kind == MethodKind::Request {
+		format!("\n  singleResponse: {{ requestVersion: {version} }},")
+	} else {
+		String::new()
+	};
+	let decode_request = if method.kind == MethodKind::Request {
+		formatdoc!(
+			r#"(payload) => {{
                 const request = {request_codec}.dec(payload);
                 if (request.tag !== "V{version}") throw new Error("unsupported request version");
                 return request.value;
-              }},
-              encodeResponse: (result) => S.Result({response_codec}, {error_codec}).enc(
-                result.isOk()
-                  ? {{ success: true, value: {{ tag: "V{version}", value: result.value }} }}
-                  : {{ success: false, value: result.error }},
-              ),
-              bufferCapacity: HOST_INITIATED_BUFFER_CAPACITY,
-            }});
-            "#
-		),
-		MethodKind::Subscription => writedoc!(
-			out,
-			r#"
-            this.{field} = transport.registerHostInitiatedSubscription({{
-              ids: W.{wire_const},
-              decodeRequest: (payload) => {request_codec}.dec(payload).value,
-              encodeItem: (item) => {response_codec}.enc({{ tag: "V{version}", value: item }}),
-              encodeInterrupt: interruptEncoder({error_codec}),
-              declinePayload: HOST_INITIATED_DECLINE_PAYLOAD,
-              bufferCapacity: HOST_INITIATED_BUFFER_CAPACITY,
-            }});
-            "#
-		),
-	}
+              }}"#,
+		)
+	} else {
+		format!("(payload) => {request_codec}.dec(payload).value")
+	};
+	writedoc!(
+		out,
+		r#"
+        this.{field} = transport.registerHostInitiatedSubscription({{
+          ids: W.{wire_const},{single_response}
+          decodeRequest: {decode_request},
+          encodeItem: (item) => {response_codec}.enc({{ tag: "V{version}", value: item }}),
+          encodeInterrupt: interruptEncoder({error_codec}),
+          declinePayload: HOST_INITIATED_DECLINE_PAYLOAD,
+          bufferCapacity: HOST_INITIATED_BUFFER_CAPACITY,
+        }});
+        "#
+	)
 	.unwrap();
 	Ok(())
 }
@@ -2114,6 +2075,8 @@ fn emit_host_initiated_method(
 		MethodKind::Request => "Request",
 		MethodKind::Subscription => "Subscription",
 	};
+	let handler =
+		if method.kind == MethodKind::Request { "hostRequestHandler(handler)" } else { "handler" };
 	let name = format!("on{}", strip_prefix(&method.name).to_case(Case::Pascal));
 	writedoc!(
 		out,
@@ -2121,7 +2084,7 @@ fn emit_host_initiated_method(
           {name}(
             handler: HostInitiated{kind}Handler<{request}, {response}, {reason}>,
           ): {{ unsubscribe(): void }} {{
-            return this.{field}.setHandler(handler);
+            return this.{field}.setHandler({handler});
           }}
         ",
 		request = payload.inner_type_ts,
@@ -3159,18 +3122,48 @@ mod tests {
 	}
 
 	#[test]
+	fn host_initiated_requests_use_the_subscription_wire_contract() {
+		let mut api = internal_api_fixture();
+		api.traits[0].methods[1].wire.host_initiated = true;
+		let actual = (
+			generate_wire_table(&api, 1).unwrap(),
+			generate_decode_table(&api, 1).unwrap(),
+			wire_schema_hash(&api, 1, 3).unwrap(),
+			crate::rust::generate_wire_table(&api, "hash").unwrap(),
+		);
+		let method = &mut api.traits[0].methods[1];
+		let ReturnType::Result { ok, err } = core::mem::replace(
+			&mut method.return_type,
+			ReturnType::Result { ok: TypeRef::Unit, err: TypeRef::Unit },
+		) else {
+			unreachable!();
+		};
+		method.kind = MethodKind::Subscription;
+		method.return_type = ReturnType::Subscription { item: ok, interrupt: err };
+		assert_eq!(
+			actual,
+			(
+				generate_wire_table(&api, 1).unwrap(),
+				generate_decode_table(&api, 1).unwrap(),
+				wire_schema_hash(&api, 1, 3).unwrap(),
+				crate::rust::generate_wire_table(&api, "hash").unwrap(),
+			)
+		);
+	}
+
+	#[test]
 	fn host_initiated_requests_register_result_handlers() {
 		let mut api = internal_api_fixture();
 		api.traits[0].methods[1].wire.host_initiated = true;
 		let source = generate_client(&api, 1, 3).unwrap();
 		assert!(
 			source.contains(
-				"HostInitiatedRequestRegistration<Extract<T.VersionedPublicRequest, { tag: \"V1\" }>[\"value\"], Extract<T.VersionedSharedResponse, { tag: \"V1\" }>[\"value\"], T.SharedError>"
+				"HostInitiatedSubscriptionRegistration<Extract<T.VersionedPublicRequest, { tag: \"V1\" }>[\"value\"], Extract<T.VersionedSharedResponse, { tag: \"V1\" }>[\"value\"], T.SharedError>"
 			),
 			"{source}"
 		);
-		assert!(source.contains("transport.registerHostInitiatedRequest({"), "{source}");
-		assert!(source.contains("requestVersion: 1,"), "{source}");
+		assert!(source.contains("transport.registerHostInitiatedSubscription({"), "{source}");
+		assert!(source.contains("singleResponse: { requestVersion: 1 },"), "{source}");
 		assert!(source.contains("if (request.tag !== \"V1\")"), "{source}");
 		assert!(
 			source.contains(
@@ -3180,10 +3173,12 @@ mod tests {
 		);
 		assert!(
 			source.contains(
-				"encodeResponse: (result) => S.Result(T.VersionedSharedResponse, T.VersionedSharedError).enc("
+				"encodeItem: (item) => T.VersionedSharedResponse.enc({ tag: \"V1\", value: item })"
 			),
 			"{source}"
 		);
+		assert!(source.contains("setHandler(hostRequestHandler(handler))"), "{source}");
+		assert!(!source.contains("registerHostInitiatedRequest"), "{source}");
 		assert!(!source.contains("this.#transport.request"), "{source}");
 	}
 

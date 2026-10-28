@@ -158,10 +158,7 @@ fn write_host_initiated_callers(
 				&request.type_ref,
 				&wrappers,
 			)?;
-			let (response, error) = match &method.return_type {
-				ReturnType::Result { ok, err } => (ok, err),
-				ReturnType::Subscription { item, interrupt } => (item, interrupt),
-			};
+			let (response, error) = method.return_type.response_types();
 			let response_name = versioned_wrapper_root(
 				&method.name,
 				"host-initiated response",
@@ -181,11 +178,11 @@ fn write_host_initiated_callers(
 
                 /// Call the product's `{wire_name}` handler and await its response.
                 pub async fn {wire_name}(
-                    requests: &HostInitiatedRequestManager,
+                    subscriptions: &HostInitiatedSubscriptionManager,
                     transport: Arc<dyn Transport>,
                     request: {request_path},
                 ) -> Result<{response_path}, truapi::CallError<{error_path}>> {{
-                    requests.request(
+                    subscriptions.request(
                         wire_table::{ids},
                         parity_scale_codec::Encode::encode(&request),
                         transport,
@@ -671,13 +668,6 @@ fn write_imports(out: &mut String, traits: &[&TraitDef]) {
         "#
 	)
 	.unwrap();
-	if traits
-		.iter()
-		.flat_map(|trait_def| &trait_def.methods)
-		.any(|method| method.wire.host_initiated && method.kind == MethodKind::Request)
-	{
-		writeln!(out, "use crate::HostInitiatedRequestManager;").unwrap();
-	}
 }
 
 fn write_top_register(out: &mut String, traits: &[&TraitDef]) {

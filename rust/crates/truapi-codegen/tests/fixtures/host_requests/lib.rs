@@ -132,7 +132,7 @@ pub mod api {
 	pub trait TrUApi: Probe {}
 }
 
-/// The generated caller compiled against the production request manager.
+/// The generated caller uses the production subscription manager.
 #[cfg(feature = "runtime")]
 #[path = "generated_caller.rs"]
 pub mod caller;

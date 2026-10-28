@@ -166,13 +166,51 @@ export type HostInitiatedSubscriptionHandler<Request, Item, Reason = never> = (
 /**
  * One answer to a host request, with cooperative cancellation. Return an Err
  * for a declared failure; throws and rejected promises become HostFailure.
- * The signal aborts on cancellation or connection loss. A cancelled call
- * answers Cancelled when its handler settles; cancellation cannot undo work.
+ * Stop or connection loss aborts pending work and discards late results.
+ * Cancellation cannot undo work already performed.
  */
 export type HostInitiatedRequestHandler<Request, Response, Failure> = (
   request: Request,
   context: { readonly signal: AbortSignal },
 ) => Result<Response, Failure> | PromiseLike<Result<Response, Failure>>;
+
+/** Adapt one typed answer to an item; the host stops after receiving it. */
+export function hostRequestHandler<Request, Response, Failure>(
+  handler: HostInitiatedRequestHandler<Request, Response, Failure>,
+): HostInitiatedSubscriptionHandler<
+  Request,
+  Response,
+  Failure | CallErrorValue<never>
+> {
+  return (request, send, interrupt) => {
+    const controller = new AbortController();
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (controller.signal.aborted) return;
+      settled = true;
+      interrupt({
+        tag: "HostFailure",
+        value: {
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+    };
+    void Promise.resolve()
+      .then(async () => {
+        if (controller.signal.aborted) return;
+        const result = await handler(request, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (result.isOk()) send(result.value);
+        if (controller.signal.aborted) return;
+        settled = true;
+        if (result.isErr()) interrupt(result.error);
+      })
+      .catch(fail);
+    return () => {
+      if (!settled) controller.abort();
+    };
+  };
+}
 
 /**
  * Wire discriminant pair addressing a method. One id addresses a method
@@ -322,35 +360,8 @@ export interface RegisterHostInitiatedSubscriptionParams<
   declinePayload: Uint8Array;
   /** Number of starts retained before a handler is installed. **/
   bufferCapacity: number;
-}
-
-/** Product-side registration for one host-initiated request method. */
-export interface HostInitiatedRequestRegistration<Request, Response, Failure> {
-  /**
-   * Replace the handler for future requests. Unsubscribing removes only this
-   * registration; active calls keep their handler.
-   */
-  setHandler(
-    handler: HostInitiatedRequestHandler<Request, Response, Failure>,
-  ): { unsubscribe(): void };
-}
-
-/** Codecs and startup buffering for one host-initiated request method. */
-export interface RegisterHostInitiatedRequestParams<
-  Request,
-  Response,
-  Failure,
-> {
-  /** Wire discriminants for the request method. */
-  ids: MethodIds;
-  /** The one request wrapper version this handler accepts. */
-  requestVersion: number;
-  /** Decode the request's versioned payload. */
-  decodeRequest(payload: Uint8Array): Request;
-  /** Encode the terminal Result, preserving its response and error versions. */
-  encodeResponse(result: Result<Response, Failure>): Uint8Array;
-  /** Maximum requests retained before a handler is installed. */
-  bufferCapacity: number;
+  /** Serve one answer, accepting only this request wrapper version. */
+  singleResponse?: { requestVersion: number };
 }
 
 /**
@@ -373,11 +384,6 @@ export interface TrUApiTransport {
   registerHostInitiatedSubscription<Request, Item, Reason>(
     params: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>,
   ): HostInitiatedSubscriptionRegistration<Request, Item, Reason>;
-
-  /** Register product-side handling for a host-initiated request. */
-  registerHostInitiatedRequest<Request, Response, Failure>(
-    params: RegisterHostInitiatedRequestParams<Request, Response, Failure>,
-  ): HostInitiatedRequestRegistration<Request, Response, Failure>;
 
   /**
    * Tear down the transport and release the listeners it registered on the

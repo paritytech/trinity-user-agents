@@ -83,7 +83,7 @@ fn caller_source(api: &rustdoc::ApiDefinition, hash: &str) -> String {
         use std::sync::Arc;
         use crate as truapi;
         use crate::versioned;
-        use core_runtime::{{HostInitiatedRequestManager, transport::Transport}};
+        use core_runtime::{{subscription::HostInitiatedSubscriptionManager, transport::Transport}};
 
         mod wire_table {{
             use core_runtime::generated::wire_table::MethodIds;
@@ -126,7 +126,10 @@ fn host_initiated_request_roundtrip() {
 		.unwrap()
 		.framework_types;
 	let method = &api.traits.iter().find(|service| service.name == "Probe").unwrap().methods[0];
-	assert_eq!((method.kind, method.wire.host_initiated), (rustdoc::MethodKind::Request, true));
+	assert_eq!(
+		(method.kind, method.wire_kind(), method.wire.host_initiated),
+		(rustdoc::MethodKind::Request, rustdoc::MethodKind::Subscription, true)
+	);
 	let hash = ts::wire_schema_hash(&api, 2, 3).unwrap();
 	fs::write(source.join("generated_caller.rs"), caller_source(&api, &hash)).unwrap();
 

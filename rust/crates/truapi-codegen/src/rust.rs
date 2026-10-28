@@ -225,7 +225,9 @@ mod tests {
 		};
 		let source = generate_dispatcher(&api).unwrap();
 		assert!(source.contains("pub async fn example_answer("), "{source}");
-		assert!(source.contains("requests: &HostInitiatedRequestManager"), "{source}");
+		assert!(source.contains("subscriptions: &HostInitiatedSubscriptionManager"), "{source}");
+		assert!(source.contains("subscriptions.request("), "{source}");
+		assert!(!source.contains("HostInitiatedRequestManager"), "{source}");
 		assert!(
 			source.contains(
 				"Result<versioned::example::RespWrapper, truapi::CallError<versioned::example::ErrWrapper>>"

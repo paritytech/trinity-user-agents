@@ -1,4 +1,4 @@
-import { errAsync, okAsync, ResultAsync, type Result } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
 import {
   decodeWireMessage,
@@ -12,12 +12,10 @@ import {
   MESSAGE_TYPE_STOP,
   PROTOCOL_ERROR_METHOD_ID,
   PROTOCOL_ERROR_TRAIT_ID,
-  type HostInitiatedRequestHandler,
   type HostInitiatedSubscriptionHandler,
   type MethodIds,
   type ProtocolMessage,
   type RegisterHostInitiatedSubscriptionParams,
-  type RegisterHostInitiatedRequestParams,
   type RequestParams,
   type SubscribeRawParams,
   type Subscription,
@@ -51,11 +49,11 @@ const KNOWN_WIRE_IDS = new Set<string>(
 );
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
-const MAX_EARLY_HOST_CANCELLATIONS = 64;
-const FRAMEWORK_RESPONSE = S.Result(S._void, S.CallError(S._void));
+const MAX_EARLY_HOST_STOPS = 64;
+const FRAMEWORK_INTERRUPT = S.Result(S._void, S.CallError(S._void));
 
-function frameworkResponse(failure: S.CallErrorValue<never>): Uint8Array {
-  return FRAMEWORK_RESPONSE.enc({ success: false, value: failure });
+function frameworkInterrupt(failure: S.CallErrorValue<never>): Uint8Array {
+  return FRAMEWORK_INTERRUPT.enc({ success: false, value: failure });
 }
 
 /** A request received no matching response before its transport deadline. */
@@ -295,28 +293,17 @@ export function createTransport(
     declinePayload: Uint8Array;
     bufferCapacity: number;
     buffered: BufferedHostStart[];
-    handler?: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    singleResponse?: { requestVersion: number };
+    handler?: {
+      call: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    };
     instances: Map<string, { unsubscribe(): void }>;
   };
   // Keyed by the full (trait, method) pair: a bare method id would collide
   // the moment two traits both number a subscription the same.
   const hostRoutes = new Map<string, HostRoute>();
-  type HostRequestRoute = {
-    ids: MethodIds;
-    requestVersion: number;
-    decodeRequest: (payload: Uint8Array) => unknown;
-    encodeResponse: (result: Result<unknown, unknown>) => Uint8Array;
-    bufferCapacity: number;
-    handler?: { call: HostInitiatedRequestHandler<unknown, unknown, unknown> };
-  };
-  type HostRequest = {
-    route: HostRequestRoute;
-    controller: AbortController;
-    buffered?: Uint8Array;
-  };
-  const hostRequestRoutes = new Map<string, HostRequestRoute>();
-  const hostRequests = new Map<string, HostRequest>();
-  const earlyHostCancellations = new Map<string, HostRequestRoute>();
+  const earlyHostStops = new Map<string, HostRoute>();
+  let hostConnectionGeneration = 0;
 
   /**
    * Normalize arbitrary thrown values into `Error` instances.
@@ -361,6 +348,7 @@ export function createTransport(
   }
 
   function interruptOperations(error: Error) {
+    hostConnectionGeneration++;
     const closing = closedError !== null;
     const requests = [...pending]
       .filter(([, request]) => request.sent || closing)
@@ -377,12 +365,9 @@ export function createTransport(
       instances.push(...route.instances.values());
       route.instances.clear();
     }
-    const hostCalls = [...hostRequests.values()];
-    hostRequests.clear();
-    earlyHostCancellations.clear();
+    earlyHostStops.clear();
 
     for (const request of requests) request.reject(error);
-    for (const request of hostCalls) request.controller.abort(error);
     // Product callbacks must not stop the provider's remaining close listeners.
     for (const instance of instances) {
       try {
@@ -539,22 +524,6 @@ export function createTransport(
       return;
     }
 
-    const requestRoute = hostRequestRoutes.get(
-      pairKey(payload.traitId, payload.methodId),
-    );
-    if (requestRoute) {
-      if (payload.messageType === MESSAGE_TYPE_REQUEST) {
-        receiveHostRequest(requestRoute, requestId, payload.value);
-      } else if (payload.messageType === MESSAGE_TYPE_CANCEL) {
-        cancelHostRequest(requestRoute, requestId);
-      } else {
-        reportProtocolViolation(
-          `ignoring host request frame for (${payload.traitId}, ${payload.methodId}): unexpected messageType ${payload.messageType}`,
-        );
-      }
-      return;
-    }
-
     const hostRoute = hostRoutes.get(
       pairKey(payload.traitId, payload.methodId),
     );
@@ -570,6 +539,15 @@ export function createTransport(
         if (instance) {
           hostRoute.instances.delete(requestId);
           instance.unsubscribe();
+        } else if (
+          bufferedIndex < 0 &&
+          hostRoute.singleResponse &&
+          !earlyHostStops.has(requestId)
+        ) {
+          if (earlyHostStops.size === MAX_EARLY_HOST_STOPS) {
+            earlyHostStops.delete(earlyHostStops.keys().next().value!);
+          }
+          earlyHostStops.set(requestId, hostRoute);
         }
       } else {
         reportProtocolViolation(
@@ -748,11 +726,17 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
     const instance = route.instances.get(requestId);
     if (instance) {
       route.instances.delete(requestId);
       instance.unsubscribe();
     }
+    if (
+      generation !== hostConnectionGeneration ||
+      route.instances.has(requestId)
+    )
+      return;
     try {
       send({
         requestId,
@@ -773,15 +757,75 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
+    if (route.singleResponse) {
+      if (
+        [...hostRoutes.values()].some(
+          (candidate) =>
+            candidate.instances.has(requestId) ||
+            candidate.buffered.some((start) => start.requestId === requestId),
+        )
+      )
+        return;
+      if (earlyHostStops.get(requestId) === route) {
+        earlyHostStops.delete(requestId);
+        return;
+      }
+      const { requestVersion } = route.singleResponse;
+      if (payload.length === 0 || payload[0]! < requestVersion - 1) {
+        interruptHostSubscription(
+          route,
+          requestId,
+          frameworkInterrupt(
+            payload.length === 0
+              ? {
+                  tag: "MalformedFrame",
+                  value: { reason: "host request payload did not decode" },
+                }
+              : { tag: "Unsupported" },
+          ),
+        );
+        return;
+      }
+      if (payload[0] !== requestVersion - 1) {
+        try {
+          send({
+            requestId,
+            payload: {
+              traitId: PROTOCOL_ERROR_TRAIT_ID,
+              methodId: PROTOCOL_ERROR_METHOD_ID,
+              messageType: MESSAGE_TYPE_RESPONSE,
+              value: PROTOCOL_ERROR.enc([
+                {
+                  tag: "V1",
+                  value: {
+                    tag: "UnsupportedVersion",
+                    value: {
+                      traitId: route.ids.trait,
+                      methodId: route.ids.method,
+                      newestVersion: requestVersion,
+                    },
+                  },
+                },
+                new Uint8Array(),
+              ]),
+            },
+          });
+        } catch {}
+        return;
+      }
+    }
     const previous = route.instances.get(requestId);
     if (previous) {
       route.instances.delete(requestId);
       previous.unsubscribe();
     }
+    if (generation !== hostConnectionGeneration || closedError) return;
 
     const handler = route.handler;
     if (!handler) {
-      if (route.buffered.length === route.bufferCapacity) {
+      route.buffered.push({ requestId, payload });
+      if (route.buffered.length > route.bufferCapacity) {
         const evicted = route.buffered.shift();
         if (evicted)
           interruptHostSubscription(
@@ -790,15 +834,6 @@ export function createTransport(
             route.declinePayload,
           );
       }
-      route.buffered.push({ requestId, payload });
-      return;
-    }
-
-    let request: unknown;
-    try {
-      request = route.decodeRequest(payload);
-    } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
       return;
     }
 
@@ -812,21 +847,33 @@ export function createTransport(
       },
     };
     route.instances.set(requestId, instance);
+    let request: unknown;
+    try {
+      request = route.decodeRequest(payload);
+    } catch {
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
+      return;
+    }
+    if (!active) return;
 
     const sendItem = (item: unknown) => {
       if (!active) return;
       try {
+        const value = route.encodeItem(item);
+        if (!active) return;
         send({
           requestId,
           payload: {
             traitId: route.ids.trait,
             methodId: route.ids.method,
             messageType: MESSAGE_TYPE_RECEIVE,
-            value: route.encodeItem(item),
+            value,
           },
         });
       } catch {
-        interruptHostSubscription(route, requestId, route.declinePayload);
+        if (active)
+          interruptHostSubscription(route, requestId, route.declinePayload);
       }
     };
 
@@ -838,217 +885,15 @@ export function createTransport(
       } catch {
         encoded = route.declinePayload;
       }
-      interruptHostSubscription(route, requestId, encoded);
+      if (active) interruptHostSubscription(route, requestId, encoded);
     };
 
     try {
-      teardown = handler(request, sendItem, interrupt);
+      teardown = handler.call(request, sendItem, interrupt);
       if (!active) teardown?.();
     } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
-    }
-  }
-
-  function finishHostRequest(
-    requestId: string,
-    request: HostRequest,
-    value: Uint8Array,
-    ids: Pick<MethodIds, "trait" | "method"> = request.route.ids,
-  ) {
-    if (hostRequests.get(requestId) !== request) return;
-    hostRequests.delete(requestId);
-    try {
-      send({
-        requestId,
-        payload: {
-          traitId: ids.trait,
-          methodId: ids.method,
-          messageType: MESSAGE_TYPE_RESPONSE,
-          value,
-        },
-      });
-    } catch {
-      // The connection close already interrupts the remaining calls.
-    }
-  }
-
-  function answerHostRequest(
-    requestId: string,
-    request: HostRequest,
-    encode: () => Uint8Array,
-  ) {
-    if (hostRequests.get(requestId) !== request) return;
-    let value: Uint8Array;
-    try {
-      value = request.controller.signal.aborted
-        ? frameworkResponse({ tag: "Cancelled" })
-        : encode();
-    } catch (error) {
-      value = frameworkResponse({
-        tag: "HostFailure",
-        value: { reason: toError(error).message },
-      });
-    }
-    if (request.controller.signal.aborted) {
-      value = frameworkResponse({ tag: "Cancelled" });
-    }
-    finishHostRequest(requestId, request, value);
-  }
-
-  function invokeHostRequest(requestId: string, request: HostRequest) {
-    const handler = request.route.handler;
-    if (
-      !handler ||
-      request.buffered === undefined ||
-      hostRequests.get(requestId) !== request
-    )
-      return;
-    const payload = request.buffered;
-    delete request.buffered;
-    let decoded: unknown;
-    try {
-      decoded = request.route.decodeRequest(payload);
-    } catch {
-      answerHostRequest(requestId, request, () =>
-        frameworkResponse({
-          tag: "MalformedFrame",
-          value: { reason: "host request payload did not decode" },
-        }),
-      );
-      return;
-    }
-    if (hostRequests.get(requestId) !== request) return;
-    if (request.controller.signal.aborted) {
-      finishHostRequest(
-        requestId,
-        request,
-        frameworkResponse({ tag: "Cancelled" }),
-      );
-      return;
-    }
-    const failed = (error: unknown) =>
-      answerHostRequest(requestId, request, () =>
-        frameworkResponse({
-          tag: "HostFailure",
-          value: { reason: toError(error).message },
-        }),
-      );
-    try {
-      const result = handler.call(decoded, {
-        signal: request.controller.signal,
-      });
-      void Promise.resolve(result).then(
-        (answer) =>
-          answerHostRequest(requestId, request, () =>
-            request.route.encodeResponse(answer),
-          ),
-        failed,
-      );
-    } catch (error) {
-      failed(error);
-    }
-  }
-
-  function receiveHostRequest(
-    route: HostRequestRoute,
-    requestId: string,
-    payload: Uint8Array,
-  ) {
-    if (hostRequests.has(requestId)) {
-      reportProtocolViolation(`ignoring duplicate host request ${requestId}`);
-      return;
-    }
-    const request: HostRequest = {
-      route,
-      controller: new AbortController(),
-      buffered: payload,
-    };
-    hostRequests.set(requestId, request);
-    const cancelled = earlyHostCancellations.get(requestId) === route;
-    earlyHostCancellations.delete(requestId);
-    if (cancelled) {
-      finishHostRequest(
-        requestId,
-        request,
-        frameworkResponse({ tag: "Cancelled" }),
-      );
-    } else if (payload.length === 0) {
-      finishHostRequest(
-        requestId,
-        request,
-        frameworkResponse({
-          tag: "MalformedFrame",
-          value: { reason: "host request payload did not decode" },
-        }),
-      );
-    } else if (payload[0] !== route.requestVersion - 1) {
-      if (payload[0]! < route.requestVersion - 1) {
-        finishHostRequest(
-          requestId,
-          request,
-          frameworkResponse({ tag: "Unsupported" }),
-        );
-      } else {
-        const value = PROTOCOL_ERROR.enc([
-          {
-            tag: "V1",
-            value: {
-              tag: "UnsupportedVersion",
-              value: {
-                traitId: route.ids.trait,
-                methodId: route.ids.method,
-                newestVersion: route.requestVersion,
-              },
-            },
-          },
-          new Uint8Array(),
-        ]);
-        finishHostRequest(requestId, request, value, {
-          trait: PROTOCOL_ERROR_TRAIT_ID,
-          method: PROTOCOL_ERROR_METHOD_ID,
-        });
-      }
-    } else if (route.handler) {
-      invokeHostRequest(requestId, request);
-    } else {
-      const buffered = [...hostRequests].filter(
-        ([, call]) => call.route === route && call.buffered !== undefined,
-      );
-      if (buffered.length > route.bufferCapacity) {
-        const [oldestId, oldest] = buffered[0]!;
-        finishHostRequest(
-          oldestId,
-          oldest,
-          frameworkResponse({
-            tag: "HostFailure",
-            value: { reason: "unavailable" },
-          }),
-        );
-      }
-    }
-  }
-
-  function cancelHostRequest(route: HostRequestRoute, requestId: string) {
-    const request = hostRequests.get(requestId);
-    if (request) {
-      if (request.route !== route) return;
-      request.controller.abort();
-      if (request.buffered !== undefined) {
-        finishHostRequest(
-          requestId,
-          request,
-          frameworkResponse({ tag: "Cancelled" }),
-        );
-      }
-      return;
-    }
-    if (!earlyHostCancellations.has(requestId)) {
-      if (earlyHostCancellations.size === MAX_EARLY_HOST_CANCELLATIONS) {
-        earlyHostCancellations.delete(
-          earlyHostCancellations.keys().next().value!,
-        );
-      }
-      earlyHostCancellations.set(requestId, route);
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
     }
   }
 
@@ -1232,12 +1077,28 @@ export function createTransport(
       encodeInterrupt,
       declinePayload,
       bufferCapacity,
+      singleResponse,
     }: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>) {
       const key = pairKey(ids.trait, ids.method);
-      if (hostRoutes.has(key) || hostRequestRoutes.has(key)) {
+      if (hostRoutes.has(key)) {
         throw new Error(
           `host-initiated subscription (${ids.trait}, ${ids.method}) is already registered`,
         );
+      }
+      if (singleResponse) {
+        const { requestVersion } = singleResponse;
+        if (
+          !Number.isInteger(requestVersion) ||
+          requestVersion < 1 ||
+          requestVersion > 255
+        ) {
+          throw new RangeError(
+            "requestVersion must be an integer from 1 to 255",
+          );
+        }
+        if (!Number.isInteger(bufferCapacity) || bufferCapacity < 1) {
+          throw new RangeError("bufferCapacity must be a positive integer");
+        }
       }
       const route: HostRoute = {
         ids,
@@ -1246,6 +1107,7 @@ export function createTransport(
         encodeInterrupt: encodeInterrupt as (reason?: unknown) => Uint8Array,
         declinePayload,
         bufferCapacity,
+        singleResponse,
         buffered: [],
         instances: new Map(),
       };
@@ -1254,72 +1116,19 @@ export function createTransport(
         setHandler(
           handler: HostInitiatedSubscriptionHandler<Request, Item, Reason>,
         ) {
-          const installed = handler as HostInitiatedSubscriptionHandler<
-            unknown,
-            unknown,
-            unknown
-          >;
-          route.handler = installed;
-          for (const start of route.buffered.splice(0)) {
-            startHostSubscription(route, start.requestId, start.payload);
-          }
-          return {
-            unsubscribe() {
-              if (route.handler === installed) route.handler = undefined;
-            },
-          };
-        },
-      };
-    },
-    registerHostInitiatedRequest<Request, Response, Failure>({
-      ids,
-      requestVersion,
-      decodeRequest,
-      encodeResponse,
-      bufferCapacity,
-    }: RegisterHostInitiatedRequestParams<Request, Response, Failure>) {
-      const key = pairKey(ids.trait, ids.method);
-      if (ids.kind !== "request")
-        throw new Error("host request registration requires a request method");
-      if (
-        !Number.isInteger(requestVersion) ||
-        requestVersion < 1 ||
-        requestVersion > 255
-      ) {
-        throw new RangeError("requestVersion must be an integer from 1 to 255");
-      }
-      if (!Number.isInteger(bufferCapacity) || bufferCapacity < 1) {
-        throw new RangeError("bufferCapacity must be a positive integer");
-      }
-      if (hostRoutes.has(key) || hostRequestRoutes.has(key)) {
-        throw new Error(
-          `host-initiated method (${ids.trait}, ${ids.method}) is already registered`,
-        );
-      }
-      const route: HostRequestRoute = {
-        ids,
-        requestVersion,
-        decodeRequest: decodeRequest as (payload: Uint8Array) => unknown,
-        encodeResponse: encodeResponse as (
-          result: Result<unknown, unknown>,
-        ) => Uint8Array,
-        bufferCapacity,
-      };
-      hostRequestRoutes.set(key, route);
-      return {
-        setHandler(
-          handler: HostInitiatedRequestHandler<Request, Response, Failure>,
-        ) {
           const installed = {
-            call: handler as HostInitiatedRequestHandler<
+            call: handler as HostInitiatedSubscriptionHandler<
               unknown,
               unknown,
               unknown
             >,
           };
           route.handler = installed;
-          for (const [requestId, request] of [...hostRequests]) {
-            if (request.route === route) invokeHostRequest(requestId, request);
+          for (const start of [...route.buffered]) {
+            const index = route.buffered.indexOf(start);
+            if (index < 0) continue;
+            route.buffered.splice(index, 1);
+            startHostSubscription(route, start.requestId, start.payload);
           }
           return {
             unsubscribe() {

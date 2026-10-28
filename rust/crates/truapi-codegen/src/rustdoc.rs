@@ -108,7 +108,7 @@ impl TraitDef {
 pub struct MethodDef {
 	/// Method name as it appears in source.
 	pub name: String,
-	/// What shape the method has on the wire (request, stream, ...).
+	/// Call shape declared by the protocol trait.
 	pub kind: MethodKind,
 	/// Parameter list with names preserved (excluding `&self` / `CallContext`).
 	pub params: Vec<ParamDef>,
@@ -118,6 +118,13 @@ pub struct MethodDef {
 	pub wire: WireAttrs,
 	/// Rustdoc comment on the method, with hidden codegen markers stripped.
 	pub docs: Option<String>,
+}
+
+impl MethodDef {
+	/// Host-initiated single responses use the subscription exchange.
+	pub fn wire_kind(&self) -> MethodKind {
+		if self.wire.host_initiated { MethodKind::Subscription } else { self.kind }
+	}
 }
 
 /// Raw wire id extracted from `#[wire(...)]`. One id addresses the method
@@ -134,7 +141,7 @@ pub struct WireAttrs {
 	pub id: Option<u8>,
 }
 
-/// Wire-shape classification of a trait method.
+/// Declared call shape of a trait method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
 	/// One request, one response.
@@ -160,6 +167,16 @@ pub enum ReturnType {
 	Result { ok: TypeRef, err: TypeRef },
 	/// Subscription that yields `item`s and ends with an `interrupt`.
 	Subscription { item: TypeRef, interrupt: TypeRef },
+}
+
+impl ReturnType {
+	/// Success or item payload, followed by the failure payload.
+	pub fn response_types(&self) -> (&TypeRef, &TypeRef) {
+		match self {
+			Self::Result { ok, err } => (ok, err),
+			Self::Subscription { item, interrupt } => (item, interrupt),
+		}
+	}
 }
 
 /// Type reference parsed from rustdoc into a structural form codegen can emit.
