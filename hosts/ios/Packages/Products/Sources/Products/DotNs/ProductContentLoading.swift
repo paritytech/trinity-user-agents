@@ -16,7 +16,6 @@ public enum ProductLoadPhase: Equatable, Sendable {
 
 public typealias ProductLoadPhaseHandler = @Sendable (ProductLoadPhase) -> Void
 
-/// One executable of a product, opened from the archive applied for it.
 public struct ProductContent: Equatable, Sendable {
     public let resolved: ResolvedProduct
     public let kind: ExecutableKind
@@ -28,15 +27,12 @@ public struct ProductContent: Equatable, Sendable {
         self.archive = archive
     }
 
-    /// The name `archive` is applied under, which is what an update for it names.
     public var contentId: ProductId {
         resolved.contentId(for: kind)
     }
 }
 
-/// One executable as a release publishes it: its manifest record and its archive, already on disk.
-/// A nil archive means the release no longer publishes it, so applying it removes the applied one.
-/// `record` is nil for a legacy product, whose base name has no executable record.
+/// A nil `archive` removes the applied one; `record` is nil for a legacy product.
 public struct ExecutableRelease: Equatable, Sendable {
     public let contentId: ProductId
     public let archive: DotNsResolvedContent?
@@ -60,12 +56,9 @@ public protocol ProductContentLoading: Sendable {
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent
-    /// Resolves the product and stages its chat worker's archive. A failed archive download
-    /// leaves the declared worker in place, so it fails when it runs rather than turning into a
-    /// legacy product.
+    /// A failed worker download keeps the declared worker instead of falling back to legacy.
     func openWorker(_ productId: ProductId) async throws -> ResolvedProduct
-    /// Re-reads the manifest and every executable the device has applied. Executables it never
-    /// opened are not downloaded.
+    /// Covers only applied executables; the rest are downloaded when first opened.
     func refresh(_ productId: ProductId) async -> [ExecutableRelease]
     func apply(_ release: ExecutableRelease) async
     func updates() -> AnyAsyncSequence<ExecutableRelease>

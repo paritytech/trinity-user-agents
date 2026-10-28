@@ -20,8 +20,7 @@ public struct DotNsResolvedContent: Equatable, Sendable {
 
 /// Protocol for resolving .dot domain names to local content directories.
 public protocol DotNsResolverProtocol {
-    /// The applied archive of a .dot name, downloaded and applied only when none is applied yet.
-    /// A newer published archive replaces it through `ProductContentLoader`, never here.
+    /// Never re-reads the chain once an archive is applied; newer ones arrive through `ProductContentLoader`.
     func resolveToLocalURL(dotNsName: String) async throws -> URL
 
     /// Clear all cached content and hash mappings.

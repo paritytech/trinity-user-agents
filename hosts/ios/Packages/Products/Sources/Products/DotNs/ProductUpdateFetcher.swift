@@ -5,8 +5,6 @@ public enum ProductUpdateFetchError: Error, Equatable {
     case tldUnavailable
 }
 
-/// Reads a product's manifest from the chain and downloads executable archives. Nothing it
-/// returns is served until the caller applies it.
 public protocol ProductUpdateFetching: Sendable {
     func fetchManifest(_ productId: ProductId) async throws -> ProductManifest
     func stage(_ contentId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> DotNsResolvedContent

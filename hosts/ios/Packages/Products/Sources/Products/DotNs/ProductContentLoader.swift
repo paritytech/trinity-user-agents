@@ -132,7 +132,6 @@ extension ProductContentLoader: ProductContentLoading {
 
 private struct FetchedContent: Sendable {
     let manifest: ProductManifest
-    /// Every requested executable that is still published, by content id.
     let archives: [ProductId: DotNsResolvedContent]
 }
 
@@ -147,8 +146,7 @@ private extension ProductManifest {
 }
 
 private extension ResolvedProduct {
-    /// The archive `kind` is served from, when the product publishes one for it. A legacy product
-    /// serves every kind from its base name; a manifest product only the kinds it declares.
+    /// A legacy product serves every kind from its base name.
     func publishedContentId(for kind: ExecutableKind) -> ProductId? {
         let contentId = contentId(for: kind)
         let published = [appContentId, executables.widget?.identifier, executables.worker?.identifier]
@@ -190,8 +188,6 @@ private extension ProductContentLoader {
         }
     }
 
-    /// Only executables with an applied archive are refreshed: those are the ones something on
-    /// this device serves, and the rest are downloaded when first opened.
     func performRefresh(_ productId: ProductId) async -> [ExecutableRelease] {
         guard let applied = try? await cache.manifest(productId) else { return [] }
 
@@ -247,8 +243,6 @@ private extension ProductContentLoader {
         return FetchedContent(manifest: manifest, archives: archives)
     }
 
-    /// An executable something serves changes only through an update that carries its record and
-    /// archive from one release; the root record and executables nothing serves take effect now.
     func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
         await cache.adopt(latest.manifest)
 

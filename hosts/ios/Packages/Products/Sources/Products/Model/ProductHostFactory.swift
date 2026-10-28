@@ -55,12 +55,12 @@ public final class ProductHostFactory: ProductHostProviding {
     }
 
     public func resolveHost(label: String) async throws -> ProductHost? {
-        let tld = try await tldProvider.resolveTld()
+        let tld = try await tldProvider.currentTldElseResolve()
         return ProductHost(name: label, root: tld)
     }
 
     public func resolveHost(rawString: String) async throws -> ProductHost? {
-        let tld = try await tldProvider.resolveTld()
+        let tld = try await tldProvider.currentTldElseResolve()
         return ProductHost.parse(rawString, tld: tld)
     }
 
@@ -68,7 +68,7 @@ public final class ProductHostFactory: ProductHostProviding {
         let tld: String
 
         do {
-            tld = try await tldProvider.resolveTld()
+            tld = try await tldProvider.currentTldElseResolve()
         } catch let error as CancellationError {
             throw error
         } catch {

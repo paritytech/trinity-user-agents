@@ -1,19 +1,12 @@
 import Foundation
 import SDKLogger
 
-/// What a product resolves to and which archive each executable serves, both readable with no
-/// network. Manifests are cached per product and archives per executable, so one executable can
-/// be opened or updated without touching the others.
 public protocol ProductContentCaching: Sendable {
-    /// The product as applied: its root record and each executable's applied record.
     func manifest(_ productId: ProductId) async throws -> ProductManifest
-    /// Nil when nothing is applied under `contentId` or its archive is no longer on disk.
+    /// Nil also when the applied archive is no longer on disk.
     func appliedArchive(of contentId: ProductId) async -> DotNsResolvedContent?
-    /// Takes the root record, and the records of executables nothing is applied for yet. An
-    /// applied executable keeps its record until a release of it is applied.
+    /// An applied executable keeps its record until a release of it is applied.
     func adopt(_ manifest: ProductManifest) async
-    /// Applies one executable's release: its record with its archive, or its removal when the
-    /// archive is nil.
     func apply(_ release: ExecutableRelease) async
 }
 
@@ -41,10 +34,9 @@ public actor ProductContentCache {
 
 extension ProductContentCache: ProductContentCaching {
     public func manifest(_ productId: ProductId) async throws -> ProductManifest {
-        let hostProvider = ProductHostFactory(tldProvider: CachedDotNsTldProvider(tldProvider: tldProvider))
+        let hostProvider = ProductHostFactory(tldProvider: tldProvider)
 
-        // The resolver treats an unresolvable host as a legacy product; with no known TLD that
-        // would be a guess, so it is a cache miss instead.
+        // Without a known TLD the resolver would guess a legacy product, so this is a cache miss.
         _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
 
         return try await resolverFactory.makeResolver(

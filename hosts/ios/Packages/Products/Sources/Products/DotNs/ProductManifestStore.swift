@@ -1,12 +1,9 @@
 import Foundation
 import os
 
-/// Persists the records a product's manifest was last resolved from. Archives are not part of it:
-/// each executable's applied archive is tracked by name in the content hash cache.
 public protocol ProductManifestStoring: Sendable {
     func records(of productId: ProductId) -> [ProductManifest.RecordKey: ProductManifest.Record]?
-    /// Replaces the given records and keeps the rest, so one executable's record can change without
-    /// the others.
+    /// Merges into the stored records.
     func save(_ records: [ProductManifest.RecordKey: ProductManifest.Record]) throws
 }
 
@@ -17,7 +14,7 @@ public final class ProductManifestFileStore: ProductManifestStoring, @unchecked 
         static let allowedFileNameCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._"))
     }
 
-    /// Process-wide: every store instance merges into the same files.
+    /// Process-wide: store instances share the files.
     private static let writeLock = OSAllocatedUnfairLock()
 
     private let directory: URL

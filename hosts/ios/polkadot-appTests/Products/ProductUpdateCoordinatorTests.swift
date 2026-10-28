@@ -99,8 +99,7 @@ struct ProductUpdateCoordinatorTests {
 }
 
 private extension ProductUpdateCoordinatorTests {
-    /// Updates are handled in the order they arrive, so once an update for a product nobody has
-    /// open is applied, `update` has been handled too.
+    /// Updates are handled in arrival order, so applying the next one means `update` was handled.
     func deliver(_ update: ExecutableRelease) async {
         let applied = loader.appliedUpdates.count
 

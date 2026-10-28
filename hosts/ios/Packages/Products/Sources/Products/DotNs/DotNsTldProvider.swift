@@ -15,13 +15,14 @@ public protocol DotNsTldReading: Sendable {
 }
 
 public protocol DotNsTldProviding: NetworkSuffixProviding {
-    /// Cached TLD label without the leading dot, or nil until a chain read has succeeded.
-    /// Kicks a background refresh when nil and the backoff window has elapsed.
+    /// Read this session, else persisted by a previous run; kicks a refresh when not read this session.
     func currentTld() -> String?
 
     /// Resolves the TLD, sharing any in-flight read. Bypasses the backoff window,
     /// subject to a minimum inter-attempt floor.
     func resolveTld() async throws -> String
+    /// Unlike `resolveTld()`, answers from a TLD persisted by a previous run.
+    func currentTldElseResolve() async throws -> String
 
     /// Kicks a background re-read of the TLD, subject to the backoff window. Non-blocking.
     func refresh()
@@ -96,6 +97,22 @@ public final class DotNsTldProvider: DotNsTldProviding {
             }
             return try await performRead()
         }
+    }
+
+    /// Kicks no refresh before resolving: it would claim the inter-attempt floor and reject this read.
+    public func currentTldElseResolve() async throws -> String {
+        let (tld, persistedTld) = state.withLock { ($0.tld, $0.persistedTld) }
+
+        if let tld {
+            return tld
+        }
+
+        if let persistedTld {
+            refreshIfNeeded()
+            return persistedTld
+        }
+
+        return try await resolveTld()
     }
 
     public func refresh() {

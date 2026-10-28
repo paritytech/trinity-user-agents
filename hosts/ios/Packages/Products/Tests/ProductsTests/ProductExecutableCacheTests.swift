@@ -51,7 +51,7 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
         try await makeCache().adopt(makeFetcher().fetchManifest(baseName))
 
-        await #expect(throws: DotNsContractError.self) {
+        await #expect(throws: FailingTldProvider.Unreachable.self) {
             try await self.makeCache(tldProvider: FailingTldProvider()).manifest(self.baseName)
         }
     }

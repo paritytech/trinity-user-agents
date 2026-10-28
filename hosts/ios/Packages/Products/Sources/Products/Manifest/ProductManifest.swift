@@ -1,15 +1,12 @@
 import Foundation
 
-/// A resolved product together with the dotNS text records it was resolved from, so the same
-/// resolution can be replayed later without the chain.
 public struct ProductManifest: Hashable, Sendable {
     public struct RecordKey: Hashable, Sendable {
         public let name: String
         public let key: String
     }
 
-    /// An absent record is a read that found nothing, which is a different fact from a record
-    /// that was never read.
+    /// `absent` is a read that found nothing; a missing key was never read.
     public enum Record: Hashable, Sendable {
         case absent
         case value(String)

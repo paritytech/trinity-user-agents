@@ -9,7 +9,6 @@ protocol SPAProductReloading: AnyObject {
 
 @MainActor
 protocol ProductPresenceRegistering: AnyObject {
-    /// `contentId` names the archive the screen serves, which is what an update waits on.
     func register(productId: ProductId, contentId: ProductId, reloader: SPAProductReloading) -> UUID
     func unregister(_ presenceId: UUID)
     func requestRefresh(of productId: ProductId)
