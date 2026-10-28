@@ -132,6 +132,12 @@ polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a car
 without naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it
 gives (see [Expanded card](#expanded-card)).
 
+An `open` link can carry more query parameters, which the expanded card's page loads with after `card`:
+`polkadotapp://pocket/open?product=peopl.dot&card=humanity&open=scratch` loads
+`https://peopl.dot?card=humanity&open=scratch`. They are the product's own, kept in order and passed on unread, so a
+product can pick the screen its card opens on. Up to 2048 bytes of them are forwarded, and a longer link is refused.
+Anyone can write the link, so the page reads them as a hint of what to show, never as proof of anything.
+
 The same link works from a product, a QR code or a web page. A link that names an action the host does not serve, or
 names no product or no card, is refused with a message. Products reach a Pocket link from their own web UI through
 `system.navigate_to`, which lets it through without the `OpenUrl` grant other `polkadotapp://` links need, so an "Add to
