@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import uniffi.truapi.PocketCardRemoval
 import uniffi.truapi.RendererNode
 
 internal val gameProduct = ProductId.fromStoredValue("game.dot")
@@ -48,12 +47,11 @@ internal class InMemoryPocketCardRepository(pinned: List<PocketCard> = emptyList
         faces[card.card.key] = card.face
     }
 
-    override suspend fun remove(key: PocketCardKey): PocketCardRemoval {
-        val held = cards.value.firstOrNull { it.key == key } ?: return PocketCardRemoval.ABSENT
-        if (held.privileged) return PocketCardRemoval.PRIVILEGED
+    override suspend fun remove(key: PocketCardKey) {
+        val held = cards.value.firstOrNull { it.key == key } ?: return
+        if (held.privileged) return
         cards.value -= held
         faces -= key
-        return PocketCardRemoval.REMOVED
     }
 
     override suspend fun face(key: PocketCardKey): RendererNode? = faces[key]

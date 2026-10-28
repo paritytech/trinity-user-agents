@@ -56,16 +56,13 @@ actor InMemoryPocketCardStore: PocketCardStore {
             .eraseToAnyAsyncSequence()
     }
 
-    func removeCard(_ key: PocketCardKey) async throws -> PocketRemoval {
-        guard pinned.pinned(key) == nil else { throw PocketRemoveError.privileged }
+    func removeCard(_ key: PocketCardKey) async throws {
+        guard pinned.pinned(key) == nil else { return }
         if writesFail { throw Unavailable() }
 
-        let before = stored.count
         stored.removeAll { $0.key == key }
         faces[key] = nil
         snapshots.send(stored)
-
-        return stored.count != before ? .removed : .absent
     }
 
     func add(_ card: PocketCardEntry, face: RendererNode) async throws {

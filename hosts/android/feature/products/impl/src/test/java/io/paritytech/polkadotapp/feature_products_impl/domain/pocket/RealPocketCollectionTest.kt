@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoveError
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -25,24 +23,33 @@ class RealPocketCollectionTest {
         assertEquals(listOf(humanity.card, loyalty.card), collection.observeCards().first())
     }
 
-    // Callers tell a refusal apart from a removal by the error, so the core's answer has to arrive as one.
     @Test
-    fun `removing a privileged card is refused and changes nothing`() = runTest {
-        val outcome = collection.removeCard(humanity.card.key)
+    fun `removing a privileged card leaves it in the collection`() = runTest {
+        assertTrue(collection.removeCard(humanity.card.key).isSuccess)
 
-        assertEquals(PocketRemoveError.Privileged, outcome.exceptionOrNull())
         assertEquals(listOf(humanity.card), collection.observeCards().first())
     }
 
-    // The core asks the host to tell a card it took out from one it never held, so the product's
-    // retry of a removal reads as already gone rather than as a second removal.
     @Test
-    fun `a removal reports whether the card was there to remove`() = runTest {
+    fun `removing an added card takes its face with it`() = runTest {
         collection.addCard(loyalty)
 
-        assertEquals(PocketRemoval.REMOVED, collection.removeCard(loyalty.card.key).getOrThrow())
-        assertEquals(PocketRemoval.ABSENT, collection.removeCard(loyalty.card.key).getOrThrow())
+        assertTrue(collection.removeCard(loyalty.card.key).isSuccess)
+
+        assertEquals(listOf(humanity.card), collection.observeCards().first())
         assertNull(collection.cachedFace(loyalty.card.key))
+    }
+
+    // The screen shows the failure; a removal that did not happen must not read as done.
+    @Test
+    fun `a removal the core could not make is reported as a failure`() = runTest {
+        val failing = object : PocketCardRepository by repository {
+            override suspend fun remove(key: PocketCardKey) = error("runtime unavailable")
+        }
+
+        val offline = RealPocketCollection(FakePinnedPocketCards(emptyList()), failing)
+
+        assertTrue(offline.removeCard(loyalty.card.key).isFailure)
     }
 
     @Test

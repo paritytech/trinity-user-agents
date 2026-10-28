@@ -58,15 +58,11 @@ final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
         .eraseToAnyAsyncSequence()
     }
 
-    func removeCard(_ key: PocketCardKey) async throws -> PocketRemoval {
-        switch try await runtimeProvider.sharedRuntime().removePocketCard(
+    func removeCard(_ key: PocketCardKey) async throws {
+        _ = try await runtimeProvider.sharedRuntime().removePocketCard(
             productId: key.productId,
             cardId: key.cardId.value
-        ) {
-        case .removed: return .removed
-        case .absent: return .absent
-        case .privileged: throw PocketRemoveError.privileged
-        }
+        )
     }
 
     func add(_ card: PocketCardEntry, face: RendererNode) async throws {

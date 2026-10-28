@@ -78,7 +78,7 @@ private actor NoFaceStore: PocketCardStore {
         AsyncStream<[PocketCardEntry]> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
-    func removeCard(_: PocketCardKey) async throws -> PocketRemoval { .absent }
+    func removeCard(_: PocketCardKey) async throws {}
 
     func add(_: PocketCardEntry, face _: RendererNode) async {}
 

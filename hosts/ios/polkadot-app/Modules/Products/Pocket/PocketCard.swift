@@ -33,18 +33,6 @@ struct PocketCardEntry: Equatable {
     let privileged: Bool
 }
 
-/// What a removal did. A privileged card is refused with
-/// ``PocketRemoveError/privileged`` instead; removing a card that is not held
-/// is a success, which the core asks a host to tell apart from one it performed.
-enum PocketRemoval {
-    case removed
-    case absent
-}
-
-enum PocketRemoveError: Error, Equatable {
-    case privileged
-}
-
 /// The host-owned collection as a product sees it. Cards enter only through the
 /// host's own approval flow, so there is no add here.
 protocol PocketCollection: Sendable {
@@ -57,7 +45,9 @@ protocol PocketCollection: Sendable {
     /// writer cannot forget to say it wrote.
     func observeCards() -> AnyAsyncSequence<[PocketCardEntry]>
 
-    func removeCard(_ key: PocketCardKey) async throws -> PocketRemoval
+    /// Removes a card on the user's behalf, together with its face. A
+    /// privileged card stays.
+    func removeCard(_ key: PocketCardKey) async throws
 }
 
 /// The collection as the host's own flows see it: what a product may read, plus
