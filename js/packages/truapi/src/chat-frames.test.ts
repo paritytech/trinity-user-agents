@@ -2,14 +2,15 @@
 //
 // A host that knows only v2 must accept each v2 call of a product that uses
 // this client. The Rust test `truapi/tests/chat_v2_frames.rs` keeps one frame
-// for each leg of the v2 methods in `truapi/tests/snapshots/chat-v2-frames.txt`.
+// for each leg of the v2 methods. The frames are in
+// `truapi/tests/snapshots/chat-v2-frames.txt`.
 // These tests encode the legs this client sends through the generated codecs
 // and the client itself, and compare them with that snapshot. They also give
 // the client the host's response frames and read the results it decodes.
 //
 // `createRoom`, `postMessage` and `setRoomFooter` keep the shapes of the first
-// SDK: a host injects this client into products built against that SDK, so
-// those products call the client with the first shapes.
+// SDK. A host injects this client into products that use that SDK. Those
+// products call the client with the first shapes.
 
 import { readFileSync } from "node:fs";
 
@@ -18,7 +19,7 @@ import { describe, expect, it } from "bun:test";
 
 import { createTransport } from "./client.js";
 import { createClient } from "./generated/client.js";
-import type { CallErrorValue } from "./scale.js";
+import { bytesToHex, hexToBytes, type CallErrorValue } from "./scale.js";
 import {
     MESSAGE_TYPE_REQUEST,
     MESSAGE_TYPE_START,
@@ -27,12 +28,6 @@ import {
 } from "./transport.js";
 import * as T from "./generated/types.js";
 import * as W from "./generated/wire-table.js";
-
-function toHex(bytes: Uint8Array): string {
-    return Array.from(bytes)
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
-}
 
 function unwrap<V>(result: Result<V, { message: string }>): V {
     return result.match(
@@ -48,7 +43,7 @@ function frame(
     messageType: number,
     value: Uint8Array,
 ): string {
-    return toHex(
+    return bytesToHex(
         unwrap(
             encodeWireMessage({
                 requestId: "p:1",
@@ -63,17 +58,13 @@ function frame(
     );
 }
 
-function fromHex(hex: string): Uint8Array {
-    return Uint8Array.from(hex.match(/../g) ?? [], (byte) => Number.parseInt(byte, 16));
-}
-
 /** A client over a provider that keeps what the client sends. */
 function recordingClient() {
     const sent: string[] = [];
     let deliver: (message: Uint8Array) => void = () => {};
     const provider: WireProvider = {
         postMessage(message: Uint8Array) {
-            sent.push(toHex(message));
+            sent.push(bytesToHex(message));
         },
         subscribe(callback: (message: Uint8Array) => void) {
             deliver = callback;
@@ -90,7 +81,7 @@ function recordingClient() {
     return {
         sent,
         client: createClient(createTransport(provider)),
-        receive: (hex: string) => deliver(fromHex(hex)),
+        receive: (hex: string) => deliver(hexToBytes(hex)),
     };
 }
 
@@ -104,7 +95,10 @@ const snapshot = new Map(
     )
         .trim()
         .split("\n")
-        .map((line) => line.split(" ") as [string, string]),
+        .map((line) => {
+            const [name, hex] = line.split(" ");
+            return [name, `0x${hex}`] as [string, string];
+        }),
 );
 
 const config: T.ChatRoomConfig = {
@@ -219,8 +213,8 @@ function pinned(name: string): string {
 type Client = ReturnType<typeof createClient>;
 
 /**
- * Make one call, check its request frame, then answer it with a response frame
- * of the snapshot and give the result the client reads.
+ * Make one call and check its request frame. Then answer it with a response
+ * frame of the snapshot, and give the result that the client reads.
  */
 async function answered<E>(
     request: string,
@@ -558,7 +552,7 @@ describe("chat extension v2 frames", () => {
     it("decodes the first requests of createRoom, setRoomFooter and postMessage", () => {
         const payload = (name: string): Uint8Array => {
             // The request id "p:1", then the trait, method and message type.
-            return fromHex(snapshot.get(name)!).slice(4 + 3);
+            return hexToBytes(snapshot.get(name)!).slice(4 + 3);
         };
         expect(T.VersionedHostChatCreateRoomRequest.dec(payload("0.create_room.request"))).toEqual({
             tag: "V1",
