@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -197,6 +197,44 @@ ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its 
 	$(MAKE) provider-swift
 	sh ios/truapi-provider/scripts/sync-bindings.sh
 	@echo "hosts/ios can now be opened in Xcode."
+
+# The vendored app as a developer runs it: Debug, the .develop bundle id, ad
+# hoc signed so the App Group and keychain entitlements are embedded without a
+# provisioning profile, which are the flags CI's simulator build uses. The dev
+# Firebase plist comes from the host SDK team; the template setup-secrets.sh
+# copies in crashes the app at launch, so it is refused here. It is put in
+# place before the build, as CI does, because the app's own copy phase runs
+# after the first build of a checkout has collected its resources. The core is
+# bootstrapped once; rerun `SIM_ONLY=1 make ios-bootstrap` after changing the
+# crates its bindings come from.
+IOS_SIM_DIR := hosts/ios
+IOS_SIM_DERIVED_DATA := build_simulator_dd
+IOS_SIM_APP := $(IOS_SIM_DIR)/$(IOS_SIM_DERIVED_DATA)/Build/Products/Debug-iphonesimulator/polkadot-app.app
+IOS_SIM_DEV_PLIST := $(IOS_SIM_DIR)/polkadot-app/GoogleService/GoogleService-Info-Dev.plist
+IOS_SIM_DEVICE ?= booted
+
+ios-sim-build: ## Build the vendored iOS app for the simulator with the dev configuration (needs the dev Firebase plist).
+	$(IOS_SIM_DIR)/Runscripts/setup-secrets.sh
+	@if grep -q YOUR_GCM_SENDER_ID "$(IOS_SIM_DEV_PLIST)"; then \
+		echo "$(IOS_SIM_DEV_PLIST) is the template, which crashes at launch."; \
+		echo "Replace it with the dev plist from the host SDK team."; \
+		exit 1; \
+	fi
+	cp "$(IOS_SIM_DEV_PLIST)" $(IOS_SIM_DIR)/polkadot-app/GoogleService-Info.plist
+	@test -d ios/truapi-host/Binaries/truapi_server.xcframework || { \
+		test -d node_modules || npm ci --ignore-scripts; \
+		$(MAKE) ios-bootstrap SIM_ONLY=1; \
+	}
+	cd $(IOS_SIM_DIR) && TRUAPI_USE_LOCAL_BINARY=1 xcodebuild build \
+		-project polkadot-app.xcodeproj -scheme polkadot-app -configuration Debug \
+		-sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+		-derivedDataPath $(IOS_SIM_DERIVED_DATA) -clonedSourcePackagesDirPath source_packages \
+		-skipPackagePluginValidation -skipMacroValidation ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+		CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES
+
+ios-sim-run: ios-sim-build ## Build the vendored iOS app, then install and launch it on a simulator (IOS_SIM_DEVICE=<udid>, default the booted one).
+	xcrun simctl install $(IOS_SIM_DEVICE) "$(IOS_SIM_APP)"
+	xcrun simctl launch $(IOS_SIM_DEVICE) io.parity.polkadotapp.develop
 
 ios-build: ## Rebuild the local Rust package and the TestFlight-configured iOS simulator app.
 	@test -d "$(IOS_HOST)/.git" || { \
