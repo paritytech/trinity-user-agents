@@ -45,6 +45,7 @@ let decoded = try? decoder.decode(Model.self, from: data) ?? defaultValue
 - Never log PII (except public AccountId/pubkey)
 - Lines written as `[truapi.<tag>] message` at info and above also go to Sentry logs in builds that link Sentry, through `HostLogSinkDestination`. The Android host sends the same lines with the same tags. Every other line stays on the device.
 - On `[truapi.core]`, `logCoreLine` raises a core marker to info only if it is on the allowlist in that file: the tracing markers (`truapi.tracing.warn`, `truapi.tracing.error`) and the markers the core addresses to a host (`truapi.chain.`, `truapi.core.`, `truapi.ws_bridge.`). Everything else stays at debug, which is what `truapi.native.` markers are, because those carry notification bodies, URLs and permission requests. The list is an allowlist rather than its inverse, so a marker the core adds later stays local until someone says what it carries.
+- A product console warning or error is logged as `[truapi.product]` by `JSEngineLogger`, capped at 512 characters, so it leaves the device. An uncaught error line names the message only, never the script or page URL. Console logs stay at debug.
 
 ## Critical Issue Reporting
 
