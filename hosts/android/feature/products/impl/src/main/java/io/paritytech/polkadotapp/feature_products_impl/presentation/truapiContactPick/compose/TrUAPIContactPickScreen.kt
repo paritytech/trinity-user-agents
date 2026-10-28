@@ -66,7 +66,7 @@ private fun TrUAPIContactPickScreenInternal(
             VerticalSpacer { small }
 
             NovaText(
-                text = stringResource(RCommon.string.truapi_contact_pick_body, state.productId?.value.orEmpty()),
+                text = stringResource(RCommon.string.truapi_contact_pick_body, state.productId.value),
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.secondary,
                 textAlign = TextAlign.Center,

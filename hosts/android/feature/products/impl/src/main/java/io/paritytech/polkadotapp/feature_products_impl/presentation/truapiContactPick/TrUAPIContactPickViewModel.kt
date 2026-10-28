@@ -3,17 +3,12 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConta
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIContactPicks
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 @HiltViewModel
@@ -22,21 +17,28 @@ class TrUAPIContactPickViewModel @Inject constructor(
     picks: TrUAPIContactPicks,
 ) : BaseViewModel(), TrUAPIContactPickContract {
     private val prompt = picks.current?.takeUnless { it.isAnswered }
-    private val choosing = MutableStateFlow(false)
+    private var choosing = false
+    private val _state = MutableStateFlow<LoadingState<TrUAPIContactPickUiState>>(
+        prompt?.question?.let { request ->
+            LoadingState.Loaded(
+                TrUAPIContactPickUiState(
+                    productId = request.productId,
+                    contacts = request.options.mapIndexed { index, option ->
+                        TrUAPIContactPickRow(index = index, name = option.displayName)
+                    }.toImmutableList(),
+                )
+            )
+        } ?: LoadingState.Loading
+    )
+    override val state = _state.asStateFlow()
 
     init {
         prompt?.markShown()
     }
 
     override fun onShown() {
-        if (prompt?.isAnswered != false) launchUnit { router.closeTrUAPIContactPick() }
+        if (prompt?.isAnswered != false) close()
     }
-
-    override val state: StateFlow<LoadingState<TrUAPIContactPickUiState>> =
-        choosing.map { toUiState() }
-            .withLoading("TrUAPIContactPick")
-            .inBackground()
-            .stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
     override fun onContactClicked(index: Int) = answer {
         prompt?.let { it.answer(it.question.options.getOrNull(index)) }
@@ -51,18 +53,16 @@ class TrUAPIContactPickViewModel @Inject constructor(
         super.onCleared()
     }
 
-    private fun toUiState() = TrUAPIContactPickUiState(
-        productId = prompt?.question?.productId,
-        contacts = prompt?.question?.options.orEmpty().mapIndexed { index, option ->
-            TrUAPIContactPickRow(index = index, name = option.displayName)
-        }.toImmutableList(),
-    )
-
-    private fun answer(choose: () -> Unit) = launchUnit {
-        if (!choosing.value) {
-            choosing.value = true
+    private fun answer(choose: () -> Unit) {
+        if (!choosing) {
+            choosing = true
             choose()
         }
-        router.closeTrUAPIContactPick()
+        close()
+    }
+
+    private fun close() {
+        _state.value = LoadingState.Loading
+        launchUnit { router.closeTrUAPIContactPick() }
     }
 }

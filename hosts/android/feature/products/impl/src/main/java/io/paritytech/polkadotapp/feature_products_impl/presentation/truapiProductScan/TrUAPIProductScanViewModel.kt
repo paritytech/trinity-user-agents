@@ -7,6 +7,7 @@ import androidx.lifecycle.LifecycleOwner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.camera.CameraQrReader
 import io.paritytech.polkadotapp.common.presentation.camera.QrCodeAnalyzer
+import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
@@ -16,7 +17,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProdu
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import uniffi.truapi.HostScan
+import uniffi.truapi.ProductId
 import uniffi.truapi.ScanFilter
 import uniffi.truapi.ScanVerdict
 import java.util.concurrent.atomic.AtomicBoolean
@@ -33,8 +36,12 @@ class TrUAPIProductScanViewModel @Inject constructor(
     private val filter = prompt?.let { ScanFilter(it.question.request) }
     private val answered = AtomicBoolean(prompt == null)
 
-    val productId = prompt?.question?.productId
-    val hint = prompt?.question?.request?.hint
+    private val _state = MutableStateFlow<LoadingState<TrUAPIProductScanUiState>>(
+        prompt?.question?.let { request ->
+            LoadingState.Loaded(TrUAPIProductScanUiState(request.productId, request.request.hint))
+        } ?: LoadingState.Loading
+    )
+    val state = _state.asStateFlow()
     val surfaceRequest = MutableStateFlow<SurfaceRequest?>(null)
     val cameraPermissionDenied = MutableStateFlow(false)
     val notForThisProduct = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -48,8 +55,10 @@ class TrUAPIProductScanViewModel @Inject constructor(
     }
 
     suspend fun bindToCamera(lifecycleOwner: LifecycleOwner) {
-        val prompt = prompt ?: return
-        when (permissionAsker.askPermission(Manifest.permission.CAMERA)) {
+        val prompt = prompt?.takeUnless { answered.get() } ?: return
+        val permission = permissionAsker.askPermission(Manifest.permission.CAMERA)
+        if (answered.get() || prompt.isAnswered) return
+        when (permission) {
             PermissionResult.GRANTED -> Unit
             // Android asks again next time, so there is nothing to explain.
             PermissionResult.DENIED -> return answer(HostScan.CameraUnavailable)
@@ -97,5 +106,11 @@ class TrUAPIProductScanViewModel @Inject constructor(
         close()
     }
 
-    private fun close() = launchUnit { router.closeTrUAPIProductScan() }
+    private fun close() {
+        answered.set(true)
+        _state.value = LoadingState.Loading
+        launchUnit { router.closeTrUAPIProductScan() }
+    }
 }
+
+data class TrUAPIProductScanUiState(val productId: ProductId, val hint: String?)

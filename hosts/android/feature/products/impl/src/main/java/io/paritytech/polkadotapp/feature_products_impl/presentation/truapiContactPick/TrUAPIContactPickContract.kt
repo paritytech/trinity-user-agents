@@ -16,7 +16,7 @@ interface TrUAPIContactPickContract {
 }
 
 data class TrUAPIContactPickUiState(
-    val productId: ProductId?,
+    val productId: ProductId,
     val contacts: ImmutableList<TrUAPIContactPickRow>,
 )
 

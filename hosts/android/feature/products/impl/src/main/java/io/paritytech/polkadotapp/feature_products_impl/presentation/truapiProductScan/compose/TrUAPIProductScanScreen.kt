@@ -28,7 +28,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.camera.compose.QrViewfinder
+import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
@@ -45,6 +47,8 @@ private const val NOT_FOR_THIS_PRODUCT_SHOWN_MS = 2_000L
 fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
     BackHandler(onBack = viewModel::onCloseClicked)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onShown() }
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val request = state.dataOrNull ?: return
 
     var notForThisProduct by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
@@ -86,12 +90,12 @@ fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         ) {
             NovaText(
-                text = stringResource(RCommon.string.truapi_product_scan_title, viewModel.productId?.value.orEmpty()),
+                text = stringResource(RCommon.string.truapi_product_scan_title, request.productId.value),
                 color = PolkadotTheme.colors.fg.staticWhite,
                 style = PolkadotTheme.typography.title.medium,
                 textAlign = TextAlign.Center,
             )
-            viewModel.hint?.let { hint ->
+            request.hint?.let { hint ->
                 NovaText(
                     text = hint,
                     color = PolkadotTheme.colors.fg.staticWhite,
@@ -108,7 +112,7 @@ fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
                     .align(Alignment.BottomCenter)
                     .systemBarsPadding()
                     .padding(PolkadotTheme.spacings.extraLargeIncreased),
-                text = stringResource(RCommon.string.truapi_product_scan_not_for_product, viewModel.productId?.value.orEmpty()),
+                text = stringResource(RCommon.string.truapi_product_scan_not_for_product, request.productId.value),
                 color = PolkadotTheme.colors.fg.staticWhite,
                 textAlign = TextAlign.Center,
             )
