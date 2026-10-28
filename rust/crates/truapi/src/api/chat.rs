@@ -327,23 +327,39 @@ pub trait Chat: Send + Sync {
 	///     interrupt({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
 	///     return;
 	///   }
-	///   if (action.tag !== "NewMessage") {
-	///     send({ tag: "Acknowledged" });
+	///   if (action.tag === "NewMessage") {
+	///     send({
+	///       tag: "MessageCreated",
+	///       value: {
+	///         messageId: action.value.messageId ?? `m-${Date.now()}`,
+	///         origin: { participantId: "user" },
+	///         timestamp: BigInt(Date.now()),
+	///         body: action.value.body,
+	///         status: "Sent",
+	///         replyTo: action.value.replyTo,
+	///         reactions: [],
+	///         request: false,
+	///       },
+	///     });
 	///     return;
 	///   }
-	///   send({
-	///     tag: "MessageCreated",
-	///     value: {
-	///       messageId: action.value.messageId ?? `m-${Date.now()}`,
-	///       origin: { participantId: "user" },
-	///       timestamp: BigInt(Date.now()),
-	///       body: action.value.body,
-	///       status: "Sent",
-	///       replyTo: action.value.replyTo,
-	///       reactions: [],
-	///       request: false,
-	///     },
-	///   });
+	///   if (action.tag === "SendPayment") {
+	///     // Send the coins to the contact before you send the answer.
+	///     send({
+	///       tag: "MessageCreated",
+	///       value: {
+	///         messageId: action.value.messageId,
+	///         origin: { participantId: "user" },
+	///         timestamp: action.value.timestamp,
+	///         body: { tag: "Payment", value: { amount: action.value.totalValue, legacy: false } },
+	///         status: "Sent",
+	///         reactions: [],
+	///         request: false,
+	///       },
+	///     });
+	///     return;
+	///   }
+	///   send({ tag: "Acknowledged" });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 17)]
