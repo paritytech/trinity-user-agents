@@ -1,16 +1,20 @@
+use core::time::Duration;
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
 };
 
 use crate::platform::{
-	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 use futures::{
+	FutureExt,
 	channel::mpsc,
+	future,
 	stream::{self, BoxStream, StreamExt},
 };
 use parity_scale_codec::Encode;
@@ -18,6 +22,7 @@ use truapi::v01;
 
 use crate::{
 	DevicePairingObserver, PairedSsoPeer,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
 };
@@ -96,9 +101,9 @@ pub struct CallbackPlatform {
 	pub storage_events: Arc<NativeEventBus>,
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
-	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
-		self.callbacks.worker_demand_changed(product_id.clone(), transition);
+impl crate::host_logic::worker::WorkerController for CallbackPlatform {
+	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.callbacks.request_worker_transition(product_id.clone(), transition);
 	}
 }
 
@@ -244,6 +249,22 @@ impl Features for CallbackPlatform {
 			.on_core_log("truapi.native.callback.supported_chains".to_string(), String::new());
 
 		self.callbacks.supported_chains().map_err(v01::GenericError::from)
+	}
+}
+
+#[async_trait]
+impl ExtrinsicVersionHost for CallbackPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, v01::GenericError> {
+		self.callbacks.on_core_log(
+			"truapi.native.callback.transaction_extension_versions".to_string(),
+			String::new(),
+		);
+		self.callbacks
+			.transaction_extension_versions()
+			.await
+			.map_err(v01::GenericError::from)
 	}
 }
 
@@ -405,7 +426,7 @@ impl Drop for NativeJsonRpcConnection {
 	}
 }
 
-/// Lowercase hex for a genesis hash in a log line.
+/// Lowercase hex for a hash in a log line.
 fn hex_lower(bytes: &[u8]) -> String {
 	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -500,18 +521,76 @@ impl LocaleHost for CallbackPlatform {
 	}
 }
 
+// Pauses between retries of a preimage lookup that missed. The first retries
+// use the CLI host's poll interval and cover the 30 seconds the product SDK's
+// lookup helpers wait. Later retries are slower, to limit requests for lookups
+// a product keeps open.
+#[cfg(not(test))]
+const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_secs(6);
+#[cfg(not(test))]
+const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
+#[cfg(test)]
+const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
+const PREIMAGE_FAST_RETRIES: u32 = 5;
+
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		// Register the change receiver first so no event between the lookup
 		// and the subscription is lost, then await the current value lazily.
-		let rx = self.events.subscribe_preimage_changes(key.clone());
+		let rx = self.events.subscribe_preimage_changes(key.to_vec());
 		let callbacks = self.callbacks.clone();
-		let current =
-			async move { callbacks.lookup_preimage(key).await.map_err(v01::GenericError::from) };
-		stream::once(current).chain(rx).boxed()
+		async move {
+			let current = callbacks.lookup_preimage(key.to_vec()).await;
+			// A miss can mean the fetch failed, and hosts are not required to
+			// notify the value later, so retry until the bytes hash to the key.
+			// An error is final: apps answer a failed fetch with `None`, and
+			// `HostRejection` has no case for a failure worth retrying.
+			let retry = match &current {
+				Ok(Some(value)) => preimage_key(value) != key,
+				Ok(None) => true,
+				Err(HostRejection::Rejected { .. }) => false,
+			};
+			let found = stream::iter(retry.then_some(key))
+				.then(move |key| lookup_until_found(callbacks.clone(), key))
+				.map(|found| found.map(Some).map_err(v01::GenericError::from));
+			let current = current.map_err(v01::GenericError::from);
+			stream::once(future::ready(current)).chain(stream::select(rx, found))
+		}
+		.flatten_stream()
+		.boxed()
+	}
+}
+
+/// Retry the host lookup until it returns bytes that hash to `digest` or an
+/// error.
+async fn lookup_until_found(
+	callbacks: Arc<dyn HostCallbacks>,
+	digest: [u8; 32],
+) -> Result<Vec<u8>, HostRejection> {
+	let key_hex = hex_lower(&digest);
+	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	let mut retries = 0u32;
+	loop {
+		let pause = if retries < PREIMAGE_FAST_RETRIES {
+			PREIMAGE_RETRY_PAUSE_FAST
+		} else {
+			PREIMAGE_RETRY_PAUSE_SLOW
+		};
+		futures_timer::Delay::new(pause).await;
+		retries += 1;
+		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
+		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
+			callbacks.on_core_log(
+				"truapi.native.preimage.found".to_string(),
+				format!("{key_hex} on retry {retries}"),
+			);
+			return Ok(value);
+		}
 	}
 }
 

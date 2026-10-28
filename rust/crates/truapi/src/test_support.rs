@@ -1226,6 +1226,8 @@ impl PlatformPermissions for StubPlatform {
 	}
 }
 
+impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
+
 #[crate::platform::async_trait]
 impl PlatformFeatures for StubPlatform {
 	async fn feature_supported(
@@ -2002,7 +2004,7 @@ impl LocaleHost for StubPlatform {
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))

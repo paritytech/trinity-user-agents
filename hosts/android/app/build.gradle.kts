@@ -123,6 +123,7 @@ dependencies {
     implementation(libs.coil.kt)
 
     implementation(project(":common"))
+    implementation(libs.sentry)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
