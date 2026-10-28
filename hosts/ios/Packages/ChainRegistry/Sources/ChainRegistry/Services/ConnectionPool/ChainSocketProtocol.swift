@@ -5,6 +5,7 @@ public enum ChainSocketCloseReason: Sendable {
     case peerClosed
     case connectTimeout
     case livenessTimeout
+    case pathLost
     case resumed
 }
 

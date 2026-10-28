@@ -16,9 +16,5 @@ extension AppConfig {
 
             return URL(string: DeepLink.scheme + "://chat?\(idPart)&\(forcePart)")!
         }
-
-        static func fiatOnramp(sessionId: String) -> URL {
-            URL(string: DeepLink.scheme + "://fiatOnramp/buySuccess?sessionId=\(sessionId)")!
-        }
     }
 }
