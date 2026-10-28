@@ -73,8 +73,8 @@ use truapi::{
 		},
 		system::{
 			HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-			HostGetProductContextRequest, HostGetProductContextResponse, HostNavigateToError,
-			HostNavigateToRequest, HostNavigateToResponse,
+			HostGetProductContextRequest, HostGetProductContextResponse, HostInfoRequest,
+			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
 		worker::{
@@ -174,6 +174,25 @@ fn feature_supported_round_trips_through_runtime() {
 	let response = futures::executor::block_on(host.feature_supported(&cx, request)).unwrap();
 	let HostFeatureSupportedResponse::V1(inner) = response;
 	assert!(inner.supported);
+}
+
+#[test]
+fn host_info_reports_the_truapi_release_the_runtime_was_built_from() {
+	// Telemetry groups products' errors by this value, so it has to be the
+	// runtime's own release rather than anything the embedding app configures.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	let response =
+		futures::executor::block_on(host.host_info(&CallContext::default(), HostInfoRequest::V1))
+			.unwrap();
+	assert_eq!(
+		response,
+		HostInfoResponse::V1(v01::HostInfo {
+			platform: truapi::latest::HostPlatform::Web,
+			name: "Polkadot Web".to_string(),
+			version: String::new(),
+			truapi_version: env!("CARGO_PKG_VERSION").to_string(),
+		})
+	);
 }
 
 #[test]
@@ -5535,8 +5554,8 @@ impl DemandRecorder {
 	}
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for DemandRecorder {
-	fn worker_demand_changed(
+impl crate::host_logic::worker::WorkerController for DemandRecorder {
+	fn request_worker_transition(
 		&self,
 		product_id: &ProductId,
 		transition: crate::host_logic::worker::WorkerTransition,
@@ -5560,7 +5579,7 @@ fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
 		host.connection
 			.services()
 			.worker_ledger
-			.install_demand_observer(recorder.clone())
+			.install_worker_controller(recorder.clone())
 	);
 	let cx = CallContext::default();
 

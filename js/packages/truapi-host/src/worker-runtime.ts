@@ -187,7 +187,10 @@ function buildRawCallbacks(capabilities: OptionalCapabilities) {
      * `acquireWorker`/`releaseWorker` or the core took the reference itself
      * for an open render.
      */
-    workerDemandChanged(productId: string, transition: WorkerTransition): void {
+    requestWorkerTransition(
+      productId: string,
+      transition: WorkerTransition,
+    ): void {
       postToMain({
         kind: "workerDemandChanged",
         productId,

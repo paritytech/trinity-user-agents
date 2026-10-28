@@ -32,6 +32,7 @@ use crate::{
 		storage_watch::diffed,
 	},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
+	time::{RealTimer, Timer},
 };
 
 mod reader;
@@ -72,6 +73,10 @@ impl WatchedStorage for ChainRuntime {
 			WatchedHead::Best => best_changes(reader).await,
 			WatchedHead::Finalized => self.finalized_changes(genesis, reader).await,
 		}
+	}
+
+	fn timer(&self) -> Arc<dyn Timer> {
+		Arc::new(RealTimer)
 	}
 }
 

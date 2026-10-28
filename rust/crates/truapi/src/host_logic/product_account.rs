@@ -283,7 +283,9 @@ pub fn derive_sr25519_hard_path(
 	derive_hard_path_from_keypair(derive_root_keypair_from_entropy(entropy)?, junctions)
 }
 
-fn derive_hard_path_from_keypair(
+/// Derive an sr25519 keypair down a path of hard string junctions from
+/// `keypair`.
+pub fn derive_hard_path_from_keypair(
 	mut keypair: Keypair,
 	junctions: &[&str],
 ) -> Result<Keypair, ProductAccountError> {

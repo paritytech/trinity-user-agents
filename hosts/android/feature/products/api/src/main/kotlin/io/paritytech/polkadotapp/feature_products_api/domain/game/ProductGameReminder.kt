@@ -10,8 +10,14 @@ interface ProductGameReminder {
      */
     suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit>
 
+    /** Return the held start time for [productId], if it has a reminder. */
+    fun scheduledStartFor(productId: ProductId): Long?
+
     /** Drop [productId]'s reminder, if any. */
     suspend fun cancel(productId: ProductId)
+
+    /** Drop the reminder at the product's request and report that cancellation. */
+    suspend fun cancelByProduct(productId: ProductId)
 
     /** Re-arm the held reminders after a reboot, dropping those whose start has passed. */
     suspend fun restore()

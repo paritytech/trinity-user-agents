@@ -38,6 +38,7 @@ pub struct JsBridge {
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
+    pub transaction_extension_versions: Function,
     pub feature_supported: Function,
     pub supported_chains: Function,
     pub schedule_game_reminder: Function,
@@ -92,6 +93,10 @@ impl JsBridge {
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
+            transaction_extension_versions: get_function(
+                callbacks,
+                "transactionExtensionVersions",
+            )?,
             feature_supported: get_function(callbacks, "featureSupported")?,
             supported_chains: get_function(callbacks, "supportedChains")?,
             schedule_game_reminder: get_optional_function(callbacks, "scheduleGameReminder")?
@@ -345,6 +350,20 @@ impl crate::platform::CoreStorage for WasmPlatform {
 }
 
 #[crate::platform::async_trait]
+impl crate::platform::ExtrinsicVersionHost for WasmPlatform {
+    async fn transaction_extension_versions(
+        &self,
+    ) -> Result<crate::platform::ExtensionVersionMap, latest::GenericError> {
+        let bytes =
+            invoke_bytes_return(&self.bridge.transaction_extension_versions, Vec::new()).await?;
+        Ok(decode_bytes::<crate::platform::ExtensionVersionMap>(
+            bytes,
+            "transactionExtensionVersions response did not decode",
+        )?)
+    }
+}
+
+#[crate::platform::async_trait]
 impl crate::platform::Features for WasmPlatform {
     async fn feature_supported(
         &self,
@@ -542,7 +561,7 @@ impl crate::platform::PocketPlatform for WasmPlatform {
 impl crate::platform::PreimageHost for WasmPlatform {
     fn lookup_preimage(
         &self,
-        key: Vec<u8>,
+        key: [u8; 32],
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
         invoke_js_subscription(
             &self.bridge.lookup_preimage,

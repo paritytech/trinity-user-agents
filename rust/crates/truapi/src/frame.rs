@@ -23,6 +23,7 @@
 //! reconstruct string action tags on every frame.
 
 use parity_scale_codec::{Decode, Encode, Error as CodecError, Input, Output};
+use scale_info::TypeInfo;
 use truapi::{
 	CallError,
 	versioned::{FromLatest, IntoLatest, Versioned},
@@ -56,7 +57,7 @@ pub const PROTOCOL_ERROR_METHOD_ID: u8 = 255;
 pub const PROTOCOL_ERROR_KEY: (u8, u8) = (PROTOCOL_ERROR_TRAIT_ID, PROTOCOL_ERROR_METHOD_ID);
 
 /// Versioned payload carried by [`PROTOCOL_ERROR_KEY`] frames.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub enum VersionedProtocolError {
 	/// Initial protocol error shape.
 	#[codec(index = 0)]
@@ -64,7 +65,7 @@ pub enum VersionedProtocolError {
 }
 
 /// Protocol errors supported by codec version 1.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub enum ProtocolErrorV1 {
 	/// The receiver does not support the incoming message address. Codec 2
 	/// addresses a frame by `(trait, method)`, so one byte can no longer name
@@ -75,6 +76,17 @@ pub enum ProtocolErrorV1 {
 		trait_id: u8,
 		/// Method discriminant of the unsupported incoming frame.
 		method_id: u8,
+	},
+	/// The host knows the method but not the version of the request, and
+	/// rejected it without running it.
+	#[codec(index = 1)]
+	UnsupportedVersion {
+		/// Trait discriminant of the rejected request.
+		trait_id: u8,
+		/// Method discriminant of the rejected request.
+		method_id: u8,
+		/// The newest version the host accepts for this method: `2` means `V2`.
+		newest_version: u8,
 	},
 }
 
@@ -131,6 +143,15 @@ pub const MESSAGE_TYPE_CANCEL: u8 = 4;
 /// Pair it with [`MESSAGE_TYPE_RESPONSE`].
 pub fn encode_cancelled_response() -> Vec<u8> {
 	Err::<(), CallError<()>>(CallError::Cancelled).encode()
+}
+
+/// Encodes the answer to a payload that did not decode, as
+/// `Err(CallError::MalformedFrame { reason })`.
+///
+/// The bytes do not depend on the method's types, so they work as any
+/// request's response and any subscription's interrupt.
+pub fn encode_malformed_frame_error(reason: String) -> Vec<u8> {
+	Err::<(), CallError<()>>(CallError::MalformedFrame { reason }).encode()
 }
 
 /// Encode `Interrupt(Ok(()))`, a subscription's natural (error-free)
@@ -356,6 +377,16 @@ mod tests {
 		// Trait and method differ here on purpose, so transposing the two
 		// fields cannot pass.
 		assert_eq!((encoded, decoded), (vec![0, 0, 250, 251], Some(error)));
+
+		let error = VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedVersion {
+			trait_id: 250,
+			method_id: 251,
+			newest_version: 2,
+		});
+		let encoded = error.encode();
+		let decoded = decode_protocol_error_payload(&encoded).expect("decode");
+		// [0] versioned index, [1] variant index, trait, method, newest version.
+		assert_eq!((encoded, decoded), (vec![0, 1, 250, 251, 2], Some(error)));
 	}
 
 	#[test]
@@ -369,11 +400,13 @@ mod tests {
 		// so the protocol-error channel stays extensible. See
 		// `an_unknown_protocol_error_variant_is_tolerated`.
 		for payload in [
-			vec![],                  // no payload at all
-			vec![0],                 // version present, variant truncated
-			vec![0, 0],              // no address at all
-			vec![0, 0, 250],         // trait present, method truncated
-			vec![0, 0, 250, 251, 0], // one trailing byte past a full pair
+			vec![],                     // no payload at all
+			vec![0],                    // version present, variant truncated
+			vec![0, 0],                 // no address at all
+			vec![0, 0, 250],            // trait present, method truncated
+			vec![0, 0, 250, 251, 0],    // one trailing byte past a full pair
+			vec![0, 1, 250, 251],       // newest version truncated
+			vec![0, 1, 250, 251, 2, 0], // one trailing byte past a full version
 		] {
 			let message = ProtocolMessage {
 				request_id: "p:1".into(),

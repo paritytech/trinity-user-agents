@@ -83,6 +83,16 @@ struct ExtrinsicVersionProviderTests {
         #expect(try await isV4(provider.getExtrinsicVersion(for: Self.unknownChain, isSigned: false)))
         #expect(pipelines.reads.isEmpty)
     }
+
+    @Test("general transaction chains list their remote-config extension versions without reading the runtime")
+    func generalTransactionExtensionVersions() {
+        let people = AppConfig.Chains.peopleChain
+        let assetHub = AppConfig.Chains.assethubChain
+        let provider = makeProvider(versions: [people: 3, Self.unknownChain: 5])
+
+        #expect(provider.generalTransactionExtensionVersions() == [people: 3, assetHub: 0])
+        #expect(pipelines.reads.isEmpty)
+    }
 }
 
 private final class StubPipelineProvider: TransactionExtensionPipelineProviding, @unchecked Sendable {

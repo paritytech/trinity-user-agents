@@ -54,7 +54,7 @@ suite("dev accounts against the real signing host", () => {
     const runtime = new WasmSigningHostRuntime(
       {
         ...createWasmRawCallbacks(mock.callbacks),
-        workerDemandChanged: () => {},
+        requestWorkerTransition: () => {},
       },
       hostConfig,
     );

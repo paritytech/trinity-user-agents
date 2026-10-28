@@ -6,17 +6,18 @@ use truapi::{
 	api::NftPurse,
 	latest,
 	versioned::nft_purse::{
-		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
-		HostNftPurseCreatePurseResponse, HostNftPurseListPursesError,
-		HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
+		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
+		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 	},
 };
 
 use crate::{
-	nft::CreatePurseError,
-	nft_purse::{self, CreateProductPurseError, NftPurses, PurseOwner},
+	nft::{AllocateItemsError, CreatePurseError, PurseId, UnknownPurse},
+	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize, PurseOwner},
 	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
-	store::DbError,
 };
 
 impl ProductConnection {
@@ -35,6 +36,24 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseCreatePurseRequest,
 	) -> Result<HostNftPurseCreatePurseResponse, CallError<HostNftPurseCreatePurseError>> {
 		version(request).exec(|request| self.create_nft_purse(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_items"))]
+	async fn create_items(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseCreateItemsRequest,
+	) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
+		version(request).exec(|request| self.create_nft_items(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.query_purse"))]
+	async fn query_purse(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseQueryPurseRequest,
+	) -> Result<HostNftPurseQueryPurseResponse, CallError<HostNftPurseQueryPurseError>> {
+		version(request).exec(|request| self.query_nft_purse(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.list_purses"))]
@@ -78,6 +97,100 @@ impl ProductRuntimeHost {
 		let listed = purses.list_purses(&owner).await.map_err(host_failure)?;
 		Ok(latest::HostNftPurseListPursesResponse { purses: listed })
 	}
+
+	async fn create_nft_items(
+		&self,
+		request: latest::HostNftPurseCreateItemsRequest,
+	) -> Result<
+		latest::HostNftPurseCreateItemsResponse,
+		CallError<latest::HostNftPurseCreateItemsError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseCreateItemsRequest { purse, count } = request;
+		let out_of_range = CallError::Domain(latest::HostNftPurseCreateItemsError::CountOutOfRange);
+		let count = ItemCount::new(count).ok_or(out_of_range)?;
+		let purse = PurseId(purse.0);
+		self.require_purse_access(&purses, purse, CREATE_ITEMS_REFUSALS).await?;
+		let items = purses.create_items(purse, count).await.map_err(create_items_failure)?;
+		Ok(latest::HostNftPurseCreateItemsResponse { items })
+	}
+
+	async fn query_nft_purse(
+		&self,
+		request: latest::HostNftPurseQueryPurseRequest,
+	) -> Result<
+		latest::HostNftPurseQueryPurseResponse,
+		CallError<latest::HostNftPurseQueryPurseError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseQueryPurseRequest { purse, page, page_size } = request;
+		let out_of_bounds =
+			CallError::Domain(latest::HostNftPurseQueryPurseError::PageSizeOutOfBounds);
+		let size = PageSize::new(page_size).ok_or(out_of_bounds)?;
+		let purse = PurseId(purse.0);
+		self.require_purse_access(&purses, purse, QUERY_PURSE_REFUSALS).await?;
+		let page = purses.query_purse(purse, page, size).await.map_err(host_failure)?;
+		Ok(latest::HostNftPurseQueryPurseResponse { page })
+	}
+
+	/// Checks that the caller may use `purse`, asking the user for a grant
+	/// when another owner holds it. An unknown purse is refused before anyone
+	/// is asked.
+	async fn require_purse_access<E>(
+		&self,
+		purses: &NftPurses,
+		purse: PurseId,
+		refusals: PurseRefusals<E>,
+	) -> Result<(), CallError<E>> {
+		let owner = purses.owner_of(purse).await.map_err(host_failure)?;
+		let owner = owner.ok_or_else(|| refusals.unknown_purse(purse))?;
+		let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) else {
+			return Ok(());
+		};
+		self.connection.require_remote_permission(grant, refusals.denied).await
+	}
+}
+
+/// How one call's error type says a purse was refused.
+struct PurseRefusals<E> {
+	/// The user did not grant access.
+	denied: E,
+	/// Any other refusal, such as an unknown purse.
+	other: fn(latest::GenericError) -> E,
+}
+
+impl<E> PurseRefusals<E> {
+	/// The refusal of a purse that does not exist.
+	fn unknown_purse(&self, purse: PurseId) -> CallError<E> {
+		let reason = latest::GenericError { reason: UnknownPurse(purse).to_string() };
+		CallError::Domain((self.other)(reason))
+	}
+}
+
+const CREATE_ITEMS_REFUSALS: PurseRefusals<latest::HostNftPurseCreateItemsError> = PurseRefusals {
+	denied: latest::HostNftPurseCreateItemsError::Denied,
+	other: latest::HostNftPurseCreateItemsError::Other,
+};
+
+const QUERY_PURSE_REFUSALS: PurseRefusals<latest::HostNftPurseQueryPurseError> = PurseRefusals {
+	denied: latest::HostNftPurseQueryPurseError::Denied,
+	other: latest::HostNftPurseQueryPurseError::Other,
+};
+
+/// An unknown purse or running out of indices is the product's error.
+/// Everything else is the host's.
+fn create_items_failure(
+	error: AllocateItemsError,
+) -> CallError<latest::HostNftPurseCreateItemsError> {
+	match error {
+		AllocateItemsError::UnknownPurse(_) | AllocateItemsError::IndicesExhausted { .. } => {
+			let refusal = latest::GenericError { reason: error.to_string() };
+			CallError::Domain(latest::HostNftPurseCreateItemsError::Other(refusal))
+		},
+		error => host_failure(error),
+	}
 }
 
 /// A name over the limit or no free id is the product's error. A database
@@ -89,6 +202,6 @@ fn create_purse_failure(error: CreateProductPurseError) -> CallError<latest::Gen
 	CallError::Domain(latest::GenericError { reason: error.to_string() })
 }
 
-fn host_failure<E>(error: DbError) -> CallError<E> {
+fn host_failure<E>(error: impl core::fmt::Display) -> CallError<E> {
 	CallError::HostFailure { reason: error.to_string() }
 }

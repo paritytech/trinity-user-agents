@@ -12,9 +12,12 @@ mod browser {
 		CallContext, CallError,
 		api::NftPurse,
 		versioned::nft_purse::{
-			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
-			HostNftPurseCreatePurseResponse, HostNftPurseListPursesError,
-			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
+			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
+			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
+			HostNftPurseListPursesResponse, HostNftPurseQueryPurseError,
+			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		},
 	};
 
@@ -27,6 +30,22 @@ mod browser {
 			_cx: &CallContext,
 			_request: HostNftPurseCreatePurseRequest,
 		) -> Result<HostNftPurseCreatePurseResponse, CallError<HostNftPurseCreatePurseError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn create_items(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseCreateItemsRequest,
+		) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn query_purse(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseQueryPurseRequest,
+		) -> Result<HostNftPurseQueryPurseResponse, CallError<HostNftPurseQueryPurseError>> {
 			Err(CallError::Unsupported)
 		}
 

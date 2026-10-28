@@ -10,7 +10,8 @@ enum MainTabBarViewFactory {
         userNotificationService: UserNotificationServicing,
         foregroundVisibilityReporter: PushForegroundVisibilityReporting? = nil,
         deepLinkHandling: DeferredLinkHandling,
-        flowStateProvider: any SPAFlowStateProviding
+        flowStateProvider: any SPAFlowStateProviding,
+        windowScene: UIWindowScene?
     ) -> MainTabBarViewProtocol? {
         let spaFlowState = flowStateProvider.flowState()
 
@@ -73,7 +74,8 @@ enum MainTabBarViewFactory {
         let wireframe = MainTabBarWireframe(
             serviceCoordinator: serviceCoordinator,
             tabFactory: tabFactory,
-            moduleNavigator: moduleNavigator
+            moduleNavigator: moduleNavigator,
+            windowScene: windowScene
         )
 
         let presenter = MainTabBarPresenter(
@@ -157,9 +159,6 @@ enum MainTabBarViewFactory {
 
         let dimHandlers: [URLHandlingServiceProtocol] = []
 
-        let fiatOnrampRedirect = FiatOnrampRedirectService(
-            fiatOnrampTransactionTracking: serviceCoordinator.fiatOnrampTrackingService
-        )
         let payDeeplink = PayDeeplinkService(
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
@@ -191,7 +190,6 @@ enum MainTabBarViewFactory {
         return URLHandlingService(children: signInHandler + [
             chatService
         ] + dimHandlers + [
-            fiatOnrampRedirect,
             payDeeplink
         ] + productHandlers + [
             w3sPayDeeplink

@@ -14,6 +14,7 @@ expects.
 | `paseo-next-v2-metadata.scale` | Paseo Next v2 | V14 | | | `AsResources`, three-field allowance info |
 | `paseo-next-v2-metadata-v16.scale` | Paseo Next v2 | V16 | 3000000 | 2026-09-03 | `AsResources`, four-field allowance info; `Resources` slot budgets as view functions |
 | `paseo-next-asset-hub-metadata.scale` | Paseo Asset Hub Next | V16 | 3000000 | 2026-09-03 | `AsPgas`, `Pgas`, `MembersSubscriber` incl. `CurrentGeneration` |
+| `paseo-next-asset-hub-3004000-metadata.scale` | Paseo Asset Hub Next | V16 | 3004000 | 2026-10-22 | `Scarcity`, whose `Nft` has `moves`; extension pipeline version 1 with `VerifyMultiSignature` and `AsScarcity` |
 | `bulletin_paseo_metadata.scale` | Polkadot Bulletin (Paseo) | V14 | 1000020 | | preimage and storage calls |
 
 The two paseo-next-v2 fixtures deliberately disagree about arity: V14 predates the
@@ -38,6 +39,11 @@ and replace both together. Re-capturing metadata alone will fail
 | File | Storage | Chain | Generation | Block | Captured |
 |---|---|---|---|---|---|
 | `paseo-next-asset-hub-ring-5-roots.scale` | `MembersSubscriber.RingRoots[(generation, LitePeople, 5)]` | Paseo Asset Hub Next | 0 | `0xf25d4e330ade1ce230695976f019df50cdaf97c96b6996838af93b68550654f3` | 2026-08-17 |
+| `paseo-next-asset-hub-nfts-by-owner.scale` | `Scarcity.NftsByOwner[0xfa7c…5644]` | Paseo Asset Hub Next | | `0xc333a433635dd26b1008b079ddabe464852812ff7d79bf11fe3e14144454024c` | 2026-10-21 |
+
+The `NftsByOwner` value pairs with the 3004000 metadata, and holds instance 330 of item 13 in
+collection 27. The tracker tests feed it through the real key encoding and value decoding,
+so a pallet change that renames or retypes a field fails them.
 
 Ring 5 holds `[105, 106, 108]`. The skipped 107 is the case that distinguishes testing the
 newest held root from testing the oldest, and freezing it makes that case permanent

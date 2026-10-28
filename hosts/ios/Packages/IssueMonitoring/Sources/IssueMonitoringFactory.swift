@@ -24,6 +24,29 @@ public enum IssueMonitoringFactory {
         #endif
     }
 
+    /// Builds the immutable product bootstrap only when this build links reporting support.
+    public static func createNativeHostTelemetry(
+        hostSessionID: UUID,
+        truapiHostVersion: @autoclosure () -> String
+    ) -> NativeHostTelemetry? {
+        guard isReportingSupported else { return nil }
+
+        return NativeHostTelemetry(
+            hostSessionID: hostSessionID,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion()
+        )
+    }
+
+    /// Records typed native host lifecycle events; builds without reporting support receive a no-op recorder.
+    public static func createHostEventRecorder() -> HostEventRecording {
+        #if SENTRY_ENABLED
+            SentryHostEventRecorder()
+        #else
+            NoopHostEventRecorder()
+        #endif
+    }
+
     /// Reports through the SDK `IssueMonitoringServiceProtocol.setup()` started; a no-op until then and in Release.
     public static func createReporter() -> IssueReporting {
         #if SENTRY_ENABLED
