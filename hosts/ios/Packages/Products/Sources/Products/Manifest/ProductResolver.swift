@@ -5,6 +5,7 @@ import SDKLogger
 public enum ProductResolutionError: Error {
     case malformedManifest(ProductId)
     case productNotOnNetwork(ProductId)
+    case missingExecutable(ProductId, ExecutableKind)
 }
 
 public protocol ProductResolving: Sendable {

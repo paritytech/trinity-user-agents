@@ -201,7 +201,7 @@ private extension SPANativeRuntimeInteractor {
 
             // Bytes come from the app executable's subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let contentId = resolved.contentId(for: configuration.executable)
+            let contentId = try resolved.contentId(for: configuration.executable)
 
             subscribeProgress(domain: contentId.rawValue)
 

@@ -12,7 +12,7 @@ struct ProductResolverTests {
         #expect(resolved.icon == nil)
         #expect(resolved.executables.app?.identifier.rawValue == "hackm3.dot")
         #expect(resolved.executables.worker == nil)
-        #expect(resolved.appContentId.rawValue == "hackm3.dot")
+        #expect(try resolved.contentId(for: .app).rawValue == "hackm3.dot")
     }
 
     @Test func propagatesUnavailableNetworkBeforeReadingRecords() async throws {
@@ -53,7 +53,7 @@ struct ProductResolverTests {
         #expect(resolved.displayName == "HackM3")
         #expect(resolved.description == "A hackathon product")
         #expect(resolved.icon?.cid == "bafyicon")
-        #expect(resolved.appContentId.rawValue == "app.hackm3.dot")
+        #expect(try resolved.contentId(for: .app).rawValue == "app.hackm3.dot")
         #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
     }
 
@@ -69,19 +69,15 @@ struct ProductResolverTests {
         let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.executables.widget?.identifier.rawValue == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
+        #expect(try resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
     }
 
-    /// A product that publishes no executable of a kind is served from its base
-    /// name, which is where a legacy product and a script installed by hand
-    /// both live. Every caller asking which archive backs a surface has to get
-    /// the same answer.
-    @Test func servesAnUnpublishedKindFromTheBaseName() async throws {
+    @Test func legacyAppDoesNotInventWidgetOrWorkerExecutables() async throws {
         let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app).rawValue == "hackm3.dot")
-        #expect(resolved.contentId(for: .widget).rawValue == "hackm3.dot")
-        #expect(resolved.contentId(for: .worker).rawValue == "hackm3.dot")
+        #expect(try resolved.contentId(for: .app).rawValue == "hackm3.dot")
+        #expect(throws: ProductResolutionError.self) { try resolved.contentId(for: .widget) }
+        #expect(throws: ProductResolutionError.self) { try resolved.contentId(for: .worker) }
     }
 
     @Test func servesEachPublishedKindFromItsOwnSubname() async throws {
@@ -93,9 +89,9 @@ struct ProductResolverTests {
 
         let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app).rawValue == "app.hackm3.dot")
-        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .worker).rawValue == "worker.hackm3.dot")
+        #expect(try resolved.contentId(for: .app).rawValue == "app.hackm3.dot")
+        #expect(try resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
+        #expect(try resolved.contentId(for: .worker).rawValue == "worker.hackm3.dot")
     }
 
     @Test func skipsAMalformedExecutableWithoutLosingItsSiblings() async throws {
@@ -108,6 +104,7 @@ struct ProductResolverTests {
 
         #expect(resolved.executables.app != nil)
         #expect(resolved.executables.worker == nil)
+        #expect(throws: ProductResolutionError.self) { try resolved.contentId(for: .worker) }
     }
 
     /// Chat and Pocket ride on one worker record, so a pocket section the

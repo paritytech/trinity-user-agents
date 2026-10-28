@@ -39,11 +39,11 @@ final class ProductBotFactory {
     }
 
     func create(resolved: ResolvedProduct) -> ProductBot? {
-        guard servesChat(resolved) else { return nil }
+        guard let source = chatSource(resolved) else { return nil }
 
         let product = resolved.product
         let description = resolved.description?.nilIfEmpty
-        let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
+        let images = productImages.resolver(contentId: { source.contentId })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
@@ -79,11 +79,11 @@ private extension ProductBotFactory {
     ///
     /// A script installed by hand through debug settings stands in for a product
     /// that has published no worker at all.
-    func servesChat(_ resolved: ResolvedProduct) -> Bool {
-        if ProductWorkerSource.published(for: resolved, serving: .chat) != nil { return true }
+    func chatSource(_ resolved: ResolvedProduct) -> ProductWorkerSource? {
+        if let published = ProductWorkerSource.published(for: resolved, serving: .chat) { return published }
 
         return ProductWorkerSource.installedByHand(for: resolved) {
             productFileProvider.manualScriptEntryPath(productId: $0)
-        } != nil
+        }
     }
 }
