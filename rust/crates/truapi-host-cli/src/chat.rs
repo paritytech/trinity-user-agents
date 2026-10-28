@@ -1797,8 +1797,8 @@ mod tests {
 
 	fn hop() -> ChatResource {
 		ChatResource::Hop {
-			identifier: vec![1; 32],
-			ticket: vec![2; 32],
+			identifier: [1; 32],
+			ticket: [2; 32],
 			node: "wss://hop.example".to_string(),
 			size: 1,
 		}
