@@ -12,6 +12,7 @@ struct GameReminderDeliveryDiagnosticsTests {
     private let productId = "game.dot"
     private let keys = GameReminderStorageKeys.product("game.dot")
 
+    /// The reminder is held only weakly while its work is queued, so callers keep it in a `let`.
     @available(iOS 26.1, *)
     private func makeAlarm(_ manager: MockGameAlarmManager, _ recorder: RecordingHostEventRecorder)
         -> AlarmKitGameReminder {
@@ -41,7 +42,6 @@ struct GameReminderDeliveryDiagnosticsTests {
         let recorder = RecordingHostEventRecorder()
         let startsAt = Date().addingTimeInterval(3_600)
 
-        // The reminder holds itself only weakly while its work is queued.
         let reminder = makeAlarm(manager, recorder)
         reminder.scheduleReminder(gameDate: startsAt, productId: productId)
         try await waitUntil { !recorder.events.isEmpty }
@@ -72,7 +72,6 @@ struct GameReminderDeliveryDiagnosticsTests {
         manager.scheduleError = fails ? ScheduleFailed() : nil
         let recorder = RecordingHostEventRecorder()
 
-        // The reminder holds itself only weakly while its work is queued.
         let reminder = makeAlarm(manager, recorder)
         reminder.scheduleReminder(gameDate: Date().addingTimeInterval(secondsToStart), productId: productId)
         try await waitUntil { !recorder.events.isEmpty }

@@ -308,7 +308,10 @@ private extension ProductGameReminderCenter {
         let alerts = services.alertingAlarms()
         alarmAlerts = Task { [weak self] in
             for await alarmIds in alerts {
-                self?.recordFired(alarmIds)
+                guard let self else {
+                    return
+                }
+                recordFired(alarmIds)
             }
         }
     }

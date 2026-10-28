@@ -51,7 +51,7 @@ struct GameReminderEvent: Equatable {
 
     let step: Step
     let productId: String
-    /// Nil only for an alarm booked before the start was attached to it.
+    /// Nil when the alarm's stored start is no longer available.
     let startsAt: Date?
     let occurredAt: Date
     let delivery: Delivery?
