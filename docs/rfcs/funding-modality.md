@@ -73,7 +73,7 @@ worker calls the provider directly. Keys never reach the core or the worker.
 
 Products keep `Funding`; the worker side is a trait of its own because execution gating applies to a whole trait.
 
-The core asks the worker through host-initiated calls, each answered with one item, and the worker tells the core through
+The core asks the worker through host-initiated requests, each awaiting one answer, and the worker tells the core through
 ordinary calls.
 
 ```rust
@@ -81,13 +81,13 @@ ordinary calls.
 #[service(required_execution = Worker)]
 pub trait FundingProvider {
     #[wire(host_initiated, id = 0)] // every provider, each quote round; 10 s to answer
-    fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Subscription<FundingQuoteAnswer, _>;
+    async fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Result<FundingQuoteAnswer, _>;
     #[wire(host_initiated, id = 1)] // the user picked it; again when the worker connects
-    fn assign(&self, cx, request: ProductFundingAssignRequest) -> Subscription<(), _>;
+    async fn assign(&self, cx, request: ProductFundingAssignRequest) -> Result<(), _>;
     #[wire(host_initiated, id = 2)] // the user asked to cancel
-    fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Subscription<FundingCancelAnswer, _>;
+    async fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Result<FundingCancelAnswer, _>;
     #[wire(host_initiated, id = 3)] // the user answered the provider's offer
-    fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Subscription<(), _>;
+    async fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Result<(), _>;
     #[wire(id = 4)] // stored before it answers
     async fn report(&self, cx, request: HostFundingReportRequest) -> Result<(), HostFundingReportError>;
     #[wire(id = 5)] // an App route or an external https page, answers once the frame closes
@@ -105,8 +105,8 @@ CORE   --- settle_cancel(decision) ---------> WORKER   user answered the offer
 ```
 
 The worker registers one handler per call, as `truapi.renderer.onRender` does: `onQuote`, `onAssign`, `onCancel` and
-`onSettleCancel`. A handler sends its one answer item and nothing after; the core ends the call once it has it, since a
-frame ending the call could overtake the item on a host that handles a connection's frames concurrently.
+`onSettleCancel`. A handler returns its answer, `ok(answer)` or `err(error)`; the core awaits it, and a call it drops
+aborts the handler's signal.
 
 ### `assign`
 

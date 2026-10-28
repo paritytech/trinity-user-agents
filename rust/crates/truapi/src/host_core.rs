@@ -1793,8 +1793,8 @@ impl ProductRuntimeControl {
 	}
 }
 
-/// Calls a funding provider's worker through its product connection. Each
-/// call is a host-initiated subscription the worker answers with one item.
+/// Calls a funding provider's worker through its product connection, each
+/// call awaiting the worker's one answer.
 struct WorkerFundingLink {
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
@@ -1806,39 +1806,37 @@ impl WorkerFundingLink {
 	}
 }
 
-/// The first item of a call answered once. `None` when the worker errs, or
-/// the connection closes first. Dropping the stream then stops the call, so
-/// the worker sends its one item and nothing after it: a frame that ended
-/// the call could overtake the item, as a host may handle a connection's
-/// frames concurrently.
-async fn first_answer<Item, Error>(
-	mut stream: truapi::Subscription<Item, truapi::CallError<Error>>,
-) -> Option<Item> {
-	stream.next().await?.ok()
-}
-
 impl FundingProviderLink for WorkerFundingLink {
 	fn assign(&self, session: v01::FundingAssignment) -> BoxFuture<'static, bool> {
 		use truapi::versioned::funding_provider::ProductFundingAssignRequest;
-		let stream = crate::generated::dispatcher::funding_provider_assign(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
-		);
-		Box::pin(async move { first_answer(stream).await.is_some() })
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_assign(
+				&subscriptions,
+				transport,
+				ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
+			)
+			.await
+			.is_ok()
+		})
 	}
 
 	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
 		use truapi::versioned::funding_provider::{
-			ProductFundingCancelItem, ProductFundingCancelRequest,
+			ProductFundingCancelRequest, ProductFundingCancelResponse,
 		};
-		let stream = crate::generated::dispatcher::funding_provider_cancel(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
-		);
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
 		Box::pin(async move {
-			let ProductFundingCancelItem::V1(answer) = first_answer(stream).await?;
+			let ProductFundingCancelResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_cancel(
+					&subscriptions,
+					transport,
+					ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
+				)
+				.await
+				.ok()?;
 			Some(answer)
 		})
 	}
@@ -1849,15 +1847,20 @@ impl FundingProviderLink for WorkerFundingLink {
 		decision: v01::FundingCancelDecision,
 	) -> BoxFuture<'static, bool> {
 		use truapi::versioned::funding_provider::ProductFundingSettleCancelRequest;
-		let stream = crate::generated::dispatcher::funding_provider_settle_cancel(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
-				intent,
-				decision,
-			}),
-		);
-		Box::pin(async move { first_answer(stream).await.is_some() })
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_settle_cancel(
+				&subscriptions,
+				transport,
+				ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
+					intent,
+					decision,
+				}),
+			)
+			.await
+			.is_ok()
+		})
 	}
 }
 
