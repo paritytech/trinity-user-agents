@@ -14,11 +14,10 @@ user's payment on its own rail, converts it, and credits the user with `payment.
 reports, and decides the outcome itself from the top-ups and payments the worker names.
 
 This RFC covers the worker's side, the `FundingProvider` trait. A product opens a session with
-`funding.request({ id, direction, amount? })` under an id it chooses, and the host draws the overlay; those are defined
-with the `Funding` trait and the host's `FundingPlatform`. The core keeps the session under that id hashed with the
-product, as payment ids are, so a product that reloads while the overlay is up still watches it with
-`statusSubscribe({ id })`, and a reused id is refused with `AlreadyExists`. The overlay runs on its own task, so a caller
-that goes away does not leave it open; a session the user dismisses ends its watchers as `Failed { Cancelled }`. The Worker
+`funding.request({ direction, amount? })`, which answers at once with the session's `intent` while the host draws the
+overlay; those are defined with the `Funding` trait and the host's `FundingPlatform`. The product watches the session
+with `statusSubscribe({ intent })`, and no other product can. The overlay runs on its own task, so no call stays open
+while the user is on it; a session the user dismisses ends its watchers as `Failed { Cancelled }` and is not kept. The Worker
 manifest's `includes.funding` is defined in the [product manifest RFC](product-manifest.md#funding-configuration).
 
 ## Motivation

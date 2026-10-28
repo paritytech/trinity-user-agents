@@ -636,8 +636,8 @@ impl FundingRegistry {
 	///
 	/// An unassigned presented session was never stored, so this cannot
 	/// fail; holding the write lock keeps any commit from storing it on the
-	/// way out. A product that reloaded under the overlay may be watching it
-	/// by its id, so its stream ends as cancelled: the user never started it.
+	/// way out. Its product may be watching it, so the stream ends as
+	/// cancelled: the user never started it.
 	async fn discard(&self, intent: &str) -> bool {
 		let _writes = self.writes.lock().await;
 		if self
@@ -1376,6 +1376,11 @@ pub enum OpenFundingError {
 	Present(GenericError),
 }
 
+/// A fresh session id.
+pub fn new_funding_intent() -> String {
+	format!("fs_{}", nanoid::nanoid!(10))
+}
+
 /// First wait before retrying a failed load of the sessions on resume.
 const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
 /// Longest wait between retries of that load.
@@ -1400,8 +1405,7 @@ impl RuntimeServices {
 		direction: FundingDirection,
 		amount: Option<u128>,
 	) -> Result<Option<String>, GenericError> {
-		let intent = format!("fs_{}", nanoid::nanoid!(10));
-		match self.open_funding(None, intent, direction, amount).await {
+		match self.open_funding(None, new_funding_intent(), direction, amount).await {
 			Ok(session) => Ok(Some(session.intent)),
 			Err(OpenFundingError::Dismissed) => Ok(None),
 			Err(error) => Err(GenericError { reason: error.to_string() }),
@@ -1702,12 +1706,10 @@ impl RuntimeServices {
 		}
 	}
 
-	/// Open a session and show the host's funding overlay for it: the one
-	/// path a product's `request` and the host's own Balance card both take.
-	///
-	/// A session the user never starts, or that the host fails to show, is
-	/// discarded rather than left open. `intent` must be new:
-	/// [`OpenFundingError::AlreadyExists`] otherwise.
+	/// Open a session and show the host's funding overlay for it, then wait
+	/// for the user to start it or close the overlay. The host's own Balance
+	/// card takes this path; a product's `request` stops at
+	/// [`Self::show_funding`].
 	pub async fn open_funding(
 		self: &Arc<Self>,
 		product: Option<&ProductContext>,
@@ -1715,6 +1717,24 @@ impl RuntimeServices {
 		direction: FundingDirection,
 		amount: Option<u128>,
 	) -> Result<FundingSession, OpenFundingError> {
+		let finished = self.show_funding(product, intent, direction, amount).await?;
+		finished.await.unwrap_or(Err(OpenFundingError::Stopped))
+	}
+
+	/// Open a session and show the host's funding overlay for it. Returns once
+	/// the session is held, so it can be watched at once, with the overlay's
+	/// outcome to wait for.
+	///
+	/// A session the user never starts, or that the host fails to show, is
+	/// discarded rather than left open. `intent` must be new:
+	/// [`OpenFundingError::AlreadyExists`] otherwise.
+	pub async fn show_funding(
+		self: &Arc<Self>,
+		product: Option<&ProductContext>,
+		intent: String,
+		direction: FundingDirection,
+		amount: Option<u128>,
+	) -> Result<oneshot::Receiver<Result<FundingSession, OpenFundingError>>, OpenFundingError> {
 		let registry = self.funding();
 		let platform = registry.platform().ok_or(OpenFundingError::Unsupported)?;
 		if amount == Some(0) {
@@ -1738,20 +1758,22 @@ impl RuntimeServices {
 		if !presented {
 			return Err(OpenFundingError::AlreadyExists);
 		}
-		// The overlay runs on its own task, so a caller that goes away while it
-		// is up, such as a product reloading, cannot leave the session
-		// presenting: the task still starts or discards it, and the product
-		// watches the outcome by its id.
+		// The overlay runs on its own task, so nobody has to wait on it: the
+		// task starts or discards the session, and watchers hear the outcome.
 		let (finished, outcome) = oneshot::channel();
 		let services = self.clone();
 		let product = product.cloned();
 		(self.spawner)(Box::pin(async move {
 			let result = services.finish_presenting(platform, product, session).await;
-			// A caller that went away no longer waits for the result, and
-			// the session is already settled either way.
+			if let Err(error @ (OpenFundingError::Present(_) | OpenFundingError::Session(_))) =
+				&result
+			{
+				tracing::warn!(%error, "the funding overlay failed");
+			}
+			// A caller that does not wait for the result has nothing to hear.
 			let _ = finished.send(result);
 		}));
-		outcome.await.unwrap_or(Err(OpenFundingError::Stopped))
+		Ok(outcome)
 	}
 
 	/// Show the overlay for presented `session`, then start or discard it by
