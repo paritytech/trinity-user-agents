@@ -33,6 +33,7 @@ final class SPANativeRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(
         nativeApi: ProductsNativeApiProtocol,
@@ -63,6 +64,7 @@ final class SPANativeRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
         workerTask?.cancel()
         workerToken?.unlock()
 
@@ -92,6 +94,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
         guard let engine = jsEngine else { return }
 
         setupTask?.cancel()
+        reloadTask?.cancel()
         setupTask = Task { [weak self] in
             await self?.performSetup(engine: engine)
         }
@@ -280,8 +283,20 @@ private extension SPANativeRuntimeInteractor {
 
 extension SPANativeRuntimeInteractor: SPAProductReloading {
     func serveAppliedBuild() {
-        Task { [weak self] in
-            await self?.performServeAppliedBuild()
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self, contentLoader, domain = productDomain, kind = configuration.executable] in
+            do {
+                let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
+
+                guard !Task.isCancelled else { return }
+
+                self?.serve(served)
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                self?.logger.error("SPA: Failed to serve the applied build: \(error)")
+                self?.presenter?.didFail(error: error)
+            }
         }
     }
 }
@@ -307,23 +322,12 @@ private extension SPANativeRuntimeInteractor {
         presenceId = presenceRegistry?.register(productId: productDomain, contentId: servedContentId, reloader: self)
     }
 
-    func performServeAppliedBuild() async {
-        do {
-            let served = try await contentLoader.open(
-                productDomain,
-                kind: configuration.executable,
-                policy: .untilCancelled
-            ).archive
-
-            if served != servedContent {
-                let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: served.localURL)
-                schemeHandlerProxy.setHandler(schemeHandler)
-                servedContent = served
-            }
-
-            presenter?.didRequestReload()
-        } catch {
-            logger.error("SPA: Failed to serve the applied build: \(error)")
+    func serve(_ served: DotNsResolvedContent) {
+        if served != servedContent {
+            schemeHandlerProxy.setHandler(makeSchemeHandler(domain: productDomain, contentURL: served.localURL))
+            servedContent = served
         }
+
+        presenter?.didRequestReload()
     }
 }

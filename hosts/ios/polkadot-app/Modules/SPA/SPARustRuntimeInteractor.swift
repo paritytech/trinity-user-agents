@@ -28,6 +28,7 @@ final class SPARustRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
@@ -52,6 +53,7 @@ final class SPARustRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
 
@@ -71,6 +73,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func retry() {
         guard let engine = jsEngine else { return }
 
+        reloadTask?.cancel()
         let previousRuntime = runtime
         runtime = nil
         Task { await previousRuntime?.dispose() }
@@ -224,13 +227,21 @@ private extension SPARustRuntimeInteractor {
 
 extension SPARustRuntimeInteractor: SPAProductReloading {
     func serveAppliedBuild() {
-        Task { [weak self, runtime] in
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self, runtime] in
             do {
                 try await runtime?.useLatestBuild()
-                self?.servedContent = await runtime?.servedBuild()
+                let served = await runtime?.servedBuild()
+
+                guard !Task.isCancelled else { return }
+
+                self?.servedContent = served
                 self?.presenter?.didRequestReload()
             } catch {
+                guard !Task.isCancelled else { return }
+
                 self?.logger.error("SPA(rust): Failed to serve the applied build: \(error)")
+                self?.presenter?.didFail(error: error)
             }
         }
     }
