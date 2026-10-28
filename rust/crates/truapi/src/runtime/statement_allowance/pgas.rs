@@ -24,7 +24,7 @@ use sp_crypto_hashing::twox_128;
 use thiserror::Error;
 
 use super::{
-	StatementAllowanceError,
+	RingHead, StatementAllowanceError,
 	collection::PersonhoodCollection,
 	duplicate_submit_error,
 	extension::{Metadata, MetadataError},
@@ -35,9 +35,15 @@ use super::{
 	slot,
 };
 
-/// How long to wait for Asset Hub to import the ring revision a proof is built
-/// against before giving up.
-const RING_REVISION_WAIT: Duration = Duration::from_secs(30);
+/// How long a caller that cannot rebuild its proof, such as dotNS registration
+/// or a propagation check, waits for Asset Hub to import a ring revision.
+pub const RING_REVISION_WAIT: Duration = Duration::from_secs(60);
+
+/// How long a PGAS claim waits in total, across its proof and the one rebuild,
+/// for Asset Hub to import the proof's ring revision. Retries of first claims
+/// that missed the revision succeeded 10 to 80 s later, so 90 s covers the
+/// slowest import seen and still leaves room for the claim itself.
+pub const PGAS_CLAIM_RING_REVISION_WAIT: Duration = Duration::from_secs(90);
 
 /// Longest a single poll sleeps while waiting for a revision to land.
 const RING_REVISION_POLL: Duration = Duration::from_secs(1);
@@ -83,15 +89,52 @@ pub enum PgasError {
 	},
 }
 
-/// Whether `err` means Asset Hub cannot verify the ring revision the proof was
-/// built against, so a proof against a freshly located ring may still succeed.
-pub fn is_stale_ring_revision(err: &StatementAllowanceError) -> bool {
-	matches!(
-		err,
-		StatementAllowanceError::Pgas(
-			PgasError::RingRevisionPruned { .. } | PgasError::RingRevisionTimeout { .. }
-		)
-	)
+/// Whether Asset Hub holds a newer revision than the proof's, so a proof
+/// against a freshly located ring may succeed. A timeout does not qualify: Asset
+/// Hub holds nothing newer, so a rebuilt proof would wait on the same import.
+pub fn is_pruned_ring_revision(err: &StatementAllowanceError) -> bool {
+	matches!(err, StatementAllowanceError::Pgas(PgasError::RingRevisionPruned { .. }))
+}
+
+/// Which People block each attempt of one PGAS claim locates its ring at, and
+/// how long it may wait for Asset Hub to import the ring's revision.
+///
+/// The first attempt reads the finalized head. When Asset Hub pruned that
+/// revision the claim rebuilds once against the best head, which can hold a
+/// revision Asset Hub imported before People finalized it. Both attempts share
+/// [`PGAS_CLAIM_RING_REVISION_WAIT`].
+pub struct PgasClaimAttempts {
+	started: Instant,
+	head: RingHead,
+	rebuilt: bool,
+}
+
+impl Default for PgasClaimAttempts {
+	fn default() -> Self {
+		Self { started: Instant::now(), head: RingHead::Finalized, rebuilt: false }
+	}
+}
+
+impl PgasClaimAttempts {
+	/// The People block this attempt locates its ring at.
+	pub fn head(&self) -> RingHead {
+		self.head
+	}
+
+	/// What is left of the claim's revision wait.
+	pub fn revision_wait(&self) -> Duration {
+		PGAS_CLAIM_RING_REVISION_WAIT.saturating_sub(self.started.elapsed())
+	}
+
+	/// Whether to rebuild the proof after `err`, moving to the best head if so.
+	pub fn rebuild_after(&mut self, err: &StatementAllowanceError) -> bool {
+		if self.rebuilt || !is_pruned_ring_revision(err) {
+			return false;
+		}
+		self.rebuilt = true;
+		self.head = RingHead::Best;
+		true
+	}
 }
 
 /// One `MembersSubscriber.RingRoots` record, projected to the field that decides
@@ -170,6 +213,8 @@ pub struct PgasClaim<'a> {
 	pub target: &'a [u8; 32],
 	/// Ring the membership proof is built against, already located on People.
 	pub ring: &'a RingParams,
+	/// How long to wait for Asset Hub to import the ring's revision.
+	pub revision_wait: Duration,
 }
 
 /// `Assets.Account[(asset_id, who)]` storage key on Asset Hub.
@@ -224,6 +269,7 @@ pub async fn claim_pgas(
 		network_suffix,
 		target,
 		ring,
+		revision_wait,
 	} = params;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
@@ -242,6 +288,7 @@ pub async fn claim_pgas(
 		ring.collection,
 		ring.ring_index,
 		revision,
+		revision_wait,
 	)
 	.await?;
 
@@ -320,7 +367,7 @@ fn revision_status(held: &[u32], revision: u32) -> RevisionStatus {
 	}
 }
 
-/// Wait until Asset Hub has imported `revision` of `ring_index`.
+/// Wait up to `wait` for Asset Hub to import `revision` of `ring_index`.
 ///
 /// Public so a host can check propagation before offering a claim, and so the
 /// live tests can exercise it without submitting.
@@ -335,6 +382,7 @@ pub async fn await_ring_revision(
 	collection: PersonhoodCollection,
 	ring_index: u32,
 	revision: u32,
+	wait: Duration,
 ) -> Result<(), StatementAllowanceError> {
 	let value_type = metadata.storage_value_type("MembersSubscriber", "RingRoots").ok_or(
 		MetadataError::MissingStorageType { pallet: "MembersSubscriber", entry: "RingRoots" },
@@ -366,17 +414,18 @@ pub async fn await_ring_revision(
 				RevisionStatus::Pending => {},
 			}
 		}
-		wait_before_next_ring_revision_poll(started, ring_index, revision).await?;
+		wait_before_next_ring_revision_poll(started, wait, ring_index, revision).await?;
 	}
 }
 
 /// Sleep before the next revision poll, or report the wait as exhausted.
 async fn wait_before_next_ring_revision_poll(
 	started: Instant,
+	wait: Duration,
 	ring_index: u32,
 	revision: u32,
 ) -> Result<(), StatementAllowanceError> {
-	let Some(remaining) = RING_REVISION_WAIT.checked_sub(started.elapsed()) else {
+	let Some(remaining) = wait.checked_sub(started.elapsed()) else {
 		return Err(PgasError::RingRevisionTimeout { ring_index, revision }.into());
 	};
 	futures_timer::Delay::new(remaining.min(RING_REVISION_POLL)).await;
@@ -484,10 +533,6 @@ mod tests {
 
 	/// End to end over the real path, against roots Asset Hub actually served: a
 	/// revision the window skipped reports as pruned instead of being waited out.
-	///
-	/// Only the two terminating outcomes are reachable here. Pending keeps
-	/// polling until `RING_REVISION_WAIT` expires, so it is covered by the
-	/// `revision_status` table instead.
 	#[test]
 	fn a_skipped_revision_reports_as_pruned_against_captured_roots() {
 		let (rpc, scripted) = scripted_ring_5_roots();
@@ -497,6 +542,7 @@ mod tests {
 			CAPTURED_COLLECTION,
 			5,
 			107,
+			RING_REVISION_WAIT,
 		))
 		.expect_err("revision 107 is missing from the captured window");
 		assert_read_ring_5_of(&scripted);
@@ -517,6 +563,7 @@ mod tests {
 			CAPTURED_COLLECTION,
 			5,
 			106,
+			RING_REVISION_WAIT,
 		))
 		.expect("revision 106 is in the captured window");
 		assert_read_ring_5_of(&scripted);
@@ -579,6 +626,7 @@ mod tests {
 			CAPTURED_COLLECTION,
 			5,
 			106,
+			RING_REVISION_WAIT,
 		))
 		.unwrap();
 
@@ -694,17 +742,89 @@ mod tests {
 		assert!(waiting.to_string().contains("has not imported"));
 	}
 
-	/// Both revision outcomes warrant a rebuilt proof; a dispatch failure does not.
+	/// A revision newer than everything held is waited on, and the wait ends as a
+	/// timeout rather than as a pruned revision.
 	#[test]
-	fn only_revision_failures_ask_for_a_fresh_ring() {
-		let stale = [
-			PgasError::RingRevisionPruned { ring_index: 2, revision: 100 },
-			PgasError::RingRevisionTimeout { ring_index: 2, revision: 100 },
-		];
-		assert!(stale.into_iter().all(|err| is_stale_ring_revision(&err.into())));
+	fn a_revision_still_arriving_times_out() {
+		let (rpc, _) = scripted_ring_5_roots();
+		let err = futures::executor::block_on(await_ring_revision(
+			&rpc,
+			test_fixtures::asset_hub(),
+			CAPTURED_COLLECTION,
+			5,
+			109,
+			Duration::ZERO,
+		))
+		.expect_err("revision 109 is newer than the captured window");
 
+		assert!(
+			matches!(
+				err,
+				StatementAllowanceError::Pgas(PgasError::RingRevisionTimeout {
+					ring_index: 5,
+					revision: 109
+				})
+			),
+			"{err:?}"
+		);
+	}
+
+	fn pruned() -> StatementAllowanceError {
+		PgasError::RingRevisionPruned { ring_index: 5, revision: 107 }.into()
+	}
+
+	/// Asset Hub holds something newer, so the proof is rebuilt against the ring
+	/// at People's best block rather than the finalized one it already read.
+	#[test]
+	fn a_pruned_revision_rebuilds_against_the_best_block() {
+		let mut attempts = PgasClaimAttempts::default();
+		assert_eq!(attempts.head(), RingHead::Finalized);
+
+		assert!(attempts.rebuild_after(&pruned()));
+		assert_eq!(attempts.head(), RingHead::Best);
+	}
+
+	/// Asset Hub holds nothing newer, so a rebuilt proof would only wait on the
+	/// same import again.
+	#[test]
+	fn a_timed_out_revision_is_not_rebuilt() {
+		let mut attempts = PgasClaimAttempts::default();
+		let timeout = PgasError::RingRevisionTimeout { ring_index: 5, revision: 109 }.into();
+
+		assert!(!attempts.rebuild_after(&timeout));
+		assert_eq!(attempts.head(), RingHead::Finalized);
+	}
+
+	/// One rebuild only: a second pruned revision is reported.
+	#[test]
+	fn a_rebuilt_proof_is_not_rebuilt_again() {
+		let mut attempts = PgasClaimAttempts::default();
+
+		assert!(attempts.rebuild_after(&pruned()));
+		assert!(!attempts.rebuild_after(&pruned()));
+	}
+
+	/// A dispatch failure says nothing about the ring, so it is not rebuilt.
+	#[test]
+	fn other_claim_failures_are_not_rebuilt() {
 		let not_recorded =
 			PgasError::ClaimNotRecorded { block_hash: "0x00".into(), day: 1, slot_index: 0 };
-		assert!(!is_stale_ring_revision(&not_recorded.into()));
+
+		assert!(!PgasClaimAttempts::default().rebuild_after(&not_recorded.into()));
+	}
+
+	/// The rebuild waits only for what is left of the claim's wait, so the two
+	/// attempts together stay within it.
+	#[test]
+	fn the_attempts_share_one_revision_wait() {
+		let attempts = PgasClaimAttempts {
+			started: Instant::now() - Duration::from_secs(60),
+			head: RingHead::Best,
+			rebuilt: true,
+		};
+
+		assert!(
+			attempts.revision_wait() <= PGAS_CLAIM_RING_REVISION_WAIT - Duration::from_secs(60)
+		);
 	}
 }

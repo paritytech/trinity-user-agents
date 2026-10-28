@@ -340,7 +340,7 @@ pub async fn allocate_smart_contract_allowance(
 
 	use crate::{
 		host_logic::features,
-		runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas},
+		runtime::statement_allowance::{self, ChainClient, find_including_rings_at, pgas},
 	};
 
 	signing_host.require_current_session(session)?;
@@ -391,18 +391,20 @@ pub async fn allocate_smart_contract_allowance(
 	// A PGAS claim uses the strongest available membership.
 	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
 	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
-	// Asset Hub may never hold the ring revision a proof was built against, so
-	// locate the ring again and rebuild the proof once.
-	let mut rebuilt = false;
+	let mut attempts = pgas::PgasClaimAttempts::default();
 	let outcome = loop {
-		let membership =
-			find_including_rings(people_rpc, &people.metadata, &signer, &collections, u32::MAX)
-				.await?
-				.into_iter()
-				.next()
-				.ok_or(AllowanceAllocationError::MissingPersonhoodMembership {
-					resource: "PGAS",
-				})?;
+		let membership = find_including_rings_at(
+			people_rpc,
+			&people.metadata,
+			&signer,
+			&collections,
+			u32::MAX,
+			attempts.head(),
+		)
+		.await?
+		.into_iter()
+		.next()
+		.ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
 
 		signing_host.require_current_session(session)?;
 		match pgas::claim_pgas(pgas::PgasClaim {
@@ -415,12 +417,12 @@ pub async fn allocate_smart_contract_allowance(
 			network_suffix: &network_suffix,
 			target: &target,
 			ring: &membership,
+			revision_wait: attempts.revision_wait(),
 		})
 		.await
 		{
-			Err(err) if !rebuilt && pgas::is_stale_ring_revision(&err) => {
-				warn!(%product_id, %err, "rebuilding the PGAS proof against the current ring");
-				rebuilt = true;
+			Err(err) if attempts.rebuild_after(&err) => {
+				warn!(%product_id, %err, "rebuilding the PGAS proof against People's best block");
 			},
 			result => break result?,
 		}

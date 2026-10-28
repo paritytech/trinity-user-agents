@@ -94,6 +94,7 @@ async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 		COLLECTION,
 		RING_INDEX,
 		revision,
+		pgas::RING_REVISION_WAIT,
 	)
 	.await
 	.expect("Asset Hub has imported the current revision");
@@ -107,9 +108,16 @@ async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 async fn live_asset_hub_reports_a_pruned_revision_rather_than_waiting() {
 	let (rpc, metadata) = asset_hub().await;
 
-	let err = pgas::await_ring_revision(&rpc, &metadata, COLLECTION, RING_INDEX, 1)
-		.await
-		.expect_err("revision 1 is long pruned");
+	let err = pgas::await_ring_revision(
+		&rpc,
+		&metadata,
+		COLLECTION,
+		RING_INDEX,
+		1,
+		pgas::RING_REVISION_WAIT,
+	)
+	.await
+	.expect_err("revision 1 is long pruned");
 
 	assert!(
 		err.to_string().contains("pruned"),
@@ -161,9 +169,10 @@ async fn live_asset_hub_reports_whether_an_account_holds_a_full_claim() {
 async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 	let (rpc, metadata) = asset_hub().await;
 
-	let err = pgas::await_ring_revision(&rpc, &metadata, COLLECTION, 5, 107)
-		.await
-		.expect_err("revision 107 was skipped for ring 5");
+	let err =
+		pgas::await_ring_revision(&rpc, &metadata, COLLECTION, 5, 107, pgas::RING_REVISION_WAIT)
+			.await
+			.expect_err("revision 107 was skipped for ring 5");
 
 	assert!(
 		err.to_string().contains("pruned"),
