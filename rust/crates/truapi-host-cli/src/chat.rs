@@ -734,15 +734,13 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 /// The chat-list row of a room: the product's preview where it set one, the
 /// host default of each field where it did not. The line comes from the
 /// newest message the preview names, else from the newest message the host
-/// holds. A newer call the preview names apart shows beside it, and does not
-/// replace the line.
+/// holds.
 fn list_json(room: &RoomRecord) -> Value {
 	let preview = room.preview.as_ref();
 	let last = preview
 		.and_then(|preview| preview.last_message.as_ref())
 		.or_else(|| room.last_message());
 	let reaction = preview.and_then(|preview| preview.last_reaction.as_ref());
-	let call = preview.and_then(|preview| preview.last_call.as_ref());
 	let badge = match preview.and_then(|preview| preview.badge.as_ref()) {
 		Some(ChatRoomBadge::UnreadCount { count }) if *count > 0 => {
 			json!({ "type": "UnreadCount", "count": count })
@@ -763,10 +761,6 @@ fn list_json(room: &RoomRecord) -> Value {
 			.or_else(|| last.map(|message| message.timestamp)),
 		"text": last.map(preview_text),
 		"origin": last.map(|message| &message.origin.participant_id),
-		"lastCall": call.map(|call| json!({
-			"messageId": call.message_id,
-			"text": preview_text(call),
-		})),
 		"lastReaction": reaction.map(|reaction| json!({
 			"emoji": reaction.emoji,
 			"byUser": reaction.by_user,
@@ -1430,20 +1424,11 @@ mod tests {
 				removed: true,
 			}),
 			unseen_reactions: 2,
-			last_call: Some(ChatMessage {
-				body: ChatMessageBody::Call(ChatCallRecord {
-					video: false,
-					answered_at: Some(2),
-					closed: Some(ChatCallClose { at: 3, by_user: true }),
-				}),
-				..message("call-1", USER, "")
-			}),
 		});
 		assert_eq!(list["timestamp"], 42);
 		assert_eq!(list["badge"], json!({ "type": "UnreadCount", "count": 7 }));
 		assert_eq!(list["text"], "from the product");
 		assert_eq!(list["origin"], "contact");
-		assert_eq!(list["lastCall"], json!({ "messageId": "call-1", "text": "Audio call, ended" }));
 		assert_eq!(
 			list["lastReaction"],
 			json!({ "emoji": "+1", "byUser": false, "messageId": "c-1", "removed": true })
@@ -1459,7 +1444,6 @@ mod tests {
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
-			last_call: None,
 		});
 		assert_eq!(list["badge"], Value::Null);
 		assert_eq!(list["text"], "newest");
@@ -1469,7 +1453,6 @@ mod tests {
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
-			last_call: None,
 		});
 		assert_eq!(list["badge"], Value::Null, "a count of 0 shows nothing");
 	}

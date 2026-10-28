@@ -546,7 +546,6 @@ function roomRow(room) {
   if (room.list && room.list.unseenReactions > 0) name.appendChild(el("span", "pin", "\u{2764}\u{FE0F}"));
   // A newer call the product names apart from the newest message: this page
   // keeps the line on the message and marks the call beside the name.
-  if (room.list && room.list.lastCall) name.appendChild(el("span", "pin", room.list.lastCall.text));
   text.appendChild(name);
   const reaction = room.list && room.list.lastReaction;
   const line = reaction ? `${reaction.byUser ? "You" : room.name} ${reaction.removed ? "removed a reaction" : `reacted with ${reaction.emoji}`}`
