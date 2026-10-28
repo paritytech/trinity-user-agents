@@ -713,7 +713,7 @@ authenticate both directions, and the products see only payloads and opaque hand
   - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
     **Accept** hands the invitation payload to Bob's Example Chat, which checks it, makes both conversation topics and
     its response, and replies through its host. Bob's host seals the reply for Alice and posts it on the request's
-    return topic. Alice's host authenticates it and hands the payload to Alice's Example Chat, which checks it and only
+    return route. Alice's host authenticates it and hands the payload to Alice's Example Chat, which checks it and only
     then completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a
     waiting invitation; otherwise it waits until its deadline. More → Log shows each step.
 - **Developer controls.** **Restart Example Chat** opens the product again, which gets its state back from the host and
@@ -738,13 +738,17 @@ authenticate both directions, and the products see only payloads and opaque hand
     payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
   - Statuses are `waiting`, `completed`, `cancelled` and `expired`: there is no delivered, declined or accepted status
     for the sender.
-- **Who owns what.** The sender's host makes the request id, the return topic `T_SETUP` and a per-request reply key
-  pair, watches `T_SETUP` before it posts, and keeps the reply key's secret. The recipient's host posts its reply only
-  on the `T_SETUP` the authenticated request names, never on a route from the payload. Products never see a request id,
-  route, reply key, evidence or anyone's identity; the recipient's product does not get the purpose or the deadline.
+- **Who owns what.** The sender's host makes the request id and a per-request reply key pair and keeps the reply key's
+  secret. Its delivery (the `HostDelivery` port) chooses both routes: it reaches the recipient by their identity, and it
+  gives the sender a return route for each request, which the sender's host watches before it posts and binds into the
+  authenticated request. The recipient's host keeps a request only when its own delivery can reach the sender on that
+  route, and posts its reply there, never on a route from the payload. The sender's host matches a reply to its request
+  by the route it arrived on, then opens it with that request's reply key. The request service does not read a route.
+  Products never see a request id, route, reply key, evidence or anyone's identity; the recipient's product does not get
+  the purpose or the deadline.
 - **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and authentication evidence shaped as v3's `AuthEvidence`
   (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`). A request's evidence covers the version, both
-  identities, the product, the purpose, the request id, the times, `T_SETUP`, the public reply key and the exact
+  identities, the product, the purpose, the request id, the times, the return route, the public reply key and the exact
   payload. A reply's covers the version, both identities, the product, the request id, the digest of the exact request
   and the exact payload. Kind and identity order keep one direction's evidence from checking as the other's. The
   sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
@@ -759,11 +763,14 @@ authenticate both directions, and the products see only payloads and opaque hand
     another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not decided.
     The directory that says a key is a person is the fixture, and it holds every other test user, so a host takes a
     request from any of them, not only from the contacts its picker lists.
-  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`: requests under a
-    route derived from the recipient's key, replies under their `T_SETUP`. Each side posts again every minute and each
-    post lapses after five minutes; these are dev choices, separate from the request's deadline, which reposts never
-    move. No notification account signs a post and no allowance is checked. The route is linkable and any script of this
-    origin can read or post.
+  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host has an
+    inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a random
+    tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply only to
+    the inbox of the person who sent the request. The delivery can instead make a random topic per request (the tests
+    run both). Each side posts again every minute and each post lapses after five minutes; these are dev choices,
+    separate from the request's deadline, which reposts never move. No notification account signs a post and no
+    allowance is checked. Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can
+    read or post.
   - When the recipient resends its reply and when it stops is open in the design. Here the recipient's host posts the
     same sealed reply again on the delivery's cadence, and when it starts, until the request's deadline.
   - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a test user reaches no chain, so

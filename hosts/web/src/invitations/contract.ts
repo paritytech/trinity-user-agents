@@ -17,14 +17,14 @@ import type { ContactHandle, ContactPickOutcome } from "@parity/truapi";
  *   challenges inside it, and its private keys. The host carries the payload
  *   unchanged and never reads it.
  * - The sender's host owns the pending request: it resolves the contact,
- *   makes the request id, the return topic `T_SETUP` and a reply key pair,
- *   authenticates and seals the request, posts it until the deadline, and
- *   watches `T_SETUP`. It hands the product a reply's payload only after it
+ *   makes the request id and a reply key pair, takes a return route from its
+ *   delivery, authenticates and seals the request, posts it until the
+ *   deadline, and watches the return route. It hands the product a reply's payload only after it
  *   authenticated the reply against the contact chosen, the exact request and
  *   the exact payload.
  * - The recipient's host authenticates the request and renders who sent it.
  *   On the product's `reply` it authenticates, seals and posts the reply on
- *   the request's `T_SETUP`. The product never sees proofs, routes, reply keys
+ *   the return route the authenticated request names. The product never sees proofs, routes, reply keys
  *   or anyone's identity: only payloads and opaque handles.
  * - `complete` is the sender product's local word that it checked the reply
  *   and is connected. It stops the reposts; nothing is sent to the recipient.

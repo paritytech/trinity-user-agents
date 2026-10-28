@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { IdentityKeys } from "../invitations/ports.js";
+import { cryptoRandom } from "../invitations/sealing.js";
 import {
   LocalDelivery,
+  type ReturnRoutes,
   POST_LIFETIME_MS,
   REPOST_INTERVAL_MS,
   deliveryPrefix,
@@ -11,10 +13,13 @@ import { MemoryWorld } from "./shared-store.js";
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);
 const HOUR = 60 * 60_000;
 const SEALED = `0x${"ab".repeat(64)}`;
-const TOPIC = `0x${"7a".repeat(32)}`;
 const ADA: IdentityKeys = {
   signingPublic: `0x${"01".repeat(32)}`,
   agreementPublic: `0x${"0a".repeat(32)}`,
+};
+const KIM: IdentityKeys = {
+  signingPublic: `0x${"03".repeat(32)}`,
+  agreementPublic: `0x${"0c".repeat(32)}`,
 };
 const LIN: IdentityKeys = {
   signingPublic: `0x${"02".repeat(32)}`,
@@ -49,7 +54,11 @@ class Clock {
 function pair() {
   const world = new MemoryWorld();
   const clock = new Clock();
-  const host = (self: IdentityKeys, network = "testnet") => {
+  const host = (
+    self: IdentityKeys,
+    network = "testnet",
+    returnRoutes: ReturnRoutes = "inbox",
+  ) => {
     const requests: string[] = [];
     const replies: string[] = [];
     const delivery = new LocalDelivery({
@@ -58,11 +67,13 @@ function pair() {
       store: world.store(),
       now: clock.now,
       schedule: clock.schedule,
+      random: cryptoRandom,
+      returnRoutes,
       log: () => {},
     });
     delivery.listen({
       request: (sealed) => requests.push(sealed),
-      reply: (topic, sealed) => replies.push(`${topic}:${sealed}`),
+      reply: (route, sealed) => replies.push(`${route} ${sealed}`),
     });
     return { delivery, requests, replies };
   };
@@ -80,24 +91,49 @@ describe("local delivery", () => {
     expect(world.items.size).toBe(1);
   });
 
-  test("hands a reply only to a host that watches its topic, including what was posted before it watched", () => {
-    const { host } = pair();
-    const ada = host(ADA);
-    const lin = host(LIN);
-    lin.delivery.postReply(TOPIC, "reply", SEALED, START + HOUR);
-    expect(ada.replies).toEqual([]);
-    ada.delivery.watch(TOPIC);
-    expect(ada.replies).toEqual([`${TOPIC}:${SEALED}`]);
-    ada.delivery.unwatch(TOPIC);
-    lin.delivery.postReply(
-      TOPIC,
-      "again",
-      `0x${"cd".repeat(64)}`,
-      START + HOUR,
-    );
-    expect(ada.replies).toHaveLength(1);
-    expect(lin.requests).toEqual([]);
-  });
+  for (const kind of ["inbox", "topic"] as const)
+    test(`with ${kind} return routes, hands a reply only to the host whose route it is, while it watches it`, () => {
+      const { host } = pair();
+      const ada = host(ADA, "testnet", kind);
+      const lin = host(LIN, "testnet", kind);
+      const kim = host(KIM, "testnet", kind);
+      const route = ada.delivery.returnRoute();
+      const other = ada.delivery.returnRoute();
+      expect(route.startsWith(`${kind}:`)).toBe(true);
+      expect(route).not.toBe(other);
+      // Reachable for Ada, who made it; an inbox route reaches no one else.
+      expect(lin.delivery.isReturnRoute(route, ADA)).toBe(true);
+      expect(lin.delivery.isReturnRoute(route, KIM)).toBe(kind === "topic");
+      expect(lin.delivery.isReturnRoute(`elsewhere:${route}`, ADA)).toBe(false);
+
+      lin.delivery.postReply(route, "reply", SEALED, START + HOUR);
+      expect(ada.replies).toEqual([]);
+      ada.delivery.watch(route);
+      expect(ada.replies).toEqual([`${route} ${SEALED}`]);
+      // A reply on another route of Ada's is not handed over while she does not watch it.
+      lin.delivery.postReply(
+        other,
+        "other",
+        `0x${"ef".repeat(64)}`,
+        START + HOUR,
+      );
+      expect(ada.replies).toHaveLength(1);
+      ada.delivery.unwatch(route);
+      lin.delivery.postReply(
+        route,
+        "again",
+        `0x${"cd".repeat(64)}`,
+        START + HOUR,
+      );
+      expect(ada.replies).toHaveLength(1);
+      // Replies are never taken as requests, and no one else hears them.
+      expect([ada.requests, lin.requests, kim.requests, kim.replies]).toEqual([
+        [],
+        [],
+        [],
+        [],
+      ]);
+    });
 
   test("posts again on its cadence until withdrawn, and reaches a host that starts later", () => {
     const { world, clock, host } = pair();

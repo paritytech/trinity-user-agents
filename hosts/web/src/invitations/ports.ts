@@ -90,17 +90,30 @@ export interface IdentityAuth {
 export interface DeliveryReceiver {
   /** A sealed request addressed to this host. */
   request(sealed: string): void;
-  /** A sealed reply on a return topic this host watches. */
-  reply(topic: string, sealed: string): void;
+  /** A sealed reply on a return route this host watches. */
+  reply(route: string, sealed: string): void;
 }
 
 /**
- * How sealed requests and replies travel between hosts. Requests go to a
- * recipient; replies go to the return topic named in the authenticated
- * request. Each post is repeated until withdrawn or `until`.
+ * How sealed requests and replies travel between hosts. The delivery, not
+ * the request service or a product, chooses both routes:
+ *
+ * - It reaches a request's recipient by their identity.
+ * - It gives the sender a return route for each request. The route is
+ *   opaque to the request service, which binds it into the authenticated
+ *   request and keeps it with the pending request. The recipient's host
+ *   gives it back to post the reply, so a reply reaches the sender and names
+ *   the request it answers. What a route is, such as a topic or the sender's
+ *   inbox with a tag, is the delivery's choice.
+ *
+ * Each post is repeated until withdrawn or `until`.
  */
 export interface HostDelivery {
   listen(receiver: DeliveryReceiver): void;
+  /** A new return route for one request, to this host. */
+  returnRoute(): string;
+  /** Whether `route` is one this delivery can post a reply on, to `requester`. */
+  isReturnRoute(route: string, requester: IdentityKeys): boolean;
   /** Post a request to `to`, under `id`. */
   postRequest(
     to: IdentityKeys,
@@ -108,11 +121,11 @@ export interface HostDelivery {
     sealed: string,
     until: number,
   ): void;
-  /** Post a reply on `topic`, under `id`. */
-  postReply(topic: string, id: string, sealed: string, until: number): void;
-  /** Hand this host what is posted on `topic`, now and as it arrives. */
-  watch(topic: string): void;
-  unwatch(topic: string): void;
+  /** Post a reply on a return route, under `id`. */
+  postReply(route: string, id: string, sealed: string, until: number): void;
+  /** Hand this host what arrives on a return route of its own, now and as it arrives. */
+  watch(route: string): void;
+  unwatch(route: string): void;
   /** Stop posting `id`. What was posted stays until it lapses. */
   withdraw(id: string): void;
   close(): void;
