@@ -81,7 +81,7 @@ class ProductChatHostBridgeFeedTest {
 
     @Test
     fun `rich text with media keeps its text and its media as a product body`() {
-        val hop = ChatResource.Hop(identifier = byteArrayOf(1), ticket = byteArrayOf(2), node = "wss://hop.example", size = 12uL)
+        val hop = ChatResource.Hop(identifier = ByteArray(32) { 1 }, ticket = ByteArray(32) { 2 }, node = "wss://hop.example", size = 12uL)
         val image = ChatMediaItem.Image(hop, ChatMediaMeta("image/png", 12uL, 2u, 1u, placeholder = null, alt = "a dot", durationMs = null))
 
         val content = ChatMessageBody.RichText("Look", listOf(image)).toContent()
