@@ -40,6 +40,25 @@ class PrefsDebugPocketCardsTest {
         assertEquals("Loyalty", definition?.title)
     }
 
+    /**
+     * The core screens a card id before any Pocket call. Screening here too means a typo reads as no
+     * card, rather than producing a worker whose one card is refused at the first wire call — which
+     * would look like the card silently not existing.
+     */
+    @Test
+    fun `an id the core would refuse reads as no card at all`() {
+        stored(cardId = "loyalty‮")
+
+        assertNull(cards().get(productId))
+    }
+
+    @Test
+    fun `an id is normalised the way the manifest path normalises one`() {
+        stored(cardId = "  loyalty  ")
+
+        assertEquals("loyalty", cards().get(productId)?.cardId?.value)
+    }
+
     /** Without a face to draw, a card would reach the add sheet and fail there. */
     @Test
     fun `a spec with no preview url is not a card`() {
@@ -62,6 +81,13 @@ class PrefsDebugPocketCardsTest {
         stored(cardId = "loyalty", title = "\u0085")
 
         assertEquals("loyalty", cards().get(productId)?.title)
+    }
+
+    @Test
+    fun `a title the core would refuse to draw reads as no card at all`() {
+        stored(cardId = "loyalty", title = "Loyalty\u202E")
+
+        assertNull(cards().get(productId))
     }
 
     /** A release build has no debug menu, so it must not carry whatever a debug build left behind. */

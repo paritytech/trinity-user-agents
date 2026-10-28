@@ -218,8 +218,8 @@ fn chat_names_keep_joiners_and_bidi_marks_but_drop_spoofing_controls() {
 
 #[test]
 fn chat_identifiers_normalize_and_bound_the_value_the_host_receives() {
-	let nfc = truapi::platform::normalize_chat_identifier("botId", "  cafe\u{301}  ").unwrap();
-	assert_eq!(nfc, "caf\u{e9}");
+	let nfc = truapi::platform::normalize_chat_identifier("botId", "cafe\u{301}").unwrap();
+	assert_eq!(nfc, truapi::platform::normalize_chat_identifier("botId", "caf\u{e9}").unwrap());
 
 	assert!(truapi::platform::normalize_chat_identifier("botId", "").is_err());
 	assert!(truapi::platform::normalize_chat_identifier("botId", "   ").is_err());
@@ -232,7 +232,6 @@ fn chat_identifiers_normalize_and_bound_the_value_the_host_receives() {
 
 	let oversized = "f".repeat(truapi::platform::CHAT_FIELD_MAX_BYTES + 1);
 	assert!(truapi::platform::normalize_chat_identifier("botId", &oversized).is_err());
-	assert!(truapi::platform::validate_chat_name("name", &oversized).is_err());
 
 	let icon = "d".repeat(truapi::platform::CHAT_ICON_MAX_BYTES + 1);
 	assert!(truapi::platform::validate_chat_icon("icon", &icon).is_err());

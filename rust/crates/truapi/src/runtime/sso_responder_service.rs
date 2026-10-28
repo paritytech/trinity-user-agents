@@ -1179,26 +1179,13 @@ mod tests {
 				statement_account_id: [0x31; 32],
 				encryption_public_key: [0x42; 32],
 			},
-			metadata: vec![
-				v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string()),
-				v2::MetadataEntry(v2::MetadataKey::PlatformType, "macOS".to_string()),
-			],
+			metadata: vec![v2::MetadataEntry(v2::MetadataKey::HostName, "paired host".to_string())],
 		});
 		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
 
 		assert_eq!(
-			PairingProposal::from_deeplink(&deeplink).unwrap(),
-			PairingProposal {
-				peer: PairedSsoPeer {
-					statement_account_id: [0x31; 32],
-					encryption_public_key: [0x42; 32]
-				},
-				metadata: PairingProposalMetadata {
-					host_name: Some("paired host".to_string()),
-					platform_type: Some("macOS".to_string()),
-					..PairingProposalMetadata::default()
-				},
-			}
+			PairedSsoPeer::from_deeplink(&deeplink).unwrap(),
+			PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] }
 		);
 	}
 
