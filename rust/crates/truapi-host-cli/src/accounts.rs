@@ -655,6 +655,7 @@ fn attest_config(
 	Ok(attestation::AttestConfig {
 		backend_base: network.identity_backend()?.to_string(),
 		asset_hub_ws: network.asset_hub_ws.to_string(),
+		people_ws: network.people_ws.to_string(),
 		network_suffix: network.network_suffix.to_string(),
 		entropy,
 		username_base,

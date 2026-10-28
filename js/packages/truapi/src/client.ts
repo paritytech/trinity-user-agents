@@ -171,8 +171,29 @@ function pairKey(traitId: number, methodId: number): string {
 }
 
 /**
- * Decode `V1(UnsupportedMessage { trait_id, method_id })` from the reserved
- * `(255, 255)` address.
+ * `VersionedProtocolError`, the payload on the reserved `(255, 255)` address,
+ * as Rust declares it, followed by whatever bytes it leaves unread.
+ */
+const PROTOCOL_ERROR = S.Tuple(
+  S.indexedTaggedUnion({
+    V1: [
+      0,
+      S.indexedTaggedUnion({
+        UnsupportedMessage: [0, S.Struct({ traitId: S.u8, methodId: S.u8 })],
+        UnsupportedVersion: [
+          1,
+          S.Struct({ traitId: S.u8, methodId: S.u8, newestVersion: S.u8 }),
+        ],
+      }),
+    ],
+  }),
+  S.Bytes(Infinity),
+);
+
+/**
+ * Decode a protocol error from the reserved `(255, 255)` address.
+ * `UnsupportedMessage` and `UnsupportedVersion` both mean the peer cannot
+ * handle the call they name; `newestVersion` is set only for the second.
  *
  * `undefined` is a protocol error this build does not know: a version or a
  * variant index it has never heard of, from a peer built against a later
@@ -181,28 +202,44 @@ function pairKey(traitId: number, methodId: number): string {
  * transport, so a build that rejected an unfamiliar payload here could never be
  * told anything new without the whole connection dying.
  *
- * A payload this build does recognise stays strict: codec 2 addresses a frame
- * by a pair, so `V1(UnsupportedMessage)` is exactly four bytes (version index,
- * variant index, then the trait and method the peer could not handle), and a
- * truncated or over-long one is corruption rather than a newer peer.
+ * A payload this build does recognise stays strict: a truncated or over-long
+ * one is corruption rather than a newer peer.
  */
-function decodeUnsupportedMessage(
+function decodeProtocolError(
   payload: Uint8Array,
-): { traitId: number; methodId: number } | undefined {
+): { traitId: number; methodId: number; newestVersion?: number } | undefined {
   if (payload.length === 0) {
     throw new Error("Malformed protocol error payload: empty");
   }
-  if (payload[0] !== 0 || (payload.length > 1 && payload[1] !== 0)) {
-    // A version or variant from a later protocol. Its length is unknowable
-    // here, so the remaining bytes are not validated.
-    return undefined;
+  let decoded: ReturnType<typeof PROTOCOL_ERROR.dec>;
+  try {
+    decoded = PROTOCOL_ERROR.dec(payload);
+  } catch (cause) {
+    // An unknown version or error means a newer peer. We don't know its
+    // layout, so we don't check the rest.
+    if (cause instanceof S.UnknownDiscriminantError) return undefined;
+    throw new Error("Malformed protocol error payload: truncated", { cause });
   }
-  if (payload.length !== 4) {
-    throw new Error(
-      `Malformed protocol error payload: expected 4 bytes, received ${payload.length}`,
-    );
+  const [error, unread] = decoded;
+  if (unread.length > 0) {
+    throw new Error("Malformed protocol error payload: trailing bytes");
   }
-  return { traitId: payload[2], methodId: payload[3] };
+  return error.value.value;
+}
+
+/** Warns that the host refused a call's version, naming the newest it accepts. */
+function reportRefusedVersion(
+  requestId: string,
+  {
+    traitId,
+    methodId,
+    newestVersion,
+  }: { traitId: number; methodId: number; newestVersion?: number },
+): void {
+  if (newestVersion === undefined) return;
+  console.warn(
+    `[truapi] the host refused request ${requestId} for (${traitId}, ${methodId}): it accepts versions up to V${newestVersion}`,
+  );
 }
 
 /**
@@ -300,11 +337,16 @@ export function createTransport(
   }
 
   function interruptOperations(error: Error) {
-    const requests = [...pending.keys()].map(
-      (requestId) => takePending(requestId)!,
-    );
-    const streams = [...subscriptions.values()];
-    subscriptions.clear();
+    const closing = closedError !== null;
+    const requests = [...pending]
+      .filter(([, request]) => request.sent || closing)
+      .map(([requestId]) => takePending(requestId)!);
+    const streams = [...subscriptions]
+      .filter(([, stream]) => stream.sent || closing)
+      .map(([requestId, stream]) => {
+        subscriptions.delete(requestId);
+        return stream;
+      });
     const instances: { unsubscribe(): void }[] = [];
     for (const route of hostRoutes.values()) {
       route.buffered.length = 0;
@@ -326,7 +368,7 @@ export function createTransport(
     }
   }
 
-  /** Close permanently; a provider reset only interrupts current operations. */
+  /** Close permanently. A provider reset interrupts only the work the host may have started. */
   function closeWithError(error: unknown) {
     if (closedError) return;
     closedError = toError(error);
@@ -358,9 +400,9 @@ export function createTransport(
       payload.traitId === PROTOCOL_ERROR_TRAIT_ID &&
       payload.methodId === PROTOCOL_ERROR_METHOD_ID
     ) {
-      let unsupported: { traitId: number; methodId: number } | undefined;
+      let unsupported: ReturnType<typeof decodeProtocolError>;
       try {
-        unsupported = decodeUnsupportedMessage(payload.value);
+        unsupported = decodeProtocolError(payload.value);
       } catch (error) {
         onProtocolError(toError(error));
         return;
@@ -395,6 +437,7 @@ export function createTransport(
         request?.ids.trait === unsupported.traitId &&
         request?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         takePending(requestId)?.resolveUnsupported();
         return;
       }
@@ -404,6 +447,7 @@ export function createTransport(
         subscription?.ids.trait === unsupported.traitId &&
         subscription?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         subscriptions.delete(requestId);
         subscription.onClose?.(
           new UnsupportedMessageError(

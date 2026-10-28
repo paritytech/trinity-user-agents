@@ -450,7 +450,9 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
 				trait_id: ids.trait_id,
 				method_id: ids.method_id,
 				message_type: MESSAGE_TYPE_START,
-				value: vec![0xff],
+				// V1, then an invalid `purse` option tag. A first byte naming a
+				// later version would be refused as unsupported, not malformed.
+				value: vec![0x00, 0xff],
 			},
 		},
 		transport.clone(),
