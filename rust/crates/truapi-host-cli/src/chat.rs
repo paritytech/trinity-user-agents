@@ -414,7 +414,7 @@ impl CliChatHost {
 		};
 		let changed = match (action, answer) {
 			(
-				ChatUserAction::NewMessage { .. } | ChatUserAction::SendPayment { .. },
+				ChatUserAction::NewMessage { .. },
 				ProductChatUserActionItem::MessageCreated(message),
 			) => match room.position(&message.message_id) {
 				Some(index) => {
@@ -448,7 +448,7 @@ impl CliChatHost {
 			// screen holds, and the page sends no payment or contact action.
 			(
 				ChatUserAction::NewMessage { .. } |
-				ChatUserAction::SendPayment { .. } |
+				ChatUserAction::SendPayment |
 				ChatUserAction::AcceptRequest |
 				ChatUserAction::DeclineRequest |
 				ChatUserAction::Block |

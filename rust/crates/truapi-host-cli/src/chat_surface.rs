@@ -616,9 +616,7 @@ impl ChatSurface {
 	) -> Applied {
 		let surface = Arc::clone(self);
 		let timeout = match action {
-			ChatUserAction::NewMessage { .. } | ChatUserAction::SendPayment { .. } => {
-				self.timeouts.send
-			},
+			ChatUserAction::NewMessage { .. } => self.timeouts.send,
 			_ => self.timeouts.action,
 		};
 		Applied::Later(Box::pin(async move {
