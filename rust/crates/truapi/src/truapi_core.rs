@@ -185,8 +185,8 @@ mod tests {
 	use truapi::v01;
 
 	use crate::{
+		ProductId,
 		frame::{Payload, request_ids, subscription_ids},
-		latest::ProductId,
 		test_support::{StubPlatform, runtime_config, test_spawner},
 	};
 

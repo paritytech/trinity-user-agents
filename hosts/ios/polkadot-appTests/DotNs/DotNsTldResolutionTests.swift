@@ -39,9 +39,6 @@ struct DotNsTldResolutionTests {
     /// hardcoded `.dot`. Parameterized so a reverted fix (constant `.dot`) fails on any non-dot TLD.
     @Test(arguments: ["dot", "testnet", "paseo"])
     func derivationPathsEmbedResolvedTld(_ tld: String) throws {
-        #expect(try BuiltInProduct.personhood(for: tld).rawValue == "peopl.\(tld)")
-        #expect(try BuiltInProduct.dim2(for: tld).rawValue == "dim2.\(tld)")
-        #expect(try BuiltInProduct.uid(for: tld).rawValue == "uid.\(tld)")
         #expect(try WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
     }
 

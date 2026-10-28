@@ -321,7 +321,7 @@ struct RingRoot {
 mod tests {
 	use parity_scale_codec::Encode;
 	use scale_info::TypeInfo;
-	use truapi::{latest::ProductId, v01::DerivationIndex};
+	use truapi::{ProductId, v01::DerivationIndex};
 
 	use super::*;
 	use crate::host_logic::product_account::index_bytes;

@@ -56,7 +56,7 @@ use truapi::latest;
 
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::{PairingProposal, host_logic::dotns};
+use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: the Pocket deeplink first, then dotNS, then `localhost`, then
@@ -76,7 +76,7 @@ pub fn truapi_host_version() -> String {
 
 /// Validate and normalize an identifier before storing it in a native value.
 #[uniffi::export]
-pub fn parse_product_id(input: String) -> Result<latest::ProductId, latest::ProductIdError> {
+pub fn parse_product_id(input: String) -> Result<ProductId, ProductIdError> {
 	input.parse()
 }
 
@@ -85,36 +85,34 @@ pub fn parse_product_id(input: String) -> Result<latest::ProductId, latest::Prod
 pub fn product_id_from_name(
 	name: String,
 	network_suffix: String,
-) -> Result<latest::ProductId, latest::ProductIdError> {
-	latest::ProductId::from_name(&name, &network_suffix)
+) -> Result<ProductId, ProductIdError> {
+	ProductId::from_name(&name, &network_suffix)
 }
 
 /// The complete dotNS name above the network suffix, including nested labels.
 #[uniffi::export]
-pub fn product_id_name(product_id: latest::ProductId) -> Option<String> {
+pub fn product_id_name(product_id: ProductId) -> Option<String> {
 	product_id.dotns_name().map(str::to_owned)
 }
 
 /// Check a product against an explicitly supplied network suffix.
 #[uniffi::export]
-pub fn product_id_matches_network(product_id: latest::ProductId, network_suffix: String) -> bool {
+pub fn product_id_matches_network(product_id: ProductId, network_suffix: String) -> bool {
 	product_id.matches_network(&network_suffix)
 }
 
 /// Name an executable under its product's full dotNS namespace.
 #[uniffi::export]
 pub fn product_id_executable(
-	product_id: latest::ProductId,
+	product_id: ProductId,
 	kind: crate::platform::ProductExecutionKind,
-) -> Result<latest::ProductId, latest::ProductIdError> {
+) -> Result<ProductId, ProductIdError> {
 	product_id.executable(kind)
 }
 
 /// Resolve an executable identity to its owning product without losing nested labels.
 #[uniffi::export]
-pub fn product_id_owner(
-	product_id: latest::ProductId,
-) -> Result<latest::ProductId, latest::ProductIdError> {
+pub fn product_id_owner(product_id: ProductId) -> Result<ProductId, ProductIdError> {
 	product_id.executable_owner()
 }
 
@@ -126,8 +124,8 @@ pub fn parse_product_link(input: String, network_suffix: String) -> Option<Produ
 
 /// Recognize a supported share host without consulting host configuration.
 #[uniffi::export]
-pub fn parse_product_share_host(input: String) -> Option<latest::ProductId> {
-	latest::ProductId::from_share_host(&input)
+pub fn parse_product_share_host(input: String) -> Option<ProductId> {
+	ProductId::from_share_host(&input)
 }
 
 /// Share domains recognized by the canonical Rust parser.
@@ -366,7 +364,7 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 /// permissions still need the OS grant. Hosts mediating product network access
 /// can use this check before storage.
 #[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: latest::ProductId) -> bool {
+pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
 	product_id.has_trusted_remote_permissions()
 }
 

@@ -6,6 +6,7 @@
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey};
 use truapi::{
+	ProductId,
 	host_logic::{
 		entropy::derive_product_entropy,
 		product_account::{
@@ -22,7 +23,7 @@ use truapi::{
 		},
 		statement_store::{build_signed_session_request_statement, decode_verified_statement_data},
 	},
-	latest::{HostDevicePermissionRequest, ProductId},
+	latest::HostDevicePermissionRequest,
 	platform::{CoreStorageKey, HostInfo, PairingHostConfig, PlatformInfo},
 };
 use wasm_bindgen_test::wasm_bindgen_test;

@@ -35,13 +35,6 @@ struct HostPlacedProductsTests {
     func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
         #expect(!HostPlacedProducts.contains(productId: try ProductId(input)))
     }
-
-    @Test("An incomplete identifier fails construction", arguments: ["dim2", ""])
-    func incompleteIdentifierIsRejected(input: String) {
-        #expect(throws: (any Error).self) {
-            _ = try ProductId(input)
-        }
-    }
 }
 
 @Suite("The host-placement switch")

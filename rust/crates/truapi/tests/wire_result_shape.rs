@@ -29,7 +29,7 @@ use std::{
 
 use parity_scale_codec::{Decode, Encode};
 
-use truapi::{CallError, latest::ProductId, v01};
+use truapi::{CallError, ProductId, v01};
 
 use truapi::{
 	TrUApiCore,

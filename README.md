@@ -88,6 +88,7 @@ const result = await truapi.accountManagement.accountGet({
 ```
 
 Product identifiers use `ProductId` throughout the protocol and host APIs.
+Rust exposes this version-independent type as `truapi::ProductId`.
 The client receives typed IDs from the host; `asProductId` brands an explicit
 string without parsing or loading WASM. Rust validates IDs at the host boundary.
 Swift's `try ProductId("my-product.dot")` and Kotlin's

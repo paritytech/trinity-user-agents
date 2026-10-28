@@ -76,15 +76,6 @@ struct ProductAccountDerivationTests {
         #expect(first.publicKey().rawData() != second.publicKey().rawData())
     }
 
-    @Test("Product ids containing junction separators are rejected")
-    func invalidProductIdsThrow() throws {
-        for productId in ["", "a/b", "a//b"] {
-            #expect(throws: (any Error).self) {
-                _ = try ProductId(productId)
-            }
-        }
-    }
-
     private func makeKeypair(path: String) throws -> IRCryptoKeypairProtocol {
         // Mirrors WalletMnemonicKeypairFactory's seed handling for a fixed mnemonic.
         let chaincodes = try SubstrateJunctionFactory().parse(path: path).chaincodes

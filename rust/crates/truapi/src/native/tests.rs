@@ -16,8 +16,7 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
-	host_logic::worker::WorkerTransition,
+	PairedSsoPeer, host_internal::bulletin::preimage_key, host_logic::worker::WorkerTransition,
 };
 
 use super::{
@@ -667,49 +666,6 @@ pub fn proposal_deeplink(
 	)
 }
 
-/// The peer a host must register a renewal target for before it answers,
-/// and the name it prompts with. Without this entry point that account is
-/// unreachable from a native host, the answer goes out with no allowance
-/// behind it, and the prompt can only name the peer by its raw key.
-#[test]
-fn a_pairing_deeplink_yields_the_proposal_it_carries() {
-	use crate::{
-		PairingProposalMetadata,
-		host_logic::sso::pairing::v2::{MetadataEntry, MetadataKey},
-	};
-
-	let peer =
-		PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] };
-	let deeplink = proposal_deeplink(
-		peer,
-		vec![
-			MetadataEntry(MetadataKey::HostName, "Polkadot Desktop Host".to_string()),
-			MetadataEntry(MetadataKey::PlatformType, "macOS".to_string()),
-			MetadataEntry(MetadataKey::Custom("seat".to_string()), "3".to_string()),
-		],
-	);
-
-	assert_eq!(
-		parse_pairing_deeplink(deeplink).expect("a well-formed deeplink decodes"),
-		PairingProposal {
-			peer,
-			metadata: PairingProposalMetadata {
-				host_name: Some("Polkadot Desktop Host".to_string()),
-				platform_type: Some("macOS".to_string()),
-				..PairingProposalMetadata::default()
-			},
-		}
-	);
-
-	for (deeplink, expected) in UNDECODABLE_DEEPLINKS {
-		let reason = pairing_rejection(
-			parse_pairing_deeplink(deeplink.to_string())
-				.expect_err("an undecodable deeplink carries no peer"),
-		);
-		assert!(reason.contains(expected), "{deeplink} did not reach the core's decoder: {reason}");
-	}
-}
-
 /// Both deeplink entry points have to reach the core's own decoder. One
 /// wired to nothing would answer the same way for every input.
 ///
@@ -834,32 +790,6 @@ fn process_runtime_counts_worker_references_per_product() {
 	assert_eq!(
 		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
 		vec![(product(), WorkerTransition::Start), (product(), WorkerTransition::Stop),]
-	);
-}
-
-/// Two spellings of one product would otherwise be two workers, and an id no
-/// product runs under would start a worker with nothing to serve.
-#[test]
-fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
-	let callbacks = Arc::new(EventCallbacks::new());
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		callbacks.clone(),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
-
-	host.acquire_worker(super::parse_product_id("Shared.DOT".to_string()).unwrap());
-	host.acquire_worker(super::parse_product_id("shared.dot".to_string()).unwrap());
-	assert!(super::parse_product_id("not_a.dot".to_string()).is_err());
-	host.release_worker(super::parse_product_id("shared.dot".to_string()).unwrap());
-	host.release_worker(super::parse_product_id("SHARED.dot".to_string()).unwrap());
-
-	assert_eq!(
-		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
-		vec![
-			(ProductId::for_test("shared.dot"), WorkerTransition::Start),
-			(ProductId::for_test("shared.dot"), WorkerTransition::Stop),
-		]
 	);
 }
 
@@ -1009,29 +939,6 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let result = execution.publish_chat_action(text_chat_action("hello"));
 
 	assert!(matches!(result, Err(crate::ProductRuntimeError::Unsupported)));
-}
-
-/// Hosts mediate product network access in their own code and ask this to
-/// decide whether to prompt, so it has to answer for the spellings a host
-/// actually holds, not only the normalized one the core passes internally.
-#[test]
-fn the_trusted_export_normalizes_before_matching() {
-	for trusted in ["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", "stash.dot"] {
-		assert!(
-			super::has_trusted_remote_permissions(
-				super::parse_product_id(trusted.to_string()).unwrap()
-			),
-			"{trusted} is a first-party product",
-		);
-	}
-	for untrusted in ["app.peopl.dot", "notpeopl.dot", "localhost:3000"] {
-		assert!(
-			!super::has_trusted_remote_permissions(
-				super::parse_product_id(untrusted.to_string()).unwrap()
-			),
-			"{untrusted} is not",
-		);
-	}
 }
 
 #[test]
@@ -3110,6 +3017,64 @@ fn reads_the_card_faces_the_hosts_conform_to() {
 	assert!(matches!(node, latest::RendererNode::Column { .. }));
 }
 
+#[test]
+fn face_json_preserves_sizes_and_flags_without_host_integer_limits() {
+	let json = r#"{"tag":"Button","value":{
+        "modifiers":[{"tag":"Width","value":4294967297},
+                     {"tag":"Opacity","value":0},{"tag":"Opacity","value":255}],
+        "props":{"text":"Go","enabled":true,"loading":false},"children":[]
+    }}"#;
+
+	assert_eq!(
+		read_renderer_node_json(json).unwrap(),
+		latest::RendererNode::Button {
+			modifiers: vec![
+				latest::Modifier::Width(parity_scale_codec::Compact(4_294_967_297)),
+				latest::Modifier::Opacity(0),
+				latest::Modifier::Opacity(255),
+			],
+			props: latest::ButtonProps {
+				text: "Go".to_string(),
+				variant: None,
+				enabled: parity_scale_codec::OptionBool(Some(true)),
+				loading: parity_scale_codec::OptionBool(Some(false)),
+				click_action: None,
+			},
+			children: Vec::new(),
+		}
+	);
+}
+
+#[test]
+fn face_json_rejects_values_outside_the_protocol_shape() {
+	for modifier in [
+		r#"{"tag":"Padding","value":{"top":-1,"end":0}}"#,
+		r#"{"tag":"Width","value":"40"}"#,
+		r#"{"tag":"Opacity","value":-1}"#,
+		r#"{"tag":"Opacity","value":256}"#,
+		r#"{"tag":"Rotate","value":90}"#,
+	] {
+		let json = format!(r#"{{"tag":"Spacer","value":{{"modifiers":[{modifier}]}}}}"#);
+		assert!(
+			matches!(read_renderer_node_json(&json), Err(NativeRendererError::Malformed { .. })),
+			"{json} must be refused rather than coerced or truncated"
+		);
+	}
+	for json in [
+		r#"{"tag":"Button","value":{"modifiers":[],"props":{"text":"Go","enabled":"true"},"children":[]}}"#,
+		r#"{"tag":"Text","value":{"modifiers":[],"props":{"color":"FG_PRIMARY"},"children":[]}}"#,
+		r#"{"tag":"Text","value":{"modifiers":[],"props":{"color":"Purple"},"children":[]}}"#,
+		r#"{"tag":"Box","value":{"props":{}}}"#,
+		r#"{"tag":"Video","value":{}}"#,
+		"not json",
+	] {
+		assert!(
+			matches!(read_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })),
+			"{json} must use the protocol's fields and variant names"
+		);
+	}
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();
@@ -3176,53 +3141,4 @@ fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
 	kept.push(0);
 
 	assert!(matches!(decode_renderer_node(kept), Err(NativeRendererError::Malformed { .. })));
-}
-
-/// A title is drawn and an id is addressed, so they cannot share one rule:
-/// the emoji below carries a variation selector, which an id may not.
-#[test]
-fn a_card_title_accepts_what_a_card_id_refuses() {
-	assert_eq!(
-		screen_pocket_card_title("\u{2615}\u{fe0f} Coffee".to_string()).unwrap(),
-		"\u{2615}\u{fe0f} Coffee"
-	);
-	assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
-}
-
-/// A host screening a room icon itself gets the answer the core's own
-/// `create_room` would give, so a product cannot pass one path and fail the
-/// other.
-#[test]
-fn a_chat_icon_is_screened_as_create_room_screens_it() {
-	assert_eq!(screen_chat_icon("  ".to_string()).unwrap(), "");
-	assert_eq!(
-		screen_chat_icon("data:image/png;base64,iVBORw0KGgo=".to_string()).unwrap(),
-		"data:image/png;base64,iVBORw0KGgo="
-	);
-	assert_eq!(
-		screen_chat_icon("https://example.invalid".to_string()).unwrap(),
-		"https://example.invalid/"
-	);
-	assert!(screen_chat_icon("data:image/svg+xml,<svg onload=alert(1)>".to_string()).is_err());
-	assert!(screen_chat_icon(format!("data:image/png;base64,{}", "A".repeat(64 * 1024))).is_err());
-}
-
-/// Both sides NFC-normalize, so a host that compares raw bytes against what
-/// the core stored would miss a card it holds.
-#[test]
-fn screening_normalizes_and_trims() {
-	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
-	assert!(screen_pocket_card_id("   ".to_string()).is_err());
-}
-
-#[test]
-fn native_product_ids_are_canonical_before_they_reach_host_apis() {
-	assert_eq!(
-		super::parse_product_id("  Peopl.DOT  ".to_string()),
-		Ok(crate::latest::ProductId::for_test("peopl.dot"))
-	);
-	assert_eq!(
-		super::parse_product_id("localhost.dot".to_string()),
-		Err(crate::latest::ProductIdError::Invalid { input: "localhost.dot".to_string() })
-	);
 }

@@ -166,15 +166,17 @@ mod tests {
         let keypair = Keypair::generate();
         let items = airdrop_items(&event_id(7), &keypair.public.to_bytes());
 
-        let (in_out, proof, _) =
-            keypair.vrf_sign(build_transcript(AIRDROP_TRANSCRIPT_LABEL, &items));
+        for items in [Vec::new(), items] {
+            let (in_out, proof, _) =
+                keypair.vrf_sign(build_transcript(AIRDROP_TRANSCRIPT_LABEL, &items));
 
-        let verify = keypair.public.vrf_verify(
-            build_transcript(AIRDROP_TRANSCRIPT_LABEL, &items),
-            &in_out.to_preout(),
-            &proof,
-        );
-        assert!(verify.is_ok());
+            let verify = keypair.public.vrf_verify(
+                build_transcript(AIRDROP_TRANSCRIPT_LABEL, &items),
+                &in_out.to_preout(),
+                &proof,
+            );
+            assert!(verify.is_ok());
+        }
     }
 
     /// Proves the generic replayer is byte-identical to sp-core's `VrfTranscript` — the construction

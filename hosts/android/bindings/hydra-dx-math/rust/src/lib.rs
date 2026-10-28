@@ -730,3 +730,6 @@ fn calculate_pool_trade_fee(amount: String, fee_nominator: String, fee_denominat
         error()
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -3,7 +3,7 @@ pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
-	latest::ProductId,
+	ProductId,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,

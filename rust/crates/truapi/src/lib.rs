@@ -49,6 +49,7 @@ pub use async_trait::async_trait;
 pub mod api;
 mod dotns_name;
 mod product_id;
+pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -93,8 +94,6 @@ uniffi::custom_type!(u128, String, {
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {
 	use crate::versioned::{self, Versioned};
-
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,

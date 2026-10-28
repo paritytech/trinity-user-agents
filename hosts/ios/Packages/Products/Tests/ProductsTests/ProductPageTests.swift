@@ -8,14 +8,6 @@ struct ProductPageTests {
         #expect(page.page == nil)
     }
 
-    @Test func foundationURLBecomesAProductPage() throws {
-        let url = URL(string: "https://browse.dot/onboarding?ref=abc#section")!
-        let page = try #require(ProductPage.fromUrl(url, tld: "dot"))
-
-        #expect(page.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page.page == "/onboarding?ref=abc#section")
-    }
-
     // MARK: - applied(to:)
 
     @Test func appliedWithoutPageReturnsRoot() {

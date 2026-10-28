@@ -35,7 +35,7 @@ use tracing::{
 	field::{Field, Visit},
 };
 use tracing_subscriber::layer::{Context as LayerContext, Layer};
-use truapi::{latest::ProductId, platform::PermissionDecision};
+use truapi::{ProductId, platform::PermissionDecision};
 use unicode_width::UnicodeWidthChar;
 
 use crate::{

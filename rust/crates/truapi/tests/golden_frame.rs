@@ -38,9 +38,9 @@
 
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
+	ProductId,
 	frame::{MESSAGE_TYPE_REQUEST, Payload, ProtocolMessage},
 	generated::wire_table,
-	latest::ProductId,
 	v01,
 	versioned::account::HostAccountGetRequest,
 };
