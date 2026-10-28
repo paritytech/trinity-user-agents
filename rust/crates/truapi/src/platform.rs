@@ -619,12 +619,8 @@ pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
 /// The longest node URL of a [`ChatResource::Hop`].
 pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
 
-/// The most coins one chat payment carries.
-pub const CHAT_PAYMENT_COINS_MAX: usize = 1024;
-
 /// Validate a user action a host sends to the product: the id a host chose
-/// for a new message or a payment is an identifier like every message id,
-/// and a payment carries well-formed coin keys.
+/// for a new message is an identifier like every message id.
 pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserAction, ChatFieldError> {
 	Ok(match action {
 		ChatUserAction::NewMessage { body, reply_to, message_id, timestamp } => {
@@ -637,30 +633,8 @@ pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserActio
 				timestamp,
 			}
 		},
-		ChatUserAction::SendPayment { message_id, timestamp, total_value, sr25519_secret_keys } => {
-			validate_chat_payment_coin_keys(&sr25519_secret_keys)?;
-			ChatUserAction::SendPayment {
-				message_id: normalize_chat_identifier("messageId", &message_id)?,
-				timestamp,
-				total_value,
-				sr25519_secret_keys,
-			}
-		},
 		action => action,
 	})
-}
-
-/// Validate the coin keys of a chat payment: at least one, at most
-/// [`CHAT_PAYMENT_COINS_MAX`].
-pub fn validate_chat_payment_coin_keys(coin_keys: &[[u8; 64]]) -> Result<(), ChatFieldError> {
-	let field = "sr25519SecretKeys";
-	if coin_keys.is_empty() {
-		return Err(ChatFieldError::Empty { field });
-	}
-	if coin_keys.len() > CHAT_PAYMENT_COINS_MAX {
-		return Err(ChatFieldError::TooMany { field, limit: CHAT_PAYMENT_COINS_MAX });
-	}
-	Ok(())
 }
 
 /// Validate the resource of a media item: a HOP file.
@@ -2480,45 +2454,6 @@ mod tests {
 			validate_chat_message_content(blank),
 			Err(ChatFieldError::Empty { field: "messageId" })
 		);
-	}
-
-	#[test]
-	fn a_payment_the_user_sends_carries_one_message_id_and_real_coin_keys() {
-		let payment =
-			|message_id: &str, sr25519_secret_keys: Vec<[u8; 64]>| ChatUserAction::SendPayment {
-				message_id: message_id.to_string(),
-				timestamp: 1_763_164_800_000,
-				total_value: 5_000_000,
-				sr25519_secret_keys,
-			};
-		let key = [7u8; 64];
-
-		// The host tracks the payment under this id, so it is screened as an
-		// identifier like any message id.
-		assert_eq!(
-			validate_chat_user_action(payment(" pay-1 ", vec![key])),
-			Ok(payment("pay-1", vec![key]))
-		);
-		assert_eq!(
-			validate_chat_user_action(payment("pay\u{200d}-1", vec![key])),
-			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
-		);
-		// A payment with no coins or too many coins would reach the contact as
-		// a payment nobody can claim.
-		assert_eq!(
-			validate_chat_user_action(payment("pay-1", Vec::new())),
-			Err(ChatFieldError::Empty { field: "sr25519SecretKeys" })
-		);
-		assert_eq!(
-			validate_chat_user_action(payment("pay-1", vec![key; CHAT_PAYMENT_COINS_MAX + 1])),
-			Err(ChatFieldError::TooMany {
-				field: "sr25519SecretKeys",
-				limit: CHAT_PAYMENT_COINS_MAX
-			})
-		);
-		// The keys spend the coins, so a logged action never shows them.
-		let printed = format!("{:?}", payment("pay-1", vec![[0xab; 64]]));
-		assert!(printed.contains("1 keys") && !printed.contains("171"), "{printed}");
 	}
 
 	#[test]

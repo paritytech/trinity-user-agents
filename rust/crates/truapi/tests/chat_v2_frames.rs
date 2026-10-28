@@ -441,12 +441,7 @@ fn frames() -> Vec<String> {
 			MESSAGE_TYPE_START,
 			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
 				room_id: room(),
-				action: v01::ChatUserAction::SendPayment {
-					message_id: "m2".into(),
-					timestamp: 1_700_000_000_000,
-					total_value: 5_000_000,
-					sr25519_secret_keys: vec![[0x11; 64]],
-				},
+				action: v01::ChatUserAction::SendPayment,
 			}),
 		),
 		line(
