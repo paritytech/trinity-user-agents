@@ -164,7 +164,7 @@ pub struct EventCallbacks {
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
 	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
-	/// The reason `list_rooms` throws with, if any.
+	/// The rejection reason of `list_rooms`, if any.
 	pub chat_list_rejection: Mutex<Option<String>>,
 	/// Chat declarations the core handed over, as `"<callback> <room>"`.
 	pub chat_declared: Mutex<Vec<String>>,
@@ -2022,8 +2022,8 @@ fn room_preview() -> truapi::latest::ChatRoomPreview {
 	}
 }
 
-// The core checks a room against this list before it deletes the room, so a
-// list the host cannot read must reach the core as a failure, not as no rooms.
+// The core checks a room against this list before it deletes the room. If the
+// host cannot read the list, the core must get an error, not an empty list.
 #[test]
 fn native_chat_adapter_surfaces_a_room_list_rejection() {
 	let (callbacks, platform, product) = chat_adapter();
