@@ -1,6 +1,5 @@
 import Foundation
 import FoundationExt
-import IssueMonitoring
 import Testing
 import UIKit
 import Keystore_iOS
@@ -98,35 +97,6 @@ struct ProductGameReminderCenterTests {
 
         #expect(center.slots == [.init(productId: productId, startsAt: later)])
         #expect(fakes.alarm(for: productId).scheduled.last == reminderCall(later, productId))
-    }
-
-    @Test("A past start is reported once and is not handed to either delivery service")
-    func pastStartIsReportedOnce() async {
-        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(60))
-
-        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
-
-        #expect(fakes.reporter.events.map(\.step) == [.notScheduled])
-        #expect(fakes.reporter.events.first?.skipReason == .startInPast)
-        #expect(fakes.alarm(for: productId).scheduled.isEmpty)
-        #expect(fakes.notification(for: productId).scheduled.isEmpty)
-        #expect(center.slots.isEmpty)
-    }
-
-    @Test("A past replacement drops the product's held future reminder")
-    func pastStartDropsHeldFutureReminder() async {
-        let heldStart = startsAt.addingTimeInterval(600)
-        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
-        await center.schedule(productId: productId, startsAt: heldStart, addCalendarEvent: false)
-        fakes.now = startsAt.addingTimeInterval(60)
-
-        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
-
-        #expect(fakes.reporter.events.map(\.step) == [.notScheduled])
-        #expect(fakes.reporter.events.first?.skipReason == .startInPast)
-        #expect(fakes.alarm(for: productId).cancelCount == 1)
-        #expect(center.slots.isEmpty)
-        #expect(center.pill == nil)
     }
 
     @Test("With the calendar flag and a start exactly an hour away, one calendar event is added")
@@ -269,43 +239,52 @@ struct ProductGameReminderCenterTests {
         center.cancel(productId: other)
         center.cancel(productId: productId)
 
-        #expect(fakes.reporter.events.map(\.step) == [.cancelled])
-        #expect(fakes.reporter.events.first?.productId == productId)
-        #expect(fakes.reporter.events.first?.startsAt == startsAt)
+        #expect(
+            fakes.recorder.events == [
+                expectedReminderHostEvent(
+                    "cancelled",
+                    productId: productId,
+                    startsAt: startsAt,
+                    occurredAt: startsAt.addingTimeInterval(-3_600),
+                    tags: ["host.app_state": "active"]
+                )
+            ]
+        )
     }
 
-    @Test("Opening at the start is reported as an auto-open with the app state and whether it navigated")
-    func reportsAutoOpen() async throws {
+    @Test("Opening at the start is reported as an auto-open with the app state")
+    func reportsAutoOpen() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
         await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
-        fakes.openNavigates = false
 
         fakes.applicationState = .inactive
         fakes.now = startsAt.addingTimeInterval(2)
         center.refresh()
 
-        let event = try #require(fakes.reporter.events.last)
-        #expect(fakes.reporter.events.map(\.step) == [.productOpened])
-        #expect(event.openSource == .autoOpen)
-        #expect(event.appState == .inactive)
-        #expect(event.navigated == false)
-        #expect(event.occurredAt == startsAt.addingTimeInterval(2))
+        #expect(
+            fakes.recorder.events == [
+                expectedReminderHostEvent(
+                    "product_opened",
+                    productId: productId,
+                    startsAt: startsAt,
+                    occurredAt: startsAt.addingTimeInterval(2),
+                    tags: ["reminder.open_source": "auto_open", "host.app_state": "inactive"]
+                )
+            ]
+        )
     }
 
-    @Test("A start reached past the grace is reported as missed, and nothing opens")
-    func reportsMissedStart() async throws {
+    @Test("An auto-open that finds the product already on screen is not reported")
+    func autoOpenWithoutNavigationIsNotReported() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))
         await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+        fakes.openNavigates = false
 
-        fakes.applicationState = .background
-        fakes.now = startsAt.addingTimeInterval(600)
+        fakes.now = startsAt.addingTimeInterval(2)
         center.refresh()
 
-        let event = try #require(fakes.reporter.events.last)
-        #expect(fakes.reporter.events.map(\.step) == [.missed])
-        #expect(event.appState == .background)
-        #expect(event.occurredAt == startsAt.addingTimeInterval(600))
-        #expect(fakes.opened.isEmpty)
+        #expect(fakes.opened == [productId])
+        #expect(fakes.recorder.events.isEmpty)
     }
 
     @Test("A ringing alarm is reported once, for the product that holds it")
@@ -324,13 +303,26 @@ struct ProductGameReminderCenterTests {
         for alarmIds: Set<UUID> in [[UUID()], [alarmId], [alarmId], [otherAlarmId]] {
             fakes.alarmAlerts.yield(alarmIds)
         }
-        try await waitUntil { fakes.reporter.events.count == 2 }
+        try await waitUntil { fakes.recorder.events.count == 2 }
 
-        let events = fakes.reporter.events
-        #expect(events.map(\.step) == [.fired, .fired])
-        #expect(events.map(\.productId) == [productId, other])
-        #expect(events.first?.delivery == .alarm)
-        #expect(events.first?.occurredAt == startsAt.addingTimeInterval(1))
+        #expect(
+            fakes.recorder.events == [
+                expectedReminderHostEvent(
+                    "fired",
+                    productId: productId,
+                    startsAt: startsAt,
+                    occurredAt: startsAt.addingTimeInterval(1),
+                    tags: ["reminder.delivery": "alarm", "host.app_state": "active"]
+                ),
+                expectedReminderHostEvent(
+                    "fired",
+                    productId: other,
+                    startsAt: startsAt.addingTimeInterval(60),
+                    occurredAt: startsAt.addingTimeInterval(1),
+                    tags: ["reminder.delivery": "alarm", "host.app_state": "active"]
+                )
+            ]
+        )
     }
 
     @Test("A ringing alarm is recorded before refresh drops its past slot")
@@ -341,12 +333,24 @@ struct ProductGameReminderCenterTests {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60), settings: settings)
         await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
         fakes.currentAlertingAlarms = [alarmId]
-        fakes.now = startsAt.addingTimeInterval(600)
+        fakes.now = startsAt.addingTimeInterval(1)
 
         center.refresh()
 
-        #expect(fakes.reporter.events.map(\.step) == [.fired, .missed])
+        #expect(fakes.recorder.events.map(\.name) == ["host.reminder.fired", "host.reminder.product_opened"])
         #expect(center.slots.isEmpty)
+    }
+
+    @Test("With no alarm ringing, a refresh does not look up the held reminders' alarms")
+    func refreshWithoutRingingAlarmReadsNoAlarmId() async {
+        let settings = ReadCountingSettingsManager()
+        settings.set(string: UUID().uuidString, for: GameReminderStorageKeys.product(productId).alarmId)
+        let (center, _) = makeSUT(now: startsAt.addingTimeInterval(-60), settings: settings)
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
+
+        center.refresh()
+
+        #expect(settings.stringReads.isEmpty)
     }
 
     @Test("A cancel while calendar access is being asked adds no event")
@@ -380,9 +384,9 @@ private final class Fakes: @unchecked Sendable {
     var opened: [String] = []
     var openNavigates = true
     let calendar = RecordingCalendar()
-    let reporter = RecordingGameReminderHostEventRecorder()
+    let recorder = RecordingHostEventRecorder()
     var currentAlertingAlarms: Set<UUID> = []
-    var diagnostics: GameReminderDiagnostics { reporter.diagnostics }
+    var diagnostics: GameReminderDiagnostics { .recording(into: recorder) }
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
     private let alarmAlertStream: AsyncStream<Set<UUID>>
     private let alarmAvailable: Bool

@@ -1,89 +1,108 @@
 import Foundation
 import IssueMonitoring
+import UIKit
 
 /// One step of a product's game reminder, from booking the alarm to opening the product. Each step names
 /// the product and the game start, so a missed game can be followed through the host.
-public struct GameReminderEvent: Sendable, Equatable {
-    public enum Step: String, Sendable {
+struct GameReminderEvent: Equatable {
+    enum Step: String {
         case scheduled
         case notScheduled = "not_scheduled"
         case fired
         case tapped
         case productOpened = "product_opened"
-        case missed
         case cancelled
     }
 
-    public enum Delivery: String, Sendable {
+    enum Delivery: String {
         case alarm
         case notification
     }
 
-    public enum SkipReason: String, Sendable {
+    enum SkipReason: String {
         case notAuthorized = "not_authorized"
         case startInPast = "start_in_past"
         case failed
     }
 
-    public enum OpenSource: String, Sendable {
+    enum OpenSource: String {
         case autoOpen = "auto_open"
         case alarm
     }
 
-    public enum AppState: String, Sendable {
+    enum AppState: String {
         case active
         case inactive
         case background
+
+        init?(_ state: UIApplication.State) {
+            switch state {
+            case .active:
+                self = .active
+            case .inactive:
+                self = .inactive
+            case .background:
+                self = .background
+            @unknown default:
+                return nil
+            }
+        }
     }
 
-    public let step: Step
-    public let productId: String
+    let step: Step
+    let productId: String
     /// Nil only for an alarm booked before the start was attached to it.
-    public let startsAt: Date?
-    public let occurredAt: Date
-    public var delivery: Delivery?
-    public var skipReason: SkipReason?
-    public var openSource: OpenSource?
-    public var appState: AppState?
-    /// False when opening found the product already on screen.
-    public var navigated: Bool?
+    let startsAt: Date?
+    let occurredAt: Date
+    let delivery: Delivery?
+    let skipReason: SkipReason?
+    let openSource: OpenSource?
+    let appState: AppState?
 
-    public init(step: Step, productId: String, startsAt: Date?, occurredAt: Date = Date()) {
+    init(
+        step: Step,
+        productId: String,
+        startsAt: Date?,
+        occurredAt: Date = Date(),
+        delivery: Delivery? = nil,
+        skipReason: SkipReason? = nil,
+        openSource: OpenSource? = nil,
+        appState: AppState? = nil
+    ) {
         self.step = step
         self.productId = productId
         self.startsAt = startsAt
         self.occurredAt = occurredAt
-    }
-
-    public var name: String {
-        "host.reminder.\(step.rawValue)"
+        self.delivery = delivery
+        self.skipReason = skipReason
+        self.openSource = openSource
+        self.appState = appState
     }
 
     /// Times are device wall clock. The alarm rings at the start, so `delay_after_start_ms` is also how
     /// late a step came against the alarm's fire time.
-    public func hostEvent(origin: HostEventOrigin) -> HostEvent {
+    func hostEvent(origin: HostEventOrigin, monotonicMilliseconds: Int) -> HostEvent {
         var tags = [
-            "host.app_variant": origin.appVariant,
-            "host.platform": "ios",
             "host.os_version": origin.osVersion,
             "reminder.product_id": productId
         ]
-        tags["host.native_app_version"] = origin.appVersion
         tags["reminder.delivery"] = delivery?.rawValue
         tags["reminder.skip_reason"] = skipReason?.rawValue
         tags["reminder.open_source"] = openSource?.rawValue
         tags["host.app_state"] = appState?.rawValue
 
-        var extras: [String: HostEventValue] = [
-            "app.launch_id": .string(origin.launchID.uuidString.lowercased())
-        ]
-        extras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
-        extras["reminder.navigated"] = navigated.map(HostEventValue.boolean)
+        var extras = ["app.launch_id": HostEventValue.string(origin.launchID.uuidString.lowercased())]
         if let startsAt {
             extras["reminder.starts_at_unix_ms"] = .integer(Int(startsAt.timeIntervalSince1970 * 1_000))
             extras["reminder.delay_after_start_ms"] = .integer(Int(occurredAt.timeIntervalSince(startsAt) * 1_000))
         }
 
-        return HostEvent(name: name, tags: tags, extras: extras)
+        return .make(
+            name: "host.reminder.\(step.rawValue)",
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: tags,
+            extras: extras
+        )
     }
 }

@@ -102,9 +102,9 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
-            var event = GameReminderEvent(step: .scheduled, productId: productId, startsAt: fireDate)
-            event.delivery = .alarm
-            diagnostics.record(event)
+            diagnostics.record(
+                GameReminderEvent(step: .scheduled, productId: productId, startsAt: fireDate, delivery: .alarm)
+            )
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
             recordNotScheduled(.failed, gameDate: fireDate, productId: productId)
@@ -112,9 +112,9 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     }
 
     private func recordNotScheduled(_ reason: GameReminderEvent.SkipReason, gameDate: Date, productId: ProductId) {
-        var event = GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate)
-        event.skipReason = reason
-        diagnostics.record(event)
+        diagnostics.record(
+            GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate, skipReason: reason)
+        )
     }
 
     private func performCancelReminder(alarmId: UUID?) {
@@ -153,7 +153,6 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
         playIntent.productId = productId
-        playIntent.startsAt = date
 
         try await alarmManger.scheduleGameAlarm(id: newAlarmId, at: date, playIntent: playIntent)
     }

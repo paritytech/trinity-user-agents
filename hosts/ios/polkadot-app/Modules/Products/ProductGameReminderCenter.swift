@@ -130,14 +130,6 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
             ringAlarm: ringAlarm,
             calendarStartsAt: slot(for: productId)?.calendarStartsAt
         )
-        guard next.startsAt > dateProvider.now else {
-            if slot(for: productId) != nil {
-                drop(productId)
-                refresh()
-            }
-            record(.notScheduled, for: next) { $0.skipReason = .startInPast }
-            return
-        }
         deliver(next)
         refresh()
 
@@ -176,11 +168,11 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                     continue
                 }
                 drop(slot.productId)
-                if isLate {
-                    record(.missed, for: slot)
-                } else if !opened {
+                if !isLate, !opened {
                     opened = true
-                    recordAutoOpen(slot, navigated: productOpener.open(productId: slot.productId))
+                    if productOpener.open(productId: slot.productId) {
+                        record(.productOpened, for: slot, openSource: .autoOpen)
+                    }
                 }
                 continue
             }
@@ -322,6 +314,9 @@ private extension ProductGameReminderCenter {
     }
 
     func recordFired(_ alarmIds: Set<UUID>) {
+        guard !alarmIds.isEmpty else {
+            return
+        }
         for slot in slots {
             guard let alarmId = settingsManager.string(for: GameReminderStorageKeys.product(slot.productId).alarmId)
                 .flatMap(UUID.init(uuidString:)),
@@ -329,40 +324,27 @@ private extension ProductGameReminderCenter {
                 firedAlarmIds.insert(alarmId).inserted else {
                 continue
             }
-            record(.fired, for: slot) { $0.delivery = .alarm }
-        }
-    }
-
-    func recordAutoOpen(_ slot: Slot, navigated: Bool) {
-        record(.productOpened, for: slot) { event in
-            event.openSource = .autoOpen
-            event.navigated = navigated
+            record(.fired, for: slot, delivery: .alarm)
         }
     }
 
     func record(
         _ step: GameReminderEvent.Step,
         for slot: Slot,
-        configure: (inout GameReminderEvent) -> Void = { _ in }
+        delivery: GameReminderEvent.Delivery? = nil,
+        openSource: GameReminderEvent.OpenSource? = nil
     ) {
-        record(step, productId: slot.productId, startsAt: slot.startsAt, configure: configure)
-    }
-
-    func record(
-        _ step: GameReminderEvent.Step,
-        productId: ProductId,
-        startsAt: Date?,
-        configure: (inout GameReminderEvent) -> Void = { _ in }
-    ) {
-        var event = GameReminderEvent(
-            step: step,
-            productId: productId,
-            startsAt: startsAt,
-            occurredAt: dateProvider.now
+        diagnostics.record(
+            GameReminderEvent(
+                step: step,
+                productId: slot.productId,
+                startsAt: slot.startsAt,
+                occurredAt: dateProvider.now,
+                delivery: delivery,
+                openSource: openSource,
+                appState: GameReminderEvent.AppState(applicationState.applicationState)
+            )
         )
-        event.appState = GameReminderEvent.AppState(applicationState.applicationState)
-        configure(&event)
-        diagnostics.record(event)
     }
 
     func wake(at date: Date, from now: Date) {

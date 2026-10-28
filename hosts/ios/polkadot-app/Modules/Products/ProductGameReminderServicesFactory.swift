@@ -13,7 +13,7 @@ protocol ProductGameReminderServicesMaking {
     /// Built at add time, so its store sees the current calendar grant.
     func makeCalendar() -> any GameCalendarServicing
     /// The ids of the alarms ringing now, each time AlarmKit reports a change while the app runs. Never yields
-    /// without AlarmKit.
+    /// without AlarmKit or a build that reports.
     func alertingAlarms() -> AsyncStream<Set<UUID>>
     /// The alarms already ringing when the app refreshes its stored reminders.
     func currentAlertingAlarmIds() -> Set<UUID>
@@ -50,7 +50,7 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
     }
 
     func alertingAlarms() -> AsyncStream<Set<UUID>> {
-        guard #available(iOS 26.1, *) else {
+        guard IssueMonitoringFactory.isReportingSupported, #available(iOS 26.1, *) else {
             return AsyncStream { $0.finish() }
         }
         let updates = AlarmManager.shared.alarmUpdates
@@ -66,7 +66,8 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
     }
 
     func currentAlertingAlarmIds() -> Set<UUID> {
-        guard #available(iOS 26.1, *),
+        guard IssueMonitoringFactory.isReportingSupported,
+              #available(iOS 26.1, *),
               let alarms = try? AlarmManager.shared.alarms else {
             return []
         }
