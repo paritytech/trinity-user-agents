@@ -347,10 +347,10 @@ pub trait Chat: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Apply what the user did in a room the product keeps. Send one item, then
-	/// the host closes the query. For a new message or a payment, the item is the
-	/// stored message. Store it under the `messageId` of the action when the
-	/// action has one. For each other action, the item is an acknowledgement.
+	/// Apply what the user did in a room the product keeps. Send one item, then the
+	/// host closes the query. For a new message, the item is the stored message.
+	/// Store it under the `messageId` of the action when the action has one. For
+	/// each other action, the item is an acknowledgement.
 	///
 	/// ```ts
 	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
@@ -368,22 +368,6 @@ pub trait Chat: Send + Sync {
 	///         body: action.value.body,
 	///         status: "Sent",
 	///         replyTo: action.value.replyTo,
-	///         reactions: [],
-	///         request: false,
-	///       },
-	///     });
-	///     return;
-	///   }
-	///   if (action.tag === "SendPayment") {
-	///     // Send the coins to the contact before you send the answer.
-	///     send({
-	///       tag: "MessageCreated",
-	///       value: {
-	///         messageId: action.value.messageId,
-	///         origin: { participantId: "user" },
-	///         timestamp: action.value.timestamp,
-	///         body: { tag: "Payment", value: { amount: action.value.totalValue, legacy: false } },
-	///         status: "Sent",
 	///         reactions: [],
 	///         request: false,
 	///       },
