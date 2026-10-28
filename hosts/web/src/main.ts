@@ -2,7 +2,6 @@ import { createWebWorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { AuthState } from "@parity/truapi-host";
 import { TRUAPI_CODEC_VERSION, TRUAPI_WIRE_SCHEMA_HASH } from "@parity/truapi";
-import { createInAppDebugger } from "@parity/truapi-debugger";
 import {
   effectiveProductIdFor,
   completeAddress,
@@ -27,9 +26,6 @@ import {
 import { bindRecentsMenu } from "./app/address-recents.js";
 import { bindChrome } from "./app/chrome.js";
 import { copyInPage } from "./app/copy.js";
-import { bindDockResize } from "../tools/dock-resize.js";
-import { resolveSource } from "./products/dotns.js";
-import { createFrameTap } from "../tools/inspector/frame-tap.js";
 import { messagePortBridge } from "./chat/draft/contract.js";
 import { ChatV2Host } from "./chat/draft/host.js";
 import { LocalChatDemo, demoAllowed } from "../tools/demos/local-demo.js";
@@ -38,7 +34,6 @@ import {
   NOVA_WORKER_PRODUCT,
   NovaWorkerMode,
 } from "../tools/demos/worker-mode.js";
-import { sessionChatKeys } from "./chat/nova-session.js";
 import { createHostCallbacks } from "./app/callbacks.js";
 import { gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";
@@ -67,38 +62,24 @@ import {
   readProductAccount,
   type ProductChainState,
 } from "./app/product-chain.js";
-import { StageLoading, documentsBeforeProduct } from "./products/loading.js";
+import { StageLoading } from "./products/loading.js";
 import {
   DESTINATIONS,
   DESTINATION_LABELS,
   destinationOf,
   isProductDestination,
-  loadAddresses,
-  resolveNavigation,
-  saveAddress,
-  type Destination,
-  type DockAddresses,
 } from "./app/shell.js";
 import { drawPocket } from "./pocket/screen.js";
-import {
-  cardKey,
-  cardLaunchPath,
-  pinnedCards,
-  pocketPlatform,
-} from "./pocket/pocket.js";
-import { PocketFaces, type PocketCardKey } from "./pocket/faces.js";
+import { cardKey, pocketPlatform } from "./pocket/pocket.js";
+import { PocketFaces } from "./pocket/faces.js";
 import { bindProductCard } from "./pocket/card-view.js";
 import { bulletinImageUrl } from "./products/render.js";
-import { resolveWidget } from "./pocket/widget.js";
 import { ChatScreen } from "./chat/screen.js";
 import { bindWorkersMenu } from "./products/workers-menu.js";
-import {
-  NotificationStore,
-  notificationsKey,
-} from "./notifications/notifications.js";
+import { NotificationStore } from "./notifications/notifications.js";
 import { NotificationsScreen } from "./notifications/screen.js";
 import { ChatTabs, type ChatTab } from "./chat/tabs.js";
-import { AppsShelf, type ShelfApp } from "./app/apps-shelf.js";
+import { AppsShelf } from "./app/apps-shelf.js";
 import { ChatInbox } from "./chat/inbox.js";
 import {
   HostContacts,
@@ -114,28 +95,15 @@ import {
 import { chainDirectory, lookupOwner } from "./chat/nova/directory.js";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import { accountProofs } from "./chat/account-proofs.js";
-import { ProductChat, productChatKey } from "./chat/product-chat.js";
+import { ProductChat } from "./chat/product-chat.js";
 import { ProductWorkers } from "./products/product-workers.js";
 import { resolveWorker } from "./products/worker-manifest.js";
-import { mountChatDiagnostics } from "../tools/inspector/chat-diagnostics-view.js";
 import { ChatDiagnostics } from "../tools/inspector/diagnostics.js";
-import { openProduct, type OpenProduct } from "./products/product.js";
-import {
-  notOpenableText,
-  productDetailsText,
-  productStatusText,
-  type Opened,
-} from "./products/status.js";
-import {
-  hostBase,
-  loaderUrl,
-  mountScope,
-  requireSecureHost,
-} from "./products/loader/mount.js";
+import { productDetailsText, productStatusText } from "./products/status.js";
+import { hostBase } from "./products/loader/mount.js";
 import { HostStorage, localStorageChanges } from "./platform/storage.js";
 import { SerialQueue } from "./app/serial-queue.js";
 import { versionSections, type VersionRow } from "./app/versions.js";
-import { bindViewport } from "../tools/viewport.js";
 import { SearchCard } from "./app/search-card.js";
 import { bindDeviceMode } from "./app/device-mode.js";
 import { SearchPeople } from "./contacts/search-people.js";
@@ -146,7 +114,14 @@ import {
   walletLabel,
 } from "./app/wallet-label.js";
 import { walletPanel, type WalletMode } from "./app/wallet-panel.js";
-import { WalletStore, type Wallet } from "./platform/wallets.js";
+import { WalletStore } from "./platform/wallets.js";
+import {
+  ProductNavigation,
+  SANDBOX_FAILED,
+  scopeOf,
+} from "./app/navigation.js";
+import { SessionMembership, WalletSession } from "./app/session.js";
+import { mountTools } from "../tools/mount.js";
 
 const MAX_LOG_LINES = 500;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
@@ -202,8 +177,6 @@ const productAddress = element<HTMLInputElement>("product-address");
 const productRecents = element<HTMLUListElement>("product-recents");
 const productIdSummary = element("product-id-summary");
 const productDot = element("product-dot");
-/** How the sandbox status of a product whose loader failed starts. */
-const SANDBOX_FAILED = "Sandbox failed:";
 const appProblem = element("app-problem");
 const productIdReset = element<HTMLButtonElement>("product-id-reset");
 const productIdEffective = element("product-id-effective");
@@ -297,8 +270,6 @@ const chatV2 = new ChatV2Host({
 });
 /** The host's own names for the people of a chat product's contact rooms. */
 const hostNames = new HostNames();
-/** The wallet and network the v2 declarations belong to. */
-let chatV2Scope: string | null = null;
 const workerFrames = document.createElement("div");
 workerFrames.id = "worker-frames";
 workerFrames.hidden = true;
@@ -321,7 +292,7 @@ const productWorkers = new ProductWorkers({
   tap: (channel) =>
     runtime === null
       ? undefined
-      : createFrameTap(inspector, channel, runtime.coreWireSchemaHash),
+      : tools.tap(channel, runtime.coreWireSchemaHash),
   log,
   chatV2: {
     connect: (productId, port) =>
@@ -460,8 +431,8 @@ const devSession =
         tap: (productId) =>
           runtime === null
             ? undefined
-            : createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
-        showProduct: () => void selectDestination("browse"),
+            : tools.tap(productId, runtime.coreWireSchemaHash),
+        showProduct: () => void navigation.selectDestination("browse"),
         pickContact: (asker): Promise<{ account: string } | null> =>
           hostContacts.choose(asker),
         log,
@@ -475,7 +446,7 @@ const testUser = devSession?.testUser ?? null;
  * worker's start references read one list. A test user blocks no one.
  */
 function blockedPeople(): HexString[] {
-  const wallet = activeWallet;
+  const wallet = walletSession.active;
   return testUser !== null || wallet === null
     ? []
     : blockedAccounts(localStorage, chatRecordKey(activeNetwork.id, wallet.id));
@@ -562,6 +533,25 @@ productWorkers.onChange(() => {
 chatInbox.onChange((change) => {
   if (change.type === "session") chatDemo?.render();
 });
+/** Everything that belongs to the signed-in session, handed each change in order. */
+const sessionMembers = new SessionMembership({
+  network: activeNetwork,
+  pocketFaces,
+  productWorkers,
+  productChat,
+  notifications: notifications?.store ?? null,
+  signedOutNotifications: devSession?.notificationsScope ?? null,
+  localChatDemo,
+  novaWorkerMode,
+  hostNames,
+  chatV2,
+  chatInbox,
+  engineSwitch: () => engineSwitch,
+  proofs: async (productId) => {
+    if (runtime === null) throw new Error("The core is not running.");
+    return accountProofs(runtime, productId);
+  },
+});
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
   button: document.querySelector<HTMLButtonElement>(
@@ -581,13 +571,13 @@ const appsShelf = new AppsShelf(
     },
     open(key) {
       const back = DESTINATIONS.find((known) => known === key) ?? null;
-      if (isProductDestination(back)) void selectDestination(back);
-      else if (held.has(key))
+      if (isProductDestination(back)) void navigation.selectDestination(back);
+      else if (navigation.isHeld(key))
         void serial(async () => {
-          bringApp(key);
+          navigation.bringApp(key);
         });
     },
-    close: closeApp,
+    close: (key) => navigation.closeApp(key),
   },
 );
 notifications?.store.onChange(renderShelf);
@@ -621,65 +611,10 @@ element("pill").addEventListener("click", () => appsShelf.close(false));
 element("apps-toggle").addEventListener("click", () => searchCard.close(false));
 const searchStatus = element("search-status");
 
-const inspector = createInAppDebugger();
-const inspectorMount = element("inspector-mount");
-inspector.mount(inspectorMount);
-const chatDiagnosticsView = mountChatDiagnostics(
-  element("chat-diagnostics"),
-  chatDiagnostics,
-);
-const inspectorNote = element("inspector-note");
-const INSPECTOR_NOTES = {
-  wire: "Frames stay in this tab and may carry sensitive payloads.",
-  chat: "Chat events are not TrUAPI frames. Metadata only unless payload capture is on; kept in memory and cleared when the session changes.",
-} as const;
-const inspectorViewButtons = [
-  ...document.querySelectorAll<HTMLButtonElement>("[data-inspector-view]"),
-];
-/** Show the TrUAPI traces or the chat events in the inspector. */
-function showInspectorView(view: keyof typeof INSPECTOR_NOTES): void {
-  for (const button of inspectorViewButtons)
-    button.setAttribute(
-      "aria-selected",
-      String(button.dataset.inspectorView === view),
-    );
-  inspectorMount.hidden = view !== "wire";
-  chatDiagnosticsView.show(view === "chat");
-  inspectorNote.textContent = INSPECTOR_NOTES[view];
-}
-for (const button of inspectorViewButtons)
-  button.addEventListener("click", () =>
-    showInspectorView(
-      button.dataset.inspectorView === "chat" ? "chat" : "wire",
-    ),
-  );
-bindDockResize(element("devtools-resize"), element("devtools"));
-
-bindViewport({
-  select: element<HTMLSelectElement>("viewport"),
-  scale: element("viewport-scale"),
-  area: element("viewport-area"),
-  frame: productFrame,
-  fills: window.matchMedia("(max-width: 900px)"),
-  custom: {
-    group: element("viewport-custom"),
-    width: element<HTMLInputElement>("viewport-width"),
-    height: element<HTMLInputElement>("viewport-height"),
-  },
-  handle: element("viewport-handle"),
-  note: element("viewport-note"),
-  caption: element("viewport-caption"),
-  presets: [
-    ...document.querySelectorAll<HTMLButtonElement>(
-      "#dev-preview [data-viewport]",
-    ),
-  ],
-  frames: [
-    ...document.querySelectorAll<HTMLButtonElement>(
-      "#dev-preview [data-frame]",
-    ),
-  ],
-  frameGroup: element("viewport-frames"),
+const tools = mountTools({
+  element,
+  productFrame,
+  diagnostics: chatDiagnostics,
 });
 
 const versionsList = element("versions");
@@ -779,44 +714,42 @@ const walletInfo = new WalletPublicInfoStore(localStorage);
 const storage = new HostStorage(localStorage, localStorageChanges);
 
 let runtime: WorkerPairingHostRuntime | null = null;
-let activeWallet: Wallet | null = null;
-let product: OpenProduct | null = null;
-let opened: Opened | null = null;
-/** Whether the open product's id was entered rather than derived. */
-let openedWithOverride = false;
-/** The origin the entered product id was last opened with, for the log. */
-let overrideOrigin: string | null = null;
-/** What the sandbox loader last said about the open product, until the page takes over. */
-let sandboxStatus = "";
-
-/**
- * The dock destination the product in front belongs to, or null for a product
- * a link opened. Choosing a destination sends the one in front behind it
- * instead of ending it, so Chat keeps running while Browse is open.
- */
-let destination: Destination | null = testUser === null ? null : "browse";
-let dockAddresses: DockAddresses = loadAddresses(
-  localStorage,
-  activeNetwork.id,
-);
-
-/** A product held behind the one in front, with the bookkeeping that belongs to it. */
-interface Held {
-  product: OpenProduct;
-  opened: Opened | null;
-  entered: boolean;
-  origin: string | null;
-  sandbox: string;
-  domains: string[];
-}
-/**
- * The products running behind the one in front: a dock destination's under
- * the destination, and an app opened by a link or an address under
- * {@link appKey}, one per product, until it is closed.
- */
-const held = new Map<string, Held>();
-/** Where an app that belongs to no destination is held. */
-const appKey = (productId: string): string => `app:${productId}`;
+/** The product in front, the ones held behind it, and how each is opened. */
+const navigation: ProductNavigation = new ProductNavigation({
+  network: activeNetwork,
+  base: BASE,
+  slot: productSlot,
+  statusLine: productStatus,
+  loading,
+  serial,
+  walletId: (): string | null => walletSession.active?.id ?? null,
+  testUser: testUser !== null,
+  tap: (current, productId) => tools.tap(productId, current.coreWireSchemaHash),
+  showAddress: (text) => {
+    addressInput.value = text;
+  },
+  clearAddress: () => {
+    addressInput.value = "";
+    renderAddress();
+  },
+  render: renderProduct,
+  resumed: () => void refreshPermissions(),
+  recorded: (entry) => {
+    recents.record(recentScope(), entry, activeNetwork.id);
+    recentsMenu.refresh();
+    renderProductRecents();
+  },
+  log,
+});
+/** The signed-in wallet, and how it changes. */
+const walletSession: WalletSession = new WalletSession({
+  network: activeNetwork,
+  storage,
+  walletInfo,
+  navigation,
+  serial,
+  log,
+});
 
 /**
  * Session changes and product opens run one at a time, in order. Opening a
@@ -848,7 +781,7 @@ let importMode: WalletMode | null = null;
 function renderWalletPanel(): void {
   const panel = walletPanel({
     saved: savedCount,
-    activeId: activeWallet?.id ?? null,
+    activeId: walletSession.active?.id ?? null,
     selectedId: wallets.has(walletSelect.value) ? walletSelect.value : "",
   });
   walletSelect.hidden = !panel.showPicker;
@@ -868,7 +801,7 @@ function renderWalletPanel(): void {
 }
 
 function renderWallets(): void {
-  const selected = walletSelect.value || activeWallet?.id || "";
+  const selected = walletSelect.value || walletSession.active?.id || "";
   const saved = wallets.list();
   const problem = wallets.problem();
   walletSelect.replaceChildren(
@@ -896,15 +829,17 @@ function renderWallets(): void {
 function renderControls(): void {
   const ready = runtime !== null && !queue.busy;
   signInButton.disabled =
-    !ready || walletSelect.value === activeWallet?.id || testUser !== null;
-  signOutButton.disabled = !ready || activeWallet === null;
+    !ready ||
+    walletSelect.value === walletSession.active?.id ||
+    testUser !== null;
+  signOutButton.disabled = !ready || walletSession.active === null;
   forgetButton.disabled = !ready || !wallets.has(walletSelect.value);
   addWalletButton.disabled = !ready || testUser !== null;
   openButton.disabled = !ready;
   addressGo.disabled = !ready;
-  closeButton.disabled = !ready || product === null;
+  closeButton.disabled = !ready || navigation.product === null;
   resetDataButton.disabled =
-    !ready || product === null || activeWallet === null;
+    !ready || navigation.product === null || walletSession.active === null;
   renderWalletPanel();
   renderAddress();
   renderDock();
@@ -920,7 +855,7 @@ function renderAddress(): void {
   const typed = completeAddress(addressInput.value, activeNetwork);
   const dirty =
     typed !== "" &&
-    typed !== completeAddress(opened?.address ?? "", activeNetwork);
+    typed !== completeAddress(navigation.opened?.address ?? "", activeNetwork);
   addressForm.dataset.dirty = String(dirty);
   // The dimmed TLD follows a bare label. A leading space would shift it, so it waits.
   const suffix =
@@ -1008,12 +943,13 @@ function errorText(error: unknown): string {
 }
 
 function renderProduct(): void {
+  const { product, opened, sandboxStatus } = navigation;
   document.body.dataset.product = product ? "open" : "closed";
   addressId.hidden = product === null;
   addressId.textContent = product ? `as ${product.productId}` : "";
   const basis = opened?.via === "name" ? "the name" : "the address";
   addressId.title = product
-    ? `Product id ${product.productId}, ${openedWithOverride ? "entered by you" : `derived from ${basis}`}. Not verified.`
+    ? `Product id ${product.productId}, ${navigation.entered ? "entered by you" : `derived from ${basis}`}. Not verified.`
     : "";
   productStatus.textContent = product
     ? productStatusText(product, opened, sandboxStatus, window.isSecureContext)
@@ -1040,6 +976,7 @@ function renderProduct(): void {
 
 /** Mark the dock: where the product in front belongs, and which destinations still run behind it. */
 function renderDock(): void {
+  const { product, destination, dockAddresses } = navigation;
   const ready = runtime !== null && !queue.busy;
   for (const { destination: id, button } of dockButtons) {
     button.setAttribute("aria-current", String(destination === id));
@@ -1055,7 +992,7 @@ function renderDock(): void {
       continue;
     }
     button.dataset.live = String(
-      held.has(id) || (destination === id && product !== null),
+      navigation.isHeld(id) || (destination === id && product !== null),
     );
     button.title =
       dockAddresses[id] === ""
@@ -1077,39 +1014,6 @@ function renderDock(): void {
       ? "Pick Chat, Pocket or Browse, or open a product with the search button."
       : "Open a name or URL with the search button. The host remembers it for this tab.";
   renderShelf();
-}
-
-/** When each open product was opened, so the shelf keeps them in that order. */
-const openedOrder = new WeakMap<OpenProduct, number>();
-let openings = 0;
-
-/** The products open in this tab, in the order they were opened, the one in front marked. */
-function openApps(): ShelfApp[] {
-  const app = (
-    key: string,
-    open: OpenProduct,
-    how: Opened | null,
-    front: boolean,
-  ): ShelfApp & { instance: OpenProduct } => ({
-    instance: open,
-    key,
-    // A name reads as itself; a URL product by its id, such as its host.
-    name:
-      how?.via === "name"
-        ? displayAddress(how.address, activeNetwork)
-        : open.productId,
-    productId: open.productId,
-    front,
-  });
-  const order = (open: OpenProduct) => openedOrder.get(open) ?? 0;
-  return [
-    ...(product === null ? [] : [app("front", product, opened, true)]),
-    ...[...held].map(([key, entry]) =>
-      app(key, entry.product, entry.opened, false),
-    ),
-  ]
-    .sort((left, right) => order(left.instance) - order(right.instance))
-    .map(({ instance: _instance, ...shown }) => shown);
 }
 
 const focusCapsule = element<HTMLButtonElement>("dev-toggle");
@@ -1135,7 +1039,7 @@ function renderShelf(): void {
   renderCoreDot();
   const store = notifications?.store ?? null;
   appsShelf.render({
-    apps: openApps(),
+    apps: navigation.openApps(),
     inbox:
       store === null
         ? null
@@ -1151,29 +1055,6 @@ function renderShelf(): void {
   });
 }
 
-/** Close a product from the Apps shelf: the one in front, or one running behind. */
-function closeApp(key: string): void {
-  void serial(async () => {
-    if (key === "front") {
-      if (product === null) return;
-      const name = product.productId;
-      closeProduct();
-      sessionStorage.removeItem(tabProductKey(activeNetwork.id));
-      log(`closed ${name}`);
-      return;
-    }
-    const entry = held.get(key);
-    if (entry === undefined) return;
-    entry.product.dispose();
-    held.delete(key);
-    const back = DESTINATIONS.find((known) => known === key) ?? null;
-    log(
-      `closed ${entry.product.productId}, which ran behind${isProductDestination(back) ? ` ${DESTINATION_LABELS[back]}` : ""}`,
-    );
-    renderProduct();
-  });
-}
-
 /** Chat's tab bar: show the conversations or the Inbox, in place. */
 function showChatTab(tab: ChatTab): void {
   chatTab = tab;
@@ -1186,8 +1067,8 @@ function showChatTab(tab: ChatTab): void {
 function openInbox(): void {
   if (notifications === null) return;
   chatTab = "inbox";
-  void selectDestination("chat").then(() => {
-    if (destination !== "chat") return;
+  void navigation.selectDestination("chat").then(() => {
+    if (navigation.destination !== "chat") return;
     showChatTab("inbox");
   });
 }
@@ -1197,6 +1078,7 @@ function openInbox(): void {
  * first time it is shown; Chat draws itself from its engine.
  */
 function renderHostScreens(): void {
+  const { destination } = navigation;
   const surface =
     destination === "chat"
       ? chatTab === "inbox" && notifications !== null
@@ -1204,7 +1086,7 @@ function renderHostScreens(): void {
         : "chat"
       : destination === "pocket"
         ? destination
-        : testUser !== null && product === null
+        : testUser !== null && navigation.product === null
           ? "test-product"
           : "product";
   document.body.dataset.surface = surface;
@@ -1225,7 +1107,7 @@ function renderHostScreens(): void {
                     source.value,
                     activeNetwork.dotns.contentGateway,
                   ),
-            open: () => void openPocketCard(key),
+            open: () => void navigation.openPocketCard(key, pocketStatus),
             log,
           });
         },
@@ -1238,7 +1120,7 @@ function renderHostScreens(): void {
   devSession?.showProduct(surface === "test-product");
   if (destination === "chat" || destination === "pocket")
     lastHost = destination;
-  renderAppChrome(surface === "product" && product !== null);
+  renderAppChrome(surface === "product" && navigation.product !== null);
 }
 
 /**
@@ -1253,7 +1135,7 @@ function renderAppChrome(shown: boolean): void {
   productFrame.dataset.appChrome = String(shown);
   renderAppArea();
   if (!shown) setAppMenu(false);
-  const holds = holdKey() !== null;
+  const holds = navigation.holdKey() !== null;
   appMinimize.hidden = !holds;
   appClose.hidden = holds;
 }
@@ -1280,15 +1162,12 @@ function setAppMenu(open: boolean): void {
 }
 
 /** Close the product in front, as the Product tab's Close does. */
-function closeFront(): void {
-  void serial(async () => {
-    closeProduct();
-    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
-    log("closed the product");
-  });
-}
+const closeFront = (): void => navigation.closeFront();
 
-appMinimize.addEventListener("click", () => void selectDestination(lastHost));
+appMinimize.addEventListener(
+  "click",
+  () => void navigation.selectDestination(lastHost),
+);
 element("app-problem-close").addEventListener("click", closeFront);
 element("app-problem-details").addEventListener("click", () =>
   chrome.show("product"),
@@ -1325,82 +1204,15 @@ document.addEventListener(
   true,
 );
 
-/** Give the Chat screen the signed-in wallet's session, or none. */
+/** Give the Chat screen and everything else of the session the signed-in wallet's session, or none. */
 function syncChatSession(): void {
   const access = chainAccess;
-  const wallet = activeWallet;
-  if (lastAuthState.tag !== "Connected" || access === null || wallet === null) {
-    pocketFaces.setSession(null);
-    productWorkers.setSession(null);
-    productChat.setScope(null);
-    notifications?.store.setScope(devSession?.notificationsScope ?? null);
-    localChatDemo?.stop();
-    novaWorkerMode?.setSession(null);
-    hostNames.setSession(null);
-    if (chatV2Scope !== null) chatV2.reset();
-    chatV2Scope = null;
-    chatInbox.setSession(null);
-    engineSwitch?.render();
-    return;
-  }
-  const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
-    lastAuthState.value;
-  hostNames.setSession({
-    scope: `${activeNetwork.id}:${wallet.id}`,
-    record: () =>
-      localStorage.getItem(chatRecordKey(activeNetwork.id, wallet.id)),
-    directory: () => chainDirectory(access.chain, access.genesis),
-  });
-  // First, so the workers and the inbox below see this session's engine choice.
-  const restartNova = novaWorkerMode?.setSession({
-    network: activeNetwork.id,
-    walletId: wallet.id,
-    identity: `${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
-    keys: () =>
-      sessionChatKeys({
-        entropy: wallet.entropy,
-        networkSuffix: access.networkSuffix,
-        identityAccountId: identityAccountId ?? undefined,
-        chatPublicKey: chatPublicKey ?? undefined,
-      }),
-  });
-  const scope = productChatKey(activeNetwork.id, wallet.id);
-  if (scope !== chatV2Scope) {
-    // The demo belongs to the session it was started in.
-    localChatDemo?.stop();
-    chatV2.reset();
-  }
-  chatV2Scope = scope;
-  productChat.setScope(scope);
-  notifications?.store.setScope(notificationsKey(activeNetwork.id, wallet.id));
-  productWorkers.setSession({ walletId: wallet.id, network: activeNetwork });
-  pocketFaces.setSession({
-    walletId: wallet.id,
-    networkId: activeNetwork.id,
-    cards: pinnedCards(activeNetwork.networkSuffix),
-  });
-  chatInbox.setSession({
-    walletId: wallet.id,
-    entropy: wallet.entropy,
-    network: activeNetwork.id,
-    networkSuffix: access.networkSuffix,
-    identityAccountId: identityAccountId ?? undefined,
-    chatPublicKey: chatPublicKey ?? undefined,
-    username: fullUsername ?? liteUsername ?? undefined,
-    chain: access.chain,
-    genesis: access.genesis,
-    identityBackend: activeNetwork.identityBackend,
-    proofs: async (productId) => {
-      if (runtime === null) throw new Error("The core is not running.");
-      return accountProofs(runtime, productId);
-    },
-  });
-  if (restartNova === true) {
-    // Its frame holds the link of the identity that ended; a new frame asks again.
-    chatV2.forget(NOVA_WORKER_PRODUCT);
-    void productWorkers.restart(NOVA_WORKER_PRODUCT);
-  }
-  engineSwitch?.render();
+  const wallet = walletSession.active;
+  sessionMembers.sync(
+    lastAuthState.tag !== "Connected" || access === null || wallet === null
+      ? null
+      : { wallet, access, account: lastAuthState.value },
+  );
 }
 
 const accountStatusList = element("account-status-rows");
@@ -1430,8 +1242,6 @@ let productChainRun = 0;
 /** The core's saved permission answers for the open product, and which read they came from. */
 let permissions: PermissionsView = { state: "none-open" };
 let permissionsRun = 0;
-/** Domains the core asked about for the open product, in this tab. */
-let askedDomains: string[] = [];
 
 function renderAccountStatus(): void {
   accountStatusList.replaceChildren(
@@ -1442,7 +1252,7 @@ function renderAccountStatus(): void {
           networkName: activeNetwork.displayName,
           networkSuffix:
             chainAccess?.networkSuffix ?? activeNetwork.networkSuffix,
-          walletName: activeWallet?.name ?? null,
+          walletName: walletSession.active?.name ?? null,
         },
         chainState,
       ),
@@ -1467,7 +1277,7 @@ function renderAccountStatus(): void {
  */
 async function refreshPermissions(): Promise<void> {
   const run = ++permissionsRun;
-  const productId = product?.productId;
+  const productId = navigation.product?.productId;
   const ready = runtime;
   if (productId === undefined || ready === null) {
     permissions = { state: "none-open" };
@@ -1477,7 +1287,7 @@ async function refreshPermissions(): Promise<void> {
     permissions = { state: "loading" };
     renderAccountStatus();
     try {
-      const { capabilities, networks } = queriesFor(askedDomains);
+      const { capabilities, networks } = queriesFor(navigation.askedDomains);
       const queries = [...capabilities, ...networks];
       const statuses = await ready.getPermissionAuthorizationStatuses(
         productId,
@@ -1521,13 +1331,13 @@ async function refreshProductAllowance(): Promise<void> {
   const run = ++ledgerRun;
   if (
     productChain.state !== "idle" &&
-    productChain.productId !== product?.productId
+    productChain.productId !== navigation.product?.productId
   ) {
     productChainRun += 1;
     productChain = { state: "idle" };
   }
   void refreshPermissions();
-  const productId = product?.productId;
+  const productId = navigation.product?.productId;
   if (productId === undefined) productAllowance = { state: "none-open" };
   else if (lastAuthState.tag !== "Connected")
     productAllowance = { state: "signed-out", productId };
@@ -1560,7 +1370,7 @@ async function refreshProductAllowance(): Promise<void> {
  */
 async function refreshProductChain(): Promise<void> {
   const access = chainAccess;
-  const productId = product?.productId;
+  const productId = navigation.product?.productId;
   const current = runtime;
   if (
     productId === undefined ||
@@ -1618,9 +1428,10 @@ async function refreshChainStatus(): Promise<void> {
     chainState = { state: "done", checkedAt: new Date(), reading };
     applySessionUsername(publicKey, reading.readings);
     const found = usernameFrom(reading.readings);
-    if (found !== undefined && activeWallet !== null) {
+    const wallet = walletSession.active;
+    if (found !== undefined && wallet !== null) {
       walletInfo.update(
-        activeWallet.id,
+        wallet.id,
         { publicKey, username: found },
         activeNetwork.id,
       );
@@ -1660,7 +1471,7 @@ function applySessionUsername(
   publicKey: string,
   readings: AccountReading[],
 ): void {
-  const wallet = activeWallet;
+  const wallet = walletSession.active;
   if (
     wallet === null ||
     lastAuthState.tag !== "Connected" ||
@@ -1675,8 +1486,8 @@ function applySessionUsername(
     activeNetwork.id,
   );
   if (found === (lastAuthState.value.liteUsername ?? null)) return;
-  void changeSession(async (current) => {
-    if (activeWallet !== wallet) return;
+  void walletSession.change(async (current) => {
+    if (walletSession.active !== wallet) return;
     await current.activateLocalSession(wallet.entropy, found ?? undefined);
     log(
       found === null
@@ -1736,11 +1547,12 @@ accountStatusFold.addEventListener("toggle", () => {
 
 function renderSession(state: AuthState): void {
   lastAuthState = state;
-  if (state.tag === "Connected" && activeWallet !== null) {
+  const wallet = walletSession.active;
+  if (state.tag === "Connected" && wallet !== null) {
     // Public facts only, kept so the picker can tell wallets apart signed out.
     const { publicKey, fullUsername, liteUsername } = state.value;
     walletInfo.update(
-      activeWallet.id,
+      wallet.id,
       { publicKey, username: fullUsername ?? liteUsername ?? undefined },
       activeNetwork.id,
     );
@@ -1757,7 +1569,7 @@ function renderSession(state: AuthState): void {
       const name =
         fullUsername ??
         liteUsername ??
-        activeWallet?.name ??
+        walletSession.active?.name ??
         testUser?.name ??
         "wallet";
       sessionLine.textContent = `Signed in as ${name} · ${abbreviate(publicKey)}`;
@@ -1777,513 +1589,13 @@ function renderSession(state: AuthState): void {
   renderProductRecents();
 }
 
-/**
- * Run a session change with the product closed.
- *
- * A product runtime must not outlive the session it was opened under, so the
- * product is closed first and opened again once the new session is in place.
- */
-function changeSession(
-  change: (runtime: WorkerPairingHostRuntime) => Promise<void>,
-): Promise<void> {
-  return serial(async (runtime) => {
-    const reopen = product;
-    const how = opened;
-    const entered = openedWithOverride;
-    const scope = overrideOrigin ?? "";
-    closeHeld();
-    closeProduct();
-    try {
-      await change(runtime);
-    } finally {
-      // A card's Widget is opened again as a Widget, not as the product's App.
-      if (reopen && how)
-        await openTarget(
-          runtime,
-          { ...how, url: reopen.url },
-          reopen.productId,
-          entered,
-          scope,
-          reopen.executionKind === "Widget" ? "Widget" : "App",
-        );
-    }
-  });
-}
-
-function signIn(wallet: Wallet): Promise<void> {
-  return changeSession(async (runtime) => {
-    if (activeWallet) await signOutOf(runtime);
-    storage.useWallet(wallet.id, activeNetwork.id);
-    activeWallet = wallet;
-    try {
-      await runtime.activateLocalSession(
-        wallet.entropy,
-        walletInfo.get(wallet.id, activeNetwork.id)?.sessionUsername,
-      );
-    } catch (error) {
-      storage.useWallet(null, activeNetwork.id);
-      activeWallet = null;
-      throw new Error(
-        `Could not sign in with ${wallet.name}: ${String(error)}`,
-      );
-    }
-    sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
-    log(`signed in with ${wallet.name}`);
-  });
-}
-
-async function signOutOf(runtime: WorkerPairingHostRuntime): Promise<void> {
-  await runtime.disconnectSession();
-  storage.useWallet(null, activeNetwork.id);
-  sessionStorage.removeItem(tabWalletKey(activeNetwork.id));
-  log(`signed out of ${activeWallet?.name ?? "wallet"}`);
-  activeWallet = null;
-}
-
-function closeProduct(): void {
-  loading.clear();
-  askedDomains = [];
-  product?.dispose();
-  product = null;
-  opened = null;
-  sandboxStatus = "";
-  renderProduct();
-}
-
-/** End every product held behind the one in front. They belong to the session that opened them. */
-function closeHeld(): void {
-  for (const entry of held.values()) entry.product.dispose();
-  held.clear();
-}
-
-/**
- * Where the product in front runs behind: its destination, or its own key as
- * an app. Null when it cannot run behind, as a Pocket card's Widget cannot.
- */
-function holdKey(): string | null {
-  if (product === null) return null;
-  if (isProductDestination(destination)) return destination;
-  return product.executionKind === "App" ? appKey(product.productId) : null;
-}
-
-/**
- * Send the product in front behind the dock, still running, or end it when it
- * cannot run behind. Either way nothing is in front afterwards.
- */
-function leaveFront(): void {
-  const key = holdKey();
-  if (key === null || product === null) {
-    closeProduct();
-    return;
-  }
-  loading.clear();
-  product.setVisible(false);
-  held.set(key, {
-    product,
-    opened,
-    entered: openedWithOverride,
-    origin: overrideOrigin,
-    sandbox: sandboxStatus,
-    domains: askedDomains,
-  });
-  product = null;
-  opened = null;
-  sandboxStatus = "";
-  askedDomains = [];
-  openedWithOverride = false;
-  overrideOrigin = null;
-  renderProduct();
-}
-
-/** Bring a held product back in front exactly as it was left. */
-function resumeFront(back: Held): void {
-  product = back.product;
-  opened = back.opened;
-  openedWithOverride = back.entered;
-  overrideOrigin = back.origin;
-  sandboxStatus = back.sandbox;
-  askedDomains = back.domains;
-  product.setVisible(true);
-  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
-  rememberFront();
-  renderProduct();
-  void refreshPermissions();
-}
-
-/** Keep this tab's way back to the product in front across a reload. */
-function rememberFront(): void {
-  if (product === null || opened === null) return;
-  sessionStorage.setItem(
-    tabProductKey(activeNetwork.id),
-    JSON.stringify({
-      address: opened.address,
-      productId: product.productId,
-      destination,
-    }),
-  );
-}
-
-/**
- * Put a dock destination in front: resume it if it is running behind, else
- * open its address. The product that was in front keeps running behind its own
- * destination.
- */
-function selectDestination(next: Destination): Promise<void> {
-  return serial(async (runtime) => {
-    if (
-      destination === next &&
-      (product !== null || !isProductDestination(next))
-    )
-      return;
-    if (destination !== next) leaveFront();
-    destination = next;
-    if (!isProductDestination(next) || testUser !== null) {
-      // The address bar names a product, and a host screen is not one.
-      addressInput.value = "";
-      renderAddress();
-      renderProduct();
-      return;
-    }
-    const back = held.get(next);
-    if (back !== undefined) {
-      held.delete(next);
-      resumeFront(back);
-      return;
-    }
-    renderProduct();
-    const address = dockAddresses[next];
-    if (address === "") return;
-    await openSaved(runtime, address);
-  });
-}
-
-/** Open a saved address as it was opened before: the name or URL, with the id it derives. */
-async function openSaved(
-  runtime: WorkerPairingHostRuntime,
-  address: string,
-): Promise<void> {
-  let parsed: Address;
-  try {
-    parsed = parseTypedAddress(address, activeNetwork);
-  } catch (error) {
-    productStatus.textContent = errorText(error);
-    log(productStatus.textContent);
-    return;
-  }
-  const { id } = effectiveProductIdFor(parsed, "");
-  await openResolved(runtime, parsed, id, false);
-}
-
-/**
- * A product asked the host to open `url`. A name of this network opens in
- * front of the destination the request came from, which keeps running behind
- * it. A destination's own product is resumed instead of opened twice.
- */
-function navigateFromProduct(url: string): Promise<void> {
-  const where = resolveNavigation(url, activeNetwork);
-  if (where.kind === "external") {
-    window.open(where.url, "_blank", "noopener,noreferrer");
-    return Promise.resolve();
-  }
-  if (where.kind === "refused") {
-    log(`navigation refused: ${where.reason}`);
-    return Promise.reject(new Error(where.reason));
-  }
-  // The host has taken the request once it is queued. What it opens is
-  // reported in the menu and the log, not back to the product.
-  const known = destinationOf(where.address, dockAddresses, activeNetwork);
-  if (known !== null) void selectDestination(known);
-  else
-    void serial(async (runtime) => {
-      let parsed: Address;
-      try {
-        parsed = parseTypedAddress(where.address, activeNetwork);
-      } catch (error) {
-        productStatus.textContent = errorText(error);
-        log(productStatus.textContent);
-        return;
-      }
-      const { id } = effectiveProductIdFor(parsed, "");
-      // An app already open comes to the front as it was, as on iOS.
-      if (destination === null && holdKey() === appKey(id)) return;
-      if (bringApp(appKey(id))) return;
-      leaveFront();
-      destination = null;
-      renderProduct();
-      await openResolved(runtime, parsed, id, false);
-    });
-  return Promise.resolve();
-}
-
-/**
- * Bring the app held under `key` to the front, sending the one in front
- * behind. False when no app is held there. Runs inside {@link serial}.
- */
-function bringApp(key: string): boolean {
-  const back = held.get(key);
-  if (back === undefined) return false;
-  leaveFront();
-  held.delete(key);
-  destination = null;
-  resumeFront(back);
-  return true;
-}
-
-/** Where a navigation ends up and how it got there. */
-interface Target extends Opened {
-  url: URL;
-}
-
-/**
- * Turn what the bar holds into a URL to embed.
- *
- * A URL is used as typed. A name is looked up on Asset Hub, and its content is
- * loaded by the sandbox loader, a static page of this host, which mounts it
- * under this host's own path for the active wallet and this product.
- */
-async function resolveTarget(
-  address: Address,
-  productId: string,
-): Promise<Target> {
-  if (address.kind === "url")
-    return { address: address.url.href, via: "url", url: address.url };
-  const shown = address.suffix
-    ? `${address.name}/${address.suffix}`
-    : address.name;
-  requireSecureHost(window.isSecureContext, window.location.origin);
-  productStatus.textContent = `Resolving ${address.name} on ${activeNetwork.displayName} Asset Hub…`;
-  let choice: Awaited<ReturnType<typeof resolveSource>>;
-  try {
-    choice = await resolveSource(address.name, activeNetwork);
-  } catch (error) {
-    throw new Error(
-      `Could not read ${address.name}: ${errorText(error)}. Check the connection, or enter a URL.`,
-    );
-  }
-  const { source, skipped } = choice;
-  if (source === null) throw new Error(notOpenableText(address.name, skipped));
-  const scope = mountScope(BASE, {
-    walletId: activeWallet?.id ?? "signed-out",
-    productId,
-    cid: source.cid,
-    network: activeNetwork.id,
-  });
-  return {
-    address: shown,
-    via: "name",
-    cid: source.cid,
-    kind: source.kind,
-    mount: scope,
-    record: source.record,
-    skipped,
-    url: loaderUrl({
-      base: BASE,
-      origin: window.location.origin,
-      scope,
-      gateway: activeNetwork.dotns.contentGateway,
-      kind: source.kind,
-      start: `/${address.suffix}`,
-    }),
-  };
-}
-
-/** The scope an entered product id was used with, for the log. */
-function scopeOf(address: Address): string {
-  return address.kind === "url" ? address.url.origin : address.name;
-}
-
-/**
- * Embed an already resolved target, closing the current product first. The
- * bookkeeping for the bar and the entered id changes only once the product is
- * open.
- */
-async function openTarget(
-  runtime: WorkerPairingHostRuntime,
-  target: Target,
-  productId: string,
-  entered: boolean,
-  scope: string,
-  executionKind: "App" | "Widget" = "App",
-): Promise<void> {
-  closeProduct();
-  const op = loading.begin("Loading…");
-  sandboxStatus = "";
-  // A product sent behind the dock while it loads must not write to the screen.
-  let handle: OpenProduct | null = null;
-  const inFront = (): boolean => handle === null || handle === product;
-  try {
-    handle = product = await openProduct(
-      runtime,
-      target.url,
-      productId,
-      productSlot,
-      {
-        mounted: target.via === "name",
-        executionKind,
-        tap: createFrameTap(inspector, productId, runtime.coreWireSchemaHash),
-        onFrameLoad(count) {
-          if (count < documentsBeforeProduct(target.via)) return;
-          loading.finish(op);
-          if (!inFront()) return;
-          sandboxStatus = "";
-          renderProduct();
-        },
-        onSandboxStatus(state, detail) {
-          if (state === "error") {
-            loading.finish(op);
-            log(`sandbox could not start the product: ${detail}`);
-          }
-          if (!inFront()) return;
-          sandboxStatus = `${state === "error" ? SANDBOX_FAILED : "Sandbox:"} ${detail}`;
-          renderProduct();
-        },
-      },
-    );
-    openings += 1;
-    openedOrder.set(handle, openings);
-    opened = {
-      address: target.address,
-      via: target.via,
-      cid: target.cid,
-      kind: target.kind,
-      mount: target.mount,
-      record: target.record,
-      skipped: target.skipped,
-    };
-    openedWithOverride = entered;
-    askedDomains = [];
-    overrideOrigin = entered ? scope : null;
-    addressInput.value = displayAddress(target.address, activeNetwork);
-    renderProduct();
-    // A Widget opens only from its card: the address, typed or reloaded,
-    // would open the product's App instead.
-    if (executionKind === "App") {
-      recents.record(
-        recentScope(),
-        { address: target.address, productId, entered },
-        activeNetwork.id,
-      );
-      recentsMenu.refresh();
-      renderProductRecents();
-      rememberFront();
-      if (isProductDestination(destination))
-        dockAddresses = saveAddress(
-          localStorage,
-          activeNetwork.id,
-          destination,
-          target.address,
-        );
-    }
-    renderProduct();
-    log(
-      target.via === "name"
-        ? `opened ${target.address} as ${productId} (${executionKind}) from ${target.url.href}`
-        : `opened ${target.url.href} as ${productId}`,
-    );
-  } catch (error) {
-    loading.finish(op);
-    productStatus.textContent = `Could not open ${target.url.href} as ${productId}: ${errorText(error)}`;
-    log(productStatus.textContent);
-  }
-}
-
-/**
- * Open a Pocket card: its product's Widget, at the card named in the query,
- * in front of Pocket. The Widget runs as the product, so it shares the
- * worker's and the app's storage, accounts and grants. Which content runs is
- * `findWidget`'s rule; Pocket stays in front, and says why, when there is
- * none to run. Choosing Pocket in the dock ends the Widget.
- */
-function openPocketCard(key: PocketCardKey): Promise<void> {
-  return serial(async (runtime) => {
-    pocketStatus.textContent = `Looking up ${key.productId}'s widget…`;
-    let widget: Awaited<ReturnType<typeof resolveWidget>>;
-    try {
-      requireSecureHost(window.isSecureContext, window.location.origin);
-      widget = await resolveWidget(key.productId, activeNetwork);
-    } catch (error) {
-      pocketStatus.textContent = errorText(error);
-      log(`pocket: ${key.cardId} not opened: ${errorText(error)}`);
-      return;
-    }
-    if (destination !== "pocket") {
-      pocketStatus.textContent = "";
-      return;
-    }
-    pocketStatus.textContent = "";
-    if (widget.fromBaseName)
-      log(
-        `pocket: ${key.productId} publishes no widget; its base name's content runs as the Widget, as the iOS host serves it`,
-      );
-    leaveFront();
-    destination = null;
-    sessionStorage.removeItem(tabProductKey(activeNetwork.id));
-    const start = cardLaunchPath(key.cardId);
-    const scope = mountScope(BASE, {
-      walletId: activeWallet?.id ?? "signed-out",
-      productId: key.productId,
-      cid: widget.cid,
-      network: activeNetwork.id,
-    });
-    await openTarget(
-      runtime,
-      {
-        address: `${key.productId}${start}`,
-        via: "name",
-        cid: widget.cid,
-        kind: widget.kind,
-        mount: scope,
-        record: widget.record,
-        skipped: [],
-        url: loaderUrl({
-          base: BASE,
-          origin: window.location.origin,
-          scope,
-          gateway: activeNetwork.dotns.contentGateway,
-          kind: widget.kind,
-          start,
-        }),
-      },
-      key.productId,
-      false,
-      key.productId,
-      "Widget",
-    );
-  });
-}
-
-/**
- * Resolve `address` and open it as `productId`. The current product stays
- * until resolution succeeds, so a lookup that fails changes nothing.
- */
-async function openResolved(
-  runtime: WorkerPairingHostRuntime,
-  address: Address,
-  productId: string,
-  entered: boolean,
-): Promise<void> {
-  let target: Target;
-  const op = loading.begin(
-    address.kind === "name" ? "Looking up name…" : "Loading…",
-  );
-  try {
-    target = await resolveTarget(address, productId);
-  } catch (error) {
-    loading.finish(op);
-    productStatus.textContent = errorText(error);
-    log(productStatus.textContent);
-    return;
-  }
-  await openTarget(runtime, target, productId, entered, scopeOf(address));
-}
-
 signInButton.addEventListener("click", () => {
   const wallet = wallets.find(walletSelect.value);
-  if (wallet) void signIn(wallet);
+  if (wallet) void walletSession.signIn(wallet);
 });
 
 signOutButton.addEventListener("click", () => {
-  void changeSession(signOutOf);
+  void walletSession.signOut();
 });
 
 forgetButton.addEventListener("click", () => {
@@ -2310,7 +1622,7 @@ importForm.addEventListener("submit", (event) => {
     importDetails.open = false;
     renderWallets();
     walletSelect.value = wallet.id;
-    void signIn(wallet);
+    void walletSession.signIn(wallet);
   } catch (error) {
     log(String(error));
   }
@@ -2333,9 +1645,17 @@ function openAddress(): void {
   }
   searchStatus.textContent = "";
   searchCard.close(false);
-  const back = destinationOf(addressInput.value, dockAddresses, activeNetwork);
-  if (back !== null && back !== destination && held.has(back)) {
-    void selectDestination(back);
+  const back = destinationOf(
+    addressInput.value,
+    navigation.dockAddresses,
+    activeNetwork,
+  );
+  if (
+    back !== null &&
+    back !== navigation.destination &&
+    navigation.isHeld(back)
+  ) {
+    void navigation.selectDestination(back);
     chrome.dismissCovering();
     return;
   }
@@ -2344,22 +1664,15 @@ function openAddress(): void {
     productIdInput.value,
   );
   const entered = source === "entered";
-  if (entered && overrideOrigin !== null && overrideOrigin !== scopeOf(address))
+  const origin = navigation.overrideOrigin;
+  if (entered && origin !== null && origin !== scopeOf(address))
     log(`product id ${productId} now applies to ${scopeOf(address)}`);
   void serial(async (runtime) => {
-    const before = opened;
-    // An address typed over a host screen or an app opens as an app of its
-    // own; one already running behind comes to the front instead.
-    if (!isProductDestination(destination)) {
-      if (holdKey() !== appKey(productId)) {
-        if (bringApp(appKey(productId))) return;
-        leaveFront();
-      }
-      destination = null;
-    }
-    await openResolved(runtime, address, productId, entered);
+    const before = navigation.opened;
+    if (await navigation.openTyped(runtime, address, productId, entered))
+      return;
     // It did not open: say why where the address was typed.
-    if (opened === null || opened === before) {
+    if (navigation.opened === null || navigation.opened === before) {
       searchStatus.textContent = productStatus.textContent;
       searchCard.open();
     }
@@ -2371,7 +1684,7 @@ const recents = new RecentProducts(localStorage);
 
 /** History is kept per wallet, like the rest of its data; signed out has its own. */
 function recentScope(): string {
-  return activeWallet?.id ?? "signed-out";
+  return walletSession.active?.id ?? "signed-out";
 }
 
 /**
@@ -2414,13 +1727,16 @@ chatInbox.onChange((change) => {
 /** Show a person chosen in the Docklet's search in Chat: their conversation, or a request to them. */
 async function showPersonInChat(person: PickedPerson): Promise<void> {
   const session = searchSession;
-  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
+  addressInput.value = displayAddress(
+    navigation.opened?.address ?? "",
+    activeNetwork,
+  );
   searchStatus.textContent = "";
   renderAddress();
   searchCard.close(false);
   hostNames.remember(person.account, person.name);
-  await selectDestination("chat");
-  if (session !== searchSession || destination !== "chat") return;
+  await navigation.selectDestination("chat");
+  if (session !== searchSession || navigation.destination !== "chat") return;
   if (chatTab === "inbox") showChatTab("chats");
   if (!chatScreen.startWith(person))
     log("Chat cannot start a conversation in this session.");
@@ -2446,7 +1762,7 @@ const recentsMenu = bindRecentsMenu({
   entries: () => recents.list(recentScope(), activeNetwork.id),
   untouched: () =>
     addressInput.value.trim() ===
-    displayAddress(opened?.address ?? "", activeNetwork),
+    displayAddress(navigation.opened?.address ?? "", activeNetwork),
   choose(entry) {
     // The entry brings its own product id, or none, so a replay never
     // inherits whatever id is entered now.
@@ -2465,8 +1781,8 @@ const recentsMenu = bindRecentsMenu({
  * outside what is cleared.
  */
 async function resetAppData(): Promise<void> {
-  const wallet = activeWallet;
-  const current = product;
+  const wallet = walletSession.active;
+  const current = navigation.product;
   if (wallet === null || current === null) return;
   const productId = current.productId;
   const confirmed = await ask({
@@ -2493,9 +1809,10 @@ async function resetAppData(): Promise<void> {
   });
   if (!confirmed) return;
   await serial(async (runtime) => {
-    const how = opened;
+    const how = navigation.opened;
+    const product = navigation.product;
     if (
-      activeWallet?.id !== wallet.id ||
+      walletSession.active?.id !== wallet.id ||
       product?.productId !== productId ||
       how === null
     ) {
@@ -2503,14 +1820,20 @@ async function resetAppData(): Promise<void> {
       return;
     }
     const url = product.url;
-    const entered = openedWithOverride;
-    const scope = overrideOrigin ?? "";
-    closeProduct();
+    const entered = navigation.entered;
+    const scope = navigation.overrideOrigin ?? "";
+    navigation.closeProduct();
     const removed = storage.clearProductData(productId);
     log(
       `reset app data of ${productId} for ${wallet.name}: ${removed} stored value${removed === 1 ? "" : "s"} removed`,
     );
-    await openTarget(runtime, { ...how, url }, productId, entered, scope);
+    await navigation.openTarget(
+      runtime,
+      { ...how, url },
+      productId,
+      entered,
+      scope,
+    );
   });
 }
 
@@ -2541,7 +1864,10 @@ addressInput.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   event.stopPropagation();
   if (recentsMenu.close()) return;
-  addressInput.value = displayAddress(opened?.address ?? "", activeNetwork);
+  addressInput.value = displayAddress(
+    navigation.opened?.address ?? "",
+    activeNetwork,
+  );
   searchStatus.textContent = "";
   renderAddress();
   searchCard.close(true);
@@ -2555,7 +1881,7 @@ productIdReset.addEventListener("click", () => {
 });
 
 for (const { destination: id, button } of dockButtons)
-  button.addEventListener("click", () => void selectDestination(id));
+  button.addEventListener("click", () => void navigation.selectDestination(id));
 
 closeButton.addEventListener("click", closeFront);
 
@@ -2568,10 +1894,8 @@ async function boot(): Promise<void> {
     storage,
     log,
     onAuthState: renderSession,
-    navigate: navigateFromProduct,
-    onNetworkAsked(domains) {
-      askedDomains = [...new Set([...askedDomains, ...domains])];
-    },
+    navigate: (url) => navigation.navigateFromProduct(url),
+    onNetworkAsked: (domains) => navigation.askDomains(domains),
     onPermissionDecided: refreshPermissionsSoon,
     preimage: gatewayPreimages(activeNetwork.dotns.contentGateway),
     chat: productChat.platform,
@@ -2618,7 +1942,7 @@ async function boot(): Promise<void> {
       : undefined;
   if (tabWallet) {
     walletSelect.value = tabWallet.id;
-    await signIn(tabWallet);
+    await walletSession.signIn(tabWallet);
   }
   await serial((current) => devSession?.start(current) ?? Promise.resolve());
 
@@ -2632,47 +1956,19 @@ async function boot(): Promise<void> {
 
   // The product this tab opened itself before a reload comes back with the
   // wallet. A link's `product` parameter never does.
-  const last = testUser === null ? readTabProduct() : null;
+  const last = testUser === null ? navigation.readTabProduct() : null;
   if (last && !params.has("product")) {
     addressInput.value = displayAddress(last.address, activeNetwork);
     const derived = effectiveProductIdFor(last.parsed, "").id;
     const entered = last.productId !== derived;
     if (entered) productIdInput.value = last.productId;
     renderAddress();
-    destination = last.destination;
+    navigation.restore(last.destination);
     renderProduct();
-    if (activeWallet)
+    if (walletSession.active)
       await serial((runtime) =>
-        openResolved(runtime, last.parsed, last.productId, entered),
+        navigation.openResolved(runtime, last.parsed, last.productId, entered),
       );
-  }
-}
-
-function readTabProduct(): {
-  address: string;
-  productId: string;
-  destination: Destination | null;
-  parsed: Address;
-} | null {
-  try {
-    const stored: unknown = JSON.parse(
-      sessionStorage.getItem(tabProductKey(activeNetwork.id)) ?? "null",
-    );
-    if (typeof stored !== "object" || stored === null) return null;
-    const { address, productId, destination } = stored as Record<
-      string,
-      unknown
-    >;
-    if (typeof address !== "string" || typeof productId !== "string")
-      return null;
-    return {
-      address,
-      productId,
-      destination: DESTINATIONS.find((known) => known === destination) ?? null,
-      parsed: parseTypedAddress(address, activeNetwork),
-    };
-  } catch {
-    return null;
   }
 }
 
