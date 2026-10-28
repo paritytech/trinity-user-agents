@@ -117,7 +117,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
     func checkForNewBuild() {
         guard servedContent != nil else { return }
 
-        presenceRegistry?.requestRefresh(of: productDomain)
+        presenceRegistry?.requestRefresh(of: configuration.productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -172,7 +172,7 @@ private extension SPANativeRuntimeInteractor {
 
     func enableProduct() async throws -> ChatExtension.Id {
         let product = Product(
-            id: configuration.page.host.toDotDomain(),
+            id: configuration.productDomain,
             name: resolvedProduct?.displayName ?? configuration.page.host.name
         )
         let extensionId = product.extensionId
@@ -205,7 +205,7 @@ private extension SPANativeRuntimeInteractor {
     /// resources (leaked monitor/bridge) or deliver stale results.
     func performSetup(engine: JSEngineProtocol) async {
         do {
-            let domain = configuration.page.host.toDotDomain()
+            let domain = configuration.productDomain
 
             // Bytes come from the executable's own subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
@@ -284,7 +284,12 @@ private extension SPANativeRuntimeInteractor {
 extension SPANativeRuntimeInteractor: SPAProductReloading {
     func serveAppliedBuild() {
         reloadTask?.cancel()
-        reloadTask = Task { [weak self, contentLoader, domain = productDomain, kind = configuration.executable] in
+        reloadTask = Task { [
+            weak self,
+            contentLoader,
+            domain = configuration.productDomain,
+            kind = configuration.executable
+        ] in
             do {
                 let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
 
@@ -302,10 +307,6 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPANativeRuntimeInteractor {
-    var productDomain: ProductId {
-        configuration.page.host.toDotDomain()
-    }
-
     var servedContentId: ProductId? {
         resolvedProduct?.contentId(for: configuration.executable)
     }
@@ -319,12 +320,19 @@ private extension SPANativeRuntimeInteractor {
     func registerPresence() {
         guard presenceId == nil, let servedContentId else { return }
 
-        presenceId = presenceRegistry?.register(productId: productDomain, contentId: servedContentId, reloader: self)
+        presenceId = presenceRegistry?.register(
+            productId: configuration.productDomain,
+            contentId: servedContentId,
+            reloader: self
+        )
     }
 
     func serve(_ served: DotNsResolvedContent) {
         if served != servedContent {
-            schemeHandlerProxy.setHandler(makeSchemeHandler(domain: productDomain, contentURL: served.localURL))
+            schemeHandlerProxy.setHandler(makeSchemeHandler(
+                domain: configuration.productDomain,
+                contentURL: served.localURL
+            ))
             servedContent = served
         }
 

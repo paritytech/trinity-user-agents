@@ -222,6 +222,22 @@ final class ProductExecutableCacheTests {
         #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
     }
 
+    @Test func releaseWhoseRecordCannotBeStoredLeavesTheAppliedArchive() async throws {
+        publishManifestProduct()
+        _ = try await makeLoader().openWorker(baseName)
+        let unwritable = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data().write(to: unwritable)
+        defer { try? FileManager.default.removeItem(at: unwritable) }
+
+        await makeCache(manifestsDirectory: unwritable).apply(ExecutableRelease(
+            contentId: workerName,
+            archive: DotNsResolvedContent(contentHash: Self.updatedWorkerHash.toHex(), localURL: unwritable),
+            record: .value("{}")
+        ))
+
+        #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
+    }
+
     @Test func servedExecutableRecordChangesOnlyWithItsArchive() async throws {
         publishManifestProduct()
         let loader = makeLoader()
@@ -295,10 +311,11 @@ private extension ProductExecutableCacheTests {
     }
 
     func makeCache(
-        tldProvider: DotNsTldProviding = StubTldProvider(resolveError: Unreachable())
+        tldProvider: DotNsTldProviding = StubTldProvider(resolveError: Unreachable()),
+        manifestsDirectory: URL? = nil
     ) -> ProductContentCache {
         ProductContentCache(
-            store: ProductManifestFileStore(directory: manifestsDirectory),
+            store: ProductManifestFileStore(directory: manifestsDirectory ?? self.manifestsDirectory),
             storage: DotNsLocalStorage(content: storage, contentHashes: contentHashCache),
             tldProvider: tldProvider,
             resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger()),

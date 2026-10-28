@@ -143,7 +143,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
         let served = try await contentLoader.open(
-            configuration.page.host.toDotDomain(),
+            configuration.productDomain,
             kind: configuration.executable,
             policy: .untilCancelled
         ).archive
@@ -161,7 +161,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
 private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
@@ -175,7 +175,7 @@ private extension SPARustRuntime {
     }
 
     func serve(_ content: DotNsResolvedContent) async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,

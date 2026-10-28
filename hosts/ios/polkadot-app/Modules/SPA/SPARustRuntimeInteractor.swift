@@ -103,7 +103,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func checkForNewBuild() {
         guard servedContent != nil else { return }
 
-        presenceRegistry?.requestRefresh(of: productDomain)
+        presenceRegistry?.requestRefresh(of: configuration.productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -146,7 +146,7 @@ private extension SPARustRuntimeInteractor {
     /// server opened from debug settings — still opens, unnamed. A development server page is not
     /// published content, so nothing is resolved for it.
     func resolveProduct() async throws -> ResolvedProduct? {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
         switch configuration.contentSource {
         case .dotNs:
@@ -196,7 +196,7 @@ private extension SPARustRuntimeInteractor {
 
     func enableProduct() async throws -> ChatExtension.Id {
         let product = Product(
-            id: configuration.page.host.toDotDomain(),
+            id: configuration.productDomain,
             name: resolvedProduct?.displayName ?? configuration.page.host.name
         )
         let extensionId = product.extensionId
@@ -248,10 +248,6 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPARustRuntimeInteractor {
-    var productDomain: ProductId {
-        configuration.page.host.toDotDomain()
-    }
-
     var servedContentId: ProductId? {
         resolvedProduct?.contentId(for: configuration.executable)
     }
@@ -268,6 +264,10 @@ private extension SPARustRuntimeInteractor {
 
         guard servedContent != nil, presenceId == nil, let servedContentId else { return }
 
-        presenceId = presenceRegistry?.register(productId: productDomain, contentId: servedContentId, reloader: self)
+        presenceId = presenceRegistry?.register(
+            productId: configuration.productDomain,
+            contentId: servedContentId,
+            reloader: self
+        )
     }
 }

@@ -48,13 +48,19 @@ extension ProductContentCache: ProductContentCaching {
     public func adopt(_ manifest: ProductManifest) {
         let stored = store.records(of: manifest.product.id) ?? [:]
 
-        save(manifest.records.filter { recordKey, _ in
+        let records = manifest.records.filter { recordKey, _ in
             guard recordKey.key == ProductManifestRecords.executableKey, stored[recordKey] != nil else {
                 return true
             }
 
             return appliedArchive(of: recordKey.name) == nil
-        })
+        }
+
+        do {
+            try store.save(records)
+        } catch {
+            logger.error("Failed to store the manifest of \(manifest.product.id): \(error)")
+        }
     }
 
     public func appliedArchive(of contentId: ProductId) -> DotNsResolvedContent? {
@@ -70,26 +76,23 @@ extension ProductContentCache: ProductContentCaching {
 
     public func apply(_ release: ExecutableRelease) {
         if let record = release.record {
-            save([ProductManifest.RecordKey(
+            let recordKey = ProductManifest.RecordKey(
                 name: release.contentId,
                 key: ProductManifestRecords.executableKey
-            ): record])
+            )
+
+            do {
+                try store.save([recordKey: record])
+            } catch {
+                logger.error("Failed to apply the release of \(release.contentId): \(error)")
+                return
+            }
         }
 
         if let archive = release.archive {
             storage.contentHashes.putContentHash(name: release.contentId, hash: archive.contentHash)
         } else {
             storage.contentHashes.removeContentHash(name: release.contentId)
-        }
-    }
-}
-
-private extension ProductContentCache {
-    func save(_ records: [ProductManifest.RecordKey: ProductManifest.Record]) {
-        do {
-            try store.save(records)
-        } catch {
-            logger.error("Failed to store manifest records: \(error)")
         }
     }
 }

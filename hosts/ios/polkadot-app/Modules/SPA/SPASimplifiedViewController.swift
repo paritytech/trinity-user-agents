@@ -110,11 +110,6 @@ private extension SPASimplifiedViewController {
         static let minimumLoadingDuration: TimeInterval = 0.5
     }
 
-    var isEnteringScreen: Bool {
-        isMovingToParent || navigationController?.isMovingToParent == true
-            || isBeingPresented || navigationController?.isBeingPresented == true
-    }
-
     func display(loadFailure content: ErrorContent) {
         rootView.activityIndicatorView.stopAnimating()
         loadIndicator.stop()
