@@ -56,8 +56,8 @@ fn message() -> v01::ChatMessage {
 			text: Some("hi".into()),
 			media: vec![v01::ChatMediaItem::Image {
 				resource: v01::ChatResource::Hop {
-					identifier: vec![7; 32],
-					ticket: vec![8; 32],
+					identifier: [7; 32],
+					ticket: [8; 32],
 					node: "wss://hop.example".into(),
 					size: 3,
 				},
@@ -354,7 +354,7 @@ fn frames() -> Vec<String> {
 					message_id: "m2".into(),
 					timestamp: 1_700_000_000_000,
 					total_value: 5_000_000,
-					coin_keys: vec![vec![0x11; 64]],
+					sr25519_secret_keys: vec![[0x11; 64]],
 				},
 			}),
 		),
