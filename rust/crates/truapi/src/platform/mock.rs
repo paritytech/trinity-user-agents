@@ -2324,6 +2324,7 @@ mod tests {
 		let metadata = latest::ChatRoomMetadata {
 			name: "Lobby".to_string(),
 			description: Some("Say hello".to_string()),
+			icon: Some("https://icons.example/lobby.png".to_string()),
 		};
 		let preview = latest::ChatRoomPreview {
 			timestamp: Some(7),
