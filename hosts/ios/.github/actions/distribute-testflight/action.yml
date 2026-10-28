@@ -86,10 +86,6 @@ inputs:
     description: "Sentry DSN"
     required: false
     default: ""
-  meld_basic_auth_token:
-    description: "MELD fiat on-ramp Basic auth token"
-    required: false
-    default: ""
 
 runs:
   using: "composite"
@@ -109,7 +105,6 @@ runs:
       with:
         # Release links no Sentry, so the DSN would only sit unused in the shipped binary.
         sentry_dsn: ${{ inputs.build_configuration != 'Release' && inputs.sentry_dsn || '' }}
-        meld_basic_auth_token: ${{ inputs.meld_basic_auth_token }}
 
     - name: Configure Google services for tests
       uses: ./hosts/ios/.github/actions/configure-google-services
