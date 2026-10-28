@@ -1500,8 +1500,8 @@ export interface ChatPlatform {
    * stores the change, because it keeps the messages of the room. Without
    * it the host applies the change only to an open room screen and the chat
    * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
-   * and, for an edit or a replacement of a message the product did not
-   * write, `NotOwner`.
+   * and, for an edit, a replacement or a deletion of a message the product
+   * did not write, `NotOwner`.
    */
   updateChatFeed?(
     product: ProductContext,
