@@ -32,10 +32,8 @@ import {
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
-import type { Wallet } from "../../src/platform/wallets.js";
 import {
   TEST_USERS,
-  testAccountWallet,
   chatContactsOf,
   fixtureIdentity,
   setTabTestUser,
@@ -73,8 +71,6 @@ export interface DevToolsDeps {
   notifications: NotificationStore;
   /** Where the Developer section is drawn in the menu. */
   section: HTMLElement;
-  /** The Account tab's fold that says what a test account is; the host shows it while one is picked. */
-  about: HTMLElement;
   /** The app bar marker that names the test user. */
   marker: HTMLElement;
   /** Where Example Chat's frame goes, over the product stage. */
@@ -95,8 +91,6 @@ export interface DevToolsDeps {
 export interface DevSession {
   /** The invitation demo user this tab acts as, or null for the normal wallet session. */
   testUser: TestUser | null;
-  /** The wallets built from the public test phrases, for the account picker. */
-  accounts: readonly Wallet[];
   /**
    * Start the invitation demo as `id` in this tab, ending its wallet
    * session, or leave it with null, back to the tab's wallet if one is set.
@@ -192,7 +186,6 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
   }
   return {
     testUser,
-    accounts: TEST_USERS.map(testAccountWallet),
     useDemo,
     notificationsScope:
       testUser === null
@@ -451,14 +444,6 @@ function drawSection(
   session: TestUserSession | null,
   useDemo: (id: string | null) => void,
 ): void {
-  deps.about.append(
-    el(
-      "p",
-      "note",
-      "A test account signs in with a public recovery phrase and works as any wallet does. Anyone can sign as it, so keep nothing of value on it. Account status shows what the chain records for it.",
-    ),
-  );
-
   const demoSelect = el("select");
   demoSelect.id = "invitation-demo";
   demoSelect.append(

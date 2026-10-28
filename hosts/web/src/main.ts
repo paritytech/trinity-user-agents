@@ -116,6 +116,7 @@ import {
   walletLabel,
 } from "./app/wallet-label.js";
 import { walletPanel, type WalletMode } from "./app/wallet-panel.js";
+import { DEV_ACCOUNTS, devAccountWallet } from "./platform/dev-accounts.js";
 import { WalletStore, type Wallet } from "./platform/wallets.js";
 import {
   ProductNavigation,
@@ -446,7 +447,6 @@ const devSession =
         base: BASE,
         notifications: notifications.store,
         section: element("developer"),
-        about: testAccountsAbout,
         marker: element("test-user-marker"),
         stage: element("product-slot"),
         leaveWalletSession: () => {
@@ -472,8 +472,8 @@ if (testUser !== null)
     title: "Chat is off in the invitation demo",
     body: "Sign in to an account in Account to chat. The Inbox still gets invitations.",
   });
-/** The wallets built into a dev server from public test phrases. */
-const testAccounts = devSession?.accounts ?? [];
+/** The wallets built into the host from public test phrases. */
+const testAccounts = DEV_ACCOUNTS.map(devAccountWallet);
 /** A wallet by id: an imported one, or a test account. */
 function findWallet(id: string): Wallet | undefined {
   return wallets.find(id) ?? testAccounts.find((wallet) => wallet.id === id);

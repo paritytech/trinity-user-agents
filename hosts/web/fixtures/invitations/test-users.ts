@@ -1,9 +1,12 @@
-import { mnemonicToEntropy } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english.js";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
 import type { Person } from "../../src/invitations/ports.js";
-import type { Wallet } from "../../src/platform/wallets.js";
+import {
+  DEV_ACCOUNTS,
+  devAccountEntropy,
+  type DevAccount,
+  type DevAccountId,
+} from "../../src/platform/dev-accounts.js";
 import { digest } from "../../src/invitations/sealing.js";
 import {
   fixtureCredential,
@@ -15,70 +18,49 @@ import {
  * DEV ONLY. Made-up users a tab can act as instead of a wallet, to try
  * features that need more than one person. Nothing about them is verified.
  *
- * Each signs the core in with a public BIP-39 test vector, so it has a real
- * session, and nothing it holds is anyone's. Its contacts stand in for the
- * chat contacts a wallet's chat providers would offer the host's picker; their
- * accounts are made up.
+ * Each is a built-in account ({@link DEV_ACCOUNTS}) with fixture data added:
+ * the session is the account's own, and a handle, a contact account and a
+ * contact list are made up. The contacts stand in for the chat contacts a
+ * wallet's chat providers would offer the host's picker.
  */
-export interface TestUser {
-  id: string;
-  name: string;
+export interface TestUser extends DevAccount {
   /** Shown as the user's username. */
   handle: string;
-  /** A public BIP-39 test vector. It holds nothing. */
-  phrase: string;
   /** The account the other test users' contact lists name this user by. */
   account: HexString;
   /** Ids of the test users in this user's contacts. */
-  contacts: readonly string[];
+  contacts: readonly DevAccountId[];
 }
 
-export const TEST_USERS: readonly TestUser[] = [
-  {
-    id: "alice",
-    name: "Alice",
+const FIXTURES: Record<
+  DevAccountId,
+  Pick<TestUser, "handle" | "account" | "contacts">
+> = {
+  alice: {
     handle: "alice.example",
-    phrase:
-      "jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge",
     account: `0x${"a1".repeat(32)}`,
     contacts: ["bob", "carol"],
   },
-  {
-    id: "bob",
-    name: "Bob",
+  bob: {
     handle: "bob.example",
-    phrase:
-      "cat swing flag economy stadium alone churn speed unique patch report train",
     account: `0x${"b0".repeat(32)}`,
     contacts: ["alice"],
   },
-  {
-    id: "carol",
-    name: "Carol",
+  carol: {
     handle: "carol.example",
-    phrase:
-      "vessel ladder alter error federal sibling chat ability sun glass valve picture",
     account: `0x${"c4".repeat(32)}`,
     contacts: ["alice"],
   },
-];
+};
+
+export const TEST_USERS: readonly TestUser[] = DEV_ACCOUNTS.map((account) => ({
+  ...account,
+  ...FIXTURES[account.id],
+}));
 
 /** The entropy the core signs `user` in with. */
 export function testUserEntropy(user: TestUser): Uint8Array {
-  return mnemonicToEntropy(user.phrase, wordlist);
-}
-
-/**
- * `user`'s public test phrase as a wallet the account picker offers. Its id
- * is its storage scope, apart from the invitation demo's
- * ({@link testUserScope}) and from every imported wallet's.
- */
-export function testAccountWallet(user: TestUser): Wallet {
-  return {
-    id: `test-account:${user.id}`,
-    name: `${user.name} (test account)`,
-    entropy: testUserEntropy(user),
-  };
+  return devAccountEntropy(user);
 }
 
 /**
