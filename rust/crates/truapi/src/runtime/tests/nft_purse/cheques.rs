@@ -1,10 +1,14 @@
 //! Receive keys and cheques through the product-facing trait.
 
-use futures::executor::block_on;
+use futures::{StreamExt, executor::block_on};
+use sp_crypto_hashing::blake2_256;
 use truapi::versioned::nft_purse::{
 	HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
 	HostNftPurseCreateChequeResponse, HostNftPurseCreateReceiveKeyError,
 	HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+	HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+	HostNftPurseObserveOperationStatusRequest, HostNftPurseRevokeChequeError,
+	HostNftPurseRevokeChequeRequest, HostNftPurseRevokeChequeResponse,
 };
 
 use super::{
@@ -275,4 +279,68 @@ fn a_cheque_to_a_low_order_static_key_answers_other_and_spends_nothing() {
 	let page = query(&purses.host, TICKETS, 10).unwrap();
 	let HostNftPurseQueryPurseResponse::V1(response) = page;
 	assert_eq!(response.page.items, items);
+}
+
+fn revoke(
+	host: &ProductRuntimeHost,
+	cheque_id: v01::NftPurseChequeId,
+) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
+	let request =
+		HostNftPurseRevokeChequeRequest::V1(v01::HostNftPurseRevokeChequeRequest { cheque_id });
+	block_on(host.revoke_cheque(&CallContext::default(), request))
+}
+
+/// The first status of the operation `host`'s product registered under
+/// `idempotency_key`.
+pub fn first_status_under(
+	host: &ProductRuntimeHost,
+	idempotency_key: [u8; 32],
+) -> Result<
+	HostNftPurseObserveOperationStatusItem,
+	CallError<HostNftPurseObserveOperationStatusError>,
+> {
+	let idempotency_key = v01::NftPurseIdempotencyKey(idempotency_key);
+	let request = v01::HostNftPurseObserveOperationStatusRequest { idempotency_key };
+	let request = HostNftPurseObserveOperationStatusRequest::V1(request);
+	let mut statuses = block_on(host.observe_operation_status(&CallContext::default(), request));
+	block_on(statuses.next()).expect("a status or an interruption")
+}
+
+/// The sender takes back an undelivered cheque without being asked, since
+/// the items return to its own purse, and follows the moves under the key
+/// the RFC derives from the cheque id.
+#[test]
+fn a_revoke_needs_no_confirmation_and_is_observed_under_its_revoke_key() {
+	let platform = Arc::new(StubPlatform::default());
+	let purses = product_purses(platform.clone());
+	let items = purses.held_items(PurseId(TICKETS), 2);
+	let receive_key = create_receive_key(&purses.host, 1).unwrap();
+	let cheque = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items).unwrap();
+
+	let revoked = revoke(&purses.host, cheque.id);
+
+	assert_eq!(revoked, Ok(HostNftPurseRevokeChequeResponse::V1));
+	let revoke_key = blake2_256(&[b"nft-purse/revoke".as_slice(), &cheque.id.0].concat());
+	let status = first_status_under(&purses.host, revoke_key);
+	assert_eq!(
+		status,
+		Ok(HostNftPurseObserveOperationStatusItem::V1(v01::NftPurseStatus::InProgress))
+	);
+	assert_eq!(drain_reviews(&platform), vec![]);
+}
+
+/// A product learns nothing about another product's cheques, and cannot take
+/// their items.
+#[test]
+fn revoking_another_products_cheque_answers_cheque_not_found() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let items = purses.held_items(PurseId(TICKETS), 1);
+	let receive_key = create_receive_key(&purses.host, 1).unwrap();
+	let cheque = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items).unwrap();
+
+	let refused = revoke(&purses.other_product(), cheque.id);
+
+	let not_found =
+		HostNftPurseRevokeChequeError::V1(v01::NftPurseRevokeChequeError::ChequeNotFound);
+	assert_eq!(refused, Err(CallError::Domain(not_found)));
 }

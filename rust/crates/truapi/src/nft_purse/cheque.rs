@@ -7,15 +7,17 @@ use parity_scale_codec::{Decode, Encode};
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
 	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-	NftPurseItemKey, X25519PublicKey,
+	NftPurseIdempotencyKey, NftPurseItemKey, X25519PublicKey,
 };
 use zeroize::Zeroizing;
 
-use super::NftPurses;
+use super::{NftPurses, operation::operation_key};
 use crate::{
+	durable::RegistrationError,
 	host_logic::x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	nft::{
 		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret, PurseId,
+		ReclaimRequest, StartOperationError,
 	},
 	platform::ProductId,
 };
@@ -28,6 +30,9 @@ const CHEQUE_ID_DOMAIN: &[u8] = b"nft-purse/cheque-id";
 
 /// Separates the creating product from the cheque id in a handoff tag.
 const HANDOFF_TAG_SEPARATOR: &[u8] = b".";
+
+/// Domain of the hash that derives the idempotency key of a cheque's revoke.
+const REVOKE_KEY_DOMAIN: &[u8] = b"nft-purse/revoke";
 
 /// The id a cheque for `destination` carries: derived from the receive key,
 /// or the static destination's own.
@@ -59,6 +64,26 @@ impl NftPurses {
 		let seal = |secrets: &[ItemSecret]| seal_cheque(to, id, &items, secrets);
 		self.ledger.hand_off(request, seal).await
 	}
+
+	/// Starts moving what sits at the keys of `creator`'s cheque `id` back
+	/// into fresh keys of the purse they left. Each call moves only the keys
+	/// with no move yet or whose latest move failed, and moves nothing when
+	/// every key is moving or moved. Refuses a cheque `creator` did not make
+	/// with `TagNotFound`.
+	pub async fn revoke_cheque(
+		&self,
+		creator: &ProductId,
+		id: &NftPurseChequeId,
+	) -> Result<(), RegistrationError<StartOperationError>> {
+		let operation = operation_key(creator, revoke_key(id));
+		let tag = handoff_tag(creator, id);
+		self.ledger.start_reclaims(ReclaimRequest { operation, tag }).await
+	}
+}
+
+/// The idempotency key the revoke of cheque `id` is observed under.
+fn revoke_key(id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+	NftPurseIdempotencyKey(blake2_256(&[REVOKE_KEY_DOMAIN, &id.0].concat()))
 }
 
 /// The tag that names the handoff of the cheque `id` by `creator`, so cheque

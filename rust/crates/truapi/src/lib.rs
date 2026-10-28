@@ -406,6 +406,12 @@ pub mod latest {
 		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
 	/// NFT cheque deposit failure.
 	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
+	/// NFT cheque revoke request.
+	pub type HostNftPurseRevokeChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeRequest>;
+	/// NFT cheque revoke failure.
+	pub type HostNftPurseRevokeChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
 	/// NFT item transfer request.
 	pub type HostNftPurseTransferItemRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;

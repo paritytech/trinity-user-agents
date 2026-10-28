@@ -38,6 +38,7 @@ pub use operation::{
 	TransferState,
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
+pub use reclaim::ReclaimRequest;
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
 };

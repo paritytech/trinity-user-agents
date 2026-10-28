@@ -25,9 +25,11 @@ mod browser {
 			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
 			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
 			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
-			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
-			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+			HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+			HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+			HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+			HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -92,6 +94,14 @@ mod browser {
 			_request: HostNftPurseRebalancePurseRequest,
 		) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>>
 		{
+			Err(CallError::Unsupported)
+		}
+
+		async fn revoke_cheque(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseRevokeChequeRequest,
+		) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
 			Err(CallError::Unsupported)
 		}
 

@@ -205,7 +205,11 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Release the items of a cheque the recipient never received.
+	/// Move the items of a cheque the calling product created back into fresh
+	/// keys of the purse they left, so its secrets no longer reach them.
+	/// Returns once the moves are registered. Their status is observed under
+	/// the idempotency key `blake2_256("nft-purse/revoke" ‖ chequeId)`.
+	/// Revoking again retries only the keys whose move failed.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.revokeCheque({
@@ -288,7 +292,8 @@ pub trait NftPurse: Send + Sync {
 
 	/// Follow an operation the calling product registered: a rebalance or
 	/// transfer by its idempotency key, a deposit or refund by its cheque
-	/// id. Ends after a terminal status.
+	/// id, and a revoke by the key `revokeCheque` gives. Ends after a
+	/// terminal status.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";

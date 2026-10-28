@@ -6,7 +6,7 @@ use truapi::{
 		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
-		HostNftPurseRevokeChequeRequest,
+		HostNftPurseRefundRequest,
 	},
 };
 
@@ -375,14 +375,13 @@ fn querying_an_unknown_purse_is_refused_without_a_prompt() {
 #[test]
 fn methods_of_later_stages_are_unavailable() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
-	let request =
-		v01::HostNftPurseRevokeChequeRequest { cheque_id: v01::NftPurseChequeId([1; 32]) };
+	let request = v01::HostNftPurseRefundRequest { cheque_id: v01::NftPurseChequeId([1; 32]) };
 
-	let revoked = futures::executor::block_on(
-		host.revoke_cheque(&CallContext::default(), HostNftPurseRevokeChequeRequest::V1(request)),
+	let refunded = futures::executor::block_on(
+		host.refund(&CallContext::default(), HostNftPurseRefundRequest::V1(request)),
 	);
 
-	assert_eq!(revoked, Err(CallError::unavailable()));
+	assert_eq!(refunded, Err(CallError::unavailable()));
 }
 
 mod cheques;

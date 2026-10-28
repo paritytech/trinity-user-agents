@@ -380,9 +380,7 @@ pub struct HostNftPurseRevokeChequeRequest {
 /// Why a cheque was not revoked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseRevokeChequeError {
-	/// Another product created the cheque.
-	Denied,
-	/// The cheque is unknown.
+	/// This product created no cheque with this id.
 	ChequeNotFound,
 	/// Any other failure.
 	Other(GenericError),

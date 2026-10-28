@@ -95,6 +95,33 @@ impl ProductRuntimeHost {
 		let depositor = self.connection.product_id();
 		purses.deposit(depositor, &cheque, PurseId(to.0)).await.map_err(deposit_failure)
 	}
+
+	/// Starts moving the items of a cheque the product created back into its
+	/// purse. Only the product's own cheques are found, and its own purse
+	/// gains the items, so nothing is asked.
+	pub async fn revoke_nft_cheque(
+		&self,
+		request: latest::HostNftPurseRevokeChequeRequest,
+	) -> Result<(), CallError<latest::HostNftPurseRevokeChequeError>> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let creator = self.connection.product_id();
+		purses.revoke_cheque(creator, &request.cheque_id).await.map_err(revoke_failure)
+	}
+}
+
+/// A cheque the product did not create is not found. A host without NFT
+/// transfers does not support revokes. Everything else is the host's failure.
+fn revoke_failure(
+	error: RegistrationError<StartOperationError>,
+) -> CallError<latest::HostNftPurseRevokeChequeError> {
+	match error {
+		RegistrationError::Hook(StartOperationError::TagNotFound) => {
+			CallError::Domain(latest::HostNftPurseRevokeChequeError::ChequeNotFound)
+		},
+		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
+		other => host_failure(other),
+	}
 }
 
 /// The product's refusals as its domain errors, everything else as the
