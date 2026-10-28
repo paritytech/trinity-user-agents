@@ -40,10 +40,8 @@ import { messagePortBridge } from "../../../../src/chat/draft/contract.js";
 import { ChatV2Host } from "../../../../src/chat/draft/host.js";
 import { chatV2Over } from "../../../../src/chat/draft/product.js";
 import { ChatV2Provider } from "../../../../src/chat/draft/provider.js";
-import {
-  NOVA_PROVIDER_ID,
-  type ChatSession,
-} from "../../../../src/chat/nova-provider.js";
+import { NOVA_PROVIDER_ID } from "../../../../src/chat/nova-provider.js";
+import type { ChatSession } from "../../../../src/chat/nova-session.js";
 import { ProductChat } from "../../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import {

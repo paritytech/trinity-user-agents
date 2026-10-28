@@ -12,13 +12,15 @@ import {
   kindLabel,
   outcomeWord,
   relatedKeys,
+} from "../../../../tools/inspector/diagnostics.js";
+import {
   sanitizeReason,
   shortHex,
   shortId,
   subscriptionEvent,
   TOPIC_ID_LIMIT,
   type ChatEventBody,
-} from "../../../../tools/inspector/diagnostics.js";
+} from "../../../../src/chat/nova/events.js";
 import {
   CONTROL_TAGS,
   encodeMessage,

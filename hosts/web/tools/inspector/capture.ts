@@ -1,5 +1,10 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { sanitizeReason } from "./diagnostics.js";
+import {
+  sanitizeReason,
+  type CaptureDirection,
+  type CaptureStream,
+  type PayloadSink,
+} from "../../src/chat/nova/events.js";
 import { statementHash } from "../../src/chat/nova/statement.js";
 import {
   statementsOf,
@@ -37,9 +42,6 @@ export const CAPTURE_ITEM_LIMIT = 300;
 /** The most one frame's text or one statement's bytes keeps. */
 export const CAPTURE_ITEM_BYTES = 256 * 1024;
 
-export type CaptureStream = "requests" | "sessions";
-export type CaptureDirection = "in" | "out";
-
 /** One JSON-RPC text, as sent or received. */
 export interface CapturedFrame {
   seq: number;
@@ -73,17 +75,6 @@ export interface CapturedStatement {
   plaintext: Uint8Array | null;
   /** Why there is no plaintext, when the engine said. */
   plaintextGap: string | null;
-}
-
-/** Where the chat engine hands its payloads. */
-export interface PayloadSink {
-  statement(
-    direction: CaptureDirection,
-    stream: CaptureStream,
-    encoded: Uint8Array,
-  ): void;
-  plaintext(hash: string, plaintext: Uint8Array): void;
-  gap(hash: string, reason: string): void;
 }
 
 /** What eviction and truncation have cost, since the capture was last emptied. */

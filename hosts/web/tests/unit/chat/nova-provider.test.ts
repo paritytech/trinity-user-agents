@@ -9,10 +9,12 @@ import type {
 } from "../../../src/chat/provider.js";
 import {
   NovaChatProvider,
-  startNovaChat,
-  type ChatSession,
   type NovaEngine,
 } from "../../../src/chat/nova-provider.js";
+import {
+  startNovaChat,
+  type ChatSession,
+} from "../../../src/chat/nova-session.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const ME = `0x${"11".repeat(32)}` as HexString;

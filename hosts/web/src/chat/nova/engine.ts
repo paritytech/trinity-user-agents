@@ -1,9 +1,5 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
-import type {
-  CaptureStream,
-  PayloadSink,
-} from "../../../tools/inspector/capture.js";
 import { equalBytes } from "./codec.js";
 import { cryptoRandom, type RandomBytes } from "./crypto.js";
 import {
@@ -11,9 +7,11 @@ import {
   shortHex,
   shortId,
   subscriptionEvent,
+  type CaptureStream,
   type ChatEventBody,
   type ChatEventSink,
-} from "../../../tools/inspector/diagnostics.js";
+  type PayloadSink,
+} from "./events.js";
 import {
   lookupChatIdentity,
   lookupOwner,
