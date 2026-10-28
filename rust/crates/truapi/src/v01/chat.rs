@@ -804,8 +804,9 @@ pub enum HostChatUpdateFeedError {
 	DuplicateMessage,
 	/// The text is over its limit.
 	MessageTooLarge,
-	/// In a room the host stores: `New` from `"user"`, or `Edited` of a message
-	/// the product did not write.
+	/// In a room the host stores: `New`, `Replaced` or a reaction from
+	/// `"user"`, or `Edited` or `Replaced` of a message the product did not
+	/// write.
 	NotOwner,
 	/// The product pushed updates to this room too often.
 	RateLimited,
