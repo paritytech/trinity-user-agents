@@ -74,9 +74,9 @@ class ProductChatHostBridgeFeedTest {
     // The events, the calls and the payments of a contact room come with the Chat Extension v2 additions.
     @Test
     fun `contact events, calls and payments draw as unsupported messages`() {
-        assertTrue(ChatMessageBody.Event(ChatContactEvent.CONTACT_ADDED).toContent() is ChatMessage.Content.Unsupported)
-        assertTrue(ChatMessageBody.Call(ChatCallRecord(video = true, answeredAt = null, closed = null)).toContent() is ChatMessage.Content.Unsupported)
-        assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent() is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Event(ChatContactEvent.CONTACT_ADDED).toContent(productId) is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Call(ChatCallRecord(video = true, answeredAt = null, closed = null)).toContent(productId) is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent(productId) is ChatMessage.Content.Unsupported)
     }
 
     @Test
@@ -84,7 +84,7 @@ class ProductChatHostBridgeFeedTest {
         val hop = ChatResource.Hop(identifier = ByteArray(32) { 1 }, ticket = ByteArray(32) { 2 }, node = "wss://hop.example", size = 12uL)
         val image = ChatMediaItem.Image(hop, ChatMediaMeta("image/png", 12uL, 2u, 1u, placeholder = null, alt = "a dot", durationMs = null))
 
-        val content = ChatMessageBody.RichText("Look", listOf(image)).toContent()
+        val content = ChatMessageBody.RichText("Look", listOf(image)).toContent(productId)
 
         val body = (content as ChatMessage.Content.ProductBody).body as ProductMessageBody.RichText
         assertEquals("Look", body.text)
