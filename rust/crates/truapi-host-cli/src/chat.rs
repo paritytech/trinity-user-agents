@@ -630,8 +630,9 @@ fn apply_feed(
 			stored.message.body = body.clone();
 			stored.message.edited_at = Some(*edited_at);
 		},
-		// Drawn again in place; an edit mark comes only from an edit. In the
-		// host's store a replacement keeps its author, as an edit does.
+		// The host draws the message again in the same place. Only an edit adds
+		// an edit mark. In the host store, a replacement keeps its author, as
+		// an edit does.
 		ChatFeedUpdate::Replaced(message) => {
 			if persist && stored.message.origin.participant_id == USER {
 				return Err(HostChatUpdateFeedError::NotOwner);
@@ -642,7 +643,7 @@ fn apply_feed(
 				stored.message.origin = origin;
 			}
 		},
-		// The user reacts in the host's store only through the host.
+		// In the host store, the user reacts only through the host.
 		ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
 		ChatFeedUpdate::ReactionRemoved { participant_id, .. }
 			if persist && participant_id == USER =>
@@ -1612,8 +1613,8 @@ mod tests {
 		assert_eq!(replaced["message"]["body"]["text"], "Audio call, ended");
 		assert_eq!(replaced["message"]["editedAt"], Value::Null);
 		assert_eq!(replaced["message"]["reactions"], json!([]));
-		// A replacement keeps the author it replaces, and the user's words
-		// stay the user's.
+		// A replacement keeps the author of the message that it replaces. A
+		// product cannot replace a message of the user.
 		feed(&host, "support", ChatFeedUpdate::Replaced(message("p-1", "p2", "")), true)
 			.expect("replaced");
 		let replaced = drain(&mut events).pop().expect("the replace event");
