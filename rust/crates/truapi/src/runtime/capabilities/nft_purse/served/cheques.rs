@@ -121,25 +121,27 @@ impl ProductRuntimeHost {
 		let purses = self.connection.nft_purses()?;
 		let depositor = self.connection.product_id();
 		let id = request.cheque_id;
-		let drain = refund_drain(&purses, depositor, &id).await?;
+		let drain = drain_to_confirm(&purses, depositor, &id).await?;
 		self.confirm_drain(cx, drain, latest::HostNftPurseRefundError::Denied).await?;
 		purses.refund(depositor, &id).await.map_err(refund_failure)
 	}
 }
 
-/// The drain a refund of `depositor`'s cheque `id` makes now, refusing early
-/// what the refund would refuse, so the user is not asked for nothing.
-async fn refund_drain(
+/// The drain the user confirms for a refund of `depositor`'s cheque `id`,
+/// refusing early what the refund would refuse, so the user is not asked
+/// for nothing.
+async fn drain_to_confirm(
 	purses: &NftPurses,
 	depositor: &ProductId,
 	id: &latest::NftPurseChequeId,
 ) -> Result<Drain, CallError<latest::HostNftPurseRefundError>> {
-	let refund = purses.refund_drain(depositor, id).await.map_err(refund_refusal)?;
-	let missing = || host_failure(format!("purse {} of a deposit does not exist", refund.from.0));
-	let owner = purses.owner_of(refund.from).await.map_err(host_failure)?.ok_or_else(missing)?;
-	let item_count = u32::try_from(refund.item_count).map_err(host_failure)?;
+	let drain = purses.refund_drain(depositor, id).await.map_err(refund_refusal)?;
+	let owner = purses.owner_of(drain.from).await.map_err(host_failure)?.ok_or_else(|| {
+		host_failure(format!("purse {} of a deposit does not exist", drain.from.0))
+	})?;
+	let item_count = u32::try_from(drain.item_count).map_err(host_failure)?;
 	let destination = NftPurseDrainDestination::Refund;
-	Ok(Drain { from: refund.from, owner, item_count, destination })
+	Ok(Drain { from: drain.from, owner, item_count, destination })
 }
 
 /// A refund refused by Layer 1 as the product's error. A host without NFT
@@ -154,8 +156,9 @@ fn refund_failure(
 	}
 }
 
-/// A deposit this product never made is not found, and a refund that would
-/// move nothing is unavailable. Anything else is the host's failure.
+/// A deposit this product never made is not found, one still moving is in
+/// progress, a repeated refund exists, and a refund that would move nothing
+/// is unavailable. Anything else is the host's failure.
 fn refund_refusal(refusal: StartOperationError) -> CallError<latest::HostNftPurseRefundError> {
 	let domain = match refusal {
 		StartOperationError::ImportNotFound => latest::HostNftPurseRefundError::ChequeNotFound,

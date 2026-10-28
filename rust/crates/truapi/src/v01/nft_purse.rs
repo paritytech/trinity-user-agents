@@ -493,8 +493,9 @@ pub enum NftPurseTransferItemError {
 /// Request for the status of an operation the calling product registered.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseObserveOperationStatusRequest {
-	/// The key the operation was registered under, or the cheque id of a
-	/// deposit or refund.
+	/// The key the operation was registered under: the cheque id of a
+	/// deposit, or `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+	/// `blake2_256("nft-purse/refund" ‖ chequeId)` for a revoke and a refund.
 	pub idempotency_key: NftPurseIdempotencyKey,
 }
 

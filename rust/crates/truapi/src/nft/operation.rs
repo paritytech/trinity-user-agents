@@ -225,9 +225,9 @@ pub fn progress_of(transfers: Vec<DurableTxState>) -> Result<Vec<TransferProgres
 	transfers.into_iter().map(transfer_progress).collect()
 }
 
-/// The latest of `transfers` for each key they consume, in registration
-/// order. A later move of a key replaces an earlier one, as when a repeated
-/// revoke retries a reclaim that failed.
+/// The latest of `transfers` for each key they consume, in the order those
+/// latest moves were registered. A later move of a key replaces an earlier
+/// one, as when a repeated revoke retries a reclaim that failed.
 pub fn latest_per_source(transfers: Vec<TransferProgress>) -> Vec<TransferProgress> {
 	let mut seen = BTreeSet::new();
 	let mut latest: Vec<_> = transfers

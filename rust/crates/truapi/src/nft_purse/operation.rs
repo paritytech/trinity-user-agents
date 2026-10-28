@@ -8,8 +8,8 @@ use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
-	NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey, NftPurseItemKey,
-	NftPurseStatus,
+	NftPurseChequeId, NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey,
+	NftPurseItemKey, NftPurseStatus,
 };
 
 use super::{NftPurses, PurseOwner};
@@ -87,6 +87,13 @@ impl NftPurses {
 /// Root or by another product.
 pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool {
 	!matches!(owner, PurseOwner::Product(id) if id == caller)
+}
+
+/// The idempotency key of the operation `domain` names for cheque `id`, as
+/// products derive it to observe a revoke or a refund.
+pub fn cheque_operation_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+	let preimage = [domain, &id.0].concat();
+	NftPurseIdempotencyKey(blake2_256(&preimage))
 }
 
 /// The operation `caller` names `idempotency_key`, scoped to `caller`.

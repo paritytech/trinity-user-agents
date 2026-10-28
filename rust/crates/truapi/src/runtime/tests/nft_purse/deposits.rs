@@ -15,7 +15,10 @@ use super::{
 	operations::{Purses, product_purses, product_purses_over},
 	*,
 };
-use crate::platform::{NftPurseDrainDestination, NftPurseDrainReview};
+use crate::{
+	nft::OperationKey,
+	platform::{NftPurseDrainDestination, NftPurseDrainReview},
+};
 
 /// The purse the sending product, the other product, hands its items out of.
 const SENDER_PURSE: u32 = 2;
@@ -251,6 +254,14 @@ fn finalize_waiting_moves(purses: &Purses) {
 	block_on(db.write(finalize)).unwrap();
 }
 
+/// The keys the deposit of `cheque` moved its items into, in its order.
+fn deposited_items(purses: &Purses, cheque: &v01::NftPurseCheque) -> Vec<v01::NftPurseItemKey> {
+	let deposit = OperationKey::new(PRODUCT.as_bytes(), cheque.id.0);
+	let mut moves = purses.ledger.observe_operation(&deposit);
+	let moves = block_on(moves.next()).unwrap().unwrap();
+	moves.iter().map(|transfer| v01::NftPurseItemKey(transfer.minted.0)).collect()
+}
+
 /// A cheque of `count` items deposited into [`TICKETS`], with the deposit
 /// finalized.
 fn deposited_cheque(count: u32) -> (Purses, v01::NftPurseCheque) {
@@ -264,14 +275,14 @@ fn deposited_cheque(count: u32) -> (Purses, v01::NftPurseCheque) {
 /// being asked, and follows the moves under the key the RFC derives from
 /// the cheque id.
 #[test]
-fn a_refund_of_a_settled_deposit_moves_every_item_back_and_is_observed_under_its_refund_key() {
+fn a_settled_deposit_is_refunded_under_its_refund_key() {
 	let (purses, cheque) = deposited_cheque(2);
 
 	let refunded = refund(&purses.host, &cheque).unwrap();
 
-	let HostNftPurseRefundResponse::V1(response) = refunded;
-	assert_eq!(response.started.len(), 2);
-	assert_eq!(response.unavailable, vec![]);
+	let started = deposited_items(&purses, &cheque);
+	let expected = v01::HostNftPurseRefundResponse { started, unavailable: vec![] };
+	assert_eq!(refunded, HostNftPurseRefundResponse::V1(expected));
 	let refund_key = blake2_256(&[b"nft-purse/refund".as_slice(), &cheque.id.0].concat());
 	let status = first_status_under(&purses.host, refund_key);
 	assert_eq!(

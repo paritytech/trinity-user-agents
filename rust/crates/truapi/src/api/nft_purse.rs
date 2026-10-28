@@ -297,8 +297,8 @@ pub trait NftPurse: Send + Sync {
 
 	/// Follow an operation the calling product registered: a rebalance or
 	/// transfer by its idempotency key, a deposit by its cheque id, and a
-	/// revoke or refund by the key `revokeCheque` or `refund` gives. Ends
-	/// after a terminal status.
+	/// revoke or refund by the key derived from its cheque id, as
+	/// `revokeCheque` and `refund` describe. Ends after a terminal status.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";

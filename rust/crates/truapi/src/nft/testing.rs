@@ -174,20 +174,20 @@ pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
 /// Marks the transfer `id` as finalized, as a landing at a finalized block
 /// would.
 pub fn finalize_transfer(db: &Db, id: DurableTxId) {
-	let update = move |tx: &rusqlite::Transaction<'_>| {
-		tx.execute("UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE id = ?1", [id.0])?;
-		Ok(())
-	};
-	block_on(db.write(update)).expect("status is written");
+	update_transfer(db, id, "UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE id = ?1");
 }
 
 /// Marks the transfer `id` as failed, as a rejection would.
 pub fn fail_transfer(db: &Db, id: DurableTxId) {
+	let statement =
+		"UPDATE durable_tx SET status = 'FAILURE', failure_kind = 'REJECTED' WHERE id = ?1";
+	update_transfer(db, id, statement);
+}
+
+/// Runs `statement` with the transfer `id` as its one parameter.
+fn update_transfer(db: &Db, id: DurableTxId, statement: &'static str) {
 	let update = move |tx: &rusqlite::Transaction<'_>| {
-		tx.execute(
-			"UPDATE durable_tx SET status = 'FAILURE', failure_kind = 'REJECTED' WHERE id = ?1",
-			[id.0],
-		)?;
+		tx.execute(statement, [id.0])?;
 		Ok(())
 	};
 	block_on(db.write(update)).expect("status is written");

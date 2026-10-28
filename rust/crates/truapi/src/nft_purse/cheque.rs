@@ -11,7 +11,10 @@ use truapi::latest::{
 };
 use zeroize::Zeroizing;
 
-use super::{NftPurses, operation::operation_key};
+use super::{
+	NftPurses,
+	operation::{cheque_operation_key, operation_key},
+};
 use crate::{
 	durable::RegistrationError,
 	host_logic::x25519_seal::{SealError, SealedBox, X25519PrivateKey},
@@ -83,7 +86,7 @@ impl NftPurses {
 
 /// The idempotency key the revoke of cheque `id` is observed under.
 fn revoke_key(id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
-	NftPurseIdempotencyKey(blake2_256(&[REVOKE_KEY_DOMAIN, &id.0].concat()))
+	cheque_operation_key(REVOKE_KEY_DOMAIN, id)
 }
 
 /// The tag that names the handoff of the cheque `id` by `creator`, so cheque

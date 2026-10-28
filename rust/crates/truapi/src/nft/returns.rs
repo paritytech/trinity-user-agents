@@ -15,7 +15,8 @@ use super::{
 };
 use crate::{
 	durable,
-	durable::{DurableTxId, PolicyParams, group_exists},
+	durable::{DurableTxId, DurableTxState, PolicyParams, group_exists},
+	store::DbError,
 	unix_time::current_unix_secs,
 };
 
@@ -62,52 +63,77 @@ pub fn plan_returns(
 }
 
 /// The items the import of `request` landed that nothing consumed, in the
-/// import's order. Refuses, in this order, when no such import exists, while
-/// any of its moves can still land or fail, when the return exists, and when
-/// no landed item is unconsumed.
+/// import's order. Refuses, in this order, when no import exists under that
+/// key, while any of its moves can still land or fail, when the return
+/// exists, and when no landed item is unconsumed.
 pub fn returnable_items(
 	conn: &Connection,
 	request: &ReturnRequest,
 ) -> Result<Vec<ReturnableItem>, StartOperationError> {
-	let landed = finalized_import_moves(conn, &request.import)?;
-	if group_exists(conn, &nft_domain(), request.operation.group())? {
-		return Err(StartOperationError::OperationExists);
-	}
-	let minted: Vec<ItemKey> = landed.iter().map(|transfer| transfer.minted).collect();
-	let unconsumed: BTreeMap<ItemKey, ItemSlot> =
-		dao::unconsumed_keys(conn, &minted)?.into_iter().collect();
-	let items: Vec<_> = landed
-		.iter()
-		.filter_map(|transfer| {
-			let slot = *unconsumed.get(&transfer.minted)?;
-			Some(ReturnableItem { key: transfer.minted, slot, origin: transfer.consumed })
-		})
-		.collect();
+	let import = durable::group(conn, &nft_domain(), request.import.group())?;
+	validate_settled_import(&import)?;
+	validate_return_is_new(conn, &request.operation)?;
+	let moves = progress_of(import)?;
+	let items = unconsumed_landed_items(conn, &finalized_moves(moves))?;
 	if items.is_empty() {
 		return Err(StartOperationError::NothingIdle);
 	}
 	Ok(items)
 }
 
-/// The moves of `import` that finalized. Refuses when no such import exists
-/// or while any of its moves can still land or fail.
-fn finalized_import_moves(
-	conn: &Connection,
-	import: &OperationKey,
-) -> Result<Vec<TransferProgress>, StartOperationError> {
-	let group = durable::group(conn, &nft_domain(), import.group())?;
-	let moves = progress_of(group)?;
-	if moves.is_empty() {
+/// Checks that `import` is an import, every move of it signed with an
+/// imported secret, and that each of its moves finalized or failed. Any
+/// other operation under the key, such as a revoke or a rebalance, is no
+/// import.
+fn validate_settled_import(import: &[DurableTxState]) -> Result<(), StartOperationError> {
+	if import.is_empty() || !import.iter().all(is_import_move) {
 		return Err(StartOperationError::ImportNotFound);
 	}
-	let finalized = TransferState::Landed { finalized: true };
-	let is_final = |transfer: &TransferProgress| {
-		matches!(transfer.state, TransferState::Failed | TransferState::Landed { finalized: true })
-	};
-	if !moves.iter().all(is_final) {
+	if !import.iter().all(|state| state.status.is_final()) {
 		return Err(StartOperationError::ImportUnsettled);
 	}
-	Ok(moves.into_iter().filter(|transfer| transfer.state == finalized).collect())
+	Ok(())
+}
+
+/// Whether `state` is a move signed with an imported secret.
+fn is_import_move(state: &DurableTxState) -> bool {
+	let params = state.plan.as_ref().and_then(|plan| TransferParams::try_from(&plan.params).ok());
+	params.is_some_and(|params| params.signer == TransferSigner::Imported)
+}
+
+/// Checks that nothing is registered under `operation` yet.
+fn validate_return_is_new(
+	conn: &Connection,
+	operation: &OperationKey,
+) -> Result<(), StartOperationError> {
+	if group_exists(conn, &nft_domain(), operation.group())? {
+		return Err(StartOperationError::OperationExists);
+	}
+	Ok(())
+}
+
+/// The moves of `moves` that landed in a finalized block.
+fn finalized_moves(moves: Vec<TransferProgress>) -> Vec<TransferProgress> {
+	let finalized = TransferState::Landed { finalized: true };
+	moves.into_iter().filter(|transfer| transfer.state == finalized).collect()
+}
+
+/// The keys `landed` minted that nothing consumed since, each with its slot
+/// and the key it came from, in the order of `landed`.
+fn unconsumed_landed_items(
+	conn: &Connection,
+	landed: &[TransferProgress],
+) -> Result<Vec<ReturnableItem>, DbError> {
+	let minted: Vec<ItemKey> = landed.iter().map(|transfer| transfer.minted).collect();
+	let unconsumed: BTreeMap<ItemKey, ItemSlot> =
+		dao::unconsumed_keys(conn, &minted)?.into_iter().collect();
+	Ok(landed
+		.iter()
+		.filter_map(|transfer| {
+			let slot = *unconsumed.get(&transfer.minted)?;
+			Some(ReturnableItem { key: transfer.minted, slot, origin: transfer.consumed })
+		})
+		.collect())
 }
 
 /// The params of moving whatever the key of `item` holds back to the key it
@@ -123,36 +149,34 @@ fn return_params(item: &ReturnableItem, give_up_after: u64) -> PolicyParams {
 	.into()
 }
 
-/// Records, in the registration write, that each move of the return with
-/// `ids` spends its item, and answers which items it started and which
-/// stay.
-pub fn record_return(
-	tx: &Transaction<'_>,
-	request: &ReturnRequest,
-	ids: &[DurableTxId],
-) -> Result<StartedReturn, StartOperationError> {
-	let started = started_return(tx, request)?;
-	let inputs: Vec<_> = started.started.iter().copied().zip(ids.iter().copied()).collect();
-	dao::insert_inputs(tx, &inputs)?;
-	Ok(started)
-}
-
 /// The items the return's registered moves take, in registration order,
 /// and the finalized items of the import they leave out.
-fn started_return(
+pub fn started_return(
 	tx: &Transaction<'_>,
 	request: &ReturnRequest,
-) -> Result<StartedReturn, StartOperationError> {
-	let group = durable::group(tx, &nft_domain(), request.operation.group())?;
+) -> Result<StartedReturn, DbError> {
+	let own = durable::group(tx, &nft_domain(), request.operation.group())?;
 	let started: Vec<ItemKey> =
-		progress_of(group)?.into_iter().map(|transfer| transfer.consumed).collect();
-	let landed = finalized_import_moves(tx, &request.import)?;
-	let unavailable = landed
+		progress_of(own)?.into_iter().map(|transfer| transfer.consumed).collect();
+	let import = durable::group(tx, &nft_domain(), request.import.group())?;
+	let import_moves = progress_of(import)?;
+	let unavailable = finalized_moves(import_moves)
 		.into_iter()
 		.map(|transfer| transfer.minted)
 		.filter(|minted| !started.contains(minted))
 		.collect();
 	Ok(StartedReturn { started, unavailable })
+}
+
+/// Records that the move with each id of `ids` spends the item at the same
+/// position of `started`.
+pub fn record_return_inputs(
+	tx: &Transaction<'_>,
+	started: &[ItemKey],
+	ids: &[DurableTxId],
+) -> Result<(), DbError> {
+	let inputs: Vec<_> = started.iter().copied().zip(ids.iter().copied()).collect();
+	dao::insert_inputs(tx, &inputs)
 }
 
 #[cfg(test)]
@@ -304,7 +328,9 @@ mod tests {
 
 		let started = start_return(&deposited, refund(2)).unwrap();
 
-		assert_eq!(started.unavailable, vec![moved]);
+		let expected =
+			StartedReturn { started: vec![deposited.minted[0]], unavailable: vec![moved] };
+		assert_eq!(started, expected);
 	}
 
 	/// An item whose deposit move failed never arrived, so there is nothing
@@ -345,6 +371,29 @@ mod tests {
 		assert!(matches!(refused, StartOperationError::ImportNotFound));
 	}
 
+	/// A product's revoke, rebalance or transfer shares the key space of its
+	/// deposits, and returning one would undo it, as a refund of a revoke
+	/// would put items back at keys the recipient holds.
+	#[test]
+	fn a_return_of_an_operation_that_is_no_import_is_refused() {
+		let deposited = deposited();
+		let moved = deposited.minted[1];
+		hold(&deposited, moved);
+		let transfer = TransferRequest {
+			operation: refund(9),
+			from: PURSE,
+			items: [moved].into(),
+			destinations: TransferDestinations::Foreign(ItemKey([0xee; 32])),
+		};
+		block_on(deposited.ledger.start_transfers(transfer)).unwrap();
+		finalize_transfer(&deposited.db, DurableTxId(3));
+		let request = ReturnRequest { operation: refund(2), import: refund(9) };
+
+		let refused = refused_with(block_on(deposited.ledger.start_returns(request)));
+
+		assert!(matches!(refused, StartOperationError::ImportNotFound));
+	}
+
 	/// A refund is not repeated under the same key.
 	#[test]
 	fn a_second_return_under_the_same_key_is_refused() {
@@ -357,7 +406,7 @@ mod tests {
 	}
 
 	/// Returned items are in use, so nothing else spends them, and are free
-	/// again once their moves fail, so a refund can be retried then.
+	/// again once their moves fail, so the depositor can spend them again.
 	#[test]
 	fn returned_items_stay_in_use_until_their_moves_fail() {
 		let deposited = deposited();

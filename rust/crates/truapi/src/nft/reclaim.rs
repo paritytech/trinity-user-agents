@@ -40,8 +40,7 @@ pub fn plan_reclaims(
 		return Err(StartOperationError::TagNotFound);
 	};
 	let purse = first.purse;
-	let busy = keys_moving_or_moved(tx, &request.operation)?;
-	let sources: Vec<_> = handed_off.into_iter().filter(|(key, _)| !busy.contains(key)).collect();
+	let sources = keys_to_reclaim(tx, &request.operation, handed_off)?;
 	if sources.is_empty() {
 		return Ok(Vec::new());
 	}
@@ -56,13 +55,25 @@ pub fn plan_reclaims(
 		.collect())
 }
 
+/// The keys of `handed_off` that `operation` has not moved yet, or whose
+/// latest move in it failed.
+fn keys_to_reclaim(
+	tx: &Transaction<'_>,
+	operation: &OperationKey,
+	handed_off: Vec<(ItemKey, ItemSlot)>,
+) -> Result<Vec<(ItemKey, ItemSlot)>, StartOperationError> {
+	let busy = keys_moving_or_moved(tx, operation)?;
+	Ok(handed_off.into_iter().filter(|(key, _)| !busy.contains(key)).collect())
+}
+
 /// The keys whose latest move in `operation` waits or landed.
 fn keys_moving_or_moved(
 	tx: &Transaction<'_>,
 	operation: &OperationKey,
 ) -> Result<BTreeSet<ItemKey>, StartOperationError> {
 	let group = durable::group(tx, &nft_domain(), operation.group())?;
-	Ok(latest_per_source(progress_of(group)?)
+	let transfers = progress_of(group)?;
+	Ok(latest_per_source(transfers)
 		.into_iter()
 		.filter(|transfer| transfer.state != TransferState::Failed)
 		.map(|transfer| transfer.consumed)
