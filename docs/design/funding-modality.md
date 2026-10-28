@@ -57,13 +57,13 @@ flowchart LR
 
 | Trait | Id | Methods | Caller |
 |---|---|---|---|
-| `Funding` | 22 | `request({ id, direction, amount? })` · `statusSubscribe({ id })` | product |
+| `Funding` | 22 | `request({ direction, amount? })` → `{ intent }` · `statusSubscribe({ intent })` | product |
 | `FundingProvider` | 24 | core → worker: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` | core and provider worker |
 | `Payment` | 9 | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe` | provider worker |
 | `AuthTokens` | 27 (#1553) | `store` · `get` · `remove` | provider worker |
 | `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed` · `funding_quotes_changed` | core → host |
 
-Session id: `fs_` + hex(blake2("truapi/funding-id", product, id)). Reused id → `AlreadyExists`. Host-opened: `fs_` + nanoid(10).
+Session id: `fs_` + nanoid(10), for product- and host-opened sessions alike. Another product's session reads as `NotFound`.
 
 Worker payments name their session (`funding`). A session the worker doesn't serve, the wrong direction, or a full session (≤3 top-ups/payments) → `FundingNotServed`. A repeat under the same id must ask the same.
 
@@ -89,8 +89,10 @@ sequenceDiagram
   participant H as Host
   participant C as Core
   participant W as Provider
-  P->>C: request(id, In, amount?)
+  P->>C: request(In, amount?)
+  C-->>P: intent
   C->>H: present_funding
+  P->>C: statusSubscribe(intent)
   H->>C: rail, asset, country
   C->>W: quote (every provider, 10 s deadline)
   W-->>C: Quoted
@@ -151,7 +153,7 @@ stateDiagram-v2
   Expired --> [*]
 ```
 
-The overlay runs on its own task: a request that goes away still starts or discards its session.
+`request` answers once the session is held; the overlay runs on its own task, which starts or discards it.
 
 One serialized reconciler, woken on every change, runs the background work: load or sweep, then retain quotes · hold workers · follow settlements · resolve starts · catch up links. Sweep retry 30 s, catch-up retry 5 s, provider call timeout 60 s.
 
