@@ -30,7 +30,7 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override suspend fun session(intent: String): FundingSession? = read { it.fundingSession(intent) }
 
-    override suspend fun progress(intent: String): FundingProgress? = read { it.fundingProgress(intent) }
+    override suspend fun progress(intent: String): FundingProgress? = bridge.progress(intent)
 
     override suspend fun sessions(): List<FundingSession> = read { it.fundingSessions() }.orEmpty()
 

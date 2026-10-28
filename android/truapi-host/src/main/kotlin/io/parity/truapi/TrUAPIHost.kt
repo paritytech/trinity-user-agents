@@ -836,8 +836,13 @@ interface FundingHostBridge {
      */
     suspend fun detectedCountry(): String?
 
-    /** A session's status changed. Runs inline on the core's thread, so return promptly. */
-    fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {}
+    /**
+     * Session [intent] changed: its status, and the progress the host draws, so the host keeps the latest of
+     * each and never reads them back. Every session in flight, and every ended one not yet acknowledged, comes
+     * through again when funding resumes. [progress] is `null` once the core keeps only the session's summary.
+     * Runs inline on the core's thread, so return promptly.
+     */
+    fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {}
 
     /**
      * The quote list requested with [TrUAPIHostRuntime.getFundingQuote]: again whenever a provider answers,
@@ -871,8 +876,8 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         }
 
     // Infallible across the FFI, as `onCoreLog` is.
-    override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
-        runCatching { bridge.fundingSessionChanged(intent, status) }
+    override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
+        runCatching { bridge.fundingSessionChanged(intent, status, progress) }
     }
 
     // Infallible across the FFI, as `onCoreLog` is.
@@ -1101,9 +1106,6 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Session [intent] as the core holds it. */
     fun fundingSession(intent: String): FundingSession? = inner.fundingSession(intent)
-
-    /** Session [intent]'s steps for its direction and rail, with when each was reached. */
-    fun fundingProgress(intent: String): FundingProgress? = inner.fundingProgress(intent)
 
     /** Every funding session the core keeps, in flight first, then ended, each newest first. */
     fun fundingSessions(): List<FundingSession> = inner.fundingSessions()

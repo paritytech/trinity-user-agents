@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -40,6 +41,10 @@ class TrUAPIWorkerSupervisorTest {
     private val executions = mutableListOf<TrUAPIProductExecution>()
     private val chatBridges = mutableListOf<ChatHostBridge?>()
     private val bootstrapInstaller = mockk<TrUAPIBootstrapInstaller>(relaxed = true)
+    private val policies = mutableListOf<NavigationPolicy>()
+    private val workerPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {})
+    private val workerScopes = mutableListOf<CoroutineScope>()
+    private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
 
     @Before
@@ -103,6 +108,19 @@ class TrUAPIWorkerSupervisorTest {
         verify(exactly = 1) { bootstrapInstaller.installerFor(setOf("https://worker.paseo"), null) }
     }
 
+    // A chat card button navigates from the worker, so the worker's execution needs a policy that
+    // opens the destination rather than one that drops it, on the worker's own scope so that
+    // stopping the worker cancels a navigation still in flight.
+    @Test
+    fun `a worker navigates through the chat worker navigation`() = runTest {
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
+    }
+
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
@@ -120,17 +138,19 @@ class TrUAPIWorkerSupervisorTest {
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
         },
         bootstrapInstaller = bootstrapInstaller,
         bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
         refCounter = { mockk(relaxed = true) },
+        navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         dispatchers = testDispatchers(),
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
         coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(5)
             Result.success(execution)
         }

@@ -148,6 +148,9 @@ pub struct FundingRegistry {
 	presenting: Mutex<HashSet<String>>,
 	subscribers: Mutex<Subscribers>,
 	announcements: Mutex<Announcements>,
+	/// Sessions past the moment they count as taking longer whose host has
+	/// heard so, as nothing else changes in them then.
+	told_longer: Mutex<HashSet<String>>,
 	/// Held across every load and write; the flag records whether persisted
 	/// sessions have been loaded.
 	writes: AsyncMutex<bool>,
@@ -835,6 +838,11 @@ impl FundingRegistry {
 				self.fan_out(&session);
 			}
 		}
+		for session in self.now_taking_longer(now_ms) {
+			if !announced.contains(&session.intent) {
+				self.tell_host(&session);
+			}
+		}
 		drop(loaded);
 		for (provider, call) in lapsed {
 			self.call(&provider, vec![call]);
@@ -1213,7 +1221,42 @@ impl FundingRegistry {
 	}
 
 	fn next_deadline(&self) -> Option<u64> {
-		self.lock_sessions().values().filter_map(FundingSession::next_alarm_ms).min()
+		let told_longer = self.lock_told_longer();
+		self.lock_sessions()
+			.values()
+			.flat_map(|session| {
+				let longer =
+					session.longer_at_ms().filter(|_| !told_longer.contains(&session.intent));
+				[session.next_alarm_ms(), longer]
+			})
+			.flatten()
+			.min()
+	}
+
+	/// The sessions that reached the moment they count as taking longer by
+	/// `now_ms` since the host last heard of them. A later report moves that
+	/// moment, so the host hears of it again.
+	fn now_taking_longer(&self, now_ms: u64) -> Vec<FundingSession> {
+		let mut told_longer = self.lock_told_longer();
+		let sessions = self.lock_sessions();
+		told_longer.retain(|intent| {
+			sessions
+				.get(intent)
+				.and_then(FundingSession::longer_at_ms)
+				.is_some_and(|at_ms| at_ms <= now_ms)
+		});
+		sessions
+			.values()
+			.filter(|session| {
+				session.longer_at_ms().is_some_and(|at_ms| at_ms <= now_ms) &&
+					told_longer.insert(session.intent.clone())
+			})
+			.cloned()
+			.collect()
+	}
+
+	fn lock_told_longer(&self) -> MutexGuard<'_, HashSet<String>> {
+		lock(&self.told_longer)
 	}
 
 	/// Tell subscribers about a session's current stage and queue it for the
@@ -1229,9 +1272,16 @@ impl FundingRegistry {
 				subscribers.remove(&session.intent);
 			}
 		}
-		// The host hears of a session once the user starts it.
+		self.tell_host(session);
+	}
+
+	/// Queue `session`'s current stage for the host, which hears of a session
+	/// once the user starts it.
+	fn tell_host(&self, session: &FundingSession) {
 		if self.platform.get().is_some() && !self.lock_presenting().contains(&session.intent) {
-			self.lock_announcements().pending.push_back((session.intent.clone(), item));
+			self.lock_announcements()
+				.pending
+				.push_back((session.intent.clone(), session.wire_item()));
 		}
 	}
 

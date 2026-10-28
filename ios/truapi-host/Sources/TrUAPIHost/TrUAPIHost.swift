@@ -372,9 +372,13 @@ public protocol FundingHostBridge: AnyObject, Sendable {
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
 
-    /// Session `intent`'s status changed, for host UI such as the in-flight
-    /// pill. Called inline, so hand it off rather than drawing here.
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
+    /// Session `intent` changed: its status, and the progress the host draws,
+    /// so the host keeps the latest of each and never reads them back. Every
+    /// session in flight, and every ended one not yet acknowledged, comes
+    /// through again when funding resumes. `progress` is `nil` once the core
+    /// keeps only the session's summary. Called inline, so hand it off rather
+    /// than drawing here.
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?)
 
     /// The quote list requested with
     /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
@@ -676,8 +680,8 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         }
     }
 
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
-        bridge.fundingSessionChanged(intent: intent, status: status)
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
+        bridge.fundingSessionChanged(intent: intent, status: status, progress: progress)
     }
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -1115,12 +1119,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Session `intent` as the core holds it.
     public func fundingSession(intent: String) -> FundingSession? {
         inner.fundingSession(intent: intent)
-    }
-
-    /// Session `intent`'s progress: the steps for its direction and rail with
-    /// when each was reached, and the provider's references.
-    public func fundingProgress(intent: String) -> FundingProgress? {
-        inner.fundingProgress(intent: intent)
     }
 
     /// Whether a provider still works on any funding session, read from

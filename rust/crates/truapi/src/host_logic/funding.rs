@@ -1007,7 +1007,7 @@ impl FundingSession {
 	/// its chosen quote's time after the provider's latest report, or after
 	/// it was assigned. `None` without a quoted time, while a top-up waits on
 	/// the user's payment, or once it ended.
-	fn longer_at_ms(&self) -> Option<u64> {
+	pub fn longer_at_ms(&self) -> Option<u64> {
 		if !self.serves_provider() || self.awaits_users_payment() {
 			return None;
 		}

@@ -63,6 +63,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         bootstrapInstaller = bootstrapInstaller,
         bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
         refCounter = Lazy { refCounter },
+        navigation = mock(),
         dispatchers = testDispatchers(),
     )
 
