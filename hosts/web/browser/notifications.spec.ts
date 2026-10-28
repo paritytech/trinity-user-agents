@@ -151,6 +151,29 @@ const seenIds = (page: Page, seen: boolean) =>
       rows.map((node) => (node as HTMLElement).dataset.notification),
     );
 
+/**
+ * Scroll the row `id` into the middle of the list, and wait until it is seen.
+ * The screen draws its list again each time a row is marked seen, so the row
+ * is looked up and scrolled in one step in the page: a node found earlier may
+ * already be detached, and scrolling a detached node moves nothing.
+ */
+async function scrollUntilSeen(page: Page, id: string): Promise<void> {
+  const selector = row(id);
+  const end = Date.now() + STEP_MS;
+  while (Date.now() < end) {
+    const seen = await page.evaluate((selector) => {
+      const node = document.querySelector<HTMLElement>(selector);
+      if (node === null) return null;
+      if (node.dataset.seen === "true") return true;
+      node.scrollIntoView({ block: "center" });
+      return false;
+    }, selector);
+    if (seen === true) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(await page.getAttribute(selector, "data-seen")).toBe("true");
+}
+
 /** Pretend the page is in a background tab, or bring it back. */
 const setPageVisible = (page: Page, visible: boolean) =>
   page.evaluate((shown) => {
@@ -232,10 +255,7 @@ describe("the Inbox", () => {
         await page.waitForTimeout(300);
         expect(await badgeCount(page)).toBeGreaterThan(0);
         // Scrolled into view one by one, the rest are seen too.
-        for (const id of unseen)
-          await page
-            .locator(row(id!))
-            .evaluate((node) => node.scrollIntoView({ block: "center" }));
+        for (const id of unseen) await scrollUntilSeen(page, id!);
         await eventually(() => badgeCount(page), 0);
         expect(await seenIds(page, false)).toEqual([]);
 
@@ -440,9 +460,7 @@ describe("the Inbox", () => {
         // badge clear together. Apps still counts the open product. Rows
         // below the fold are seen once scrolled into view.
         for (const id of await seenIds(page, false))
-          await page
-            .locator(row(id!))
-            .evaluate((node) => node.scrollIntoView({ block: "center" }));
+          await scrollUntilSeen(page, id!);
         await eventually(() => badgeCount(page), 0);
         expect(await inboxDot()).toBe(false);
         expect(await appsOpen()).toBe(1);
