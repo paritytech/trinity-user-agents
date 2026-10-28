@@ -227,15 +227,18 @@ schemes.
 - URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
   is a URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`), which MAY use `http` or `ws`, so a stack running on a laptop can be
-  read on the same network. A hostname never qualifies, so DNS cannot turn a public name into a private address.
+  read on the same network. A hostname never qualifies, so DNS cannot turn a public name into a private address, except
+  `localhost` for a `web-gateway`, below.
 - A URL MUST NOT carry a user name or password, which would let `https://previewnet.substrate.dev@evil.example/` read as
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
   disagree on shorthand, so two readers would reach different hosts.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given. A `web-gateway` URL MUST name a host, never an address, carry no fragment, and use `https`,
-  except that a gateway on the host `localhost` MAY use `http`: browsers send `localhost` and its subdomains to loopback
-  without asking DNS, so a stack run on a laptop can name its local gateway, such as `http://localhost:5173/`. Its path
-  as written MUST end in `/`. It MAY carry a query, so one gateway can serve several stacks.
+  except that a gateway whose host is exactly `localhost` MAY use `http`. `localhost` and the names under it resolve to
+  the reader's own machine ([RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)), so the traffic never leaves
+  it and DNS has no part in it. Such a gateway, like `http://localhost:5173/`, serves only readers on the machine that
+  runs it, so it belongs in a stack run on that machine. Its path as written MUST end in `/`. It MAY carry a query, so
+  one gateway can serve several stacks.
 
 A reader opens a dotNS name on the stack's `web-gateway` as follows. The name is lowercase labels joined by dots, each
 following the rule for `tld`, and readers refuse any other. A name ending in `.` and the stack's `tld` loses that
