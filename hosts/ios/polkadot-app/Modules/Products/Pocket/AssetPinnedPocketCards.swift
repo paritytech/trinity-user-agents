@@ -33,8 +33,10 @@ struct AssetPinnedPocketCards: PinnedPocketCards {
         self.tld = tld
     }
 
-    func cards() -> [PocketCardEntry] {
-        Self.definitions.map { $0.card(tld: tld) }
+    func cards() -> [PinnedPocketCard] {
+        Self.definitions.map {
+            PinnedPocketCard(productId: $0.backingProduct(tld), cardId: $0.cardId, title: $0.title)
+        }
     }
 
     /// A key already names the product that must back it.

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
+import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.RendererNode
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -18,7 +19,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 /** The cards the host itself places: present on first run, removable by nobody. */
 interface PinnedPocketCards {
     /** The cards placed on the network [tld] names, which the runtime is started with. */
-    fun cards(tld: DotNsTld): List<PocketCard>
+    fun cards(tld: DotNsTld): List<PinnedPocketCard>
 
     /** The host-placed card [key] names, if it names one. A card's own key already says which network it belongs to. */
     fun pinned(key: PocketCardKey): CachedPocketCard?
@@ -48,7 +49,9 @@ class AssetPinnedPocketCards @Inject constructor(
     private val bundledFaces = ConcurrentHashMap<String, RendererNode>()
     private val bundledImages by lazy { context.assets.list("pocket").orEmpty().map { "pocket/$it" }.toSet() }
 
-    override fun cards(tld: DotNsTld): List<PocketCard> = definitions.map { it.card(it.backingProduct(tld)) }
+    override fun cards(tld: DotNsTld): List<PinnedPocketCard> = definitions.map {
+        PinnedPocketCard(it.backingProduct(tld).value, it.cardId, context.getString(it.titleRes))
+    }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? {
         val definition = definitions.firstOrNull { it.cardId == key.cardId.value } ?: return null
@@ -66,14 +69,12 @@ class AssetPinnedPocketCards @Inject constructor(
         return backingProduct(tld) == productId
     }
 
-    private fun Definition.card(backing: ProductId) = PocketCard(
-        key = PocketCardKey(backing, PocketCardId(cardId)),
-        title = context.getString(titleRes),
-        privileged = true,
-    )
-
     private fun Definition.toCard(backing: ProductId) = CachedPocketCard(
-        card = card(backing),
+        card = PocketCard(
+            key = PocketCardKey(backing, PocketCardId(cardId)),
+            title = context.getString(titleRes),
+            privileged = true,
+        ),
         face = bundledFace(cardId),
     )
 

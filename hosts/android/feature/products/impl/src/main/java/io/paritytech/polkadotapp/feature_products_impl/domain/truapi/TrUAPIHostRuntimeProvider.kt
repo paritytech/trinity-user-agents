@@ -51,7 +51,6 @@ import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
-import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
@@ -175,9 +174,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
-            pinnedPocketCards = pinnedPocketCards.cards(tld).map {
-                PinnedPocketCard(it.key.productId.value, it.key.cardId.value, it.title)
-            },
+            pinnedPocketCards = pinnedPocketCards.cards(tld),
         )
     }
 

@@ -17,6 +17,7 @@ import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.RendererNode
 import java.io.File
 
@@ -43,12 +44,10 @@ class AssetPinnedPocketCardsTest {
     // them left two placeholder cards that duplicated the host's own native ones.
     @Test
     fun `the host pins Humanity alone, on the personhood product`() {
-        assertEquals(listOf(humanityKey), pinnedCards().cards(tld).map { it.key })
-    }
-
-    @Test
-    fun `a host-placed card is privileged, so nothing can remove it`() {
-        assertTrue(pinnedCards().cards(tld).single().privileged)
+        assertEquals(
+            listOf(PinnedPocketCard(ReservedProductIds.personhood(tld).value, "humanity", "Humanity")),
+            pinnedCards().cards(tld),
+        )
     }
 
     @Test

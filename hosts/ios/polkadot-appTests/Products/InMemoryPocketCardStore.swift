@@ -48,7 +48,7 @@ actor InMemoryPocketCardStore: PocketCardStore {
 
         return snapshots
             .map { [pinned] added in
-                let placed = pinned.cards()
+                let placed = Self.placed(by: pinned)
                 let placedKeys = Set(placed.map(\.key))
 
                 return placed + added.filter { !placedKeys.contains($0.key) }
@@ -82,10 +82,20 @@ actor InMemoryPocketCardStore: PocketCardStore {
     }
 
     private func settle(_ added: [PocketCardEntry]) -> [PocketCardEntry] {
-        let placed = pinned.cards()
+        let placed = Self.placed(by: pinned)
         let placedKeys = Set(placed.map(\.key))
 
         return placed + added.filter { !placedKeys.contains($0.key) }
+    }
+
+    private static func placed(by pinned: any PinnedPocketCards) -> [PocketCardEntry] {
+        pinned.cards().map {
+            PocketCardEntry(
+                key: PocketCardKey(productId: $0.productId, cardId: PocketCardId(value: $0.cardId)),
+                title: $0.title,
+                privileged: true
+            )
+        }
     }
 }
 
@@ -99,7 +109,9 @@ struct InMemoryPinnedCards: PinnedPocketCards {
         bundledFace = face
     }
 
-    func cards() -> [PocketCardEntry] { cardsHeld }
+    func cards() -> [PinnedPocketCard] {
+        cardsHeld.map { PinnedPocketCard(productId: $0.key.productId, cardId: $0.key.cardId.value, title: $0.title) }
+    }
 
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
         cardsHeld.first { $0.key == key }
