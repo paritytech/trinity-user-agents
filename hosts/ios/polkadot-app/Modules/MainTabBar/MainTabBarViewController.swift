@@ -192,6 +192,7 @@ private extension MainTabBarViewController {
                 .offset(-Self.statusTitleCenterInset).constraint
             make.trailing.lessThanOrEqualTo(chainStatusAnchorGuide.snp.leading)
                 .offset(-Self.statusTitleSpacing)
+            make.height.equalTo(ChainConnectionStatusBarView.preferredHeight)
         }
 
         statusBarHost.didMove(toParent: self)

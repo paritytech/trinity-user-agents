@@ -32,6 +32,7 @@ final class StatusBarTitleButton: UIButton {
         menu = viewModel.menu
         isUserInteractionEnabled = viewModel.menu != nil
         accessibilityLabel = viewModel.title
+        accessibilityTraits = viewModel.menu == nil ? .staticText : .button
     }
 }
 
