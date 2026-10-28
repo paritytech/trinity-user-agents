@@ -30,8 +30,7 @@ where
 /// An endless sequence of pauses that starts at a first pause and doubles up
 /// to a cap.
 ///
-/// It adds no jitter. Add jitter before using it for many clients that retry
-/// against the same server at the same time.
+/// The pauses have no jitter, so clients that fail together retry together.
 #[derive(Debug)]
 pub struct Backoff {
 	first: Duration,
