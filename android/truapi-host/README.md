@@ -82,9 +82,9 @@ A host serving the Chat modality implements `ChatHostBridge` and passes it when 
 | --- | --- |
 | `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update and posted message |
 | `setRoomConfig` | Keeps the configuration the product declared for a room across restarts. The core calls it for the product's `setRoomConfig` |
-| `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and the icon when the metadata names one; and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
-| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `updateFeed` | Applies one change to the messages, a deletion included; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
 | `setRoomFooter` | Shows the text input, or nothing |
 
 The core checks that the product created the room before it calls any of these.
