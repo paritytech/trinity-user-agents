@@ -437,18 +437,17 @@ export async function closeTools(page: Page): Promise<void> {
 }
 
 /**
- * Account → pick test account `id` and Sign in, or Sign out of the test
- * account with null. Either reloads the tab; this waits for the load.
+ * More → Invitation demo → `id`, or Off with null. Either reloads the tab;
+ * this waits for the load.
  */
-export async function useTestAccount(
+export async function useInvitationDemo(
   page: Page,
   id: string | null,
 ): Promise<void> {
-  await openTools(page, "account");
-  if (id !== null) await page.selectOption("#wallet", `test-account:${id}`);
+  await openTools(page, "more");
   await Promise.all([
     page.waitForEvent("load"),
-    page.click(id === null ? "#sign-out" : "#sign-in"),
+    page.selectOption("#invitation-demo", id ?? ""),
   ]);
 }
 

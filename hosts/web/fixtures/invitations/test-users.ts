@@ -3,6 +3,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
 import type { Person } from "../../src/invitations/ports.js";
+import type { Wallet } from "../../src/platform/wallets.js";
 import { digest } from "../../src/invitations/sealing.js";
 import {
   fixtureCredential,
@@ -65,6 +66,19 @@ export const TEST_USERS: readonly TestUser[] = [
 /** The entropy the core signs `user` in with. */
 export function testUserEntropy(user: TestUser): Uint8Array {
   return mnemonicToEntropy(user.phrase, wordlist);
+}
+
+/**
+ * `user`'s public test phrase as a wallet the account picker offers. Its id
+ * is its storage scope, apart from the invitation demo's
+ * ({@link testUserScope}) and from every imported wallet's.
+ */
+export function testAccountWallet(user: TestUser): Wallet {
+  return {
+    id: `test-account:${user.id}`,
+    name: `${user.name} (test account)`,
+    entropy: testUserEntropy(user),
+  };
 }
 
 /**

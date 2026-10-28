@@ -20,7 +20,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
-  useTestAccount,
+  useInvitationDemo,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -108,11 +108,11 @@ async function setMenu(
 }
 
 /**
- * Account → the test account → Sign in, then More → Open Example Chat. The
+ * More → Invitation demo → the user, then More → Open Example Chat. The
  * tab reloads as that user, and Example Chat opens only when asked.
  */
 async function actAs(page: Page, user: string): Promise<void> {
-  await useTestAccount(page, user);
+  await useInvitationDemo(page, user);
   await ready(page);
   await page
     .locator("#session")

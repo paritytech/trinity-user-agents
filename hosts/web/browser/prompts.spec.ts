@@ -22,7 +22,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
-  useTestAccount,
+  useInvitationDemo,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -80,7 +80,7 @@ async function start(viewport: { width: number; height: number }): Promise<{
   const page = await context.newPage();
   await page.goto(host.origin);
   await ready(page);
-  await useTestAccount(page, "alice");
+  await useInvitationDemo(page, "alice");
   await ready(page);
   // The tab has booted once the core signed the test user in. Nothing else
   // opens: the product below is the one the test user tries.

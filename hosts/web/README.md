@@ -674,11 +674,11 @@ not a passing toast, and separate from the operating system's notification permi
 open it in place of the conversation list, and the Apps shelf's **Inbox** opens the same view: Chat, at its Inbox tab.
 Both read one list, so an item seen, dismissed or accepted in one shows so in the other. It holds chat invitations and
 profile sharing requests, not every chat message. No sharing, invitation or contact API feeds it: its requests come from
-sample data or from [test accounts](#test-accounts-prototype).
+sample data or from the [invitation demo](#invitation-demo-prototype).
 
 - **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the
   [local demo](#local-demo); a build leaves it out with both entries. Developer tools → **More** → **Add sample
-  notifications** fills the list of the signed-in wallet or test account, and **Clear samples** removes them.
+  notifications** fills the list of the signed-in wallet or demo user, and **Clear samples** removes them.
 - **The look.** The native apps have no Inbox, so this one is built from native parts: one list whose rows follow the
   iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the product
   it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
@@ -694,31 +694,46 @@ sample data or from [test accounts](#test-accounts-prototype).
   - **Accept** is the user's intent, handed to the product that owns the request. The row shows **Accepting…** until the
     product answers: it accepts, and the row shows Accepted, or it refuses, does not answer within 30 seconds, or is
     closed, and the reason shows under the row with the request still waiting. The host shows the product only when the
-    product asks; tapping an accepted row asks the product again. For a test account's invitation the product is Example
+    product asks; tapping an accepted row asks the product again. For a demo user's invitation the product is Example
     Chat, which checks the invitation, replies through the host and asks to be shown, at its **Accepted by you** list.
     Accepted on the row means the recipient's product replied; it is not the sender's connection. Example Chat has no
     chat conversation, so no Chat request or conversation is opened.
 - **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, or per
-  network and test account. Written only once used and removed when empty. Waiting requests and history survive a
-  reload. `src/notifications/notifications.ts` holds the list, which does not know where a request came from, and
+  network and demo user. Written only once used and removed when empty. Waiting requests and history survive a reload.
+  `src/notifications/notifications.ts` holds the list, which does not know where a request came from, and
   `src/notifications/screen.ts` the screen. The sample requests, from senders and products ending in `.example`, are in
   `fixtures/notifications/sample-notifications.ts`, which adds and removes them by id.
 
-### Test accounts (prototype)
+### Test accounts
+
+On a dev server, the Account picker lists three test accounts, **Alice**, **Bob** and **Carol (test account)**, under
+**Test accounts**, below saved wallets under **Your wallets**. Each is a wallet built into the dev server from a public
+BIP-39 test vector (`fixtures/invitations/test-users.ts`), under a storage scope of its own (`test-account:<id>`). It
+signs in, signs out and runs as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account
+status** follow the same path and read what the core and the chain report for its account. It has no **Forget**, and the
+picker names it alone until it has signed in once. **About test accounts**, a closed fold, shows while the picker points
+at one.
+
+The phrases are public, so anyone can sign as these accounts: keep nothing of value on them. The host registers and
+funds nothing for them; an account is registered elsewhere, and once it is, the chain says so here as for any wallet.
+Chat still refuses the Substrate development phrase (`src/chat/nova/gate.ts`), which is not one of these.
+
+### Invitation demo (prototype)
 
 **Prototype, with FIXTURE IDENTITIES and LOCAL SIMULATED DELIVERY.** A tab can act as a made-up user, Alice, Bob or
-Carol, instead of a wallet, to try features that need more than one person. Open the host in one tab per user and choose
-a different test account in each. The core signs a test account in with a public BIP-39 test vector, so products get a
-real session: `contacts.pick` opens the host's own picker over that user's contacts and returns the core's handle. The
-first feature that uses two users is a chat invitation over a proposed host request/reply service, after the v3
-"Establish Connection" design: the product gives an opaque payload, the hosts own the request, its return route and
+Carol, instead of an account, to try features that need more than one person. Open the host in one tab per user and
+choose a different user in each, in **More** → **Invitation demo**. The core signs the demo user in with the same public
+test vector as the test account of that name, but under the demo's own storage scope (`test-user:<id>`), so products get
+a real session: `contacts.pick` opens the host's own picker over that user's made-up contacts and returns the core's
+handle. The first feature that uses two users is a chat invitation over a proposed host request/reply service, after the
+v3 "Establish Connection" design: the product gives an opaque payload, the hosts own the request, its return route and
 keys, and authenticate both directions, and the products see only payloads and opaque handles. Nothing in it is an
 agreed API.
 
-- **Try it.** In one tab: Developer tools → **Account**, pick **Alice (test account)** in the account picker and **Sign
-  in**. The tab reloads with **Test account · Alice** over the app and "Signed in as Alice (test account)" in Account,
-  and opens nothing: open any product with the search button to try it as Alice, or **More** → **Open Example Chat**,
-  the test accounts' demo, which then shows in Browse. In a second tab sign in as **Bob**.
+- **Try it.** In one tab: Developer tools → **More** → **Invitation demo** → **Alice**. The tab reloads with
+  **Invitation demo · Alice** over the app and "Signed in as Alice (invitation demo)" in Account, and opens nothing:
+  open any product with the search button to try it as Alice, or **More** → **Open Example Chat**, the demo's product,
+  which then shows in Browse. In a second tab choose **Bob**.
   - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
   - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact handle.
     **Invite** opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
@@ -728,33 +743,27 @@ agreed API.
     it on the request's return route. Alice's host authenticates it and hands the payload to Alice's Example Chat, which
     checks it and only then completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice
     can **Cancel** a waiting invitation; otherwise it waits until its deadline. Inspector → Activity shows each step.
-- **One account at a time.** The Account picker lists saved wallets under **Your wallets** and, on a dev server, the
-  three test accounts under **Test accounts**. **Sign in** signs the tab in to the one picked and **Sign out** signs it
-  out, for either kind; a test account has no **Forget**. **About test accounts**, a closed fold that says what one is,
-  shows only while the picker points at a test account. Signing in to a test account ends the tab's wallet session, and
-  signing out of it leaves the tab signed out. Picking a wallet while a test account is signed in, or importing one,
-  reloads the tab signed in to that wallet. The choice is kept for the tab, so a reload keeps it.
+- **Leaving it.** **Sign out** in Account, or **Off** in More, leaves the tab signed out. Signing in to an account in
+  the picker, or importing one, reloads the tab signed in to it. The choice is kept for the tab, so a reload keeps it.
+  Starting the demo ends the tab's wallet session and leaves saved wallets and their data alone.
 - **Example Chat.** **More** → **Open Example Chat** opens it, and once it is open **Restart Example Chat** opens it
   again, which gets its state back from the host and its own storage. The **Close** circle over it ends its frame; an
   Accept that waits for it then fails at once. An accepted row in the Inbox opens it again, as Accept does.
-- **Clear invitations.** **More** → **Clear Alice's invitations** asks first, then removes that test account's sent and
+- **Clear invitations.** **More** → **Clear Alice's invitations** asks first, then removes that demo user's sent and
   received invitations and their Inbox items on this network, in this browser. It is not a sign-out: wallets, the other
-  test accounts and Example Chat's own records stay.
-- **What a test account is.** A core session from a public test phrase, under its own storage scope, apart from every
-  wallet's. The phrase is public, so anyone can sign as the account: keep nothing of value on it. The host registers and
-  funds nothing for it. **Account status** reads the People chain for the account the phrase derives, as it does for a
-  wallet: the fold's first opening and **Refresh** read it, and a sign-in does not. Its handle (`alice.example`, used
-  only by the fixture contacts and the Inbox), its fixture account and its contacts' accounts are made up, unrelated to
-  the account the phrase derives. The host's invitation inbox starts with the session, so requests from other tabs
-  arrive; Example Chat does not. None of a wallet session's services start, so Chat says **Chat is off for test
-  accounts** rather than asking to sign in: no Nova chat, product worker, Pocket or registration, and the host does not
-  give the session a username from the chain. The core looks up the account's DotNS name on Asset Hub once, as it does
-  at every sign-in. Signing in to a test account leaves saved wallets and their data alone. Contacts are made up
-  (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network
-  and test account, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2`
-  (sent) and `...:received:v2` (received, and the sealed reply). The `v1` sent and received lists of the earlier
-  prototype are left in place and no longer read; **Clear invitations** removes them too. Example Chat keeps its
-  protocol secrets and topics in its own TrUAPI local storage.
+  demo users and Example Chat's own records stay.
+- **What the demo keeps apart.** Its contacts, identity credentials, handle (`alice.example`) and the accounts its
+  contacts are named by are fixtures, unrelated to the account the phrase derives, so none of a wallet session's
+  services start: Chat says **Chat is off in the invitation demo** rather than asking to sign in, and no Nova chat,
+  product worker or Pocket runs, so fixture contacts never reach chat or a transaction. The host's invitation inbox
+  starts with the session, so requests from other tabs arrive; Example Chat does not. **Account status** reads the
+  People chain for the account the phrase derives only when its fold opens. The core looks up the account's DotNS name
+  on Asset Hub once, as it does at every sign-in. Contacts (`fixtures/invitations/test-users.ts`): Alice has Bob and
+  Carol, Bob and Carol have Alice. Lists are kept per network and demo user, under
+  `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent) and `...:received:v2`
+  (received, and the sealed reply). The `v1` sent and received lists of the earlier prototype are left in place and no
+  longer read; **Clear invitations** removes them too. Example Chat keeps its protocol secrets and topics in its own
+  TrUAPI local storage.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
   It reuses TrUAPI's `ContactHandle` and `ContactPickOutcome`. Each call has an `id` and one `result`.
   - Sender: `pickContact` (answers a `ContactPickOutcome`, as `contacts.pick` does), `request` (contact handle, purpose,
@@ -781,15 +790,15 @@ agreed API.
   sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
   the request. Example Chat's own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
-  - The contact handle is 32 bytes the dev tools mint per test account and person. It stands in for the `contacts.pick`
+  - The contact handle is 32 bytes the dev tools mint per demo user and person. It stands in for the `contacts.pick`
     handle: the core gives the host no way to resolve that handle outside a transaction, so sending to it needs a
     host-only core operation (resolve or check a handle).
   - The identity credential (`fixtures/invitations/fixture-identity.ts`) is a reference profile over keys derived from
-    public test account ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the
-    signature is sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's
-    wallet/UID account or another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ
-    part are not decided. The directory that says a key is a person is the fixture, and it holds every other test
-    account, so a host takes a request from any of them, not only from the contacts its picker lists.
+    public demo user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature
+    is sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account
+    or another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not
+    decided. The directory that says a key is a person is the fixture, and it holds every other test account, so a host
+    takes a request from any of them, not only from the contacts its picker lists.
   - Delivery (`fixtures/invitations/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host
     has an inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a
     random tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply
@@ -800,17 +809,17 @@ agreed API.
     read or post.
   - When the recipient resends its reply and when it stops is open in the design. Here the recipient's host posts the
     same sealed reply again on the delivery's cadence, and when it starts, until the request's deadline.
-  - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a test account reaches no chain,
-    so it only keeps them.
+  - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a demo user reaches no chain, so
+    it only keeps them.
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
   `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
   transcripts their evidence covers, `sealing.ts` the sealing, `invitation-service.ts` one user's host side, and
   `outbox.ts` and `received.ts` what it keeps. What only tests and the dev server use lives outside it:
-  `fixtures/invitations/` holds the fixture contacts and identities, the local delivery and the test accounts,
+  `fixtures/invitations/` holds the fixture contacts and identities, the local delivery and the demo users,
   `fixtures/notifications/` the sample notifications, `fixtures/products/example-chat/` Example Chat, and
   `tools/demos/dev-tools.ts` the Developer section. `tests/unit/invitations/invitation-flow.test.ts` runs two and three
   users end to end. Only a dev server on this machine loads the Developer section, so a build has none of it; the host's
-  contact picker reads the test account's contacts in place of the chat contacts.
+  contact picker reads the demo user's contacts in place of the chat contacts.
 
 ### Contacts
 
@@ -835,7 +844,7 @@ asked: choosing someone is the consent.
   once typing pauses. On a dev server on this machine it searches by prefix, a page of 20 at a time, through the dev
   server's [username search route](#run-it) for the tab's network. Elsewhere, as in a build, there is no index, and what
   is typed is read on chain as a whole username (Asset Hub and People), so a person is found only by their exact
-  username. A test account searches the other test accounts instead, so neither is asked. People found who are neither
+  username. A demo user searches the other demo users instead, so neither is asked. People found who are neither
   contacts nor blocked show under **Not in your contacts**, by username, with Show more for the next page. Choosing one
   from the index checks first that the username names the same account on chain, since the index is a listing and not a
   proof; if it does not, the sheet says so and nothing is picked. Then the pick answers `Picked` as for a contact. The
@@ -849,8 +858,8 @@ asked: choosing someone is the consent.
   nobody after a reload, a session change, or once the user blocks them, and a transaction naming it then fails with
   `UnknownContact` until the product asks for a pick again. A blocked person is never picked.
 - **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username,
-  sending a request to a picked handle (test accounts use a fixture handle instead), and contacts from a worker's own
-  chat. Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
+  sending a request to a picked handle (demo users use a fixture handle instead), and contacts from a worker's own chat.
+  Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
 
 ### Differences from the native hosts
 
@@ -870,8 +879,8 @@ These are accepted for a development host.
 The window has two zones: the app, on black, and the developer tools, a dark glass panel beside or under it. The only
 developer control over the app is the **Focus capsule**, Dotli's 120 × 8 status capsule at the top centre. Its colour is
 the core's state: grey while it starts, green signed in, amber signed out, red when it failed. It shows or hides the
-tools at the tab they last showed; hidden, they give the app the whole window: Focus. A test account's marker sits at
-the app's top left.
+tools at the tab they last showed; hidden, they give the app the whole window: Focus. A demo user's marker sits at the
+app's top left.
 
 The tools' header holds the brand mark, **Developer**, a **Dev wallets** tag, the Right / Bottom switch and Hide. Under
 it are five tabs:
@@ -882,8 +891,8 @@ it are five tabs:
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
 - **Inspector:** the Activity view, the TrUAPI traces, the Chat diagnostics and the Workers view.
-- **More:** Versions, and the dev server's own controls (Example Chat, sample Inbox items, the chat engine and the chat
-  demo).
+- **More:** Versions, and the dev server's own controls (the invitation demo, Example Chat, sample Inbox items, the chat
+  engine and the chat demo).
 
 **Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
 (`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens
@@ -892,11 +901,11 @@ nothing and picks no one. The field shows a dashed outline and a go button while
 - **Apps.** The recent products that match. Enter with no suggestion chosen, the go button, or **Open** in the Product
   tab opens what is typed as a product, as before. When people show too, the Apps group starts with **Open** and the
   name or URL Enter would open, so a name that could be either reads as two choices.
-- **People** (`src/contacts/search-people.ts`), while a wallet is signed in (not for a test account, and not signed
-  out), and only for text that can be a username, so a URL looks no one up. First the session's contacts whose names
-  match, then people found by username in the contact picker's own directory: the dev server's username index on this
-  machine, else the chain by exact username. Blocked people are never listed. A person found by username is checked on
-  chain first, as in the picker; until the check passes nothing is chosen, and typing again lets it go.
+- **People** (`src/contacts/search-people.ts`), while a wallet is signed in (not for a demo user, and not signed out),
+  and only for text that can be a username, so a URL looks no one up. First the session's contacts whose names match,
+  then people found by username in the contact picker's own directory: the dev server's username index on this machine,
+  else the chain by exact username. Blocked people are never listed. A person found by username is checked on chain
+  first, as in the picker; until the check passes nothing is chosen, and typing again lets it go.
 - **Choosing a person** opens Chat as New chat does (`ChatScreen.startWith`): a contact's conversation, or a request to
   someone new that the provider sends only on **Send request**, with focus in the message field. Nothing is given to a
   product. A choice made before the session changed is dropped. When Chat cannot start a conversation, such as for the
@@ -1238,7 +1247,7 @@ together once its rows are seen, while Apps keeps counting open products; the sh
 it back to Apps on Escape, brings a product running behind to the front and closes it; and on a phone the four dock
 entries fit, long rows wrap, Dismiss is a full tap target, and nothing scrolls sideways.
 
-`browser/prompts.spec.ts` checks the host's prompts with a test account and a fixture product: in a phone preview the
+`browser/prompts.spec.ts` checks the host's prompts with a demo user and a fixture product: in a phone preview the
 dialog covers the app's rectangle only, with a dark sheet inside it, the developer tools outside it and no page-wide
 backdrop; the picker names the product once and lists contacts by name only, with Cancel below; focus starts on the
 title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its detail and is denied; focus
@@ -1282,31 +1291,31 @@ closed and every request outside this host refused: signed out, nothing can be a
 Workers page or demo panel; a typed name survives hiding the developer tools, and an empty one is refused until edited;
 Start runs the demo as a worker the host added, with no Remove, and its rooms in Chat; opening and closing the developer
 tools restart no worker; Restart gives one new frame and Stop takes it and its rooms away; on a phone the sheet holds
-the section, keeps a typed name across Escape, and nothing scrolls sideways; and a test account tab runs no workers.
+the section, keeps a typed name across Escape, and nothing scrolls sideways; and a demo user tab runs no workers.
 
-`browser/invitations.spec.ts` checks test accounts in tabs of the normal host, with no wallet, Playwright's clock, every
-socket closed and every request outside this host refused: a test account tab is marked and signed in to the core as
-that user, with its choice in Account and nothing opened until More opens Example Chat in Browse; the host's Send
-invitation prompt offers the user's contacts and Cancel sends nothing; an invitation shows a badge of 1 in the chosen
-recipient's tab only, and showing in the list is seen, not answered; Accept opens the recipient's Example Chat, reaches
-the sender's product, hands the recipient's product the same setup data and then shows it, and the accepted row opens it
-again; Dismiss sends no answer and the sender's invitation waits until it expires; a request expires on the clock on
-both sides, and its row loses its actions; replays and late or contrary answers change nothing; restarting Example Chat
-restores it, Close ends its frame until it is opened again, and an accepted row opens it; a reload keeps the test
-account and the lists; another network shows none of it. It also checks one account picker from signed out: a test
-account signs in and out and survives a reload, its Account status names the account the core derived and not its
-fixture account, Chat says it is off for a test account and asks a signed-out tab to sign in, an imported wallet signs
-in as a wallet, switching to a test account and back leaves the saved wallet and its notifications alone, and Clear
-invitations asks first and removes only that test account's lists; and that on a phone nothing scrolls sideways and the
-banner's buttons fit.
+`browser/invitations.spec.ts` checks demo users in tabs of the normal host, with no wallet, Playwright's clock, every
+socket closed and every request outside this host refused: a demo user tab is marked and signed in to the core as that
+user, with its choice in More and nothing opened until More opens Example Chat in Browse; the host's Send invitation
+prompt offers the user's contacts and Cancel sends nothing; an invitation shows a badge of 1 in the chosen recipient's
+tab only, and showing in the list is seen, not answered; Accept opens the recipient's Example Chat, reaches the sender's
+product, hands the recipient's product the same setup data and then shows it, and the accepted row opens it again;
+Dismiss sends no answer and the sender's invitation waits until it expires; a request expires on the clock on both
+sides, and its row loses its actions; replays and late or contrary answers change nothing; restarting Example Chat
+restores it, Close ends its frame until it is opened again, and an accepted row opens it; a reload keeps the demo user
+and the lists; another network shows none of it. It also checks that a test account signs in from the picker as a wallet
+does, with Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the
+same account on the same path; that the invitation demo is chosen in More, is not listed in the picker, runs no Chat or
+workers and shows none of the wallet's Inbox; that Clear invitations asks first and removes only that demo user's lists;
+that Sign out leaves the demo signed out; and that the saved wallet and its notifications are as they were; and that on
+a phone nothing scrolls sideways and the banner's buttons fit.
 
-`browser/contacts-pick.spec.ts` checks `contacts.pick` for test accounts: the host's picker names the product and lists
-the user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel
-and Escape give Dismissed; the product shows no name or account; a second product, opened by URL, gets the same handle
-for the same person; another test account gets another handle for the same contact; the username search finds a test
-account who is not a contact and shows them apart, lists a contact once, does not look up text that cannot be a
-username, gives the product a handle for the person found, the same each time and without making them a contact, and
-never asks the username index; and with no session the core refuses the pick with NotConnected and no picker is drawn.
+`browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users: the host's picker names the product and lists the
+user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and
+Escape give Dismissed; the product shows no name or account; a second product, opened by URL, gets the same handle for
+the same person; another demo user gets another handle for the same contact; the username search finds a demo user who
+is not a contact and shows them apart, lists a contact once, does not look up text that cannot be a username, gives the
+product a handle for the person found, the same each time and without making them a contact, and never asks the username
+index; and with no session the core refuses the pick with NotConnected and no picker is drawn.
 
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
@@ -1412,8 +1421,8 @@ nothing else of it.
   `demos/` holds the dev server's controls, which a build leaves out: the Developer section, the local chat demo and its
   routes, and the switch between the host's engine and the Nova chat worker.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
-  synthetic chat product, its call media and Example Chat. `invitations/`, `notifications/`: test accounts, local
-  delivery and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.
+  synthetic chat product, its call media and Example Chat. `invitations/`, `notifications/`: demo users, local delivery
+  and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.
 - `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers.
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
 - `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat workers and username route.
