@@ -29,6 +29,9 @@ data class Contact(
     val pendingDevicesFanOut: Boolean = true,
     val addedAt: Instant,
     val establishedAt: Instant? = null,
+    val profileAvatarUri: String? = null,
+    val profileAvatarCid: String? = null,
+    val profileCheckedAt: Instant? = null,
 ) : Identifiable {
     override val identifier = accountId.value.contentToString()
 }

@@ -54,6 +54,7 @@ import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.PublicProfileLookup
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
@@ -1166,6 +1167,15 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     @Throws(RecoveryException::class)
     suspend fun runDurableRecovery() = inner.runDurableRecovery()
+
+    /**
+     * A contact's public profile by the label the contact row holds (`alice`, `alice.42`):
+     * Found with its avatar bytes and name, Absent when the name has no record (clear what is
+     * stored), or Failed when the core could not tell (keep what is stored). `force` skips the
+     * core's hour-long cache.
+     */
+    suspend fun resolvePublicProfile(label: String, force: Boolean): PublicProfileLookup =
+        inner.resolvePublicProfile(label, force)
 
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)

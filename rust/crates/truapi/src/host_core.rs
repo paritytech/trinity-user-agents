@@ -627,6 +627,18 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+	/// A person's public profile, resolved from the `profile` text record under their
+	/// dotNS name and cached for an hour; `force` reads the chain regardless. Host-facing
+	/// only: no product reaches it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.resolve_public_profile"))]
+	pub async fn resolve_public_profile(
+		&self,
+		label: &str,
+		force: bool,
+	) -> crate::runtime::public_profile::PublicProfileLookup {
+		crate::runtime::public_profile::resolve_public_profile(&self.services, label, force).await
+	}
+
 	/// Answer resource allocation as granted without performing it.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.

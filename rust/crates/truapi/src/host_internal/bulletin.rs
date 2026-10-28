@@ -43,6 +43,31 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
+/// The preimage key a CID names, when it is the CID [`preimage_cid`] builds: CIDv1, the
+/// `raw` codec, a blake2b-256 multihash, in base32. Any other CID is `None`; a value that
+/// does not hash to the key is for the caller to refuse.
+pub fn preimage_key_from_cid(cid: &str) -> Option<[u8; 32]> {
+	const PREFIX: [u8; 6] = [0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
+	let digits = cid.strip_prefix('b')?;
+	let mut bytes = Vec::with_capacity(PREFIX.len() + 32);
+	let (mut buffer, mut bits) = (0u32, 0u32);
+	for digit in digits.bytes() {
+		let value = match digit {
+			b'a'..=b'z' => digit - b'a',
+			b'2'..=b'7' => digit - b'2' + 26,
+			_ => return None,
+		};
+		buffer = (buffer << 5) | u32::from(value);
+		bits += 5;
+		if bits >= 8 {
+			bytes.push(((buffer >> (bits - 8)) & 0xff) as u8);
+			bits -= 8;
+		}
+	}
+	let (prefix, key) = bytes.split_at_checked(PREFIX.len())?;
+	(prefix == PREFIX).then(|| key.try_into().ok()).flatten()
+}
+
 /// Build the signed store transaction for `data` on the Bulletin chain
 /// `genesis`, born at its finalized head.
 pub async fn build_signed_store_transaction(
@@ -140,6 +165,27 @@ mod tests {
 
 	/// A blob stored on Paseo Bulletin: `bitswap_v1_get` with this CID returns the bytes whose
 	/// blake2b-256 is the key.
+	#[test]
+	fn a_preimage_cid_names_its_key_and_nothing_else_does() {
+		let key = [0xab; 32];
+		assert_eq!(preimage_key_from_cid(&preimage_cid(&key)), Some(key));
+		assert_eq!(
+			preimage_key_from_cid("bafk2bzacecv2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2w"),
+			Some(key),
+			"the CID seity's profile-core writes for this key"
+		);
+		// A dag-pb CID (codec 0x70), a CIDv0, an uppercase alphabet and a truncated one.
+		for other in [
+			"bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+			"QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+			"BAFK2BZACECV2XK5LVOV2XK5LVOV2XK5LVOV2XK5LVOV2XK5LVOV2XK5LVOV2W",
+			"bafk2bzacecv2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov",
+			"",
+		] {
+			assert_eq!(preimage_key_from_cid(other), None, "{other}");
+		}
+	}
+
 	#[test]
 	fn preimage_cid_is_cidv1_raw_blake2b_256_in_base32() {
 		let key: [u8; 32] =

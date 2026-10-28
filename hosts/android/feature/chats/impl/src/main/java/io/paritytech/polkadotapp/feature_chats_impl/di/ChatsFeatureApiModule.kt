@@ -119,6 +119,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.RealTextMessage
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.address.RealContactsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.RealChatMessageTimeFormatter
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.ContactProfileLifecycleBinder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.ContactSessionChainBridge
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.ContactSessionLifecycleBinder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.RealContactChatSessionManagerInitializer
@@ -335,6 +336,10 @@ internal interface ChatsFeatureApiModule {
     @Binds
     @IntoSet
     fun bindContactSessionLifecycleBinder(impl: ContactSessionLifecycleBinder): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindContactProfileLifecycleBinder(impl: ContactProfileLifecycleBinder): AppInitializer
 
     @Binds
     @IntoSet

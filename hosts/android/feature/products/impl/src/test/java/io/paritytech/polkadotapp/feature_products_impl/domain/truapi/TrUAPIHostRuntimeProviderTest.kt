@@ -64,6 +64,7 @@ class TrUAPIHostRuntimeProviderTest {
         scannerBridge = mockk(),
         installations = mockk(),
         extensionVersions = mockk(),
+        ipfsContentLookup = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

@@ -1280,6 +1280,14 @@ pub enum CoreStorageKey {
 	/// as one versioned SCALE blob.
 	#[codec(index = 13)]
 	FundingSessions,
+	/// A person's public profile as last resolved from their dotNS name: what the
+	/// record held and when it was read, honoured for a bounded lifetime so a
+	/// change or a takedown reaches hosts without a chain read on every refresh.
+	#[codec(index = 14)]
+	PublicProfile {
+		/// The name's label, lowercased, without the network TLD.
+		label: String,
+	},
 	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
 	/// raw blobs, newest last, so a stored session is never overwritten
 	/// unread and a later bad blob does not replace an earlier one. Kept for
@@ -1345,6 +1353,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+		CoreStorageKey::PublicProfile { label } => ("PublicProfile", Some(label)),
 		CoreStorageKey::FundingSessions => ("FundingSessions", None),
 		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
 		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
@@ -1362,6 +1371,12 @@ impl CoreStorageKey {
 	/// must use this key.
 	pub fn product_manifest(product_id: &ProductId) -> Self {
 		Self::ProductManifest { product_id: product_id.bare_label().to_string() }
+	}
+
+	/// Cache key for the public profile under `label`, a person's dotNS name without
+	/// its TLD. Lowercased, so `Alice.42` and `alice.42` are one entry.
+	pub fn public_profile(label: &str) -> Self {
+		Self::PublicProfile { label: label.trim().to_ascii_lowercase() }
 	}
 
 	/// Persisted authorization key for one product-scoped device permission.

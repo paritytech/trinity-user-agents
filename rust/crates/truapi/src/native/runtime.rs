@@ -276,6 +276,18 @@ impl NativeTrUApiHostRuntime {
 			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
 	}
 
+	/// A contact's public profile by the label the contact row holds (`alice`,
+	/// `alice.42`). Found with its avatar bytes and name, Absent when the name has
+	/// no record (clear what is stored), or Failed when the core could not tell
+	/// (keep what is stored). `force` skips the hour-long cache.
+	pub async fn resolve_public_profile(
+		&self,
+		label: String,
+		force: bool,
+	) -> crate::runtime::public_profile::PublicProfileLookup {
+		self.runtime.resolve_public_profile(&label, force).await
+	}
+
 	/// Open a funding session on the host's own behalf, as the Balance
 	/// card does, and show the overlay. Answers the session id, or `None`
 	/// when the user dismissed it.

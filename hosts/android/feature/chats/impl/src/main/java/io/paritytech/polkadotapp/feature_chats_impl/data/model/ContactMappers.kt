@@ -35,6 +35,9 @@ fun ContactLocal.toDomain(): Contact {
         pendingDevicesFanOut = pendingDevicesFanOut,
         addedAt = Instant.fromEpochMilliseconds(addedAt),
         establishedAt = establishedAt?.let(Instant::fromEpochMilliseconds),
+        profileAvatarUri = profileAvatarUri,
+        profileAvatarCid = profileAvatarCid,
+        profileCheckedAt = profileCheckedAt?.let(Instant::fromEpochMilliseconds),
     )
 }
 
@@ -59,6 +62,9 @@ fun Contact.toLocal(): ContactLocal {
         pendingDevicesFanOut = pendingDevicesFanOut,
         addedAt = addedAt.toEpochMilliseconds(),
         establishedAt = establishedAt?.toEpochMilliseconds(),
+        profileAvatarUri = profileAvatarUri,
+        profileAvatarCid = profileAvatarCid,
+        profileCheckedAt = profileCheckedAt?.toEpochMilliseconds(),
     )
 }
 

@@ -35,6 +35,8 @@ interface ContactsRepository {
 
     suspend fun saveContact(contact: Contact)
     suspend fun updateContactUsername(accountId: AccountId, username: String?)
+    suspend fun updateContactProfile(accountId: AccountId, avatarUri: String?, avatarCid: String?, checkedAt: Instant)
+    suspend fun updateContactProfileCheckedAt(accountId: AccountId, checkedAt: Instant)
     suspend fun updateContactPushToken(accountId: AccountId, token: ChatPushToken, operatingSystem: OperatingSystem)
     suspend fun updateContactVoipPushToken(accountId: AccountId, token: ChatPushToken)
     suspend fun updateLastSharedPushTokenFor(accounts: List<AccountId>, newPushToken: String)
@@ -122,6 +124,14 @@ class RealContactsRepository @Inject constructor(
 
     override suspend fun updateContactUsername(accountId: AccountId, username: String?) {
         dao.updateUsername(accountId.value, username)
+    }
+
+    override suspend fun updateContactProfile(accountId: AccountId, avatarUri: String?, avatarCid: String?, checkedAt: Instant) {
+        dao.updateProfile(accountId.value, avatarUri, avatarCid, checkedAt.toEpochMilliseconds())
+    }
+
+    override suspend fun updateContactProfileCheckedAt(accountId: AccountId, checkedAt: Instant) {
+        dao.updateProfileCheckedAt(accountId.value, checkedAt.toEpochMilliseconds())
     }
 
     override suspend fun updateContactPushToken(
