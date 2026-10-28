@@ -76,7 +76,6 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
-use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
@@ -1568,7 +1567,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingRequest,
 	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
 		version(request)
-			.exec(|latest::HostFundingRequest { id, direction, amount }| async move {
+			.exec(|latest::HostFundingRequest { direction, amount }| async move {
 				// A capability the host does not serve is a framework answer; a
 				// missing session is one the product handles.
 				if self.connection.services.funding().platform().is_none() {
@@ -1577,37 +1576,22 @@ impl Funding for ProductRuntimeHost {
 				if self.accounts.current_session().is_none() {
 					return Err(CallError::Domain(latest::HostFundingError::NotConnected));
 				}
-				self.connection
+				let intent = funding::new_funding_intent();
+				// The overlay finishes on its own; the product watches the
+				// outcome by the intent, so nothing waits for it here.
+				let _overlay = self
+					.connection
 					.services
-					.open_funding(
-						Some(&self.connection.product),
-						host_funding_intent(&self.connection.product, id),
-						direction,
-						amount,
-					)
+					.show_funding(Some(&self.connection.product), intent.clone(), direction, amount)
 					.await
 					.map_err(|error| match error {
 						funding::OpenFundingError::Unsupported => CallError::Unsupported,
-						funding::OpenFundingError::Dismissed => {
-							CallError::Domain(latest::HostFundingError::Rejected)
-						},
 						funding::OpenFundingError::InvalidAmount => {
 							CallError::Domain(latest::HostFundingError::InvalidAmount)
 						},
-						funding::OpenFundingError::AlreadyExists => {
-							CallError::Domain(latest::HostFundingError::AlreadyExists)
-						},
-						funding::OpenFundingError::Stopped => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
-						funding::OpenFundingError::Present(error) => {
-							CallError::HostFailure { reason: error.reason }
-						},
-						funding::OpenFundingError::Session(error) => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
+						error => CallError::HostFailure { reason: error.to_string() },
 					})?;
-				Ok(())
+				Ok(latest::HostFundingResponse { intent })
 			})
 			.await
 	}
@@ -1619,7 +1603,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingStatusSubscribeRequest,
 	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
 		version(request)
-			.exec(|latest::HostFundingStatusSubscribeRequest { id }| async move {
+			.exec(|latest::HostFundingStatusSubscribeRequest { intent }| async move {
 				let registry = self.connection.services.funding();
 				if registry.platform().is_none() {
 					return Subscription::interrupted(CallError::Unsupported);
@@ -1627,7 +1611,6 @@ impl Funding for ProductRuntimeHost {
 				if let Err(error) = self.require_session() {
 					return Subscription::interrupted(error);
 				}
-				let intent = host_funding_intent(&self.connection.product, id);
 				if let Err(error) = registry.load(self.connection.platform.as_ref()).await {
 					return Subscription::interrupted(CallError::HostFailure {
 						reason: error.to_string(),
