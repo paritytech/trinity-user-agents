@@ -2505,8 +2505,8 @@ async fn prepare_pairing_response(
 			},
 			Err(err) if !existing.is_empty() && is_statement_slot_exhaustion(&err) => {
 				return Err(err).context(
-                    "cannot pair another device: the allowance period is full until the next UTC day",
-                );
+					"cannot pair another device: the allowance period is full until the next UTC day",
+				);
 			},
 			Err(err) => return Err(err),
 		}
