@@ -84,56 +84,43 @@ where
     register_worker(dispatcher, host);
 }
 
-/// Start the host-initiated `funding_provider_quote` subscription.
-pub fn funding_provider_quote(
-    subscriptions: &HostInitiatedSubscriptionManager,
-    transport: Arc<dyn Transport>,
-    request: versioned::funding_provider::ProductFundingQuoteRequest,
-) -> truapi::Subscription<versioned::funding_provider::ProductFundingQuoteItem, truapi::CallError<versioned::funding_provider::ProductFundingQuoteError>> {
-    subscriptions.start(
-        wire_table::FUNDING_PROVIDER_QUOTE,
-        parity_scale_codec::Encode::encode(&request),
-        transport,
-    )
-}
-
-/// Start the host-initiated `funding_provider_assign` subscription.
-pub fn funding_provider_assign(
+/// Call the product's `funding_provider_assign` handler and await its response.
+pub async fn funding_provider_assign(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::funding_provider::ProductFundingAssignRequest,
-) -> truapi::Subscription<versioned::funding_provider::ProductFundingAssignItem, truapi::CallError<versioned::funding_provider::ProductFundingAssignError>> {
-    subscriptions.start(
+) -> Result<versioned::funding_provider::ProductFundingAssignResponse, truapi::CallError<versioned::funding_provider::ProductFundingAssignError>> {
+    subscriptions.request(
         wire_table::FUNDING_PROVIDER_ASSIGN,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
-/// Start the host-initiated `funding_provider_cancel` subscription.
-pub fn funding_provider_cancel(
+/// Call the product's `funding_provider_cancel` handler and await its response.
+pub async fn funding_provider_cancel(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::funding_provider::ProductFundingCancelRequest,
-) -> truapi::Subscription<versioned::funding_provider::ProductFundingCancelItem, truapi::CallError<versioned::funding_provider::ProductFundingCancelError>> {
-    subscriptions.start(
+) -> Result<versioned::funding_provider::ProductFundingCancelResponse, truapi::CallError<versioned::funding_provider::ProductFundingCancelError>> {
+    subscriptions.request(
         wire_table::FUNDING_PROVIDER_CANCEL,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
-/// Start the host-initiated `funding_provider_settle_cancel` subscription.
-pub fn funding_provider_settle_cancel(
+/// Call the product's `funding_provider_settle_cancel` handler and await its response.
+pub async fn funding_provider_settle_cancel(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::funding_provider::ProductFundingSettleCancelRequest,
-) -> truapi::Subscription<versioned::funding_provider::ProductFundingSettleCancelItem, truapi::CallError<versioned::funding_provider::ProductFundingSettleCancelError>> {
-    subscriptions.start(
+) -> Result<versioned::funding_provider::ProductFundingSettleCancelResponse, truapi::CallError<versioned::funding_provider::ProductFundingSettleCancelError>> {
+    subscriptions.request(
         wire_table::FUNDING_PROVIDER_SETTLE_CANCEL,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
 /// Start the host-initiated `renderer_render` subscription.
