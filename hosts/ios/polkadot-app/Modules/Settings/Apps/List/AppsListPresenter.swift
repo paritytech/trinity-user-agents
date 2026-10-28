@@ -27,9 +27,8 @@ extension AppsListPresenter: AppsListPresenterProtocol {
         interactor.setup()
     }
 
-    func selectApp(_ item: AppsListViewLayout.Item) {
-        guard let productId = try? ProductId(item.id) else { return }
-        wireframe.showAppDetail(productId: productId, from: view)
+    func selectApp(_ item: AppsListViewLayout<ProductId>.Item) {
+        wireframe.showAppDetail(productId: item.id, from: view)
     }
 }
 

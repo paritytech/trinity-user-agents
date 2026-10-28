@@ -1,9 +1,9 @@
 import SwiftUI
 import DesignSystem
 
-public struct AppsListViewLayout: View {
+public struct AppsListViewLayout<Identifier: Hashable>: View {
     public struct Item: Identifiable {
-        public let id: String
+        public let id: Identifier
         public let name: String
         /// The product's domain, shown only when the manifest gave it a different display name.
         public let subtitle: String?
@@ -12,7 +12,7 @@ public struct AppsListViewLayout: View {
         public let icon: (any ImageViewModelProtocol)?
 
         public init(
-            id: String,
+            id: Identifier,
             name: String,
             subtitle: String?,
             avatar: AvatarViewModel,
@@ -26,7 +26,7 @@ public struct AppsListViewLayout: View {
         }
     }
 
-    @State public var viewModel = AppsListViewModel()
+    @State public var viewModel = AppsListViewModel<Identifier>()
 
     public init() {}
 

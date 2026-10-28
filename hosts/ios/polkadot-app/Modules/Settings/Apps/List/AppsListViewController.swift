@@ -1,13 +1,14 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import SwiftUI
 import PolkadotUI
 
-final class AppsListViewController: UIHostingController<AppsListViewLayout> {
+final class AppsListViewController: UIHostingController<AppsListViewLayout<ProductId>> {
     let presenter: AppsListPresenterProtocol
 
     init(presenter: AppsListPresenterProtocol) {
         self.presenter = presenter
-        super.init(rootView: AppsListViewLayout())
+        super.init(rootView: AppsListViewLayout<ProductId>())
     }
 
     @available(*, unavailable)
@@ -30,7 +31,7 @@ final class AppsListViewController: UIHostingController<AppsListViewLayout> {
 }
 
 extension AppsListViewController: AppsListViewProtocol {
-    func didReceive(items: [AppsListViewLayout.Item]) {
+    func didReceive(items: [AppsListViewLayout<ProductId>.Item]) {
         rootView.viewModel.items = items
     }
 }
