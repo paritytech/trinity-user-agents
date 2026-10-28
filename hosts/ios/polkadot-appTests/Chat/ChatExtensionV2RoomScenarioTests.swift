@@ -20,7 +20,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let status = try await create(
             bridge,
             icon: icon,
-            metadata: ChatRoomMetadata(name: "Lobby", description: nil),
+            metadata: ChatRoomMetadata(name: "Lobby", description: nil, icon: nil),
             config: .hostDefault,
             preview: nil
         )
@@ -45,7 +45,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let declared = try await fixture.storedChat("lobby")?.roomDeclarations
         let repeated = try await create(
             bridge,
-            metadata: ChatRoomMetadata(name: "Lobby", description: "Another"),
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Another", icon: nil),
             config: .hostDefault,
             preview: nil
         )
@@ -66,7 +66,10 @@ struct ChatExtensionV2RoomScenarioTests {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
-        try await bridge.setRoomMetadata(roomId: "lobby", metadata: ChatRoomMetadata(name: "Finals", description: "x"))
+        try await bridge.setRoomMetadata(
+            roomId: "lobby",
+            metadata: ChatRoomMetadata(name: "Finals", description: "x", icon: nil)
+        )
 
         let chat = try #require(try await fixture.storedChat("lobby"))
         let registry = SingleBotRegistry(bot: fixture.bot)
@@ -169,7 +172,7 @@ private let png = Data([0x89, 0x50, 0x4E, 0x47])
 
 private extension ChatExtensionV2RoomScenarioTests {
     var metadata: ChatRoomMetadata {
-        ChatRoomMetadata(name: "Lobby", description: "Weekly game")
+        ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil)
     }
 
     var config: ChatRoomConfig {
