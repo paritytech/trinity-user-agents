@@ -30,7 +30,7 @@ extension LocalNotificationGameReminder: GameStartReminderServicing {
     func scheduleReminder(gameDate: Date, productId: ProductId) {
         localNotificationService.notificationAccessStatus { status in
             guard status == .allowed else {
-                self.record(.notScheduled, gameDate: gameDate, productId: productId, skipReason: .notAuthorized)
+                self.diagnostics.notScheduled(productId: productId, startsAt: gameDate, reason: .notAuthorized)
                 return
             }
             self.performScheduleReminder(gameDate: gameDate, productId: productId)
@@ -60,7 +60,7 @@ private extension LocalNotificationGameReminder {
 
         guard fireDate > Date() else {
             logger.debug("fire date is in the past, skipping")
-            record(.notScheduled, gameDate: fireDate, productId: productId, skipReason: .startInPast)
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             return
         }
 
@@ -72,30 +72,12 @@ private extension LocalNotificationGameReminder {
             after: fireDate.timeIntervalSince(Date())
         ) { [logger] error in
             logger.debug("gameStart scheduled with error: \(String(describing: error))")
-            self.record(
-                error == nil ? .scheduled : .notScheduled,
-                gameDate: fireDate,
-                productId: productId,
-                skipReason: error == nil ? nil : .failed
-            )
+            if error == nil {
+                self.diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .notification)
+            } else {
+                self.diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
+            }
         }
-    }
-
-    func record(
-        _ step: GameReminderEvent.Step,
-        gameDate: Date,
-        productId: ProductId,
-        skipReason: GameReminderEvent.SkipReason? = nil
-    ) {
-        diagnostics.record(
-            GameReminderEvent(
-                step: step,
-                productId: productId,
-                startsAt: gameDate,
-                delivery: step == .scheduled ? .notification : nil,
-                skipReason: skipReason
-            )
-        )
     }
 
     func cancel() {

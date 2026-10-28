@@ -14,7 +14,10 @@ final class GameReminderCenterFakes: @unchecked Sendable {
     let calendar = RecordingCalendar()
     let recorder = RecordingHostEventRecorder()
     var currentAlertingAlarms: Set<UUID> = []
-    var diagnostics: GameReminderDiagnostics { .recording(into: recorder) }
+    var diagnostics: GameReminderDiagnostics {
+        .recording(into: recorder, now: { self.now }, applicationState: { self.applicationState })
+    }
+
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
     private let alarmAlertStream: AsyncStream<Set<UUID>>
     private let alarmAvailable: Bool

@@ -143,7 +143,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
             return
         }
         drop(productId)
-        record(.cancelled, for: slot)
+        diagnostics.cancelled(productId: slot.productId, startsAt: slot.startsAt)
         refresh()
     }
 
@@ -171,7 +171,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                 if !isLate, !opened {
                     opened = true
                     if productOpener.open(productId: slot.productId) {
-                        record(.productOpened, for: slot, openSource: .autoOpen)
+                        diagnostics.productOpened(productId: slot.productId, startsAt: slot.startsAt, source: .autoOpen)
                     }
                 }
                 continue
@@ -327,27 +327,8 @@ private extension ProductGameReminderCenter {
                 firedAlarmIds.insert(alarmId).inserted else {
                 continue
             }
-            record(.fired, for: slot, delivery: .alarm)
+            diagnostics.fired(productId: slot.productId, startsAt: slot.startsAt)
         }
-    }
-
-    func record(
-        _ step: GameReminderEvent.Step,
-        for slot: Slot,
-        delivery: GameReminderEvent.Delivery? = nil,
-        openSource: GameReminderEvent.OpenSource? = nil
-    ) {
-        diagnostics.record(
-            GameReminderEvent(
-                step: step,
-                productId: slot.productId,
-                startsAt: slot.startsAt,
-                occurredAt: dateProvider.now,
-                delivery: delivery,
-                openSource: openSource,
-                appState: GameReminderEvent.AppState(applicationState.applicationState)
-            )
-        )
     }
 
     func wake(at date: Date, from now: Date) {

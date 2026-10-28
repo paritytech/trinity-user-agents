@@ -44,7 +44,7 @@ struct GameReminderDeliveryDiagnosticsTests {
 
         let reminder = makeAlarm(manager, recorder)
         reminder.scheduleReminder(gameDate: startsAt, productId: productId)
-        try await waitUntil { !recorder.events.isEmpty }
+        _ = try await recorder.waitForEvents(count: 1)
 
         #expect(recorder.events.map(\.name) == ["host.reminder.scheduled"])
         #expect(recorder.events.first?.tags["reminder.delivery"] == "alarm")
@@ -74,7 +74,7 @@ struct GameReminderDeliveryDiagnosticsTests {
 
         let reminder = makeAlarm(manager, recorder)
         reminder.scheduleReminder(gameDate: Date().addingTimeInterval(secondsToStart), productId: productId)
-        try await waitUntil { !recorder.events.isEmpty }
+        _ = try await recorder.waitForEvents(count: 1)
 
         #expect(recorder.events.map(\.name) == ["host.reminder.not_scheduled"])
         #expect(recorder.events.first?.tags["reminder.skip_reason"] == reason.rawValue)
@@ -85,7 +85,7 @@ struct GameReminderDeliveryDiagnosticsTests {
 
         makeNotification(MockUserNotificationService(), recorder)
             .scheduleReminder(gameDate: Date().addingTimeInterval(3_600), productId: productId)
-        try await waitUntil { !recorder.events.isEmpty }
+        _ = try await recorder.waitForEvents(count: 1)
 
         #expect(recorder.events.map(\.name) == ["host.reminder.scheduled"])
         #expect(recorder.events.first?.tags["reminder.delivery"] == "notification")
@@ -114,7 +114,7 @@ struct GameReminderDeliveryDiagnosticsTests {
             gameDate: Date().addingTimeInterval(secondsToStart),
             productId: productId
         )
-        try await waitUntil { !recorder.events.isEmpty }
+        _ = try await recorder.waitForEvents(count: 1)
 
         #expect(recorder.events.map(\.name) == ["host.reminder.not_scheduled"])
         #expect(recorder.events.first?.tags["reminder.skip_reason"] == reason.rawValue)

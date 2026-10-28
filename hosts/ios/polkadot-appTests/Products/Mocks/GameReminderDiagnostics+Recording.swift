@@ -1,5 +1,6 @@
 import Foundation
 import IssueMonitoring
+import UIKit
 @testable import polkadot_app
 
 extension GameReminderDiagnostics {
@@ -13,11 +14,17 @@ extension GameReminderDiagnostics {
     static let testMonotonicMilliseconds = 7
 
     /// Diagnostics whose events land in `recorder` with a fixed origin and clock.
-    static func recording(into recorder: RecordingHostEventRecorder) -> GameReminderDiagnostics {
+    static func recording(
+        into recorder: RecordingHostEventRecorder,
+        now: @escaping @Sendable () -> Date = { Date() },
+        applicationState: @escaping @MainActor @Sendable () -> UIApplication.State = { .active }
+    ) -> GameReminderDiagnostics {
         GameReminderDiagnostics(
             recorder: recorder,
             origin: testOrigin,
-            monotonicMilliseconds: { testMonotonicMilliseconds }
+            monotonicMilliseconds: { testMonotonicMilliseconds },
+            now: now,
+            applicationState: applicationState
         )
     }
 }

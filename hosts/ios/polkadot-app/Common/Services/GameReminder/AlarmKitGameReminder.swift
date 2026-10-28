@@ -70,13 +70,13 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
         guard alarmManger.isAuthorized else {
             logger.debug("Not authorized, skipping schedule")
-            recordNotScheduled(.notAuthorized, gameDate: fireDate, productId: productId)
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .notAuthorized)
             return
         }
 
         guard fireDate > Date() else {
             logger.debug("Fire date is in the past, skipping")
-            recordNotScheduled(.startInPast, gameDate: fireDate, productId: productId)
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             performCancelReminder(alarmId: nil)
             return
         }
@@ -102,19 +102,11 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
-            diagnostics.record(
-                GameReminderEvent(step: .scheduled, productId: productId, startsAt: fireDate, delivery: .alarm)
-            )
+            diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .alarm)
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
-            recordNotScheduled(.failed, gameDate: fireDate, productId: productId)
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
         }
-    }
-
-    private func recordNotScheduled(_ reason: GameReminderEvent.SkipReason, gameDate: Date, productId: ProductId) {
-        diagnostics.record(
-            GameReminderEvent(step: .notScheduled, productId: productId, startsAt: gameDate, skipReason: reason)
-        )
     }
 
     private func performCancelReminder(alarmId: UUID?) {

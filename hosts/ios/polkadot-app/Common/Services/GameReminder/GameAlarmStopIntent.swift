@@ -3,7 +3,6 @@ import AlarmKit
 import AppIntents
 import IssueMonitoring
 import Keystore_iOS
-import UIKit
 
 @available(iOS 26.1, *)
 struct GameAlarmPlayIntent: LiveActivityIntent {
@@ -20,25 +19,13 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         if let productId {
             let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
-            let startsAt = { storedStartsAt(productId: productId) }
-            diagnostics.record(
-                GameReminderEvent(
-                    step: .tapped,
-                    productId: productId,
-                    startsAt: startsAt(),
-                    appState: .init(UIApplication.shared.applicationState)
-                )
-            )
+            diagnostics.tapped(productId: productId, startsAt: storedStartsAt(productId: productId))
 
             if ProductOpener().open(productId: productId) {
-                diagnostics.record(
-                    GameReminderEvent(
-                        step: .productOpened,
-                        productId: productId,
-                        startsAt: startsAt(),
-                        openSource: .alarm,
-                        appState: .init(UIApplication.shared.applicationState)
-                    )
+                diagnostics.productOpened(
+                    productId: productId,
+                    startsAt: storedStartsAt(productId: productId),
+                    source: .alarm
                 )
             }
         }

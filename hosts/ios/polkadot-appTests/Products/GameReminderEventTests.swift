@@ -1,5 +1,6 @@
 import Foundation
 import IssueMonitoring
+import os
 import Testing
 @testable import polkadot_app
 
@@ -68,14 +69,25 @@ struct GameReminderEventTests {
         )
     }
 
-    @Test func aNoopRecorderNeverBuildsTheEvent() {
-        var built = false
+    @MainActor
+    @Test func aNoopRecorderNeverReadsTheHostState() {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let diagnostics = GameReminderDiagnostics(
+            now: {
+                reads.withLock { $0 += 1 }
+                return Date()
+            },
+            applicationState: {
+                reads.withLock { $0 += 1 }
+                return .active
+            }
+        )
 
-        GameReminderDiagnostics().record({
-            built = true
-            return GameReminderEvent(step: .tapped, productId: "game.dot", startsAt: nil)
+        diagnostics.tapped(productId: "game.dot", startsAt: {
+            reads.withLock { $0 += 1 }
+            return nil
         }())
 
-        #expect(!built)
+        #expect(reads.withLock { $0 } == 0)
     }
 }
