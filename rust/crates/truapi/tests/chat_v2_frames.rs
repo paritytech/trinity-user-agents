@@ -142,7 +142,11 @@ fn config() -> v01::ChatRoomConfig {
 fn frames() -> Vec<String> {
 	use versioned::*;
 	let room = || "room".to_string();
-	let metadata = v01::ChatRoomMetadata { name: "Room".into(), description: Some("About".into()) };
+	let metadata = v01::ChatRoomMetadata {
+		name: "Room".into(),
+		description: Some("About".into()),
+		icon: Some("https://icons.example/renamed.png".into()),
+	};
 	let preview = v01::ChatRoomPreview {
 		timestamp: Some(5),
 		badge: Some(v01::ChatRoomBadge::UnreadCount { count: 3 }),
@@ -363,6 +367,15 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
+			"11.update_feed.deleted",
+			wire_table::CHAT_UPDATE_FEED,
+			MESSAGE_TYPE_REQUEST,
+			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+				room_id: room(),
+				update: v01::ChatFeedUpdate::Deleted { message_id: "m1".into() },
+			}),
+		),
+		line(
 			"11.update_feed.custom",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_REQUEST,
@@ -442,6 +455,15 @@ fn frames() -> Vec<String> {
 			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
 				room_id: room(),
 				action: v01::ChatUserAction::SendPayment,
+			}),
+		),
+		line(
+			"13.user_action.delete",
+			wire_table::CHAT_USER_ACTION,
+			MESSAGE_TYPE_START,
+			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+				room_id: room(),
+				action: v01::ChatUserAction::DeleteMessage { message_id: "m1".into() },
 			}),
 		),
 		line(
