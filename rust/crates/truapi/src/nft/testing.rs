@@ -171,6 +171,16 @@ pub fn stored_transfer_params(db: &Db) -> Vec<TransferParams> {
 		.collect()
 }
 
+/// Marks the transfer `id` as finalized, as a landing at a finalized block
+/// would.
+pub fn finalize_transfer(db: &Db, id: DurableTxId) {
+	let update = move |tx: &rusqlite::Transaction<'_>| {
+		tx.execute("UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE id = ?1", [id.0])?;
+		Ok(())
+	};
+	block_on(db.write(update)).expect("status is written");
+}
+
 /// Marks the transfer `id` as failed, as a rejection would.
 pub fn fail_transfer(db: &Db, id: DurableTxId) {
 	let update = move |tx: &rusqlite::Transaction<'_>| {

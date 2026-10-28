@@ -157,9 +157,7 @@ pub fn key_standings(
 	keys: &[ItemKey],
 ) -> Result<HashMap<ItemKey, KeyStanding>, DbError> {
 	let mut statement = conn.prepare_cached(KEY_STANDINGS)?;
-	let key_values: Rc<Vec<Value>> =
-		Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect());
-	let params = named_params! { ":purse": purse.0, ":keys": key_values };
+	let params = named_params! { ":purse": purse.0, ":keys": key_array(keys) };
 	let rows = statement.query_map(params, key_standing_from_row)?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }
@@ -218,6 +216,26 @@ pub fn handoff_keys(
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
+const UNCONSUMED_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
+	item.installation AS installation, item.idx AS idx FROM nft_item AS item
+	WHERE item.key IN rarray(:keys) AND NOT EXISTS (SELECT 1 FROM nft_consumption AS spent
+	LEFT JOIN durable_tx AS tx ON tx.id = spent.tx
+	WHERE spent.key = item.key AND (spent.kind = 'HANDOFF' OR tx.status != 'FAILURE'))
+	ORDER BY item.key";
+
+/// Each of `keys` that is ours and that nothing consumed, with its slot,
+/// ordered by key. A key is consumed once it is handed off or spent by a
+/// transaction that did not fail, landed or not. No holding is needed.
+pub fn unconsumed_keys(
+	conn: &Connection,
+	keys: &[ItemKey],
+) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+	let mut statement = conn.prepare_cached(UNCONSUMED_KEYS)?;
+	let rows =
+		statement.query_map(named_params! { ":keys": key_array(keys) }, keyed_slot_from_row)?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
 const PURSE_OF: &str = "SELECT purse FROM nft_item WHERE key = :key";
 
 /// The purse `key` belongs to, if it is one of ours.
@@ -269,6 +287,11 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 	let instance: i64 = row.get("instance")?;
 	let (_, slot) = keyed_slot_from_row(row)?;
 	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+}
+
+/// `keys` as the value of an `rarray` parameter.
+fn key_array(keys: &[ItemKey]) -> Rc<Vec<Value>> {
+	Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect())
 }
 
 fn keyed_slot_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, ItemSlot)> {

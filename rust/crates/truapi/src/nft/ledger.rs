@@ -19,6 +19,7 @@ use super::{
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims},
+	returns::{ReturnRequest, StartedReturn, plan_returns, record_return},
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
@@ -219,6 +220,26 @@ impl NftLedger {
 			plan_reclaims(tx, &request, keys)
 		});
 		self.durable.execute_with(planned, |_, _| Ok(())).await.map(|_| ())
+	}
+
+	/// Once every move of `request.import` is final, registers under
+	/// `request.operation` one move for each item it landed that nothing
+	/// consumed, back to the key the item came from, and records that each
+	/// move spends its item. Answers which items it started and which stay.
+	/// Each move waits for its key to hold an NFT for up to 30 minutes.
+	pub async fn start_returns(
+		&self,
+		request: ReturnRequest,
+	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
+		let group = request.operation.group().clone();
+		let recorded = request.clone();
+		let policy = PolicyId::new(TRANSFER_POLICY);
+		let planned = DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+			plan_returns(tx, &request)
+		});
+		let record =
+			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_return(tx, &recorded, ids);
+		self.durable.execute_with(planned, record).await.map(|(_, started)| started)
 	}
 
 	/// `plan` as a durable request whose moves are planned in its write.

@@ -67,6 +67,15 @@ pub enum StartOperationError {
 	/// No key was handed off under the tag.
 	#[error("no key was handed off under this tag")]
 	TagNotFound,
+	/// No operation is registered under the import's key.
+	#[error("no import is registered under this key")]
+	ImportNotFound,
+	/// A move of the import can still land or fail.
+	#[error("the import has moves that are not final yet")]
+	ImportUnsettled,
+	/// Every item the import landed is consumed already.
+	#[error("no item the import landed is idle")]
+	NothingIdle,
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),
