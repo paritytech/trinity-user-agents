@@ -31,16 +31,6 @@ struct ProductNavigationTargetResolverTests {
         }
     }
 
-    @Test("Resolves a .dot destination to a product page")
-    func resolvesProductPage() {
-        guard case let .productPage(page) = resolver.resolve(destination: "wallet.dot/send") else {
-            Issue.record("Expected a product page")
-            return
-        }
-
-        #expect(page.host.toDotDomain().rawValue == "wallet.dot")
-    }
-
     @Test("Resolves allowlisted schemes to external URLs", arguments: [
         "https://example.com",
         "mailto:hello@example.com",

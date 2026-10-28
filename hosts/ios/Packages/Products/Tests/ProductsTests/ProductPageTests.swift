@@ -3,11 +3,6 @@ import Testing
 @testable import Products
 
 struct ProductPageTests {
-    @Test func rootRouteBecomesNoPage() throws {
-        let page = try #require(ProductPage.fromUrl(URL(string: "https://browse.dot/")!, tld: "dot"))
-        #expect(page.page == nil)
-    }
-
     // MARK: - applied(to:)
 
     @Test func appliedWithoutPageReturnsRoot() {

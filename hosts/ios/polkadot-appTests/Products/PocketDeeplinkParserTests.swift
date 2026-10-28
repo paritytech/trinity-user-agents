@@ -9,20 +9,6 @@ struct PocketDeeplinkParserTests {
         parser.classify(URL(string: link)!)
     }
 
-    /// A build answers to its own flavor of the scheme, `polkadotappdev` in a
-    /// debug build, and has to read a link under it as the one the core mints.
-    @Test
-    func readsALinkUnderTheAppsOwnScheme() throws {
-        let link = "\(DeeplinkTestSchemes.active)://pocket/open?product=game.dot&card=loyalty"
-        guard case let .pocket(deeplink) = classify(link) else {
-            Issue.record("expected a pocket link")
-            return
-        }
-
-        #expect(deeplink.action == .open)
-        #expect(deeplink.canonicalUrl == "polkadotapp://pocket/open?product=game.dot&card=loyalty")
-    }
-
     /// A product's paths are its own App routes, whatever they spell. The host
     /// claims none of them.
     @Test

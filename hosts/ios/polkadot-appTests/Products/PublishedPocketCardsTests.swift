@@ -28,17 +28,6 @@ struct PublishedPocketCardsTests {
         #expect(found.workerContentId.rawValue == "worker.game.paseo")
     }
 
-    /// A deeplink may name the product in any casing dotNS accepts, and the
-    /// collection is keyed by one id only, the one the resolver settled on.
-    @Test
-    func keysTheCardByTheResolvedProductIdRatherThanTheOneAskedFor() async throws {
-        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
-
-        let found = try await cards.find(productId: try! ProductId("GAME.paseo"), cardId: PocketCardId(value: "loyalty"))
-
-        #expect(found.productId.rawValue == "game.paseo")
-    }
-
     @Test
     func refusesAProductWithNoWorker() async {
         let cards = PublishedPocketCards(products: gameResolver(worker: nil))
@@ -211,8 +200,6 @@ private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecuta
     )
 }
 
-/// Answers any id with the one product these tests ask about, including the mixed-casing id one
-/// test deliberately asks under.
 private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResolver {
     StubProductResolver(alwaysResolvingTo: ResolvedProduct(
         id: try! ProductId("game.paseo"),

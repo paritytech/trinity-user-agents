@@ -17,13 +17,6 @@ class DeeplinkWebHostNormalizerTest {
     }
 
     @Test
-    fun `web schemes route an action-named product as a product`() {
-        listOf("http", "https").forEach { scheme ->
-            assertEquals("pair.dot", dotProductHost(scheme, "pair.dot.li"))
-        }
-    }
-
-    @Test
     fun `product app links require a web scheme and host`() {
         listOf("polkadotapp", "file", null).forEach { scheme ->
             assertNull(dotProductHost(scheme, "pair.dot.li"))

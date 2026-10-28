@@ -389,7 +389,7 @@ Rust runtime tests live beside their components; [native binding tests](rust/cra
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
 Product ID and link parsing rules are tested in Rust. Swift and Kotlin tests
-cover native serialization, adapters and host integration.
+cover native serialization, persistence, rendering, callbacks and host behavior.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 

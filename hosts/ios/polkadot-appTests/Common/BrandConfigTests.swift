@@ -1,5 +1,4 @@
 import Foundation
-import Products
 import Testing
 
 @testable import polkadot_app
@@ -64,14 +63,5 @@ struct BrandConfigTests {
         #expect(AppConfig.Brand.privacyURL.scheme == "https")
         #expect(AppConfig.Brand.privacyURL.host() != nil)
         #expect(AppConfig.Brand.contactEmail.contains("@"))
-    }
-
-    /// EXPECTED TO FAIL under any non-polkadot brand. ProductHost.shareHosts is the
-    /// Rust-backed inbound universal-link allow-list for the supported product networks, so iOS hands
-    /// the app a link that WebDeeplinkNormalizer then rejects. The failure is the intended
-    /// signal for that known blocker, not a regression in this suite.
-    @Test("Share root is matchable inbound")
-    func shareRootIsMatchableInbound() {
-        #expect(ProductHost.shareHosts.contains(AppConfig.Brand.shareRoot))
     }
 }

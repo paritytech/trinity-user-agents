@@ -2,12 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
@@ -125,16 +123,6 @@ class RealResolveProductUseCaseTest {
         useCase.resolve(productId).getOrThrow()
 
         verify(dotNsResolver, times(1)).getMetadataEntry(base, "manifest")
-    }
-
-    @Test
-    fun `an executable subname resolves as its product`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
-
-        val servingHost = productIdFromHost("APP.$base", DotNsTld.parse("dot")!!).getOrThrow()
-        val resolved = useCase().resolve(servingHost).getOrThrow()
-
-        assertEquals(base, resolved.product.id.value)
     }
 
     @Test

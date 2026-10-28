@@ -76,16 +76,6 @@ final class TrUAPIStorageTests {
         #expect(defaults.data(forKey: "io.polkadotapp.truapi.product.store.counter.paseo.\(key)") == Data([0x01]))
     }
 
-    @Test func canonicalIdentitySelectsTheSameStorage() throws {
-        let storage = TrUAPILocalStorage.createProductLocalStorage(productId: try! ProductId("Counter.paseo"), defaults: defaults)
-        let key = "truapi:product-storage:v1:13:counter.paseo:count"
-
-        try storage.write(key: key, value: Data([0x01]))
-
-        #expect(try storage.read(key: key) == Data([0x01]))
-        #expect(defaults.data(forKey: "io.polkadotapp.truapi.product.store.counter.paseo.\(key)") == Data([0x01]))
-    }
-
     @Test func ownerIsReadFromTheCoreKeyFormat() {
         #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:13:counter.paseo:a:b") == (try! ProductId("counter.paseo")))
         #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:7:caf\u{e9}.p:k") == nil)

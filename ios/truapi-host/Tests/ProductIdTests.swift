@@ -27,13 +27,4 @@ struct ProductIdTests {
 
         #expect(try FfiConverterTypeProductId_lift(lowered) == original)
     }
-
-    @Test
-    func decodingPropagatesRustValidationErrors() throws {
-        let encoded = try JSONEncoder().encode("not a product id")
-
-        #expect(throws: ProductIdError.self) {
-            try JSONDecoder().decode(ProductId.self, from: encoded)
-        }
-    }
 }

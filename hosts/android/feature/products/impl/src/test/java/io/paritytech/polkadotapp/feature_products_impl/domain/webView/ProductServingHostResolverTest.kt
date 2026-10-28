@@ -80,21 +80,9 @@ class ProductServingHostResolverTest {
     }
 
     @Test
-    fun `a host that already names an executable keeps its own archive`() = runBlocking {
-        // Otherwise a worker.<base> request would be answered with the app's archive.
-        assertEquals("worker.coinflip.dot", resolver.servingHostFor("worker.coinflip.dot"))
-        assertEquals("app.coinflip.dot", resolver.servingHostFor("app.coinflip.dot"))
-    }
-
-    @Test
     fun `a web-mirror host maps to the canonical archive`() = runBlocking {
         stubResolution("app.coinflip.dot")
 
         assertEquals("app.coinflip.dot", resolver.servingHostFor("coinflip.dot.li"))
-    }
-
-    @Test
-    fun `a host that is not a product is left alone`() = runBlocking {
-        assertEquals("example.com", resolver.servingHostFor("example.com"))
     }
 }

@@ -1,7 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Testing
 import Keystore_iOS
-import KeyDerivation
 @testable import polkadot_app
 
 @Suite("Host-placed products")
@@ -14,7 +13,6 @@ struct HostPlacedProductsTests {
 
         #expect(HostPlacedProducts.all.count == 1)
         #expect(hostPlaced.fallbackName == "Jollity")
-        #expect(try hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for

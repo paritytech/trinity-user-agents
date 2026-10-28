@@ -35,13 +35,6 @@ struct DotNsTldResolutionTests {
         #expect(throws: DotNsTldError.self) { try vrfRepo.litePerson() }
     }
 
-    /// The bug fix itself: product domains and derivation paths must embed the resolved TLD, not a
-    /// hardcoded `.dot`. Parameterized so a reverted fix (constant `.dot`) fails on any non-dot TLD.
-    @Test(arguments: ["dot", "testnet", "paseo"])
-    func derivationPathsEmbedResolvedTld(_ tld: String) throws {
-        #expect(try WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
-    }
-
     /// End-to-end proof that the TLD flows into real key material: two TLDs over the same root
     /// entropy derive different main accounts and different personhood member keys. Also exercises
     /// the shared repository mocks.

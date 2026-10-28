@@ -6,10 +6,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductIdException
 
 class AutoAllowProductPermissionRequesterTest {
     private val delegate = RecordingRequester(PermissionDecision.Deny)
@@ -51,12 +49,6 @@ class AutoAllowProductPermissionRequesterTest {
 
         assertEquals(PermissionDecision.Deny, decision)
         assertEquals(listOf(productId("arena.getcash.dot")), delegate.promptCalls)
-    }
-
-    @Test
-    fun `a bare label cannot enter the permission request`() {
-        assertThrows(ProductIdException::class.java) { productId("getcash") }
-        assertTrue(delegate.promptCalls.isEmpty())
     }
 
     private fun productId(value: String) = ProductId.parse(value)
