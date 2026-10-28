@@ -109,8 +109,8 @@ export class Outbox {
     return this.items.find((item) => item.handle === handle);
   }
 
-  byTopic(topic: string): OutgoingRequest | undefined {
-    return this.items.find((item) => item.context.setupTopic === topic);
+  byRoute(route: string): OutgoingRequest | undefined {
+    return this.items.find((item) => item.context.returnRoute === route);
   }
 
   status(item: OutgoingRequest): OutgoingStatus {

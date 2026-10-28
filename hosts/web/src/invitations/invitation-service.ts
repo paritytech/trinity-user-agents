@@ -41,18 +41,20 @@ import {
  * received, and reaches other hosts only through a {@link HostDelivery}.
  *
  * Sending: the product names a contact by handle and gives its payload. The
- * host resolves the contact, asks its user, makes the request id, the return
- * topic `T_SETUP` and a reply key pair, watches `T_SETUP`, then authenticates,
- * seals and posts the request until its deadline. A reply on `T_SETUP` reaches
- * the product only once the host opened and authenticated it. The product's
+ * host resolves the contact, asks its user, makes the request id and a reply
+ * key pair, asks its delivery for a return route and watches it, then
+ * authenticates, seals and posts the request until its deadline. A reply on
+ * that route reaches the product only once the host opened and authenticated
+ * it. The product's
  * `complete` closes the request and stops the reposts; nothing is sent.
  *
  * Receiving: an authenticated request from a contact, for this product, before
  * its deadline and not seen before, goes to Notifications. Nothing goes back:
  * not on arrival, not when seen, not on Dismiss. Accept is the user's intent,
  * handed with the payload to the product. Only the product's `reply` accepts
- * it; the host then authenticates, seals and posts the reply on the request's
- * return topic.
+ * it; the host then authenticates, seals and posts the reply on the return
+ * route the authenticated request names, once its delivery confirmed it can
+ * reach the sender there.
  *
  * Demo choice, not the design's: the recipient's host posts its sealed reply
  * again on the delivery's cadence until the request's deadline, and again
@@ -150,7 +152,7 @@ export class InvitationService {
   start(): void {
     this.deps.delivery.listen({
       request: (sealed) => this.receiveRequest(sealed),
-      reply: (topic, sealed) => this.receiveReply(topic, sealed),
+      reply: (route, sealed) => this.receiveReply(route, sealed),
     });
     for (const item of this.outbox.waiting()) this.post(item);
     const now = this.deps.now();
@@ -315,7 +317,7 @@ export class InvitationService {
   }
 
   private post(item: OutgoingRequest): void {
-    this.deps.delivery.watch(item.context.setupTopic);
+    this.deps.delivery.watch(item.context.returnRoute);
     const person = this.deps.contacts.byIdentity(item.context.to);
     if (person === undefined) return;
     this.deps.delivery.postRequest(
@@ -328,7 +330,7 @@ export class InvitationService {
 
   private postReply(item: ReceivedRequest, sealed: string): void {
     this.deps.delivery.postReply(
-      item.context.setupTopic,
+      item.context.returnRoute,
       item.handle,
       sealed,
       item.context.deadline,
@@ -337,7 +339,7 @@ export class InvitationService {
 
   private stopPosting(item: OutgoingRequest): void {
     this.deps.delivery.withdraw(item.handle);
-    this.deps.delivery.unwatch(item.context.setupTopic);
+    this.deps.delivery.unwatch(item.context.returnRoute);
   }
 
   private outgoingView(item: OutgoingRequest): OutgoingView {
@@ -417,7 +419,7 @@ export class InvitationService {
         requestId: toHex(random(16)),
         createdAt: now,
         deadline: now + ttlMs,
-        setupTopic: toHex(random(32)),
+        returnRoute: this.deps.delivery.returnRoute(),
         replyKey: toHex(replyKey.public),
       },
       payload,
@@ -437,7 +439,7 @@ export class InvitationService {
     };
     this.outbox.add(item);
     this.deps.log(
-      `Request ${short(item.handle)}: watching its return topic, then posting it, sealed for ${person.name}.`,
+      `Request ${short(item.handle)}: watching its return route, then posting it, sealed for ${person.name}.`,
     );
     this.post(item);
     this.scheduleExpiry();
@@ -533,7 +535,7 @@ export class InvitationService {
     this.received.markReplied(handle, sealed, this.deps.now());
     this.postReply(received, sealed);
     this.deps.log(
-      `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return topic.`,
+      `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return route.`,
     );
     if (open) this.deps.showProduct();
     return settle({ ok: true });
@@ -592,6 +594,12 @@ export class InvitationService {
       );
       return;
     }
+    if (!this.deps.delivery.isReturnRoute(context.returnRoute, peer.identity)) {
+      this.deps.log(
+        `Ignored request ${label}: its return route does not reach ${peer.name}.`,
+      );
+      return;
+    }
     const now = this.deps.now();
     if (
       now >= context.deadline ||
@@ -639,10 +647,10 @@ export class InvitationService {
     );
   }
 
-  /** A sealed reply arrived on a return topic. Handed to the product only once authenticated. */
-  private receiveReply(topic: string, sealed: string): void {
+  /** A sealed reply arrived on a return route. Handed to the product only once authenticated. */
+  private receiveReply(route: string, sealed: string): void {
     if (this.stopped) return;
-    const item = this.outbox.byTopic(topic);
+    const item = this.outbox.byRoute(route);
     if (item === undefined) return;
     const label = short(item.handle);
     const status = this.outbox.status(item);

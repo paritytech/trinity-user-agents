@@ -190,23 +190,26 @@ async function screenshot(page: Page, name: string): Promise<void> {
 }
 
 /**
- * What the local delivery holds: the routes requests were posted to, and the
- * return topics replies were posted on.
+ * What the local delivery holds: the inboxes requests were posted to, or the
+ * return routes replies were posted on.
  */
 const posts = (page: Page, kind: "request" | "reply") =>
-  page.evaluate(
-    (kind) =>
-      [
-        ...new Set(
-          Object.keys(localStorage)
-            .filter((key) => key.includes(`:dev:delivery:v2:${kind}:`))
-            .map(
-              (key) => key.split(`:dev:delivery:v2:${kind}:`)[1]!.split(":")[0],
-            ),
-        ),
-      ].sort(),
-    kind,
-  );
+  page.evaluate((kind) => {
+    const found = new Set<string>();
+    for (const key of Object.keys(localStorage)) {
+      const [, rest] = key.split(":dev:delivery:v3:");
+      if (rest === undefined) continue;
+      const [where, label] = rest.split(":");
+      const { route } = JSON.parse(localStorage.getItem(key)!) as {
+        route?: string;
+      };
+      if (kind === "reply" && where === "topic") found.add(`topic:${label}`);
+      else if (kind === "reply" && route !== undefined) found.add(route);
+      else if (kind === "request" && where === "inbox" && route === undefined)
+        found.add(label!);
+    }
+    return [...found].sort();
+  }, kind);
 
 describe("invitations between test users", () => {
   test(
@@ -276,7 +279,7 @@ describe("invitations between test users", () => {
 
         // Accept: Bob's Example Chat checks the payload and replies through
         // its host, which posts the sealed reply on the request's return
-        // topic. Alice's host authenticates it, her product checks it, and only
+        // route. Alice's host authenticates it, her product checks it, and only
         // then is it Connected.
         await row.locator('[data-action="notification-accept"]').click();
         await eventually(
@@ -293,7 +296,7 @@ describe("invitations between test users", () => {
         expect(aliceLog).toContain("authenticated a reply from Bob");
         expect(aliceLog).toContain("reposting stopped. Nothing is sent.");
         expect(await bob.locator("#log").textContent()).toContain(
-          "the host sealed it for Alice and posted it on the request's return topic",
+          "the host sealed it for Alice and posted it on the request's return route",
         );
         expect(await posts(alice, "reply")).toHaveLength(1);
         // Neither product shows who the other person is.

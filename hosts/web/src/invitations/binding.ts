@@ -29,7 +29,8 @@ import {
  * reply, and the transcripts their authentication evidence covers.
  *
  * - A request carries its context (both identities, the product, the request
- *   id, the deadline, the return topic `T_SETUP` and the public reply key),
+ *   id, the deadline, the return route the sender's delivery chose and the
+ *   public reply key),
  *   the product's payload and the sender's evidence over all of it. It is
  *   sealed to the recipient's identity key.
  * - A reply carries its context (both identities, the product, the request id
@@ -54,7 +55,8 @@ const REQUEST_ID_BYTES = 16;
  * room for the context, the evidence and the sealing.
  */
 const ENVELOPE_MAX_BYTES = 2 * PAYLOAD_MAX_BYTES + 8192;
-const TOPIC_BYTES = 32;
+/** The longest return route a request may name. */
+const ROUTE_MAX_CHARS = 256;
 
 /** What a request says, besides its payload. Every field is authenticated. */
 export interface RequestContext {
@@ -69,8 +71,8 @@ export interface RequestContext {
   requestId: string;
   createdAt: number;
   deadline: number;
-  /** The return topic, `T_SETUP`. */
-  setupTopic: string;
+  /** Where the reply reaches the sender, as the sender's delivery chose it. Opaque here. */
+  returnRoute: string;
   /** The public reply-envelope key. */
   replyKey: string;
 }
@@ -108,7 +110,7 @@ export function requestTranscript(
     context.requestId,
     String(context.createdAt),
     String(context.deadline),
-    context.setupTopic,
+    context.returnRoute,
     context.replyKey,
     payloadDigest(payload),
   );
@@ -163,7 +165,9 @@ function readRequestContext(value: unknown): RequestContext | null {
     isHexOf(item.requestId, REQUEST_ID_BYTES) &&
     isTime(item.createdAt) &&
     isTime(item.deadline) &&
-    isHexOf(item.setupTopic, TOPIC_BYTES) &&
+    typeof item.returnRoute === "string" &&
+    item.returnRoute !== "" &&
+    item.returnRoute.length <= ROUTE_MAX_CHARS &&
     isKey(item.replyKey)
     ? {
         version: WIRE_VERSION,
@@ -174,7 +178,7 @@ function readRequestContext(value: unknown): RequestContext | null {
         requestId: item.requestId,
         createdAt: item.createdAt,
         deadline: item.deadline,
-        setupTopic: item.setupTopic,
+        returnRoute: item.returnRoute,
         replyKey: item.replyKey,
       }
     : null;

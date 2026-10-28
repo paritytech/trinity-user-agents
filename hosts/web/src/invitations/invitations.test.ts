@@ -91,10 +91,16 @@ class Clock {
   }
 }
 
-/** Records what the service asks of its delivery, in order. */
+/**
+ * Records what the service asks of its delivery, in order. Its return routes
+ * are `route:<n>`, with nothing about the transport in them; it can reach
+ * anyone on one, except on the routes in `unreachable`.
+ */
 class FakeDelivery implements HostDelivery {
   receive: Parameters<HostDelivery["listen"]>[0] | null = null;
   readonly calls: string[] = [];
+  readonly unreachable = new Set<string>();
+  private routes = 0;
   readonly posts = new Map<string, string>();
   readonly watched = new Set<string>();
   closed = false;
@@ -105,17 +111,24 @@ class FakeDelivery implements HostDelivery {
     this.calls.push(`postRequest ${id}`);
     this.posts.set(id, sealed);
   }
-  postReply(topic: string, id: string, sealed: string): void {
-    this.calls.push(`postReply ${topic} ${id}`);
+  returnRoute(): string {
+    this.routes += 1;
+    return `route:${this.routes}`;
+  }
+  isReturnRoute(route: string): boolean {
+    return route.startsWith("route:") && !this.unreachable.has(route);
+  }
+  postReply(route: string, id: string, sealed: string): void {
+    this.calls.push(`postReply ${route} ${id}`);
     this.posts.set(id, sealed);
   }
-  watch(topic: string): void {
-    this.calls.push(`watch ${topic}`);
-    this.watched.add(topic);
+  watch(route: string): void {
+    this.calls.push(`watch ${route}`);
+    this.watched.add(route);
   }
-  unwatch(topic: string): void {
-    this.calls.push(`unwatch ${topic}`);
-    this.watched.delete(topic);
+  unwatch(route: string): void {
+    this.calls.push(`unwatch ${route}`);
+    this.watched.delete(route);
   }
   withdraw(id: string): void {
     this.calls.push(`withdraw ${id}`);
@@ -213,7 +226,7 @@ function fromAda(overrides: Partial<RequestContext> = {}) {
       requestId: toHex(cryptoRandom(16)),
       createdAt: START,
       deadline: START + HOUR,
-      setupTopic: toHex(cryptoRandom(32)),
+      returnRoute: `route:${toHex(cryptoRandom(8))}`,
       replyKey: toHex(cryptoRandom(32)),
       ...overrides,
     },
@@ -256,7 +269,7 @@ describe("the request service, receiving", () => {
     expect(lin.notifications.get(handle)!.state.tag).toBe("accepted");
     expect(lin.shown).toHaveLength(1);
     expect(lin.delivery.calls).toEqual([
-      `postReply ${context.setupTopic} ${handle}`,
+      `postReply ${context.returnRoute} ${handle}`,
     ]);
   });
 
@@ -399,6 +412,17 @@ describe("the request service, receiving", () => {
     expect(lin.delivery.calls).toEqual([]);
   });
 
+  test("ignores a request whose return route its delivery cannot reach the sender on", () => {
+    const lin = host(LIN);
+    lin.delivery.unreachable.add("route:elsewhere");
+    lin.delivery.receive!.request(
+      fromAda({ returnRoute: "route:elsewhere" }).sealed,
+    );
+    lin.delivery.receive!.request(fromAda({ returnRoute: "other:1" }).sealed);
+    expect(lin.notifications.list()).toEqual([]);
+    expect(lin.delivery.calls).toEqual([]);
+  });
+
   test("ignores a request for another product, with a lifetime over the limit, or whose deadline passed", () => {
     const lin = host(LIN);
     lin.delivery.receive!.request(
@@ -439,7 +463,7 @@ describe("the request service, receiving", () => {
       },
     ]);
     expect(again.delivery.calls).toEqual([
-      `postReply ${context.setupTopic} ${handle}`,
+      `postReply ${context.returnRoute} ${handle}`,
     ]);
     again.delivery.receive!.request(sealed);
     expect(again.notifications.list()).toHaveLength(1);
@@ -478,7 +502,7 @@ describe("the request service, across tabs and malformed input", () => {
     for (const text of ["null", "1", "[]"])
       expect(() =>
         ada.delivery.receive!.reply(
-          item!.context.setupTopic,
+          item!.context.returnRoute,
           toHex(
             sealTo(
               fromHex(item!.context.replyKey),
@@ -540,7 +564,7 @@ describe("the request service, across tabs and malformed input", () => {
     );
     expect(second.delivery.calls).toEqual([]);
     expect(first.delivery.calls).toEqual([
-      `postReply ${context.setupTopic} ${handle}`,
+      `postReply ${context.returnRoute} ${handle}`,
     ]);
   });
 
@@ -560,7 +584,7 @@ describe("the request service, across tabs and malformed input", () => {
     const second = host(ADA, { storage, clock });
     const [item] = second.service.outbox.list();
     expect([...second.delivery.posts.keys()]).toEqual([item!.handle]);
-    expect([...second.delivery.watched]).toEqual([item!.context.setupTopic]);
+    expect([...second.delivery.watched]).toEqual([item!.context.returnRoute]);
     await first.product.call({ call: "cancel", handle: item!.handle });
     second.service.reload();
     expect([...second.delivery.posts.keys()]).toEqual([]);
@@ -580,7 +604,7 @@ describe("the request service, sending", () => {
       },
     });
 
-  test("the host makes the request id, return topic and reply key, and watches the topic before it posts", async () => {
+  test("the host makes the request id and reply key, takes a return route from its delivery, and watches it before it posts", async () => {
     const ada = host(ADA, { picks: [LIN] });
     expect(await ada.product.call({ call: "pickContact" })).toEqual({
       ok: true,
@@ -606,13 +630,16 @@ describe("the request service, sending", () => {
     });
     expect(second.ok).toBe(true);
     expect(one!.context.requestId).not.toBe(two!.context.requestId);
-    expect(one!.context.setupTopic).not.toBe(two!.context.setupTopic);
+    expect([one!.context.returnRoute, two!.context.returnRoute]).toEqual([
+      "route:1",
+      "route:2",
+    ]);
     expect(one!.context.replyKey).not.toBe(two!.context.replyKey);
     expect(one!.handle).not.toBe(one!.context.requestId);
     expect(ada.delivery.calls).toEqual([
-      `watch ${one!.context.setupTopic}`,
+      `watch ${one!.context.returnRoute}`,
       `postRequest ${one!.handle}`,
-      `watch ${two!.context.setupTopic}`,
+      `watch ${two!.context.returnRoute}`,
       `postRequest ${two!.handle}`,
     ]);
   });
@@ -627,7 +654,7 @@ describe("the request service, sending", () => {
     const again = host(ADA, { storage, clock });
     const [item] = again.service.outbox.list();
     expect(again.delivery.calls).toEqual([
-      `watch ${item!.context.setupTopic}`,
+      `watch ${item!.context.returnRoute}`,
       `postRequest ${item!.handle}`,
     ]);
     expect(again.product.received).toEqual([
@@ -645,7 +672,7 @@ describe("the request service, sending", () => {
     ada.clock.advance(2 * MINUTE);
     expect(ada.delivery.calls.slice(2)).toEqual([
       `withdraw ${item!.handle}`,
-      `unwatch ${item!.context.setupTopic}`,
+      `unwatch ${item!.context.returnRoute}`,
     ]);
     const reports = () =>
       ada.product.received.filter(

@@ -211,6 +211,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       store: pageStore(),
       now,
       schedule,
+      random: cryptoRandom,
       log: deps.log,
     }),
     now,
