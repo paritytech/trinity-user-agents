@@ -290,7 +290,7 @@ export async function startTestHost(
         // is supplied here the way the worker runtime does. The test host runs
         // one product and starts no workers.
         ...createWasmRawCallbacks(host.callbacks),
-        workerDemandChanged: () => {},
+        requestWorkerTransition: () => {},
       },
       hostConfig,
     );

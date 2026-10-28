@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
@@ -71,7 +72,8 @@ class ProductChatCardImagesTest {
         val factory = ProductBotFactory(
             appContext = mockk<Context>(relaxed = true),
             workerRefCounter = mockk(),
-            imageResolver = RealProductImageResolver(archive, ipfsContentLookup),
+            imageResolver = RealProductImageResolver(archive, ipfsContentLookup, FakePinnedPocketCards(emptyList())),
+            resolveProduct = mockk(),
         )
         val extension = factory.create(product, ProductChatExtensionOrigin.InstalledByUser)
         val renderer = extension.customMessageRenderers().single() as ProductsMessageRenderer

@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.common.utils.stateInBackground
+import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
@@ -25,7 +26,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
-import io.paritytech.polkadotapp.feature_fund_api.domain.AutoConvertDepositService
+import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
@@ -62,6 +63,7 @@ class RootViewModel @Inject constructor(
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
     featureOverlays: Set<@JvmSuppressWildcards ChatOverlay>,
@@ -74,6 +76,7 @@ class RootViewModel @Inject constructor(
     override val chatOverlays = chatEngine.observeActiveOverlays().map { featureOverlays.toList() + it }
     override val isOnboarded = observeAccountOnboardingStatus().map { it.isOnboarded }
     override val bottomNavHeight = bottomNavHeightProvider.heightDp
+    val appTheme = appThemeSelector.selectedTheme
     override val chainsHealth = chainHealthMixinFactory.create(this).model
 
     private val networkStatusTooltipDismissed = MutableStateFlow(!rootInteractor.shouldShowNetworkStatusTooltip())

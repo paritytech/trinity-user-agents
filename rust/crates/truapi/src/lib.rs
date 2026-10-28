@@ -109,16 +109,18 @@ pub mod latest {
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
-		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
-		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePurse, OperationStartedResult, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
+		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -340,6 +342,39 @@ pub mod latest {
 	/// Failure following a payment top-up.
 	pub type HostPaymentTopUpStatusSubscribeError =
 		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
+	/// NFT purse creation request.
+	pub type HostNftPurseCreatePurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseRequest>;
+	/// Created NFT purse.
+	pub type HostNftPurseCreatePurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseResponse>;
+	/// NFT purse listing request.
+	pub type HostNftPurseListPursesRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesRequest>;
+	/// An owner's NFT purses.
+	pub type HostNftPurseListPursesResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesResponse>;
+	/// NFT purse listing failure.
+	pub type HostNftPurseListPursesError =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesError>;
+	/// NFT purse item key creation request.
+	pub type HostNftPurseCreateItemsRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsRequest>;
+	/// Created NFT purse item keys.
+	pub type HostNftPurseCreateItemsResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsResponse>;
+	/// NFT purse item key creation failure.
+	pub type HostNftPurseCreateItemsError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsError>;
+	/// NFT purse page request.
+	pub type HostNftPurseQueryPurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseRequest>;
+	/// One page of an NFT purse.
+	pub type HostNftPurseQueryPurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseResponse>;
+	/// NFT purse page failure.
+	pub type HostNftPurseQueryPurseError =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
@@ -699,6 +734,8 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 }
 
 #[cfg(feature = "runtime")]
+pub mod background_task;
+#[cfg(feature = "runtime")]
 pub mod bootstrap;
 #[cfg(feature = "runtime")]
 pub mod chain;
@@ -734,6 +771,8 @@ mod runtime;
 mod session_usernames;
 #[cfg(feature = "runtime")]
 pub mod subscription;
+#[cfg(feature = "runtime")]
+pub mod time;
 #[cfg(feature = "runtime")]
 pub mod transport;
 #[cfg(feature = "runtime")]
@@ -771,6 +810,18 @@ pub mod store;
 pub mod durable;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod installation;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft_purse;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -779,7 +830,10 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{preimage_cid, preimage_key};
+pub use host_internal::{
+	bulletin::{preimage_cid, preimage_key},
+	extrinsic::Sr25519Signer,
+};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,

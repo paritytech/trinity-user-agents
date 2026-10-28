@@ -26,6 +26,13 @@ on:
         required: false
         type: string
         default: ""
+      core_artifact:
+        description: >-
+          An artifact an earlier job in the calling run packed the in-tree core
+          into. Empty builds the core here.
+        required: false
+        type: string
+        default: ""
     outputs:
       tag:
         description: "Tag of the release carrying the bundle."
@@ -38,8 +45,6 @@ on:
         value: ${{ jobs.build_simulator.outputs.sha }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64:
-        required: true
-      MELD_BASIC_AUTH_TOKEN:
         required: true
       SENTRY_AUTH_TOKEN:
         required: true
@@ -74,9 +79,11 @@ jobs:
       download_url: ${{ steps.tag.outputs.download_url }}
       sha: ${{ steps.tag.outputs.sha }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -86,7 +93,14 @@ jobs:
       # this tree. The app repository got the core as a published package and
       # needed none of this; here it has to be generated before any build.
       - name: Bootstrap the in-tree core
+        if: inputs.core_artifact == ''
         uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Restore the in-tree core
+        if: inputs.core_artifact != ''
+        uses: ./.github/actions/restore-ios-core
+        with:
+          name: ${{ inputs.core_artifact }}
 
       - name: Configure Google services
         uses: ./hosts/ios/.github/actions/configure-google-services
@@ -98,7 +112,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build simulator .app
         working-directory: hosts/ios
@@ -165,8 +178,32 @@ jobs:
 
           echo "archive=hosts/ios/build_simulator/$ARCHIVE" >> "$GITHUB_OUTPUT"
 
+      # Generated notes compare against the newest release of any kind unless
+      # told otherwise, and this repository also publishes Android nightlies
+      # and npm releases. The base is the last simulator release the room was
+      # told about, so the notes list everything since that announcement,
+      # including what a dispatched or unannounced build in between carried.
+      - name: Find the last announced simulator release
+        id: previous
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PREFIX: simulator-
+          TAG: ${{ steps.tag.outputs.tag }}
+        with:
+          script: |
+            const { PREFIX: prefix, TAG: tag } = process.env;
+            const { data } = await github.rest.repos.listReleases({
+              owner: context.repo.owner, repo: context.repo.repo, per_page: 100,
+            });
+            const series = data.filter(r => !r.draft && r.tag_name.startsWith(prefix) && r.tag_name !== tag);
+            // The announcement marks a release once the room has it. Until one
+            // carries the marker, the newest of the series is the base.
+            const previous = series.find(r => (r.body || '').includes('<!-- nightly-announced -->')) || series[0];
+            core.info(previous ? `Notes start from ${previous.tag_name}` : 'No previous release; GitHub picks the base');
+            core.setOutput('tag', previous ? previous.tag_name : '');
+
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           # Without this the tag is created at the default branch, so a build of
@@ -174,11 +211,12 @@ jobs:
           # another, and generated notes computed from the wrong base.
           target_commitish: ${{ steps.tag.outputs.sha }}
           name: ${{ steps.tag.outputs.name }}
-          # GitHub auto-generates a "What's Changed" PR list between this tag
-          # and the previous one. softprops/action-gh-release prepends the
-          # body below to those notes, so the install snippet sits above the
-          # PR list — same shape Android nightlies use.
+          # GitHub generates a "What's Changed" list between this tag and the
+          # last announced simulator release, which is the changelog the
+          # nightly announcement links to. softprops/action-gh-release prepends the
+          # body below to those notes, so the install snippet sits above it.
           generate_release_notes: true
+          previous_tag: ${{ steps.previous.outputs.tag }}
           body: |
             Ad-hoc-signed arm64-iphonesimulator `.app` bundle built from commit
             `${{ steps.tag.outputs.sha }}` on the `${{ env.FASTLANE_CONFIGURATION }}` configuration.
@@ -202,7 +240,7 @@ jobs:
       - name: Confirm the published asset is present and not empty
         # Through github-script rather than `gh` and `jq`, which the self-hosted
         # macOS images do not ship.
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           ASSET: polkadot-app-simulator.app.zip

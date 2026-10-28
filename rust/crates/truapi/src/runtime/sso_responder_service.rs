@@ -45,8 +45,8 @@ use crate::{
 		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic,
-			decode_pairing_deeplink, derive_identity_chat_private_key,
+			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
+			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
 			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
 			establish_responder_session_info, v2, x25519_public_key,
 		},
@@ -193,7 +193,7 @@ struct EstablishedPairing {
 
 impl PairedSsoPeer {
 	/// Extract the public peer material carried by a pairing deeplink.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
 	}
 }
@@ -204,9 +204,8 @@ pub const MAX_PAIRING_METADATA_CHARS: usize = 512;
 impl PairingProposal {
 	/// Decode a pairing deeplink into the peer it advertises and the metadata
 	/// a host prompts with.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
-		let VersionedHandshakeProposal::V2(proposal) =
-			decode_pairing_deeplink(deeplink).map_err(|err| err.to_string())?;
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
+		let VersionedHandshakeProposal::V2(proposal) = decode_pairing_deeplink(deeplink)?;
 		let mut metadata = PairingProposalMetadata::default();
 		for v2::MetadataEntry(key, value) in proposal.metadata {
 			let value = sanitize_pairing_metadata(value);
@@ -283,7 +282,7 @@ impl SsoResponderService {
 		&self,
 		deeplink: &str,
 	) -> Result<EstablishedPairing, String> {
-		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let entropy = self
 			.signing_host
 			.root_entropy()
@@ -388,7 +387,7 @@ impl SsoResponderService {
 		&self,
 		deeplink: &str,
 	) -> Result<AnnouncedPairing, String> {
-		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let entropy = self
 			.signing_host
 			.root_entropy()
@@ -890,6 +889,8 @@ mod tests {
 			"headless",
 			None,
 			0,
+			None,
+			None,
 		)
 		.expect("registration builds");
 

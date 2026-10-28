@@ -76,7 +76,7 @@ internal class RealResolveProductUseCase @Inject constructor(
 
         // Legacy products have no record, so one is synthesized to keep a single code path.
         val root = if (rootText == null) {
-            RootManifest(displayName = baseName, icon = null)
+            RootManifest(displayName = baseName, description = null, icon = null)
         } else {
             manifestParser.parseRoot(rootText)
                 .logFailure("Rejected product manifest for $baseName")
@@ -96,7 +96,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         // Identity only — executables are re-fetched on the next resolve.
         productRepository.upsertResolvedProduct(product)
 
-        return Result.success(ResolvedProduct(product = product, executables = executables))
+        return Result.success(ResolvedProduct(product = product, description = root.description, executables = executables))
     }
 
     // A manifest worker wins over the debug-menu `userWorkerUrl`; legacy products carry only an

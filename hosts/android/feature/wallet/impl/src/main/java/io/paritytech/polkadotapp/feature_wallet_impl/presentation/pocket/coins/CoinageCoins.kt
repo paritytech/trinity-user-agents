@@ -84,6 +84,7 @@ internal fun CoinageCoins(
     isExpanded: Boolean,
     /** The picked coin, already known to be among [coins]. Ignored while collapsed. */
     focusedCoin: String?,
+    coinSet: CoinageScene.CoinSet,
     stripHeight: Dp = CoinageStripLayout.Options().height.dp,
     onMetrics: (CoinageCoinsMetrics) -> Unit,
     onCoinTapped: (String?) -> Unit,
@@ -140,7 +141,7 @@ internal fun CoinageCoins(
 
         // The most the field is ever asked to be for these coins, which is what keeps the surface from being
         // resized under a flight: picking a coin or scrolling never changes it.
-        val roomiest = maxOf(gridHeight + CoinageArrangement.FOCUS_BAND_MINIMUM, stripHeight.value)
+        val roomiest = maxOf(gridHeight + maxOf(CoinageTraceHeight.value, CoinageArrangement.FOCUS_BAND_MINIMUM), stripHeight.value)
         val wanted = when {
             !isExpanded -> stripHeight.value
             focus != null && bandTop != null -> CoinageArrangement.fieldHeight(focus, gridHeight, bandTop)
@@ -189,7 +190,8 @@ internal fun CoinageCoins(
                     gridBudget = budget,
                     surfaceHeight = surfacePixels,
                     focus = focus,
-                    window = window
+                    window = window,
+                    coinSet = coinSet
                 )
             }
         )
@@ -208,7 +210,7 @@ internal fun CoinageCoins(
             transitionSpec = { fadeIn() togetherWith fadeOut() }
         ) { shown ->
             if (shown != null) {
-                Box(modifier = Modifier.fillMaxWidth().height(focus?.band?.dp ?: CoinageTraceHeight)) {
+                Box(modifier = Modifier.fillMaxWidth()) {
                     detail(shown)
                 }
             }
@@ -259,8 +261,12 @@ private fun Modifier.flickDown(onFlick: () -> Unit) = pointerInput(onFlick) {
     }
 }
 
-/** How tall the detail beside a picked coin needs to be: a headline and two lines, with an inset each way. */
-internal val CoinageTraceHeight = (CoinageArrangement.FOCUS_INSET * 2 + 30f + 18f * 2).dp
+/**
+ * How tall the detail beside a picked coin is at its tallest: a headline, two lines and the open quality
+ * explanation (four small lines and the gap under them), with an inset each way. The band is placed for this
+ * from the start, so opening the explanation never moves the box or pushes it off the screen.
+ */
+internal val CoinageTraceHeight = (CoinageArrangement.FOCUS_INSET * 2 + 30f + 24f * 2 + 80f).dp
 
 private val FlickDistance = 24.dp
 private val FlickSpeed = 600.dp

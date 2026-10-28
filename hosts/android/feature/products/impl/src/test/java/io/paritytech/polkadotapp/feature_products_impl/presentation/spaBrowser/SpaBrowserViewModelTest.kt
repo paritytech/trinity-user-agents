@@ -205,6 +205,7 @@ class SpaBrowserViewModelTest {
 
     private fun resolved(productId: ProductId) = ResolvedProduct(
         product = Product(id = productId, name = productId.value, icon = null),
+        description = null,
         executables = Executables(
             app = ProductExecutable.App(host = ExecutableHost("app.${productId.value}"), appVersion = SemVer.ZERO),
             widget = null,

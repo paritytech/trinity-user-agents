@@ -36,11 +36,6 @@ struct WalletView: View {
                 }
                 .scrollClipDisabled(viewModel.openPocketCard != nil)
                 .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
-                .safeAreaInset(edge: .bottom) {
-                    if viewModel.expandedSection == .assetDetails {
-                        AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
-                    }
-                }
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }
@@ -64,19 +59,19 @@ struct WalletView: View {
     @ViewBuilder
     private var pocketCards: some View {
         if viewModel.expandedSection == .none {
-            ForEach(viewModel.pocketCards) { card in
+            let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
+            ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                 // A press takes the user into the product the card belongs
                 // to, at the page the card names. The shape is named so the
                 // peek a card shows is all of it that takes a press, the
                 // rest is under the card above.
                 PocketCollectionCardView(card: card)
+                    .pocketMotion(motion(ofCardAt: index, openAt: openIndex))
                     .onGeometryChange(for: CGRect.self) { proxy in
                         proxy.frame(in: .global)
                     } action: {
                         viewModel.pocketCardFrames[card.key] = $0
                     }
-                    // Its screen draws the card while it is open.
-                    .opacity(viewModel.openPocketCard == card.key ? 0 : 1)
                     .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
                     .onTapGesture { viewModel.onOpenPocketCard?(card) }
                     // A host-placed card is removable by nobody, so a long
@@ -89,6 +84,15 @@ struct WalletView: View {
                     }
             }
         }
+    }
+
+    private func motion(ofCardAt index: Int, openAt openIndex: Int?) -> PocketCardMotion {
+        PocketCardMotion.of(
+            cardAt: index,
+            openAt: openIndex,
+            openOffset: viewModel.openPocketCardOffset,
+            cleared: viewModel.isPocketCleared
+        )
     }
 
     @ViewBuilder

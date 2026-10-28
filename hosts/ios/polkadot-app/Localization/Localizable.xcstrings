@@ -22,6 +22,78 @@
         }
       }
     },
+    "payments.setup.notice.dismiss" : {
+      "comment" : "Accessibility label of the close button on the payments setup notice",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dismiss"
+          }
+        }
+      }
+    },
+    "payments.setup.notice.message" : {
+      "comment" : "Notice at the top of the app while a payment waits for the installation's on-chain backup to complete",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We're still setting up payments. You can keep using them, but settlement will be delayed until setup is finished."
+          }
+        }
+      }
+    },
+    "settings.cell.payments.backup" : {
+      "comment" : "Settings row showing the installation's on-chain backup status",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payments backup"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.completed" : {
+      "comment" : "Payments backup status once the registration is final",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completed"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.delayed" : {
+      "comment" : "Payments backup status when the registration did not land in the expected time",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delayed"
+          }
+        }
+      }
+    },
+    "settings.payments.backup.status.registering" : {
+      "comment" : "Payments backup status while the registration is being submitted",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In progress"
+          }
+        }
+      }
+    },
     "≈ %@" : {
       "comment" : "A label displaying the fee amount."
     },
@@ -853,6 +925,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Yesterday"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.accept" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use username"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.decline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This chat can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.message.with.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your chat with %1$(username)@ can't be fully private right now. Messages will be signed with your username, so this activity can be linked to it."
+          }
+        }
+      }
+    },
+    "chat.signing.consent.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send from your username?"
           }
         }
       }
@@ -1833,204 +1960,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Fee"
-          }
-        }
-      }
-    },
-    "fiat.onramp.amount.maximum" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Maximum amount is %@"
-          }
-        }
-      }
-    },
-    "fiat.onramp.amount.minimum" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Minimum amount is %@"
-          }
-        }
-      }
-    },
-    "fiat.onramp.amount.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enter amount"
-          }
-        }
-      }
-    },
-    "fiat.onramp.browser.alert.cancel" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Go back"
-          }
-        }
-      }
-    },
-    "fiat.onramp.browser.alert.confirm" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue"
-          }
-        }
-      }
-    },
-    "fiat.onramp.browser.alert.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To continue funding, you will be redirected from the Polkadot App to %@"
-          }
-        }
-      }
-    },
-    "fiat.onramp.browser.alert.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue In browser?"
-          }
-        }
-      }
-    },
-    "fiat.onramp.continue.button" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue"
-          }
-        }
-      }
-    },
-    "fiat.onramp.credit.card.label" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Credit card"
-          }
-        }
-      }
-    },
-    "fiat.onramp.disclaimer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "By continuing, you’ll purchase DOT on Mercuryo.com.\nAfter completing the purchase, your funds will be automatically converted to digital dollars"
-          }
-        }
-      }
-    },
-    "fiat.onramp.payment.methods.empty" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No payment methods available."
-          }
-        }
-      }
-    },
-    "fiat.onramp.payment.methods.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pay with"
-          }
-        }
-      }
-    },
-    "fiat.onramp.providers.empty" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "No providers available."
-          }
-        }
-      }
-    },
-    "fiat.onramp.providers.refresh" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New quote: %@"
-          }
-        }
-      }
-    },
-    "fiat.onramp.providers.refreshing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Refreshing..."
-          }
-        }
-      }
-    },
-    "fiat.onramp.providers.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Select provider"
-          }
-        }
-      }
-    },
-    "fiat.onramp.web.warning.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To continue the purchase you will\nbe redirected from Polkadot App\nto %@"
-          }
-        }
-      }
-    },
-    "fiat.onramp.web.warning.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Continue\nin browser?"
           }
         }
       }

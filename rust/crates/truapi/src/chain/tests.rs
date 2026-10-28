@@ -19,23 +19,34 @@ use super::{
 };
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailureKind},
-	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_runtime_call, system_events},
+	host_internal::extrinsic::tests::{
+		BULLETIN_METADATA_BYTES, bulletin_chain_state, runtime_call_serving_metadata, system_events,
+	},
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
+
+mod live_extrinsic_builder;
+mod live_storage_watch;
+mod watched_storage;
 
 const GENESIS: H256 = H256([0xab; 32]);
 const FOLLOW_ID: &str = "follow-1";
 const FINALIZED_SUBSCRIPTION: &str = "finalized-heads";
 const BEST_SUBSCRIPTION: &str = "best-heads";
+const STORAGE_SUBSCRIPTION: &str = "storage";
 
 /// A linear chain the scripted node serves over both the legacy methods and
 /// chainHead, plus the scripted outcome of validation and submission.
-struct Node {
+pub struct Node {
 	headers: Vec<SubstrateHeader<H256>>,
 	finalized: u64,
 	best: u64,
 	bodies: HashMap<H256, Vec<Vec<u8>>>,
 	events: HashMap<H256, Vec<u8>>,
+	/// Storage values `state_queryStorageAt` answers, by block and key.
+	storage: HashMap<H256, HashMap<Vec<u8>, Vec<u8>>>,
+	/// Keys `state_queryStorageAt` leaves out of its answer.
+	unanswered_keys: HashSet<Vec<u8>>,
 	/// Heights `chain_getBlockHash` answers `null` for although they exist,
 	/// as a light client does for every height it cannot verify.
 	unservable_heights: HashSet<u64>,
@@ -48,11 +59,16 @@ struct Node {
 	follow_events: Vec<Value>,
 	watch_events: Vec<Value>,
 	next_operation: usize,
+	/// The `RuntimeMetadataPrefixed` bytes the node serves, the bulletin
+	/// fixture unless a test sets another.
+	pub metadata: &'static [u8],
+	/// What `system_accountNextIndex` answers for every account.
+	pub account_next_index: u64,
 }
 
 impl Node {
 	/// Blocks `0..=best`, with `finalized` finalized, no bodies and no events.
-	fn new(finalized: u64, best: u64) -> Self {
+	pub fn new(finalized: u64, best: u64) -> Self {
 		let mut headers: Vec<SubstrateHeader<H256>> = Vec::new();
 		for number in 0..=best {
 			let parent_hash = headers.last().map(header_hash).unwrap_or_default();
@@ -64,12 +80,16 @@ impl Node {
 			best,
 			bodies: HashMap::new(),
 			events: HashMap::new(),
+			storage: HashMap::new(),
+			unanswered_keys: HashSet::new(),
 			unservable_heights: HashSet::new(),
 			unservable_bodies: HashSet::new(),
 			validation: Validation::Valid,
 			follow_events: Vec::new(),
 			watch_events: Vec::new(),
 			next_operation: 0,
+			metadata: BULLETIN_METADATA_BYTES,
+			account_next_index: 0,
 		}
 	}
 
@@ -84,7 +104,7 @@ impl Node {
 
 	fn runtime_call(&self, method: &str, at: &Value) -> Vec<u8> {
 		if method != "TaggedTransactionQueue_validate_transaction" {
-			return bulletin_runtime_call(method).unwrap();
+			return runtime_call_serving_metadata(self.metadata, method).unwrap();
 		}
 		let valid = match self.validation {
 			Validation::Valid => true,
@@ -92,6 +112,37 @@ impl Node {
 			Validation::ValidOnlyAtBest => parse_hash(at) == Some(self.block(self.best).hash),
 		};
 		validation_output(valid)
+	}
+
+	/// `state_queryStorageAt`: one change set at the requested block.
+	fn query_storage_at(&self, params: &Value) -> Value {
+		let at = parse_hash(&params[1]).unwrap();
+		json!([self.change_set_of_keys_at(&params[0], at)])
+	}
+
+	/// The first `state_subscribeStorage` notification, at the best block.
+	fn initial_storage_notification(&self, params: &Value) -> String {
+		let best = self.block(self.best).hash;
+		storage_notification(self.change_set_of_keys_at(&params[0], best))
+	}
+
+	/// A change set holding every one of `keys` the node answers for at `at`,
+	/// with `null` for the absent ones.
+	fn change_set_of_keys_at(&self, keys: &Value, at: H256) -> Value {
+		let stored = self.storage.get(&at);
+		let changes: Vec<Value> = keys
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|key| hex::decode(key.as_str().unwrap().trim_start_matches("0x")).unwrap())
+			.filter(|key| !self.unanswered_keys.contains(key))
+			.map(|key| {
+				let value = stored.and_then(|stored| stored.get(&key));
+				let value = value.map(|value| format!("0x{}", hex::encode(value)));
+				json!([format!("0x{}", hex::encode(&key)), value])
+			})
+			.collect();
+		json!({"block": at, "changes": changes})
 	}
 
 	fn respond(&mut self, request: &str) -> Vec<String> {
@@ -141,6 +192,7 @@ impl Node {
 				vec![response(block.unwrap_or(Value::Null))]
 			},
 			"chain_getFinalizedHead" => vec![response(json!(self.block(self.finalized).hash))],
+			"system_accountNextIndex" => vec![response(json!(self.account_next_index))],
 			"state_call" => {
 				let output = self.runtime_call(params[0].as_str().unwrap(), &params[2]);
 				vec![response(json!(format!("0x{}", hex::encode(output))))]
@@ -150,6 +202,13 @@ impl Node {
 					.and_then(|at| self.events.get(&at))
 					.map(|events| json!(format!("0x{}", hex::encode(events))));
 				vec![response(events.unwrap_or(Value::Null))]
+			},
+			"state_queryStorageAt" => vec![response(self.query_storage_at(params))],
+			"state_subscribeStorage" => {
+				vec![
+					response(json!(STORAGE_SUBSCRIPTION)),
+					self.initial_storage_notification(params),
+				]
 			},
 			"chain_subscribeFinalizedHeads" => vec![response(json!(FINALIZED_SUBSCRIPTION))],
 			"chain_subscribeNewHeads" => vec![response(json!(BEST_SUBSCRIPTION))],
@@ -195,6 +254,7 @@ impl Node {
 				}));
 				frames
 			},
+			"state_unsubscribeStorage" |
 			"chainHead_v1_unpin" |
 			"chainHead_v1_stopOperation" |
 			"transactionWatch_v1_unwatch" |
@@ -253,6 +313,16 @@ fn follow_event(result: Value) -> String {
 	.to_string()
 }
 
+/// A `state_storage` notification of `change_set`.
+fn storage_notification(change_set: Value) -> String {
+	json!({
+		"jsonrpc": "2.0",
+		"method": "state_storage",
+		"params": {"subscription": STORAGE_SUBSCRIPTION, "result": change_set}
+	})
+	.to_string()
+}
+
 fn head_notification(subscription: &str, header: &SubstrateHeader<H256>) -> String {
 	json!({
 		"jsonrpc": "2.0",
@@ -278,7 +348,7 @@ fn validation_output(valid: bool) -> Vec<u8> {
 }
 
 /// A scripted node for `node` and the capabilities over it.
-fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) {
+pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) {
 	let node = Arc::new(Mutex::new(node));
 	let scripted = node.clone();
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
@@ -288,7 +358,47 @@ fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) 
 	(node, provider, chain)
 }
 
-fn method_count(provider: &ScriptedProvider, method: &str) -> usize {
+/// A host that builds every chain as V4.
+pub struct V4OnlyHost;
+
+impl crate::platform::ExtrinsicVersionHost for V4OnlyHost {}
+
+/// A host that answers a fixed map of V5 chains.
+pub struct FixedExtensionVersions(pub crate::platform::ExtensionVersionMap);
+
+impl FixedExtensionVersions {
+	/// A host that builds `genesis` as V5 on `extension_version`.
+	pub fn one_chain(genesis: H256, extension_version: u8) -> Self {
+		let chain =
+			crate::platform::ChainExtensionVersion { genesis_hash: genesis.0, extension_version };
+		Self(crate::platform::ExtensionVersionMap { chains: vec![chain] })
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ExtrinsicVersionHost for FixedExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
+/// An extrinsic service over a scripted node serving `metadata`, on a host
+/// that builds that node's chain as V5 on `extension_version`.
+pub fn extrinsic_service_serving(
+	metadata: &'static [u8],
+	extension_version: u8,
+) -> super::ExtrinsicService {
+	let mut node = Node::new(4, 6);
+	node.metadata = metadata;
+	let (_node, _provider, chain) = serve(node);
+	let versions = FixedExtensionVersions::one_chain(GENESIS, extension_version);
+	super::ExtrinsicService::over_chain(chain, Arc::new(versions))
+}
+
+/// How many requests for `method` the node received.
+pub fn method_count(provider: &ScriptedProvider, method: &str) -> usize {
 	provider
 		.sent
 		.lock()
