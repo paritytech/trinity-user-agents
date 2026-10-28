@@ -104,7 +104,7 @@ private extension ProductResolver {
 
     /// Every kind a surface on this host runs: an app screen, the widget an
     /// expanded Pocket card runs, and the product's worker.
-    static let resolvedKinds: [ExecutableKind] = ExecutableKind.allCases
+    static let resolvedKinds: [ProductExecutionKind] = [.app, .widget, .worker]
 
     func resolveExecutables(_ baseName: ProductId) async throws -> ProductExecutables {
         try await withThrowingTaskGroup(of: ProductExecutable?.self) { group in
@@ -123,8 +123,8 @@ private extension ProductResolver {
     /// An absent subname means the product does not provide that executable. A failed read is a
     /// different thing and propagates: swallowing it would cache a product as missing executables
     /// it actually publishes, and every surface would serve the base archive until the next launch.
-    func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ProductExecutable? {
-        let subname = try productIdExecutable(productId: baseName, kind: kind.executionKind)
+    func resolveExecutable(_ baseName: ProductId, kind: ProductExecutionKind) async throws -> ProductExecutable? {
+        let subname = try productIdExecutable(productId: baseName, kind: kind)
 
         let text = try await dotNsResolver.getMetadataEntry(
             dotNsName: subname.rawValue,

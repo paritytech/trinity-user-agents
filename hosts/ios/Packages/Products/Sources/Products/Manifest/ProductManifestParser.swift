@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import Foundation
 import SDKLogger
 
@@ -14,7 +14,7 @@ protocol ProductManifestParsing {
     func parseRoot(_ rawText: String?) -> RootManifest?
     func parseExecutable(
         _ rawText: String?,
-        kind: ExecutableKind,
+        kind: ProductExecutionKind,
         identifier: ProductId
     ) -> ProductExecutable?
 }
@@ -80,7 +80,7 @@ struct ProductManifestParser: ProductManifestParsing {
     /// `identifier` is the subname the record was read from, and the name its archive resolves under.
     func parseExecutable(
         _ rawText: String?,
-        kind: ExecutableKind,
+        kind: ProductExecutionKind,
         identifier: ProductId
     ) -> ProductExecutable? {
         guard let rawText, !rawText.isEmpty else { return nil }
@@ -93,8 +93,9 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("\(identifier): unsupported $v=\(String(describing: dto.version))")
         }
 
-        guard dto.kind == kind.rawValue else {
-            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kind.rawValue)'")
+        let kindLabel = productExecutionKindLabel(kind: kind)
+        guard dto.kind == kindLabel else {
+            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kindLabel)'")
         }
 
         guard let appVersion = dto.appVersion?.value else {

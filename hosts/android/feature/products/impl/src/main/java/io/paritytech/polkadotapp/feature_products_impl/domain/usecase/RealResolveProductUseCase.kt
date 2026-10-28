@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.utils.mapErrorNotInstance
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
@@ -24,6 +23,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -115,9 +115,9 @@ internal class RealResolveProductUseCase @Inject constructor(
         }
 
         return coroutineScope {
-            val app = async { resolveExecutable(productId, ExecutableKind.APP) }
-            val widget = async { resolveExecutable(productId, ExecutableKind.WIDGET) }
-            val worker = async { resolveExecutable(productId, ExecutableKind.WORKER) }
+            val app = async { resolveExecutable(productId, ProductExecutionKind.APP) }
+            val widget = async { resolveExecutable(productId, ProductExecutionKind.WIDGET) }
+            val worker = async { resolveExecutable(productId, ProductExecutionKind.WORKER) }
 
             combineResults(app.await(), widget.await(), worker.await()) { appExec, widgetExec, workerExec ->
                 Executables(
@@ -150,7 +150,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     // as "this product has no such executable". An absent or rejected record is that answer.
     private suspend fun resolveExecutable(
         productId: ProductId,
-        kind: ExecutableKind,
+        kind: ProductExecutionKind,
     ): Result<ProductExecutable?> {
         val host = ProductManifest.hostOf(productId, kind)
 

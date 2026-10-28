@@ -4,13 +4,14 @@ import com.google.gson.Gson
 import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.productExecutionKindLabel
 import uniffi.truapi.screenPocketCardId
 import uniffi.truapi.screenPocketCardTitle
 import javax.inject.Inject
@@ -31,20 +32,21 @@ internal class ManifestParser @Inject constructor(
     }
 
     /** [host] is the subname read from, and the executable's serving host. */
-    fun parseExecutable(rawText: String, expectedKind: ExecutableKind, host: ExecutableHost): Result<ProductExecutable> =
+    fun parseExecutable(rawText: String, expectedKind: ProductExecutionKind, host: ExecutableHost): Result<ProductExecutable> =
         runCatching {
             val remote = requireNotNull(gson.fromJson(rawText, ExecutableManifestRemote::class.java)) { "empty manifest" }
 
             require(remote.version == SCHEMA_VERSION) { "unsupported \$v=${remote.version}" }
-            require(remote.kind == expectedKind.manifestKind) {
-                "kind '${remote.kind}' does not match subname kind '${expectedKind.manifestKind}'"
+            val expectedLabel = productExecutionKindLabel(expectedKind)
+            require(remote.kind == expectedLabel) {
+                "kind '${remote.kind}' does not match subname kind '$expectedLabel'"
             }
             val appVersion = requireNotNull(remote.appVersion) { "missing appVersion" }
 
             when (expectedKind) {
-                ExecutableKind.APP -> ProductExecutable.App(host, appVersion)
+                ProductExecutionKind.APP -> ProductExecutable.App(host, appVersion)
 
-                ExecutableKind.WIDGET -> {
+                ProductExecutionKind.WIDGET -> {
                     val dimensions = requireNotNull(remote.dimensions) { "widget missing dimensions" }
                     val heights = dimensions.height?.takeIf { it.isNotEmpty() }
                     ProductExecutable.Widget(
@@ -56,7 +58,7 @@ internal class ManifestParser @Inject constructor(
                     )
                 }
 
-                ExecutableKind.WORKER -> {
+                ProductExecutionKind.WORKER -> {
                     val entrypoint = requireNotNull(remote.entrypoint) { "worker missing entrypoint" }
                     val includes = requireNotNull(remote.includes) { "worker missing includes" }
                     val includesPocket = requireNotNull(includes.pocket) { "worker includes missing 'pocket'" }
