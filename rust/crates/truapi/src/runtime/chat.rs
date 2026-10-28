@@ -50,8 +50,9 @@ impl Default for ChatRateLimits {
 	}
 }
 
-/// Token bucket for each `(product, room)` pair: at most `per_second` calls in
-/// one second, refilled at the same rate.
+/// A token bucket for each `(product, room)` pair. Each pair can make
+/// `per_second` calls in one second, and it gets its tokens again at the same
+/// rate.
 pub struct ChatRateLimiter {
 	per_second: u32,
 	buckets: Mutex<HashMap<(String, String), ChatRateBucket>>,
@@ -70,8 +71,9 @@ impl ChatRateLimiter {
 		Self { per_second, buckets: Default::default() }
 	}
 
-	/// Take one token for `room_id` of `product_id` at `now_ms`, milliseconds
-	/// since the Unix epoch. `false` when the room used its budget.
+	/// Take one token for `room_id` of `product_id` at `now_ms`, in
+	/// milliseconds since the Unix epoch. Returns `false` when the room used
+	/// all of its budget.
 	pub fn try_acquire(&self, product_id: &str, room_id: &str, now_ms: u64) -> bool {
 		let capacity = u64::from(self.per_second) * 1000;
 		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
@@ -89,7 +91,7 @@ impl ChatRateLimiter {
 		true
 	}
 
-	/// Drop the budget of a deleted room.
+	/// Remove the budget of a deleted room.
 	pub fn forget(&self, product_id: &str, room_id: &str) {
 		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
 		buckets.remove(&(product_id.to_string(), room_id.to_string()));
@@ -100,8 +102,8 @@ impl ChatRateLimiter {
 mod tests {
 	use super::*;
 
-	// The 21st feed update in one second is refused, and the budget comes back
-	// at the rate it is spent.
+	// The limiter refuses the 21st feed update in one second. The budget fills
+	// again at the rate that the product spends it.
 	#[test]
 	fn the_rate_limiter_holds_each_room_to_its_budget() {
 		let limiter = ChatRateLimiter::new(crate::platform::CHAT_FEED_UPDATES_PER_SECOND);
@@ -113,7 +115,7 @@ mod tests {
 		// Another room and another product keep their own budgets.
 		assert!(limiter.try_acquire("chat.dot", "other", start));
 		assert!(limiter.try_acquire("other.dot", "room", start));
-		// At 20 per second one token comes back every 50 ms.
+		// At 20 calls per second, the room gets one token again every 50 ms.
 		assert!(!limiter.try_acquire("chat.dot", "room", start + 49));
 		assert!(limiter.try_acquire("chat.dot", "room", start + 50));
 		assert!(!limiter.try_acquire("chat.dot", "room", start + 50));

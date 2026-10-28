@@ -1439,10 +1439,10 @@ export interface ChatPlatform {
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
 
   /**
-   * The current product-scoped room list, read one time. The core uses it
-   * to check that a product hosts a room. A host that cannot read its
-   * rooms returns an error, not an empty list. A Rust host that does not
-   * implement it gives the first item of the room list subscription.
+   * The current product-scoped room list, read one time. The core uses it to
+   * check that a product hosts a room. A host that cannot read its rooms
+   * returns an error, not an empty list. If a Rust host does not implement
+   * this method, the core uses the first item of the room list subscription.
    */
   listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
 
@@ -1459,9 +1459,9 @@ export interface ChatPlatform {
 
   /**
    * Replace the configuration of a room whole and keep it across restarts.
-   * The core has already checked the product hosts the room. A Rust host
-   * that does not implement it accepts only the default configuration,
-   * which keeps the behaviour the host serves anyway.
+   * The core checks that the product hosts the room before this call. If a
+   * Rust host does not implement this method, it accepts only the default
+   * configuration. That configuration changes nothing that the host shows.
    */
   setChatRoomConfig?(
     product: ProductContext,
@@ -1469,9 +1469,9 @@ export interface ChatPlatform {
   ): Promise<void>;
 
   /**
-   * Replace the name and description of a room. A Rust host that does not
-   * implement it ignores the metadata and keeps the name and icon the room
-   * was created with.
+   * Replace the name and description of a room. If a Rust host does not
+   * implement this method, it ignores the metadata. The room keeps the name
+   * and icon of `create_chat_room`.
    */
   setChatRoomMetadata?(
     product: ProductContext,
