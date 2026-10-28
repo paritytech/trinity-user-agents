@@ -9469,39 +9469,68 @@ fn a_failed_chain_call_warns_the_host_once() {
 		lines,
 		vec![
 			"truapi.tracing.warn truapi::runtime: chain call failed \
-			 {kind=Unavailable, reason=get_head_header: json-rpc connection closed}"
+			 {kind=Unavailable, reason=get_head_header: json-rpc connection closed, seen=1}"
 		]
 	);
 }
 
 /// A connection that drops fails every call made over it afterwards. The first
-/// failure speaks and the rest are counted, so the line that says when the
-/// trouble started is not buried under the ones behind it.
+/// two speak, then every doubling, so a long outage is a handful of lines
+/// rather than one per call, and each says how many it stands for.
 #[test]
-fn a_repeated_chain_failure_is_counted_rather_than_reported() {
+fn a_sustained_chain_failure_reports_on_a_widening_schedule() {
+	let reported: Vec<u64> = (1..=64).filter(|seen| crate::runtime::reports_at(*seen)).collect();
+
+	assert_eq!(reported, vec![1, 2, 4, 8, 16, 32, 64]);
+}
+
+/// The count rides on every line it reports, so how bad an outage is reads off
+/// the lines as they arrive rather than waiting for a tally at the end, which
+/// an outage that stops inside the quiet period would never send.
+#[test]
+fn a_chain_failure_carries_how_many_it_stands_for() {
 	use crate::chain_runtime::RuntimeFailureKind;
 	use core::time::Duration;
 	use std::{collections::BTreeMap, time::Instant};
 
 	let quiet = Duration::from_secs(30);
 	let mut reported = BTreeMap::new();
-	let key = (RuntimeFailureKind::Unavailable, "chain_probe");
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
+	let now = Instant::now();
+
+	let counts: Vec<u64> = (0..5)
+		.map(|_| crate::runtime::count_failure(&mut reported, key.clone(), now, quiet))
+		.collect();
+
+	assert_eq!(counts, vec![1, 2, 3, 4, 5]);
+}
+
+/// A gap longer than the quiet period is a new episode, so a connection that
+/// drops twice in a day reads as two outages rather than one that never ended.
+#[test]
+fn a_chain_failure_after_a_quiet_spell_starts_counting_again() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
 	let started = Instant::now();
 
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), Some(0));
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), None);
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), None);
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 2);
 	assert_eq!(
-		crate::runtime::take_report_slot(&mut reported, key, started + quiet, quiet),
-		Some(2),
-		"the line that broke the quiet did not say how many it spoke for",
+		crate::runtime::count_failure(&mut reported, key, started + quiet, quiet),
+		1,
+		"a failure after the quiet period carried on the last outage's count",
 	);
 }
 
-/// Each kind and method is its own condition, so one failing call does not
-/// silence a different one that starts failing beside it.
+/// Two conditions are counted apart, so a connection that drops does not stand
+/// in for a payload that will not decode, and neither silences the other.
 #[test]
-fn a_chain_failure_does_not_silence_another_call() {
+fn chain_failures_are_counted_per_condition() {
 	use crate::chain_runtime::RuntimeFailureKind;
 	use core::time::Duration;
 	use std::{collections::BTreeMap, time::Instant};
@@ -9509,13 +9538,14 @@ fn a_chain_failure_does_not_silence_another_call() {
 	let quiet = Duration::from_secs(30);
 	let mut reported = BTreeMap::new();
 	let now = Instant::now();
+	let closed = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
+	let malformed = (RuntimeFailureKind::HostFailure, "chain_probe", "malformed".to_string());
 
-	let one = (RuntimeFailureKind::Unavailable, "chain_probe_one");
-	let two = (RuntimeFailureKind::Unavailable, "chain_probe_two");
-	let refused = (RuntimeFailureKind::HostFailure, "chain_probe_one");
-
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, one, now, quiet), Some(0));
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, two, now, quiet), Some(0));
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, refused, now, quiet), Some(0));
-	assert_eq!(crate::runtime::take_report_slot(&mut reported, one, now, quiet), None);
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, malformed, now, quiet),
+		1,
+		"a different condition was answered by another's count",
+	);
 }
