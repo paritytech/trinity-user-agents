@@ -45,10 +45,6 @@ public struct ExecutableRelease: Equatable, Sendable {
     }
 }
 
-public enum ProductContentError: Error, Equatable {
-    case executableNotPublished(ExecutableKind)
-}
-
 public protocol ProductContentLoading: Sendable {
     func open(
         _ productId: ProductId,

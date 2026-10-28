@@ -77,11 +77,7 @@ extension ProductContentLoader: ProductContentLoading {
 
             let manifest = try await fetcher.fetchManifest(productId)
 
-            guard let contentId = manifest.product.publishedContentId(for: kind) else {
-                throw ProductContentError.executableNotPublished(kind)
-            }
-
-            let archive = try await fetcher.stage(contentId, onPhase: onPhase)
+            let archive = try await fetcher.stage(manifest.product.contentId(for: kind), onPhase: onPhase)
 
             return (manifest, ProductContent(resolved: manifest.product, kind: kind, archive: archive))
         }
@@ -145,22 +141,11 @@ private extension ProductManifest {
     }
 }
 
-private extension ResolvedProduct {
-    /// A legacy product serves every kind from its base name.
-    func publishedContentId(for kind: ExecutableKind) -> ProductId? {
-        let contentId = contentId(for: kind)
-        let published = [appContentId, executables.widget?.identifier, executables.worker?.identifier]
-
-        return published.contains(contentId) ? contentId : nil
-    }
-}
-
 private extension ProductContentLoader {
     func cachedContent(_ productId: ProductId, kind: ExecutableKind) async -> ProductContent? {
         guard
             let manifest = try? await cache.manifest(productId),
-            let contentId = manifest.product.publishedContentId(for: kind),
-            let archive = await cache.appliedArchive(of: contentId)
+            let archive = await cache.appliedArchive(of: manifest.product.contentId(for: kind))
         else {
             return nil
         }
@@ -209,14 +194,11 @@ private extension ProductContentLoader {
         var served: [ExecutableKind: ProductId] = [:]
 
         for kind in ExecutableKind.allCases {
-            guard
-                let contentId = resolved.publishedContentId(for: kind),
-                await cache.appliedArchive(of: contentId) != nil
-            else {
-                continue
-            }
+            let contentId = resolved.contentId(for: kind)
 
-            served[kind] = contentId
+            if await cache.appliedArchive(of: contentId) != nil {
+                served[kind] = contentId
+            }
         }
 
         return served
@@ -228,7 +210,7 @@ private extension ProductContentLoader {
         using fetcher: ProductUpdateFetching
     ) async throws -> FetchedContent {
         let manifest = try await fetcher.fetchManifest(productId)
-        let contentIds = Set(kinds.compactMap { manifest.product.publishedContentId(for: $0) })
+        let contentIds = Set(kinds.map(manifest.product.contentId(for:)))
 
         var archives: [ProductId: DotNsResolvedContent] = [:]
 

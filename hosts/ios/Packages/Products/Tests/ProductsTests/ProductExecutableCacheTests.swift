@@ -87,10 +87,10 @@ final class ProductExecutableCacheTests {
         #expect(fetcher.fetchCount == 1)
     }
 
-    @Test func kindTheProductDoesNotPublishFailsToOpen() async throws {
+    @Test func undeclaredKindFailsToOpenWhenTheBaseNamePublishesNothing() async throws {
         publishManifestProduct()
 
-        await #expect(throws: ProductContentError.executableNotPublished(.widget)) {
+        await #expect(throws: DotNsContractError.self) {
             try await self.makeLoader().open(self.baseName, kind: .widget, policy: .attempts(1))
         }
     }

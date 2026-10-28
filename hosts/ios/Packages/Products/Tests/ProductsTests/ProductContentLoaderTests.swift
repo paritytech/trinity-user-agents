@@ -130,6 +130,27 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 1)
     }
 
+    /// A product that declares no widget serves its expanded Pocket card from its base name.
+    @Test func stagesTheBaseNameAWidgetlessCardIsServedFrom() async throws {
+        let appContentHash = try Data.randomOrError(of: 34)
+        contracts.set(
+            text: #"{"$v":1,"displayName":"Shop","description":"A shop","icon":{"cid":"bafyicon","format":"png"}}"#,
+            name: productId,
+            key: ProductManifestRecords.rootKey
+        )
+        contracts.set(
+            text: #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#,
+            name: "app.\(productId)",
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: appContentHash, name: "app.\(productId)")
+        let environment = try Environment(self)
+
+        let widget = try await environment.loader.open(productId, kind: .widget, policy: .attempts(1))
+
+        #expect(widget.archive.localURL == storage.directory(for: contentHash.toHex()))
+    }
+
     @Test func networkOpenReportsResolvingDownloadAndUnpacking() async throws {
         let environment = try Environment(self)
         let phases = PhaseRecorder()

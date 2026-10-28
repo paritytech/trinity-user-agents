@@ -67,6 +67,37 @@ const sub: Subscription = truapi.chainInteraction
 sub.unsubscribe();
 ```
 
+## Host-initiated requests
+
+A Rust method marked `#[wire(host_initiated, id = N)]` and returning
+`Result<Response, CallError<Error>>` generates an `onMethod(handler)` registration.
+The handler receives the decoded request and a context containing an `AbortSignal`.
+It returns a `neverthrow` `Result`, a promise of that result, or a `ResultAsync`.
+Use `ok(value)` for success and `err(error)` for a declared failure. The generated
+handler type preserves the method's versioned domain error and framework errors.
+Unexpected throws and rejected promises produce a framework `HostFailure` error.
+Each generated handler accepts its selected request version; other versions are
+refused before the handler runs.
+
+Each call uses a one-item subscription. Success emits one item; the Rust caller
+awaits it and closes the subscription with `Stop`. Failure interrupts the stream
+with the declared error. A stream ending without an answer is an error.
+
+Dropping a pending call sends `Stop`, aborts the handler's signal and suppresses
+later output. Handlers must observe the signal to stop their work; cancellation
+does not undo side effects. The host caller owns deadlines and retries.
+
+Registrations buffer a bounded number of requests until a handler is installed and
+answer overflow with an unavailable error. The returned `unsubscribe()` removes
+that registration's handler for future requests; calls already running retain their
+handler. Connection reset aborts active signals, clears queued requests and prevents
+old promises from replying on the replacement connection.
+
+Generated handlers use `registerHostInitiatedSubscription` with the optional
+`singleResponse` settings. These select the request version, prevent duplicate
+live calls and remember stops that arrive before their starts. The wire rules are
+defined in the [protocol specification](../../../docs/design/truapi-protocol.md#host-initiated-calls-with-one-response).
+
 ## What's in the package
 
 - **Transport providers** for `MessagePort` pipes (used by both webview hosts and iframe hosts)
