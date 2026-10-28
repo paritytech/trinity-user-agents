@@ -1,5 +1,5 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { blake2b256, sr25519Verify } from "../../src/chat/crypto.js";
+import { blake2b256, sr25519Verify } from "../../src/chat/nova/crypto.js";
 import {
   HOP_ERRORS,
   HopError,
@@ -8,7 +8,7 @@ import {
   fromSr25519Multi,
   verifySubmission,
   type HopConnection,
-} from "../../src/chat/hop.js";
+} from "../../src/chat/nova/hop.js";
 
 /**
  * A HOP node in memory, for tests: it checks submissions and claims the way

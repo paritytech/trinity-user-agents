@@ -1,7 +1,7 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type { JsonRpcConnection } from "@parity/truapi-host";
-import { equalBytes } from "../../src/chat/codec.js";
-import { decodeStatement } from "../../src/chat/statement.js";
+import { equalBytes } from "../../src/chat/nova/codec.js";
+import { decodeStatement } from "../../src/chat/nova/statement.js";
 
 /**
  * A statement store behind JSON-RPC, in memory, for tests. It answers the

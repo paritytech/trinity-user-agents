@@ -3,7 +3,7 @@ import {
   allocationRecord,
   decodeRenewalLedger,
   normalizeProductId,
-} from "../../../src/allowance-ledger.js";
+} from "../../../src/platform/allowance-ledger.js";
 
 const text = (value: string) => [
   value.length << 2,

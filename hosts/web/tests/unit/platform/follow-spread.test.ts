@@ -3,7 +3,7 @@ import type { JsonRpcConnection } from "@parity/truapi-host";
 import {
   FOLLOWS_PER_CONNECTION,
   spreadFollows,
-} from "../../../src/follow-spread.js";
+} from "../../../src/platform/follow-spread.js";
 
 /**
  * A light-client connection that, like the embedded one, refuses a follow

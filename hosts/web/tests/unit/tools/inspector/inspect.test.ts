@@ -8,22 +8,22 @@ import {
   option,
   text,
   u64,
-} from "../../../../src/chat/codec.js";
+} from "../../../../src/chat/nova/codec.js";
 import {
   decodeMessageLayer,
   decodePlaintextLayer,
   decodeStatementLayer,
-} from "../../../../src/chat/inspect.js";
-import { ChatKeys } from "../../../../src/chat/keys.js";
+} from "../../../../tools/inspector/inspect.js";
+import { ChatKeys } from "../../../../src/chat/nova/keys.js";
 import {
   decodeMessage,
   encodeSessionData,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 import {
   decodeStatement,
   encodeSigned,
   statementHash,
-} from "../../../../src/chat/statement.js";
+} from "../../../../src/chat/nova/statement.js";
 
 const keys = ChatKeys.fromEntropy(
   mnemonicToEntropy(

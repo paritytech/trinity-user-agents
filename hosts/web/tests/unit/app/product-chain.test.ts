@@ -7,8 +7,8 @@ import {
   readBalance,
   type BalanceReading,
   type ProductChainState,
-} from "../../../src/product-chain.js";
-import { productAllowanceRows } from "../../../src/account-status.js";
+} from "../../../src/app/product-chain.js";
+import { productAllowanceRows } from "../../../src/app/account-status.js";
 
 const u128 = (value: bigint): number[] =>
   Array.from({ length: 16 }, (_, index) =>

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TRUAPI_CODEC_VERSION } from "@parity/truapi";
 import type { InAppDebugger } from "@parity/truapi-debugger";
-import { createFrameTap } from "../../../../src/frame-tap.js";
+import { createFrameTap } from "../../../../tools/inspector/frame-tap.js";
 
 interface Fed {
   channelId: string;

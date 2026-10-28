@@ -4,7 +4,7 @@ import {
   RAW,
   cidFor,
   cidKey,
-} from "../../src/archive/cid.js";
+} from "../../src/products/archive/cid.js";
 
 /** Test-only encoders for the formats an archive is made of. */
 

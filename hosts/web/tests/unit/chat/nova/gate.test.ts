@@ -4,7 +4,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import {
   PUBLIC_WALLET_REFUSED,
   chatRefusal,
-} from "../../../../src/chat/gate.js";
+} from "../../../../src/chat/nova/gate.js";
 
 const entropy = (phrase: string) => mnemonicToEntropy(phrase, wordlist);
 

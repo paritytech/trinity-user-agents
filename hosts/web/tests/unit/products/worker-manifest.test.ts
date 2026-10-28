@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   findWorker,
   parseWorkerManifest,
-} from "../../../src/worker-manifest.js";
+} from "../../../src/products/worker-manifest.js";
 
 /** A worker manifest in the shape `dotkit` publishes to a `worker.` record. */
 const PUBLISHED =

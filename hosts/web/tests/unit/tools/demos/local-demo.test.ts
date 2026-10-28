@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
   LocalChatDemo,
   demoAllowed,
-} from "../../../../src/chat-v2/local-demo.js";
+} from "../../../../tools/demos/local-demo.js";
 import {
   DEMO_WORKER_PATH,
   type DemoWorkerAnswer,
-} from "../../../../src/chat-v2/local-demo-route.js";
+} from "../../../../tools/demos/local-demo-route.js";
 
 const ANSWER: DemoWorkerAnswer = {
   record: "this dev server",

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { hexToBytes } from "@parity/truapi/scale";
 import { bytesToHex } from "@parity/truapi/scale";
-import { concat, text } from "../../../../src/chat/codec.js";
+import { concat, text } from "../../../../src/chat/nova/codec.js";
 import {
   accountNamesKey,
   chatKeyOf,
@@ -11,7 +11,7 @@ import {
   liteLabelOwnerKey,
   resolveChatIdentity,
   usernameOwnerKey,
-} from "../../../../src/chat/directory.js";
+} from "../../../../src/chat/nova/directory.js";
 
 describe("chain directory", () => {
   test("map keys match keys read from Paseo Next v2 Asset Hub", () => {

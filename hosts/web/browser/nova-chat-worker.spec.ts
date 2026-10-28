@@ -5,7 +5,7 @@
  * and the contact is made up; nothing reaches a network or a person.
  *
  * What runs for real: the engine switch, the dev server's archive of
- * `src/chat-worker/worker.ts`, the archive check, the worker frame, the
+ * `src/chat/worker/worker.ts`, the archive check, the worker frame, the
  * product's TrUAPI storage and permission prompt, the identity bridge, the
  * v2 draft bridge and the Chat screen. With no People chain, no statement
  * reaches a store, so this checks the boundary, not delivery.
@@ -15,8 +15,8 @@ import { bytesToHex } from "@parity/truapi/scale";
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import type { Browser, Frame, Page } from "playwright-core";
-import { ChatKeys } from "../src/chat/keys.js";
-import { chatRecordKey, type ChatRecord } from "../src/chat/store.js";
+import { ChatKeys } from "../src/chat/nova/keys.js";
+import { chatRecordKey, type ChatRecord } from "../src/chat/nova/store.js";
 import {
   type RunningHost,
   startHost,

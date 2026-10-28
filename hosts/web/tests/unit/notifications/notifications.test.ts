@@ -4,8 +4,8 @@ import {
   notificationsKey,
   statusOf,
   type HostNotification,
-} from "../../../src/notifications.js";
-import { ago, until } from "../../../src/notifications-screen.js";
+} from "../../../src/notifications/notifications.js";
+import { ago, until } from "../../../src/notifications/screen.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);

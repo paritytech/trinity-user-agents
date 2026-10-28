@@ -5,7 +5,7 @@ import {
   shortKey,
   usernameFrom,
   walletLabel,
-} from "../../../src/wallet-label.js";
+} from "../../../src/app/wallet-label.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const KEY = `0x${"ab".repeat(32)}`;

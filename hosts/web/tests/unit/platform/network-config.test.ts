@@ -4,7 +4,7 @@ import {
   DEFAULT_NETWORK_CONFIG,
   NETWORKS,
   networkConfig,
-} from "../../../src/network-config.js";
+} from "../../../src/platform/network-config.js";
 
 describe("NETWORKS", () => {
   test("paseo is Paseo Next v2 on the paseo TLD", () => {

@@ -6,7 +6,7 @@ import {
   pinnedCards,
   pocketCards,
   pocketPlatform,
-} from "../../../src/pocket.js";
+} from "../../../src/pocket/pocket.js";
 
 describe("pocketCards", () => {
   // The native list is the balance card first, then the pinned Humanity card.

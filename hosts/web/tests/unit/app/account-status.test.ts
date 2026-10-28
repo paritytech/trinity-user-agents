@@ -4,12 +4,12 @@ import {
   accountStatusRows,
   productAllowanceRows,
   type ChainState,
-} from "../../../src/account-status.js";
+} from "../../../src/app/account-status.js";
 import type {
   ConsumerRecord,
   PeopleChainReading,
   RingMembership,
-} from "../../../src/people-chain.js";
+} from "../../../src/platform/people-chain.js";
 
 const CONTEXT = {
   networkName: "Paseo Next v2",

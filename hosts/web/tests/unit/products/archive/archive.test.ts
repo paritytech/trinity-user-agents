@@ -8,15 +8,18 @@ import {
   cidToString,
   parseCidString,
   verifyBlock,
-} from "../../../../src/archive/cid.js";
-import { parseCar } from "../../../../src/archive/car.js";
+} from "../../../../src/products/archive/cid.js";
+import { parseCar } from "../../../../src/products/archive/car.js";
 import {
   ARCHIVE_LIMITS,
   gatewayBlocks,
   loadArchive,
   loadSite,
-} from "../../../../src/archive/gateway.js";
-import { readFile, unpackDirectory } from "../../../../src/archive/unixfs.js";
+} from "../../../../src/products/archive/gateway.js";
+import {
+  readFile,
+  unpackDirectory,
+} from "../../../../src/products/archive/unixfs.js";
 
 const text = (value: string) => new TextEncoder().encode(value);
 const decode = (bytes: Uint8Array | undefined) =>

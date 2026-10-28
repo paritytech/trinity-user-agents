@@ -6,7 +6,7 @@ import {
   ProductChat,
   ROOM_MESSAGE_LIMIT,
   productChatKey,
-} from "../../../src/product-chat.js";
+} from "../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const worker = (productId: string): ProductContext => ({

@@ -3,7 +3,7 @@ import type { ContactHandle, ContactPickOutcome } from "./contract.js";
 /**
  * What the request service needs from the rest of the host. Each is a
  * PROPOSED operation with no official binding yet; in this repository the
- * dev tools implement them over made-up users (`src/dev-tools/`).
+ * dev tools implement them over made-up users (`fixtures/invitations/`).
  */
 
 export interface Product {

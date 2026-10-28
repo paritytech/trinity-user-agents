@@ -15,9 +15,9 @@ import {
   type Page,
 } from "playwright-core";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
-import { PASEO_DOTNS, bytesToHex, namehash } from "../../src/dotns.js";
+import { PASEO_DOTNS, bytesToHex, namehash } from "../../src/products/dotns.js";
 import { Blocks, car } from "../../fixtures/archive/builders.js";
-import { cidToString } from "../../src/archive/cid.js";
+import { cidToString } from "../../src/products/archive/cid.js";
 
 const hostRoot = fileURLToPath(new URL("../..", import.meta.url));
 

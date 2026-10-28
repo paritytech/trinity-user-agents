@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { walletPanel } from "../../../src/wallet-panel.js";
+import { walletPanel } from "../../../src/app/wallet-panel.js";
 
 describe("wallet panel", () => {
   // With no wallet there is nothing to pick, sign in to, sign out of or forget.

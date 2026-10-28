@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { NETWORKS, type NetworkConfig } from "../../../src/network-config.js";
-import { type Fetcher, searchUsernames } from "../../../src/username-search.js";
+import {
+  NETWORKS,
+  type NetworkConfig,
+} from "../../../src/platform/network-config.js";
+import {
+  type Fetcher,
+  searchUsernames,
+} from "../../../src/contacts/username-search.js";
 
 const PAGE = { usernames: [], nextCursor: null };
 

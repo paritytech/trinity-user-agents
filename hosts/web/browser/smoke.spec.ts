@@ -49,7 +49,7 @@ import {
   previewFill,
   type DevTab,
 } from "./support/fixtures.js";
-import { PASEO_DOTNS } from "../src/dotns.js";
+import { PASEO_DOTNS } from "../src/products/dotns.js";
 import type {
   SyntheticChatProduct,
   SyntheticSeen,
@@ -1202,7 +1202,7 @@ describe("contacts", () => {
   const SAM = `0x${"5a".repeat(32)}`;
   const PENDING = `0x${"6c".repeat(32)}`;
 
-  /** A saved Nova chat record, in the shape `src/chat/store.ts` keeps: two accepted contacts and one request still waiting. */
+  /** A saved Nova chat record, in the shape `src/chat/nova/store.ts` keeps: two accepted contacts and one request still waiting. */
   const contact = (
     account: string,
     name: string,

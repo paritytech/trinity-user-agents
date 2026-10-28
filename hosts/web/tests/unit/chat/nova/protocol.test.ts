@@ -7,7 +7,7 @@ import {
   equalBytes,
   text,
   u64,
-} from "../../../../src/chat/codec.js";
+} from "../../../../src/chat/nova/codec.js";
 import {
   aeadKey,
   keyedBlake2b256,
@@ -15,8 +15,8 @@ import {
   x25519Agree,
   x25519PublicKey,
   type RandomBytes,
-} from "../../../../src/chat/crypto.js";
-import { ChatKeys } from "../../../../src/chat/keys.js";
+} from "../../../../src/chat/nova/crypto.js";
+import { ChatKeys } from "../../../../src/chat/nova/keys.js";
 import {
   checkIdentityProof,
   decodeMessage,
@@ -31,7 +31,7 @@ import {
   sealSession,
   sessionTopic,
   withoutTickets,
-} from "../../../../src/chat/protocol.js";
+} from "../../../../src/chat/nova/protocol.js";
 import {
   decodeStatement,
   encodeSigned,
@@ -39,7 +39,7 @@ import {
   nextExpiry,
   requestDay,
   verifyStatement,
-} from "../../../../src/chat/statement.js";
+} from "../../../../src/chat/nova/statement.js";
 
 /** Synthetic phrases from the BIP-39 test vectors. They hold nothing. */
 const ALICE =

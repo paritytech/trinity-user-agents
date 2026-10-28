@@ -1,7 +1,7 @@
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import type { HexString } from "@parity/truapi/scale";
-import type { ChatContact } from "../../src/chat-provider.js";
+import type { ChatContact } from "../../src/chat/provider.js";
 import type { Person } from "../../src/invitations/ports.js";
 import { digest } from "../../src/invitations/sealing.js";
 import {

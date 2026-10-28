@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chatProductDemo } from "./chat-product-demo-plugin.js";
 import { sandboxAssets } from "./sandbox-plugin.js";
 import { usernameSearch } from "./username-search-plugin.js";
-import type { BuildInfo } from "./src/versions.js";
+import type { BuildInfo } from "./src/app/versions.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));

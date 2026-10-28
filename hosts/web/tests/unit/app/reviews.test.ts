@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { describeReview, formatValue } from "../../../src/reviews.js";
+import { describeReview, formatValue } from "../../../src/app/reviews.js";
 
 describe("describeReview", () => {
   // The protocol requires the host to warn that unwatermarked bytes could be

@@ -10,7 +10,7 @@ import {
   REOPEN_MS,
   pocketFacesKey,
   type PocketWorkers,
-} from "../../../src/pocket-faces.js";
+} from "../../../src/pocket/faces.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const CARD = { productId: "example.paseo", cardId: "membership" };

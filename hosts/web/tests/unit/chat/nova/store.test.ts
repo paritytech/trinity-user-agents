@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryStorage } from "../../../support/test-support.js";
-import { blockedAccounts, chatRecordKey } from "../../../../src/chat/store.js";
+import {
+  blockedAccounts,
+  chatRecordKey,
+} from "../../../../src/chat/nova/store.js";
 
 const contact = (account: string, blocked?: boolean) => ({
   account,

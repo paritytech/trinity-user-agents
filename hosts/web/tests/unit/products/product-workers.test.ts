@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { NetworkConfig } from "../../../src/network-config.js";
-import { ProductWorkers, workersKey } from "../../../src/product-workers.js";
+import type { NetworkConfig } from "../../../src/platform/network-config.js";
+import {
+  ProductWorkers,
+  workersKey,
+} from "../../../src/products/product-workers.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 /** Workers with no core: nothing starts, so only the list is exercised. */

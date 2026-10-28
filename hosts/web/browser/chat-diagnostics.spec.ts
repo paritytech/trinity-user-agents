@@ -12,7 +12,7 @@ import {
   startHost,
   testBrowser,
 } from "./support/fixtures.js";
-import type { ChatEventBody } from "../src/chat/diagnostics.js";
+import type { ChatEventBody } from "../tools/inspector/diagnostics.js";
 import type { ScenarioValues } from "./support/chat-transport-scenario.js";
 
 const STEP_MS = 60_000;
@@ -123,8 +123,8 @@ const VIEW_PAGE = `<!doctype html>
       <div id="chat-diagnostics" class="chat-diagnostics" hidden></div>
     </section>
     <script type="module">
-      import { mountChatDiagnostics } from "/src/chat-diagnostics-view.ts";
-      import { ChatDiagnostics } from "/src/chat/diagnostics.ts";
+      import { mountChatDiagnostics } from "/tools/inspector/chat-diagnostics-view.ts";
+      import { ChatDiagnostics } from "/tools/inspector/diagnostics.ts";
       let now = Date.UTC(2026, 9, 16, 23, 56, 23);
       const diagnostics = new ChatDiagnostics(300, () => now);
       const view = mountChatDiagnostics(

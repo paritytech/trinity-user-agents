@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { refused } from "../../../src/account-proofs.js";
+import { refused } from "../../../src/chat/account-proofs.js";
 
 describe("account proof refusals", () => {
   test("name the core's domain error, so a missing grant is told apart", () => {

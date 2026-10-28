@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { copyText } from "../../../src/copy.js";
+import { copyText } from "../../../src/app/copy.js";
 
 describe("copyText", () => {
   test("writes the text to the clipboard and reports it", async () => {

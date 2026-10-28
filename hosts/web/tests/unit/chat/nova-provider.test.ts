@@ -1,18 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import type { HexString } from "@parity/truapi/scale";
-import { ChatDiagnostics } from "../../../src/chat/diagnostics.js";
-import type { ChatSnapshot } from "../../../src/chat/engine.js";
-import type { Contact, StoredMessage } from "../../../src/chat/store.js";
+import { ChatDiagnostics } from "../../../tools/inspector/diagnostics.js";
+import type { ChatSnapshot } from "../../../src/chat/nova/engine.js";
+import type { Contact, StoredMessage } from "../../../src/chat/nova/store.js";
 import type {
   ChatProvider,
   ProviderEvent,
-} from "../../../src/chat-provider.js";
+} from "../../../src/chat/provider.js";
 import {
   NovaChatProvider,
   startNovaChat,
   type ChatSession,
   type NovaEngine,
-} from "../../../src/nova-chat-provider.js";
+} from "../../../src/chat/nova-provider.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
 const ME = `0x${"11".repeat(32)}` as HexString;

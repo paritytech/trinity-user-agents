@@ -10,9 +10,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { blake2b } from "@noble/hashes/blake2.js";
 import type { Browser, Frame, Page } from "playwright-core";
-import { PASEO_DOTNS, bytesToHex } from "../src/dotns.js";
-import { preimageCid } from "../src/preimage.js";
-import { productLabel } from "../src/sandbox/mount.js";
+import { PASEO_DOTNS, bytesToHex } from "../src/products/dotns.js";
+import { preimageCid } from "../src/products/preimage.js";
+import { productLabel } from "../src/products/loader/mount.js";
 import {
   type PublishedApp,
   type RunningHost,

@@ -1,4 +1,7 @@
-import type { HostNotification, NotificationStore } from "../notifications.js";
+import type {
+  HostNotification,
+  NotificationStore,
+} from "../notifications/notifications.js";
 import {
   openReply,
   openRequest,

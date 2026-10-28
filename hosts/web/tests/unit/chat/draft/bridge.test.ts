@@ -4,17 +4,17 @@ import {
   messagePortBridge,
   type ChatMessage,
   type HostChatRoomEventsSubscribeItem,
-} from "../../../../src/chat-v2/contract.js";
+} from "../../../../src/chat/draft/contract.js";
 import {
   ChatV2Host,
   type CallMediaEngine,
   type CallMediaEvents,
   type ChatV2Change,
-} from "../../../../src/chat-v2/host.js";
+} from "../../../../src/chat/draft/host.js";
 import {
   chatV2Over,
   type ChatV2Product,
-} from "../../../../src/chat-v2/product.js";
+} from "../../../../src/chat/draft/product.js";
 
 const PRODUCT = "chat.paseo";
 const OTHER = "other.paseo";

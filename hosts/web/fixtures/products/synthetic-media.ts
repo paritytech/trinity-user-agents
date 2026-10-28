@@ -1,11 +1,12 @@
-import type { CallMediaEngine } from "../../src/chat-v2/host.js";
+import type { CallMediaEngine } from "../../src/chat/draft/host.js";
 
 /**
  * A call engine that opens no camera or microphone and sends no media. It
  * trades made-up signals, `synthetic-offer:<call>` and
  * `synthetic-answer:<call>`, so the call flow of the Chat Extension v2 draft
  * can be tried between a host and a product's own signaling without devices.
- * The host gives it only to the local chat product demo (`./local-demo.ts`).
+ * The host gives it only to the local chat product demo
+ * (`tools/demos/local-demo.ts`).
  */
 
 const encode = (text: string) => new TextEncoder().encode(text);

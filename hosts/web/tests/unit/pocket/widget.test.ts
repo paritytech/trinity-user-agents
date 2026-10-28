@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findWidget } from "../../../src/widget.js";
+import { findWidget } from "../../../src/pocket/widget.js";
 
 const NAME = "example.paseo";
 const ROOT = JSON.stringify({
