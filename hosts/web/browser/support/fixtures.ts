@@ -452,6 +452,15 @@ export async function useTestAccount(
   ]);
 }
 
+/**
+ * Browse, then its landing's Browse apps: the product Browse's address
+ * names. Browse opens nothing by itself.
+ */
+export async function openCatalog(page: Page): Promise<void> {
+  await page.click('#dock [data-destination="browse"]');
+  await page.click('#browse-screen [data-action="open-catalog"]');
+}
+
 /** Open the developer tools at the tab that holds `selector`. */
 export async function reveal(page: Page, selector: string): Promise<void> {
   const tab = await page

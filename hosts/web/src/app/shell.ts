@@ -4,7 +4,6 @@ import {
   DEFAULT_NETWORK,
   normalizeNetwork,
 } from "../platform/network-scope.js";
-import { isRecordable } from "./recents.js";
 
 /** The places the host's dock opens, in the order the dock shows them. */
 export const DESTINATIONS = ["chat", "pocket", "browse"] as const;
@@ -44,17 +43,23 @@ export function defaultAddresses(network: string): DockAddresses {
   };
 }
 
-const KEY = "truapi-web-signing-host:dock:v1";
+/**
+ * Where a browser can point a destination elsewhere, per network, read only
+ * by a dev server. The host never writes it; a developer or a test sets it by
+ * hand. `v1`, which the host once wrote with the last product opened in
+ * Browse, is not read.
+ */
+const KEY = "truapi-web-signing-host:dock:v2";
 
-/** The default network keeps the original key, as the rest of this host's storage does. */
+/** The default network keeps the shorter key, as the rest of this host's storage does. */
 function keyFor(network: string): string {
   const id = normalizeNetwork(network);
   return id === DEFAULT_NETWORK
     ? KEY
-    : `truapi-web-signing-host:network:${id}:dock:v1`;
+    : `truapi-web-signing-host:network:${id}:dock:v2`;
 }
 
-/** The addresses saved for a network over its defaults. Anything unreadable gives the defaults. */
+/** The addresses set for a network over its defaults. Anything unreadable gives the defaults. */
 export function loadAddresses(
   storage: Pick<Storage, "getItem">,
   network: string,
@@ -72,23 +77,6 @@ export function loadAddresses(
   } catch {
     // An unreadable value is no choice at all.
   }
-  return addresses;
-}
-
-/**
- * Remember what `destination` opens. An address that carries credentials or a
- * secret-looking parameter is not kept, as the recents list does not keep it.
- */
-export function saveAddress(
-  storage: Pick<Storage, "getItem" | "setItem">,
-  network: string,
-  destination: ProductDestination,
-  address: string,
-): DockAddresses {
-  const addresses = loadAddresses(storage, network);
-  if (!isRecordable(address)) return addresses;
-  addresses[destination] = address;
-  storage.setItem(keyFor(network), JSON.stringify(addresses));
   return addresses;
 }
 

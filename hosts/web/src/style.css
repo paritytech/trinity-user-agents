@@ -992,7 +992,8 @@ body[data-surface="pocket"] .stage-empty {
  * tokens and bundled fonts.
  */
 body[data-surface="chat"] .stage-empty,
-body[data-surface="inbox"] .stage-empty {
+body[data-surface="inbox"] .stage-empty,
+body[data-surface="browse"] .stage-empty {
   display: none;
 }
 

@@ -21,6 +21,7 @@ import {
   serveNames,
   startHost,
   testBrowser,
+  openCatalog,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -99,13 +100,13 @@ describe("preimage images", () => {
         );
         await context.addInitScript((browse) => {
           localStorage.setItem(
-            "truapi-web-signing-host:dock:v1",
+            "truapi-web-signing-host:dock:v2",
             JSON.stringify({ browse }),
           );
         }, PRODUCT);
         const page = await context.newPage();
         await page.goto(host.origin);
-        await page.click('#dock [data-destination="browse"]');
+        await openCatalog(page);
         const frame = await productFrame(page);
 
         // A miss leaves the product waiting, as Browse waits with a grey tile.

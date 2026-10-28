@@ -247,9 +247,14 @@ describe("invitations between test users", () => {
           "Signed in as Alice (test account)",
         );
         expect(await alice.locator(".test-product iframe").count()).toBe(0);
-        expect(await alice.getAttribute("body", "data-surface")).toBe(
-          "product",
+        expect(await alice.getAttribute("body", "data-surface")).toBe("chat");
+        // Browse shows its landing, and opens nothing for a test account either.
+        await alice.click(dockTab("browse"));
+        await eventually(
+          () => alice.getAttribute("body", "data-surface"),
+          "browse",
         );
+        expect(await alice.locator("#product-slot iframe").count()).toBe(0);
         await openExampleChat(alice);
         expect(await alice.getAttribute("body", "data-surface")).toBe(
           "test-product",
@@ -385,12 +390,12 @@ describe("invitations between test users", () => {
         expect(await sentStatus(alice, first)).toBe("completed");
         expect(await sentStatus(alice, second)).toBe("cancelled");
 
-        // Close ends Example Chat's frame and leaves the stage empty; nothing
+        // Close ends Example Chat's frame and leaves Browse's landing; nothing
         // opens it again until asked, and its rows come back when it does.
         await alice.locator("#app-close").click();
         await eventually(
           () => alice.getAttribute("body", "data-surface"),
-          "product",
+          "browse",
         );
         expect(await alice.locator(".test-product iframe").count()).toBe(0);
         expect(await alice.locator("#app-chrome").isHidden()).toBe(true);
