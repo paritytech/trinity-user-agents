@@ -25,10 +25,6 @@ public struct ProductHost: Sendable {
 }
 
 extension ProductHost {
-    public static func name(fromDotDomain dotDomain: ProductId) -> String {
-        productIdName(productId: dotDomain) ?? ""
-    }
-
     static func parse(_ rawString: String, tld: String) -> ProductHost? {
         parseProductLink(input: rawString, networkSuffix: tld).map { ProductHost(link: $0) }
     }

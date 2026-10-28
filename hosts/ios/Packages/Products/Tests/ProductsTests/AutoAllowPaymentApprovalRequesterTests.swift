@@ -6,10 +6,10 @@ import SubstrateSdk
 
 @Suite("AutoAllowPaymentApprovalRequester Tests")
 struct AutoAllowPaymentApprovalRequesterTests {
-    private let allowedLabels = Set(["getcash"])
     private let destination = Data(repeating: 7, count: 32)
 
     private func makeSUT(
+        allowedLabels: Set<String> = ["getcash"],
         wrappedDecision: PaymentApprovalDecision = .rejected
     ) -> (requester: AutoAllowPaymentApprovalRequester, wrapped: MockPaymentApprovalRequester) {
         let wrapped = MockPaymentApprovalRequester()
@@ -47,10 +47,13 @@ struct AutoAllowPaymentApprovalRequesterTests {
         #expect(wrapped.calls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("malformed IDs cannot reach approval", arguments: ["getcash", "getcash..dot"])
-    func malformedInputIsRejected(input: String) {
-        #expect(throws: (any Error).self) {
-            try ProductId(input)
-        }
+    @Test func productWithoutADotNsNameStillAsksWhenEmptyLabelIsAllowed() async throws {
+        let (requester, wrapped) = makeSUT(allowedLabels: [""])
+        let productId = try ProductId("localhost:3000")
+
+        let decision = await requester.requestApproval(productId: productId, amount: 100, destination: destination)
+
+        #expect(decision == .rejected)
+        #expect(wrapped.calls.map(\.productId) == [productId])
     }
 }

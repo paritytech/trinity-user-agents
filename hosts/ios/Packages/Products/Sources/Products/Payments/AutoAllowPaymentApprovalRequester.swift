@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productIdName
 import Foundation
 import SubstrateSdk
 
@@ -34,6 +35,7 @@ private extension AutoAllowPaymentApprovalRequester {
     /// differs per network, and resolving it here would put a network call in
     /// front of an auto-allow.
     func isAutoAllowed(productId: ProductId) -> Bool {
-        allowedLabels.contains(ProductHost.name(fromDotDomain: productId))
+        guard let name = productIdName(productId: productId) else { return false }
+        return allowedLabels.contains(name)
     }
 }

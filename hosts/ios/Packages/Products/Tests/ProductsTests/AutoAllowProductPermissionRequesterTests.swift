@@ -5,9 +5,8 @@ import Testing
 
 @Suite("AutoAllowProductPermissionRequester Tests")
 struct AutoAllowProductPermissionRequesterTests {
-    private let allowedLabels = Set(["getcash"])
-
     private func makeSUT(
+        allowedLabels: Set<String> = ["getcash"],
         wrappedDecision: PermissionDecision = .deny
     ) -> (
         requester: AutoAllowProductPermissionRequester,
@@ -62,10 +61,13 @@ struct AutoAllowProductPermissionRequesterTests {
         #expect(wrapped.promptCalls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("malformed IDs cannot reach permission prompts", arguments: ["getcash", "getcash..dot"])
-    func malformedInputIsRejected(input: String) {
-        #expect(throws: (any Error).self) {
-            try ProductId(input)
-        }
+    @Test func productWithoutADotNsNameStillPromptsWhenEmptyLabelIsAllowed() async throws {
+        let (requester, wrapped) = makeSUT(allowedLabels: [""])
+        let productId = try ProductId("localhost:3000")
+
+        let decision = await requester.prompt(productId: productId, permission: .balanceAccess)
+
+        #expect(decision == .deny)
+        #expect(wrapped.promptCalls.map(\.productId) == [productId])
     }
 }
