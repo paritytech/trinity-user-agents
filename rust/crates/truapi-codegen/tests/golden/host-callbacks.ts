@@ -446,9 +446,8 @@ export type HostScan =
    */
   | { tag: "CameraUnavailable"; value?: undefined }
   /**
-   * The requesting App or Widget is not the screen the user sees, so the
-   * host opened nothing. A Worker's request was already checked by the core
-   * and is never answered this way.
+   * The requesting App or Widget is not the screen the user sees, or the
+   * host application is not in front, so the host opened nothing.
    */
   | { tag: "NotVisible"; value?: undefined };
 
@@ -1946,8 +1945,9 @@ export interface ProductStorage {
  * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
  * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
  *   scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
- *   the host already passed the core's tap check.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen, or for any product
+ *   while the host application is not in front. A Worker reaching the host already passed the
+ *   core's tap check.
  * - Close the viewfinder when the core drops the future, and close any still open before opening
  *   another. A JS host is not told about a drop.
  */
