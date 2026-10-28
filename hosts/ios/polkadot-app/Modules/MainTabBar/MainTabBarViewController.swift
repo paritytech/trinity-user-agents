@@ -25,8 +25,13 @@ final class MainTabBarViewController: UIViewController {
     private let chainStatusAnchorGuide = UILayoutGuide()
 
     private static let chainStatusAnchorInset: CGFloat = 26
+    private static let statusTitleSpacing: CGFloat = 8
 
     private var chainStatusAnchorWidth: Constraint?
+    private var statusTitleLeading: Constraint?
+    private var statusTitleCenterY: Constraint?
+
+    private let statusBarTitleButton = StatusBarTitleButton()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -140,6 +145,8 @@ final class MainTabBarViewController: UIViewController {
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
 
+        statusTitleLeading?.update(offset: ChainConnectionStatusBarView.horizontalPadding)
+        statusTitleCenterY?.update(offset: -Self.statusTitleCenterInset)
         applyWidgetLayout(for: chromeContext(for: container.selectedController))
     }
 
@@ -177,7 +184,49 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
+        view.addSubview(statusBarTitleButton)
+        statusBarTitleButton.snp.makeConstraints { make in
+            statusTitleLeading = make.leading.equalTo(statusBarHost.view)
+                .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
+            statusTitleCenterY = make.centerY.equalTo(statusBarHost.view.snp.bottom)
+                .offset(-Self.statusTitleCenterInset).constraint
+            make.trailing.lessThanOrEqualTo(chainStatusAnchorGuide.snp.leading)
+                .offset(-Self.statusTitleSpacing)
+            make.height.equalTo(ChainConnectionStatusBarView.preferredHeight)
+        }
+
         statusBarHost.didMove(toParent: self)
+    }
+
+    static var statusTitleCenterInset: CGFloat {
+        ChainConnectionStatusBarView.bottomPadding + ChainConnectionStatusBarView.preferredHeight / 2
+    }
+
+    func makeStatusBarTitleViewModel() -> StatusBarTitleViewModel {
+        switch container.selection {
+        case let .spa(tabId):
+            let provider = container.selectedController as? StatusBarTitleProviding
+            return StatusBarTitleViewModel(
+                title: provider?.statusBarTitle ?? spaChipViewModels.first { $0.id == tabId }?.name ?? "",
+                showsLogo: true,
+                menu: provider?.makeStatusBarMenu()
+            )
+        case let .tab(index):
+            return StatusBarTitleViewModel(
+                title: tabs.indices.contains(index) ? Self.statusBarTitle(for: tabs[index]) : "",
+                showsLogo: false,
+                menu: nil
+            )
+        }
+    }
+
+    static func statusBarTitle(for item: TabBarItem) -> String {
+        switch item {
+        case .chat: String(localized: .chatMainTitle)
+        case .wallet,
+             .browse,
+             .settings: item.title
+        }
     }
 
     func installChromeController() {
@@ -298,6 +347,7 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     func showSPATabs(_ viewModels: [SPATabChipViewModel]) {
         spaChipViewModels = viewModels
         applyChips()
+        refreshStatusBarTitle()
     }
 
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
@@ -384,6 +434,11 @@ extension MainTabBarViewController {
     ) {
         chromeController.apply(context)
         applyWidgetLayout(for: context, animatingAlongside: transitionCoordinator)
+        refreshStatusBarTitle()
+    }
+
+    func refreshStatusBarTitle() {
+        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
     }
 
     func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
@@ -400,6 +455,7 @@ extension MainTabBarViewController {
     /// Wallet fades it along with the Pocket's own content.
     func setChromeAlpha(_ alpha: CGFloat) {
         statusBarHost.view.alpha = alpha
+        statusBarTitleButton.alpha = alpha
         chromeController.view.alpha = alpha
     }
 }

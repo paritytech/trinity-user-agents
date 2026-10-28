@@ -58,6 +58,9 @@ extension MainTabBarViewController {
             closeSPA(tabId: tab.id)
             return
         }
+        (controller as? StatusBarTitleProviding)?.onStatusBarTitleChanged = { [weak self] in
+            self?.refreshStatusBarTitle()
+        }
         container.mountSPA(controller, for: tab.id)
         applyChrome(.spa(controller))
         applyChips()

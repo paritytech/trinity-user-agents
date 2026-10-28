@@ -956,28 +956,6 @@
         }
       }
     },
-    "product.browser.accessibility.minimize": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Minimize"
-          }
-        }
-      }
-    },
-    "product.browser.accessibility.more": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "More"
-          }
-        }
-      }
-    },
     "product.load.damaged.message": {
       "extractionState": "manual",
       "localizations": {
