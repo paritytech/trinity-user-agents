@@ -71,14 +71,16 @@ use a stack that did not exist when that version shipped, such as a two-hour PPN
 
 ### Requirements
 
-The format has to meet three requirements:
+The format has to meet four requirements:
 
-1. **Single.** Each fact about a stack lives in its descriptor, and every host and tool reads it there instead of
-   keeping a copy. When previewnet is wiped, its operator publishes the new genesis hashes once, and no app or tool
-   ships a release.
+1. **Single.** Each fact about a stack lives in its descriptor, and every host and tool takes it from there instead of
+   keeping its own. When previewnet is wiped, its operator publishes the new genesis hashes once, and no app or tool
+   ships a release to follow it.
 2. **Verifiable.** A reader can tell that a signed descriptor comes from the stack's operator, and that it is not older
    than one it already accepted.
 3. **Evolvable.** The format can gain fields without breaking readers that do not know them.
+4. **Not a live dependency.** A host, tool or app keeps working when a descriptor's server is down. It runs from the
+   copy it holds and refreshes when it can.
 
 ## Stakeholders
 
@@ -274,7 +276,9 @@ A reader finds the dotNS contracts in three steps:
    registry leaves unset returns the zero address.
 
 The addresses change when the stack redeploys dotNS, as a restart of the chains does, or when the registry's owner
-rewires a key, so a reader can keep them for a while under one `generation`.
+rewires a key. A reader MAY keep the addresses it read, in a build copy too, recorded with the descriptor's `generation`
+and the block it read them at. It MUST NOT use them with a descriptor of another `generation`, and SHOULD read them
+again when it refreshes the descriptor.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
@@ -438,7 +442,8 @@ is unavailable, not wrong. The follow-up RFCs add host checks, such as how far a
 An operator MUST publish a new descriptor whenever something a descriptor carries changes, and raise `sequence` each
 time. It SHOULD take genesis hashes and specs from the live chains rather than copy them by hand, and SHOULD have a
 person approve each publish when the key guards a stack with real funds. A runtime upgrade or a dotNS redeploy needs no
-publish, because readers read those from the chains.
+publish, because readers read those from the chains. An operator SHOULD serve the descriptor with an `ETag`, so a reader
+can check for a change without downloading it again.
 
 How an operator does this is its choice. [Appendix A](#appendix-a-how-operators-publish-today) shows how
 previewnet-engine and a git-kept stack such as paseo-next-v2 would.
@@ -446,14 +451,29 @@ previewnet-engine and a git-kept stack such as paseo-next-v2 would.
 ### Readers
 
 A tool reads a stack from a pointer or a local file, and runs the checks under [Validation](#validation). A local file
-has no identity and no rollback protection, and is trusted as far as its source. Every reader implementation, in the
-host core or in a tool, MUST pass the conformance vectors once they are published, so all of them accept and refuse the
-same descriptors. [Appendix B](#appendix-b-changes-per-tool) lists what changes in each tool today.
+has no identity and no rollback protection, and is trusted as far as its source.
 
-A reference implementation, which is informative, will come with the conformance vectors: a TypeScript library and CLI
-that build a descriptor from one model, render each format from it, validate, sign, and print a pointer's link and QR
-code, and a Rust parser in the host core. Its CLI defaults `sequence` to the publish time in seconds. Operators and
-tools may use it or their own.
+A reader runs from a copy it holds, and fetching only refreshes that copy:
+
+- A reader MAY start from a copy made at build time and verified against its pointer, and MUST treat it as a stored
+  copy, so no fetch lowers its `sequence`. A reader with no copy fetches before first use.
+- A reader whose fetch fails, or returns a descriptor it refuses, MUST keep using the copy it holds. Being unable to
+  fetch is never a reason to stop.
+- A reader SHOULD NOT fetch a descriptor per request. It fetches when its user asks, or on a schedule of its own, at
+  most once per process or once per period it chooses. It SHOULD send `If-None-Match` with the `ETag` it was last
+  served.
+- A reader MAY stay on its build copy and never fetch. It then follows no change until it is rebuilt, and a chain
+  reporting a genesis hash other than the copy's tells it the stack was restarted.
+
+Every reader implementation, in the host core or in a tool, MUST pass the conformance vectors once they are published,
+so all of them accept and refuse the same descriptors. [Appendix B](#appendix-b-changes-per-tool) lists what changes in
+each tool today.
+
+A reference implementation, which is informative, will come with the conformance vectors: a Rust crate that holds every
+rule and the reader, used by the host core and compiled to WebAssembly for a TypeScript library and CLI that build a
+descriptor from one model, render each format from it, validate, sign, print a pointer's link and QR code, and keep a
+project's build copies. Its CLI defaults `sequence` to the publish time in seconds. Operators and tools may use it or
+their own.
 
 ## Drawbacks
 
@@ -465,8 +485,9 @@ tools may use it or their own.
 ## Security
 
 - **Replay and rollback.** The sequence rule refuses an older signed descriptor for the same stack, and the signing
-  prefix keeps a descriptor signature from standing in for any other signed message. A reader that stores no `sequence`,
-  such as a one-off tool run, can be served an older signed copy. `validUntil` with regular republishing limits that.
+  prefix keeps a descriptor signature from standing in for any other signed message. A reader with neither a build copy
+  nor a stored one, such as a one-off run on a pasted link, can be served an older signed copy. `validUntil` with
+  regular republishing limits that.
 - **Downgrade.** A keyed pointer never accepts a plain descriptor.
 - **Key reuse.** A key that signs two stacks lets one be swapped for the other, which is why one key signs one stack.
 - **Stolen keys.** A stolen key can point its stack at other chains and services, or publish the highest possible
@@ -475,7 +496,9 @@ tools may use it or their own.
   host is the stack itself or the reader's own network.
 - **TURN.** A descriptor never carries a TURN secret. Readers ask the `turn` service for short-lived credentials, which
   it issues against an access token from the DUB.
-- **Availability.** A reader keeps its last verified copy while the descriptor is unreachable.
+- **Availability.** A reader keeps its build copy or its last verified one while the descriptor is unreachable, so a
+  descriptor server that goes down stops no reader that holds a copy. The dotNS addresses a reader keeps are not signed.
+  They are what the RPC the signed descriptor names returns, recorded with their block so they can be checked later.
 
 ## Alternatives Considered
 
@@ -538,7 +561,7 @@ new genesis hashes and specs after a wipe.
 
 | Repository                | Change                                                                                  |
 | ------------------------- | --------------------------------------------------------------------------------------- |
-| dotns-sdk                 | `--stack <url, link or file>` replaces `--env`; contract addresses come from the chain  |
+| dotns-sdk                 | `--stack <url, link or file>` replaces `--env`; build copies carry contract addresses   |
 | bulletin-deploy           | `--stack` replaces the triangle-status snapshot and its drift checks                    |
 | triangle-status           | keeps a list of descriptor URLs instead of copies of their facts, and checks each stack |
 | polkadot-pop-e2e          | a `STACK` variable replaces the `FORK_*` variables                                      |
