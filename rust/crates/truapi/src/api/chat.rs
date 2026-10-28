@@ -217,9 +217,8 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Replace how a room shows in the chat list: its sort time, its badge,
-	/// and the newest message and reaction the host makes the preview line
-	/// from.
+	/// Replace how a room shows in the chat list. The preview gives the sort time,
+	/// the badge, and the newest message and reaction for the preview line.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -257,7 +256,7 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Delete a room and all the host keeps for it: messages, configuration
-	/// and cache. Deleting a room that is gone succeeds.
+	/// and cache. A delete of a room that does not exist succeeds.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -278,9 +277,10 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Push one change to the messages of a room: a new message, an edit, a
-	/// reaction, a status, or a message drawn again with new content. The host stores the change
-	/// for a room it stores, and only shows it for a room the product keeps.
+	/// Push one change to the messages of a room. The change is a new message, an
+	/// edit, a reaction, a status, or new content for a message with no edit mark.
+	/// The host stores the change for a room it stores, and only shows it for a
+	/// room the product keeps.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -346,10 +346,10 @@ pub trait Chat: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Apply what the user did in a room the product keeps. Send one item,
-	/// then the host closes the query: the stored message for a new message,
-	/// under the `messageId` the host chose when it chose one, or for a
-	/// payment, under its `messageId`; or an acknowledgement.
+	/// Apply what the user did in a room the product keeps. Send one item, then
+	/// the host closes the query. For a new message or a payment, the item is the
+	/// stored message. Store it under the `messageId` of the action when the
+	/// action has one. For each other action, the item is an acknowledgement.
 	///
 	/// ```ts
 	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
