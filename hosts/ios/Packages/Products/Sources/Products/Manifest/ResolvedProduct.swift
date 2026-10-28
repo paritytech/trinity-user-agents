@@ -1,5 +1,5 @@
 import struct TrUAPIHost.ProductId
-import enum TrUAPIHost.ProductExecutionKind
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 
 /// Manifest products and legacy ones share this shape, so callers branch on `executables`
@@ -64,7 +64,7 @@ public struct ResolvedProduct: Hashable, Sendable {
     /// base name, which is where a legacy product and a script installed by
     /// hand through debug settings both live. Everything that asks which
     /// archive backs a surface asks here, so no two callers can disagree.
-    public func contentId(for kind: ProductExecutionKind) -> ProductId {
+    public func contentId(for kind: ExecutableKind) -> ProductId {
         switch kind {
         case .app: appContentId
         case .widget: executables.widget?.identifier ?? id

@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.net.URI
 import javax.inject.Inject
@@ -64,7 +64,7 @@ class TrUAPISpaHost @Inject constructor(
             scope = scope,
             fixedProductId = servedPage?.productId,
             firstPartyOrigin = servedPage?.origin,
-            servedExecutable = if (underCard) ProductExecutionKind.WIDGET else ProductExecutionKind.APP,
+            servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(

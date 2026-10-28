@@ -397,7 +397,7 @@ public protocol BalanceHostBridge: AnyObject, Sendable {
 public protocol ScannerHostBridge: AnyObject, Sendable {
     func scanCode(
         productId: ProductId,
-        executionKind: ProductExecutionKind,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan
 }
@@ -581,7 +581,7 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
 
     func scanCode(
         productId: ProductId,
-        executionKind: ProductExecutionKind,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan {
         try await withHostRejection {

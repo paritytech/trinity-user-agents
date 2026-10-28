@@ -14,7 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.mockito.Mockito.mock
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 
 class ProductServingHostResolverTest {
@@ -67,7 +67,7 @@ class ProductServingHostResolverTest {
     fun `a card's page is served from the widget subname`() = runBlocking {
         stubResolution(appHost = "app.coinflip.dot", widgetHost = "widget.coinflip.dot")
 
-        assertEquals("widget.coinflip.dot", resolver.servingHostFor("coinflip.dot", ProductExecutionKind.WIDGET))
+        assertEquals("widget.coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET))
     }
 
     // A product with cards but no widget has faces that do not open; serving its app there instead
@@ -76,7 +76,7 @@ class ProductServingHostResolverTest {
     fun `a card of a product with no widget is not served the app`() = runBlocking {
         stubResolution(appHost = "app.coinflip.dot")
 
-        assertEquals("coinflip.dot", resolver.servingHostFor("coinflip.dot", ProductExecutionKind.WIDGET))
+        assertEquals("coinflip.dot", resolver.servingHostFor("coinflip.dot", ExecutableKind.WIDGET))
     }
 
     @Test

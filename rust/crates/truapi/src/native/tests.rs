@@ -5,10 +5,10 @@ use std::{
 };
 
 use crate::platform::{
-	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
+	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductExecutionKind, ProductId, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -196,7 +196,7 @@ pub struct EventCallbacks {
 	pub permission_confirmation_result: PermissionDecision,
 	/// Counts prompts across the execution's separate connections.
 	pub remote_permission_calls: std::sync::atomic::AtomicUsize,
-	pub remote_permission_products: Mutex<Vec<(ProductId, ProductExecutionKind)>>,
+	pub remote_permission_products: Mutex<Vec<(ProductId, ExecutableKind)>>,
 	/// Counts device permission prompts.
 	pub device_permission_calls: std::sync::atomic::AtomicUsize,
 }
@@ -605,7 +605,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 
 pub fn native_execution_config(
 	product_id: &str,
-	execution_kind: ProductExecutionKind,
+	execution_kind: ExecutableKind,
 ) -> ProductExecutionConfig {
 	ProductExecutionConfig { product_id: ProductId::for_test(product_id), execution_kind }
 }
@@ -624,7 +624,7 @@ pub fn native_product_execution(
 		None,
 		None,
 		None,
-		native_execution_config(product_id, ProductExecutionKind::App),
+		native_execution_config(product_id, ExecutableKind::App),
 	)
 	.expect("product execution config should be valid")
 }
@@ -976,7 +976,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 			None,
 			None,
 			None,
-			native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
+			native_execution_config("chat-product.dot", ExecutableKind::Worker),
 		)
 		.expect("Chat execution should open");
 
@@ -1420,10 +1420,8 @@ fn a_key_that_is_not_32_bytes_is_a_miss_without_asking_the_host() {
 fn native_chat_room_subscription_emits_current_then_notified_replacement() {
 	let (callbacks, events, _platform) = event_platform();
 	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let mut stream = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 
 	let first = ready_rooms(stream.as_mut(), "initial room list");
@@ -1469,10 +1467,8 @@ fn native_chat_adapter_forwards_every_message_variant() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let reaction =
 		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
 	// Every variant the protocol advertises reaches the host, so a product
@@ -1534,10 +1530,8 @@ fn native_chat_adapter_forwards_the_alt_of_a_message() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
 		message_type: "results".to_string(),
 		payload: vec![1],
@@ -1575,10 +1569,8 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let connection = crate::runtime::ActionChannel::chat();
 
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1640,10 +1632,8 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
 		Some("cannot render a file card".to_string());
 
@@ -1681,10 +1671,8 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
 		Some("keychain locked".to_string());
 
@@ -1719,10 +1707,8 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let events = Arc::new(NativeEventBus::default());
 	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let request = v01::HostChatRegisterBotRequest {
 		bot_id: "flipper".to_string(),
 		name: "Flipper".to_string(),
@@ -1780,10 +1766,8 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 	let request = v01::HostChatCreateRoomRequest {
 		room_id: "support".to_string(),
 		name: "Support".to_string(),
@@ -1849,10 +1833,8 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new_with_execution(
-		ProductId::for_test("chat.dot"),
-		ProductExecutionKind::Worker,
-	);
+	let product =
+		ProductContext::new_with_execution(ProductId::for_test("chat.dot"), ExecutableKind::Worker);
 
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
@@ -2548,7 +2530,7 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 			None,
 			None,
 			None,
-			native_execution_config("first.dot", ProductExecutionKind::App),
+			native_execution_config("first.dot", ExecutableKind::App),
 		)
 		.expect("open execution");
 	execution.start_ws_bridge(0).expect("start bridge");
@@ -2584,7 +2566,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 			None,
 			None,
 			None,
-			native_execution_config(product_id, ProductExecutionKind::App),
+			native_execution_config(product_id, ExecutableKind::App),
 		)
 		.expect("open execution")
 	});
@@ -2658,7 +2640,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 			None,
 			None,
 			None,
-			native_execution_config("shared.dot", ProductExecutionKind::App),
+			native_execution_config("shared.dot", ExecutableKind::App),
 		)
 		.expect("App execution should open");
 	let chat_host = Arc::new(EventCallbacks::new());
@@ -2668,7 +2650,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 			Some(chat_host),
 			None,
 			None,
-			native_execution_config("shared.dot", ProductExecutionKind::Worker),
+			native_execution_config("shared.dot", ExecutableKind::Worker),
 		)
 		.expect("Chat execution should open");
 
@@ -2843,7 +2825,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 				None,
 				None,
 				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::Worker),
+				native_execution_config("fetch.dot", ExecutableKind::Worker),
 			)
 			.unwrap();
 		let request = truapi::latest::RemotePermissionRequest {
@@ -2855,7 +2837,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 			futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
 		assert_eq!(
 			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
-			(granted, vec![(ProductId::for_test("fetch.dot"), ProductExecutionKind::Worker)]),
+			(granted, vec![(ProductId::for_test("fetch.dot"), ExecutableKind::Worker)]),
 		);
 	}
 }
@@ -2912,7 +2894,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 				None,
 				None,
 				None,
-				native_execution_config(product_id, ProductExecutionKind::App),
+				native_execution_config(product_id, ExecutableKind::App),
 			)
 			.unwrap()
 		};
@@ -2962,7 +2944,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 				None,
 				None,
 				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::App),
+				native_execution_config("fetch.dot", ExecutableKind::App),
 			)
 			.unwrap();
 		futures::executor::block_on(async {
@@ -3007,7 +2989,7 @@ fn a_native_status_read_follows_the_os_gate() {
 			None,
 			None,
 			None,
-			native_execution_config("gated.dot", ProductExecutionKind::App),
+			native_execution_config("gated.dot", ExecutableKind::App),
 		)
 		.expect("execution should open");
 

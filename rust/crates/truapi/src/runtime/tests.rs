@@ -6,8 +6,8 @@ use std::sync::{
 };
 
 use crate::platform::{
-	AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
-	PermissionAuthorizationRequest, ProductExecutionKind,
+	AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
+	ExecutableKind, HostScan, PermissionAuthorizationRequest,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -1078,7 +1078,7 @@ fn contacts_pick_maps_a_platform_failure_to_unknown() {
 fn contacts_pick_is_available_to_an_app_execution() {
 	// Unlike Chat, the picker is not gated on an execution kind.
 	let (_, product) = runtime_config("voting.dot");
-	assert_eq!(product.execution_kind, crate::platform::ProductExecutionKind::App);
+	assert_eq!(product.execution_kind, crate::platform::ExecutableKind::App);
 
 	let host = contacts_host(
 		"voting.dot",
@@ -1674,7 +1674,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -1821,7 +1821,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -1930,7 +1930,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -2012,7 +2012,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -2096,7 +2096,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -2185,7 +2185,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -2285,7 +2285,7 @@ impl crate::platform::PocketPlatform for RecordingPocketPlatform {
 }
 
 fn pocket_dot_host(
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 	configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config("pocket.dot");
@@ -2312,7 +2312,7 @@ fn pocket_dot_host(
 }
 
 fn pocket_host(
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 	pocket: Option<Arc<RecordingPocketPlatform>>,
 	with_session: bool,
 ) -> ProductRuntimeHost {
@@ -2363,7 +2363,7 @@ fn first_pocket_item(
 fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors() {
 	let pocket =
 		Arc::new(RecordingPocketPlatform::with_cards(vec![("loyalty", false), ("humanity", true)]));
-	let host = pocket_host(crate::platform::ProductExecutionKind::Worker, Some(pocket), true);
+	let host = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket), true);
 
 	let mut items = futures::executor::block_on(Pocket::list_subscribe(
 		&host,
@@ -2415,7 +2415,7 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 }
 
 fn expanded_card_host(
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 	expanded_card: Option<Arc<RecordingExpandedCardHost>>,
 ) -> ProductRuntimeHost {
 	pocket_dot_host(kind, |adapters| {
@@ -2444,8 +2444,7 @@ fn set_face_shown(
 fn expanded_card_widget_requests_reach_the_host_in_order() {
 	let card =
 		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
-	let host =
-		expanded_card_host(crate::platform::ProductExecutionKind::Widget, Some(card.clone()));
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
 
 	for shown in [false, true, false] {
 		assert!(matches!(
@@ -2461,9 +2460,7 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 /// filter, so only a Widget may move a face, and nothing else reaches the host.
 #[test]
 fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
-	for kind in
-		[crate::platform::ProductExecutionKind::App, crate::platform::ProductExecutionKind::Worker]
-	{
+	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
 		let card = RecordingExpandedCardHost::answering(Ok(
 			crate::platform::ExpandedCardFaceOutcome::Applied,
 		));
@@ -2479,7 +2476,7 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 /// `HostFailure` would read as a real failure.
 #[test]
 fn expanded_card_without_an_adapter_is_unsupported() {
-	let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, None);
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
 }
@@ -2493,7 +2490,7 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 
 	let answer = |outcome| {
 		let card = RecordingExpandedCardHost::answering(outcome);
-		let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, Some(card));
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
 		set_face_shown(&host, false)
 	};
 
@@ -2522,8 +2519,7 @@ fn expanded_card_host_outcomes_map_to_wire_answers() {
 fn pocket_remove_card_normalizes_the_id_and_maps_domain_errors() {
 	let pocket =
 		Arc::new(RecordingPocketPlatform::with_cards(vec![("loyalty", false), ("humanity", true)]));
-	let host =
-		pocket_host(crate::platform::ProductExecutionKind::Worker, Some(pocket.clone()), true);
+	let host = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket.clone()), true);
 
 	// Trimmed and NFC-normalized before the host sees it, so the host stores
 	// one spelling of a card id however the product spells it.
@@ -2555,15 +2551,14 @@ fn pocket_remove_card_normalizes_the_id_and_maps_domain_errors() {
 #[test]
 fn pocket_is_denied_to_apps_and_sessionless_workers_and_unsupported_without_an_adapter() {
 	let pocket = Arc::new(RecordingPocketPlatform::with_cards(vec![]));
-	let app = pocket_host(crate::platform::ProductExecutionKind::App, Some(pocket.clone()), true);
+	let app = pocket_host(crate::platform::ExecutableKind::App, Some(pocket.clone()), true);
 	assert!(matches!(remove_card(&app, "loyalty"), Err(CallError::Denied)));
 	assert!(matches!(first_pocket_item(&app), Some(Err(CallError::Denied))));
 
-	let no_session =
-		pocket_host(crate::platform::ProductExecutionKind::Worker, Some(pocket), false);
+	let no_session = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket), false);
 	assert!(matches!(remove_card(&no_session, "loyalty"), Err(CallError::Denied)));
 
-	let no_adapter = pocket_host(crate::platform::ProductExecutionKind::Worker, None, true);
+	let no_adapter = pocket_host(crate::platform::ExecutableKind::Worker, None, true);
 	assert!(matches!(remove_card(&no_adapter, "loyalty"), Err(CallError::Unsupported)));
 	assert!(matches!(first_pocket_item(&no_adapter), Some(Err(CallError::Unsupported))));
 }
@@ -2623,7 +2618,7 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
 /// The game product's runtime over `platform`, with `game` installed when
 /// given and no session.
 fn game_host(
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 	platform: Arc<StubPlatform>,
 	game: Option<Arc<RecordingGamePlatform>>,
 ) -> ProductRuntimeHost {
@@ -2633,7 +2628,7 @@ fn game_host(
 /// [`game_host`] for an arbitrary `product_id`.
 fn game_host_for(
 	product_id: &str,
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 	platform: Arc<StubPlatform>,
 	game: Option<Arc<RecordingGamePlatform>>,
 ) -> ProductRuntimeHost {
@@ -2703,13 +2698,11 @@ fn prompts(platform: &StubPlatform) -> Vec<v01::HostDevicePermissionRequest> {
 
 #[test]
 fn game_is_unsupported_without_an_adapter_and_open_to_apps_and_workers_without_a_session() {
-	let no_adapter = game_host(crate::platform::ProductExecutionKind::App, stub_platform(), None);
+	let no_adapter = game_host(crate::platform::ExecutableKind::App, stub_platform(), None);
 	assert!(matches!(remind(&no_adapter, FUTURE_START), Err(CallError::Unsupported)));
 	assert!(matches!(cancel(&no_adapter), Err(CallError::Unsupported)));
 
-	for kind in
-		[crate::platform::ProductExecutionKind::App, crate::platform::ProductExecutionKind::Worker]
-	{
+	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host(kind, stub_platform(), Some(game.clone()));
 		assert_eq!(remind(&host, FUTURE_START), Ok(HostRemindNextGameResponse::V1), "{kind:?}");
@@ -2730,11 +2723,8 @@ fn remind_next_game_asks_for_no_permission() {
 		..Default::default()
 	});
 	let game = Arc::new(RecordingGamePlatform::default());
-	let host = game_host(
-		crate::platform::ProductExecutionKind::Worker,
-		platform.clone(),
-		Some(game.clone()),
-	);
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, platform.clone(), Some(game.clone()));
 
 	assert_eq!(
 		(remind(&host, FUTURE_START), scheduled(&game), prompts(&platform)),
@@ -2749,11 +2739,8 @@ fn remind_next_game_asks_for_no_permission() {
 #[test]
 fn remind_next_game_rejects_a_past_start_without_calling_the_host() {
 	let game = Arc::new(RecordingGamePlatform::default());
-	let host = game_host(
-		crate::platform::ProductExecutionKind::Worker,
-		stub_platform(),
-		Some(game.clone()),
-	);
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
 
 	assert_eq!(
 		(remind(&host, 0), scheduled(&game)),
@@ -2769,11 +2756,8 @@ fn remind_next_game_rejects_a_past_start_without_calling_the_host() {
 #[test]
 fn remind_next_game_schedules_nothing_for_a_withdrawn_call() {
 	let game = Arc::new(RecordingGamePlatform::default());
-	let host = game_host(
-		crate::platform::ProductExecutionKind::Worker,
-		stub_platform(),
-		Some(game.clone()),
-	);
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
 	let cx = CallContext::default();
 	cx.cancel().cancel();
 
@@ -2786,11 +2770,8 @@ fn remind_next_game_schedules_nothing_for_a_withdrawn_call() {
 #[test]
 fn cancel_next_game_delegates() {
 	let game = Arc::new(RecordingGamePlatform::default());
-	let host = game_host(
-		crate::platform::ProductExecutionKind::Worker,
-		stub_platform(),
-		Some(game.clone()),
-	);
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
 
 	assert_eq!(
 		(cancel(&host), game.cancelled.lock().expect("cancelled mutex poisoned").clone(),),
@@ -2804,11 +2785,8 @@ fn game_host_failures_reach_the_product_with_their_reason() {
 		failure: Some("alarm store unavailable"),
 		..Default::default()
 	});
-	let host = game_host(
-		crate::platform::ProductExecutionKind::Worker,
-		stub_platform(),
-		Some(game.clone()),
-	);
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
 
 	assert_eq!(
 		(remind(&host, FUTURE_START), cancel(&host), scheduled(&game)),
@@ -2830,7 +2808,7 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
-			crate::platform::ProductExecutionKind::App,
+			crate::platform::ExecutableKind::App,
 			stub_platform(),
 			Some(game.clone()),
 		);
@@ -2844,7 +2822,7 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
-			crate::platform::ProductExecutionKind::App,
+			crate::platform::ExecutableKind::App,
 			stub_platform(),
 			Some(game),
 		);
@@ -3561,7 +3539,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 	let (host_config, _) = runtime_config("camera.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("camera.dot"),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let spawner = test_spawner();
 	let platform = stub_platform();
@@ -8329,12 +8307,12 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 /// A runtime for `greenmarket.dot` with no session, and `scanner` installed
 /// when given.
 fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
-	scanner_host_for(ProductExecutionKind::App, scanner)
+	scanner_host_for(ExecutableKind::App, scanner)
 }
 
 /// [`scanner_host`] for an execution of `kind`.
 fn scanner_host_for(
-	kind: ProductExecutionKind,
+	kind: ExecutableKind,
 	scanner: Option<Arc<StubScannerPlatform>>,
 ) -> ProductRuntimeHost {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
@@ -8411,7 +8389,7 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 	// A Worker has no screen of its own. Without a recent tap, the viewfinder
 	// would open over whatever the user is doing.
 	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
-	let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+	let host = scanner_host_for(ExecutableKind::Worker, Some(scanner.clone()));
 	let not_visible = Err(CallError::Domain(v01::HostScannerScanError::NotVisible));
 	assert_eq!(scan(&host), not_visible);
 

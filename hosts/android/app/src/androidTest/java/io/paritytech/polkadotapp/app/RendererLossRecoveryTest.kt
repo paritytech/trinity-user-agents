@@ -33,7 +33,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -54,7 +54,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
         val reports = Reports()
         val bridge = mockk<HostBridge>(relaxed = true) { coEvery { coreStorage.read(any()) } returns null }
         TrUAPIHostRuntime(bridge, CONFIG).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ProductExecutionKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val provider = PageProvider(context, scope)
                 try {

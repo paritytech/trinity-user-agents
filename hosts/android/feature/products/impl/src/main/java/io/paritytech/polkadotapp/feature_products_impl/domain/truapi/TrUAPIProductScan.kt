@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -20,7 +20,7 @@ import kotlin.time.Duration.Companion.seconds
 /** What the viewfinder shows: who is asking, and what they accept. */
 class ProductScanRequest(
     val productId: ProductId,
-    val executionKind: ProductExecutionKind,
+    val executionKind: ExecutableKind,
     val request: HostScannerScanRequest,
 )
 
@@ -39,15 +39,15 @@ class TrUAPIProductScans @Inject constructor(
     ScannerHostBridge {
     override suspend fun scanCode(
         productId: ProductId,
-        executionKind: ProductExecutionKind,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan = ask(ProductScanRequest(productId, executionKind, request))
 
     override suspend fun canShow(question: ProductScanRequest): Boolean = withContext(dispatchers.main) {
         when (question.executionKind) {
-            ProductExecutionKind.WORKER ->
+            ExecutableKind.WORKER ->
                 contextManager.getActivity()?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
-            ProductExecutionKind.APP, ProductExecutionKind.WIDGET -> pageOnScreen(question.productId)
+            ExecutableKind.APP, ExecutableKind.WIDGET -> pageOnScreen(question.productId)
         }
     }
 

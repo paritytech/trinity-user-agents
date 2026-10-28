@@ -40,7 +40,7 @@ use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHostRuntime,
-	platform::{ProductExecutionKind, ProductId},
+	platform::{ExecutableKind, ProductId},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -70,12 +70,12 @@ pub struct ProductSelection {
 	/// Execution kind every selection keeps. A host serves one kind for its
 	/// lifetime: the core reads it per connection, and chat is denied to a
 	/// connection that opened as `App`.
-	execution_kind: ProductExecutionKind,
+	execution_kind: ExecutableKind,
 }
 
 impl ProductSelection {
 	/// Select the initial product identity.
-	pub fn new(product_id: ProductId, execution_kind: ProductExecutionKind) -> Arc<Self> {
+	pub fn new(product_id: ProductId, execution_kind: ExecutableKind) -> Arc<Self> {
 		let product = ProductContext::new_with_execution(product_id, execution_kind);
 		let (current, _) = watch::channel(product);
 		Arc::new(Self { current, execution_kind })
@@ -775,7 +775,7 @@ mod tests {
 		let address = listener.local_addr()?;
 		let endpoint = format!("ws://{address}");
 		let product =
-			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let container = tempfile::NamedTempFile::new()?;
 		std::fs::write(container.path(), "installSandbox();")?;
 		let server = tokio::spawn(async move {
@@ -938,7 +938,7 @@ mod tests {
 		let (server_stream, _) = listener.accept().await?;
 		client.write_all(b"GET /boot").await?;
 		let product =
-			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let endpoint = format!("ws://{address}");
 
 		let client_exchange = async move {
@@ -986,7 +986,7 @@ mod tests {
 		let runtime = Arc::new(PendingRuntime::default());
 		let server_runtime = runtime.clone();
 		let product =
-			ProductSelection::new(ProductId::for_test("localhost:3000"), ProductExecutionKind::App);
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let product_updates = product.subscribe();
 		let server = tokio::spawn(async move {
 			let (stream, _) = listener.accept().await?;
@@ -1068,7 +1068,7 @@ mod tests {
 	#[test]
 	fn product_selection_compares_canonical_ids() {
 		let product =
-			ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ProductExecutionKind::App);
+			ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ExecutableKind::App);
 
 		assert_eq!(product.current().as_str(), "dotli.dot");
 		assert!(product.select(ProductId::for_test("localhost:3000")));
@@ -1078,8 +1078,7 @@ mod tests {
 
 	#[tokio::test]
 	async fn changing_product_notifies_connections() -> Result<()> {
-		let product =
-			ProductSelection::new(ProductId::for_test("first.dot"), ProductExecutionKind::App);
+		let product = ProductSelection::new(ProductId::for_test("first.dot"), ExecutableKind::App);
 		let mut connection = product.subscribe();
 
 		assert!(product.select(ProductId::for_test("second.dot")));
@@ -1450,7 +1449,7 @@ mod tests {
 	fn tapped_product(tapped: &Arc<DebugTappedRuntime>, product_id: &str) -> ProductRuntime {
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test(product_id),
-			ProductExecutionKind::App,
+			ExecutableKind::App,
 		);
 		tapped.product_runtime(product, Arc::new(DiscardingFrameSink))
 	}

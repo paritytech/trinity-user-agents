@@ -541,7 +541,7 @@ mod tests {
 #[cfg(feature = "runtime")]
 mod runtime {
 	use super::{ProductId, ProductIdError};
-	use crate::platform::ProductExecutionKind;
+	use crate::platform::ExecutableKind;
 
 	impl ProductId {
 		/// Parse only a supported `.li` share host, without a URL or network lookup.
@@ -553,20 +553,17 @@ mod runtime {
 		}
 
 		/// Name an executable without changing its product's nested namespace.
-		pub fn executable(&self, kind: ProductExecutionKind) -> Result<Self, ProductIdError> {
+		pub fn executable(&self, kind: ExecutableKind) -> Result<Self, ProductIdError> {
 			format!("{}.{self}", kind.dotns_label()).parse()
 		}
 
 		/// Remove one executable prefix while keeping a complete, valid product name.
 		pub fn executable_owner(&self) -> Result<Self, ProductIdError> {
 			if let Some((prefix, owner)) = self.as_str().split_once('.') {
-				let is_executable = [
-					ProductExecutionKind::App,
-					ProductExecutionKind::Widget,
-					ProductExecutionKind::Worker,
-				]
-				.iter()
-				.any(|kind| kind.dotns_label() == prefix);
+				let is_executable =
+					[ExecutableKind::App, ExecutableKind::Widget, ExecutableKind::Worker]
+						.iter()
+						.any(|kind| kind.dotns_label() == prefix);
 				if is_executable && owner.contains('.') {
 					return owner.parse();
 				}
@@ -594,9 +591,9 @@ mod runtime {
 		fn executable_owners_preserve_nested_product_names() {
 			let owner = ProductId::for_test("arena.coinflip.paseo");
 			for (kind, expected) in [
-				(ProductExecutionKind::App, "app.arena.coinflip.paseo"),
-				(ProductExecutionKind::Widget, "widget.arena.coinflip.paseo"),
-				(ProductExecutionKind::Worker, "worker.arena.coinflip.paseo"),
+				(ExecutableKind::App, "app.arena.coinflip.paseo"),
+				(ExecutableKind::Widget, "widget.arena.coinflip.paseo"),
+				(ExecutableKind::Worker, "worker.arena.coinflip.paseo"),
 			] {
 				let executable = owner.executable(kind).unwrap();
 				assert_eq!(executable, ProductId::for_test(expected));
@@ -622,15 +619,11 @@ mod runtime {
 		#[test]
 		fn executable_names_cannot_create_invalid_product_ids() {
 			assert!(ProductId::for_test("app.localhost.dot").executable_owner().is_err());
-			assert!(
-				ProductId::for_test("localhost:3000")
-					.executable(ProductExecutionKind::App)
-					.is_err()
-			);
+			assert!(ProductId::for_test("localhost:3000").executable(ExecutableKind::App).is_err());
 			let label = "a".repeat(63);
 			let longest =
 				ProductId::for_test(&format!("{label}.{label}.{label}.{}.dot", "b".repeat(60)));
-			assert!(longest.executable(ProductExecutionKind::Worker).is_err());
+			assert!(longest.executable(ExecutableKind::Worker).is_err());
 		}
 	}
 }

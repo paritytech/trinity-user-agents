@@ -707,8 +707,8 @@ fn core_key(key: &CoreStorageKey) -> String {
 	match key {
 		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
 		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-		CoreStorageKey::PermissionAuthorization(key) => {
-			format!("core:permission:{}:{:?}", key.scope, key.request)
+		CoreStorageKey::PermissionAuthorization { scope, request } => {
+			format!("core:permission:{scope}:{request:?}")
 		},
 		CoreStorageKey::AutoSigningKey { product_id } => {
 			format!("core:auto-signing-key:{product_id}")

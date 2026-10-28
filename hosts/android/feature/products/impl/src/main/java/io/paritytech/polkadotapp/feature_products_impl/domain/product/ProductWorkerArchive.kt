@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveToLocalFile
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.io.File
 import javax.inject.Inject
@@ -12,7 +12,7 @@ class ProductWorkerArchive @Inject constructor(
     private val dotNsResolver: DotNsResolver,
 ) {
     suspend fun file(productId: ProductId, path: String): Result<File> {
-        val workerHost = runCatching { ProductManifest.hostOf(productId, ProductExecutionKind.WORKER) }
+        val workerHost = runCatching { ProductManifest.hostOf(productId, ExecutableKind.WORKER) }
             .getOrElse { return Result.failure(it) }
         return dotNsResolver.resolveToLocalFile(workerHost.value).mapCatching { archive -> archive.fileInside(path) }
     }

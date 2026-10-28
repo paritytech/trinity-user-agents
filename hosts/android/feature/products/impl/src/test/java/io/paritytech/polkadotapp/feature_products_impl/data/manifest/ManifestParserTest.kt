@@ -11,8 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi.ProductExecutionKind
-import uniffi.truapi.productExecutionKindLabel
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.executableKindLabel
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -26,9 +26,9 @@ class ManifestParserTest {
         parser.parseRoot(rawText).isFailure,
     )
 
-    private fun rejectsExecutable(rawText: String, kind: ProductExecutionKind) = assertTrue(
+    private fun rejectsExecutable(rawText: String, kind: ExecutableKind) = assertTrue(
         "expected a rejection for $rawText",
-        parser.parseExecutable(rawText, kind, host("${productExecutionKindLabel(kind)}.coinflip.dot")).isFailure,
+        parser.parseExecutable(rawText, kind, host("${executableKindLabel(kind)}.coinflip.dot")).isFailure,
     )
 
     /**
@@ -36,7 +36,7 @@ class ManifestParserTest {
      * loads: failing it would take the product's chat down over a defect in its Pocket block.
      */
     private fun publishesNoCards(rawText: String) {
-        val worker = parser.parseExecutable(rawText, ProductExecutionKind.WORKER, host("worker.coinflip.dot"))
+        val worker = parser.parseExecutable(rawText, ExecutableKind.WORKER, host("worker.coinflip.dot"))
             .getOrNull() as? ProductExecutable.Worker
 
         assertEquals("expected a worker with no cards for $rawText", emptyList<PocketCardDefinition>(), worker?.pocketCards)
@@ -92,7 +92,7 @@ class ManifestParserTest {
     fun `parses app executable`() {
         val app = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"app","appVersion":[1,2,3]}""",
-            ProductExecutionKind.APP,
+            ExecutableKind.APP,
             host("app.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.App
 
@@ -104,7 +104,7 @@ class ManifestParserTest {
     fun `parses widget executable with dimensions`() {
         val widget = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"widget","appVersion":[0,1,0],"description":"w","dimensions":{"height":[1,2],"width":3}}""",
-            ProductExecutionKind.WIDGET,
+            ExecutableKind.WIDGET,
             host("widget.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Widget
 
@@ -117,7 +117,7 @@ class ManifestParserTest {
     fun `widget without width defaults to one column`() {
         val widget = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"widget","appVersion":[0,1,0],"dimensions":{"height":[2]}}""",
-            ProductExecutionKind.WIDGET,
+            ExecutableKind.WIDGET,
             host("widget.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Widget
 
@@ -128,7 +128,7 @@ class ManifestParserTest {
     fun `parses worker executable and formats semver build`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0,"abc"],"entrypoint":"index.js","includes":{"chat":true,"pocket":false}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -144,7 +144,7 @@ class ManifestParserTest {
         // user-facing surface and runs purely as background logic.
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":false}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -157,7 +157,7 @@ class ManifestParserTest {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
                "pocket":{"cards":[{"id":" loyalty ","title":"Loyalty","preview":"faces/loyalty.json"}]}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -181,7 +181,7 @@ class ManifestParserTest {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
                "pocket":{"cards":[{"id":"loyalty","title":"Loyalty","preview":"https://example.invalid/face.json"}]}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -195,7 +195,7 @@ class ManifestParserTest {
     fun `worker that includes pocket but publishes no cards is valid and has none`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -227,7 +227,7 @@ class ManifestParserTest {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
                "pocket":{"cards":[$cardJson]}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 
@@ -271,7 +271,7 @@ class ManifestParserTest {
         // NEXT LINE is not blank to Kotlin, but the core trims it away and would leave the card untitled.
         publishesNoCards(worker("\\u0085"))
 
-        val worker = parser.parseExecutable(worker(" \\u2615\\ufe0f Coffee "), ProductExecutionKind.WORKER, host("worker.coinflip.dot"))
+        val worker = parser.parseExecutable(worker(" \\u2615\\ufe0f Coffee "), ExecutableKind.WORKER, host("worker.coinflip.dot"))
             .getOrNull() as? ProductExecutable.Worker
         assertEquals("☕️ Coffee", worker?.pocketCards?.single()?.title)
     }
@@ -279,14 +279,14 @@ class ManifestParserTest {
     @Test
     fun `executables that do not conform are rejected`() {
         // Incomplete includes: RFC-0001 types it as Record<'chat' | 'pocket', boolean>.
-        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""", ProductExecutionKind.WORKER)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""", ExecutableKind.WORKER)
         // A record read from worker.<base> that declares kind=app must not load as a worker.
-        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}""", ProductExecutionKind.WORKER)
-        rejectsExecutable("""{"${'$'}v":2,"kind":"app","appVersion":[1,0,0]}""", ProductExecutionKind.APP)
-        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,2]}""", ProductExecutionKind.APP)
-        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,2,3,4,5]}""", ProductExecutionKind.APP)
-        rejectsExecutable("""{"${'$'}v":1,"kind":"app"}""", ProductExecutionKind.APP)
-        rejectsExecutable("""{"${'$'}v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[]}}""", ProductExecutionKind.WIDGET)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.WORKER)
+        rejectsExecutable("""{"${'$'}v":2,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.APP)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,2]}""", ExecutableKind.APP)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,2,3,4,5]}""", ExecutableKind.APP)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"app"}""", ExecutableKind.APP)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[]}}""", ExecutableKind.WIDGET)
     }
 
     // The worker record carries chat and Pocket together. A product that publishes a bad card must
@@ -296,7 +296,7 @@ class ManifestParserTest {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true,"pocket":true},
                "pocket":{"cards":[{"id":"a","title":"","preview":"a.json"}]}}""",
-            ProductExecutionKind.WORKER,
+            ExecutableKind.WORKER,
             host("worker.coinflip.dot"),
         ).getOrNull() as? ProductExecutable.Worker
 

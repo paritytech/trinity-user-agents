@@ -161,7 +161,10 @@ export type CoreStorageKey =
   /**
    * Persisted authorization for one product-scoped permission request.
    */
-  | { tag: "PermissionAuthorization"; value: PermissionStorageKey }
+  | {
+      tag: "PermissionAuthorization";
+      value: { scope: string; request: StoredPermissionRequest };
+    }
   /**
    * Persisted allowance-slot keys for one paired SSO session.
    */
@@ -317,6 +320,17 @@ export type DevicePermissionStatus =
   | "Denied"
   | "NotDetermined"
   | "NotApplicable";
+
+/**
+ * Trusted kind of product executable attached to a TrUAPI connection.
+ *
+ * Mirrors the executable kinds a product manifest declares. The variants are
+ * capability classes: a connection reaches an execution-gated service only
+ * when its kind matches exactly, so `App` and `Widget` carry the same
+ * capability and differ only in how the host presents them, and `Worker` is
+ * the only kind that may serve the Chat modality.
+ */
+export type ExecutableKind = "App" | "Widget" | "Worker";
 
 /**
  * What the host did with a request to show or hide the expanded card face.
@@ -544,21 +558,6 @@ export type PermissionAuthorizationStatus =
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
 
 /**
- * Encoded permission scope, which can be a full identity or a manifest label.
- */
-export interface PermissionStorageKey {
-  /**
-   * Stored full identifier or bare manifest label.
-   */
-  scope: string;
-
-  /**
-   * Permission encoded under this scope.
-   */
-  request: StoredPermissionRequest;
-}
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -577,19 +576,8 @@ export interface ProductContext {
   /**
    * Trusted kind of executable attached to this connection by the host.
    */
-  executionKind: ProductExecutionKind;
+  executionKind: ExecutableKind;
 }
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ProductExecutionKind = "App" | "Widget" | "Worker";
 
 /**
  * Review shown before a product resolves its own account subtree over SSO,
@@ -899,7 +887,13 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
     S.indexedTaggedUnion({
       AuthSession: [0, S._void] as const,
       PairingDeviceIdentity: [1, S._void] as const,
-      PermissionAuthorization: [2, PermissionStorageKey] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          scope: S.str,
+          request: StoredPermissionRequest,
+        }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
+      ] as const,
       AllowanceKeys: [
         3,
         S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
@@ -1000,6 +994,19 @@ export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
+);
+
+/**
+ * Trusted kind of product executable attached to a TrUAPI connection.
+ *
+ * Mirrors the executable kinds a product manifest declares. The variants are
+ * capability classes: a connection reaches an execution-gated service only
+ * when its kind matches exactly, so `App` and `Widget` carry the same
+ * capability and differ only in how the host presents them, and `Worker` is
+ * the only kind that may serve the Chat modality.
+ */
+export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
+  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
 );
 
 /**
@@ -1183,17 +1190,6 @@ export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
 );
 
 /**
- * Encoded permission scope, which can be a full identity or a manifest label.
- */
-export const PermissionStorageKey: S.Codec<PermissionStorageKey> = S.lazy(
-  (): S.Codec<PermissionStorageKey> =>
-    S.Struct({
-      scope: S.str,
-      request: StoredPermissionRequest,
-    }) as S.Codec<PermissionStorageKey>,
-);
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -1203,21 +1199,8 @@ export const ProductContext: S.Codec<ProductContext> = S.lazy(
   (): S.Codec<ProductContext> =>
     S.Struct({
       productId: ProductId,
-      executionKind: ProductExecutionKind,
+      executionKind: ExecutableKind,
     }) as S.Codec<ProductContext>,
-);
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ProductExecutionKind: S.Codec<ProductExecutionKind> = S.lazy(
-  (): S.Codec<ProductExecutionKind> => S.Status("App", "Widget", "Worker"),
 );
 
 /**

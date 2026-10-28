@@ -96,7 +96,7 @@ Swift's `try ProductId("my-product.dot")` and Kotlin's
 owned by the native application. Browser hosts can use their existing worker
 runtime's `parseProductId` method for the same validation and normalization.
 Native callers use Rust for product names, executable ownership and share-link parsing.
-Both native hosts use Rust's `ProductExecutionKind` for executable selection and
+Both native hosts use Rust's `ExecutableKind` for executable selection and
 its label mapping for manifest discriminators.
 Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
 Product links require an explicitly supplied network suffix; both direct names

@@ -6,7 +6,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
@@ -26,6 +26,6 @@ class RealProductContentWarmUp @Inject constructor(
             .map {}
 
     // Only the TrUAPI runtime serves a card its widget; the native runtime still serves the app under it.
-    private fun cardExecutable(): ProductExecutionKind =
-        if (runtimeSettings.isTrUAPIRuntimeEnabled()) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
+    private fun cardExecutable(): ExecutableKind =
+        if (runtimeSettings.isTrUAPIRuntimeEnabled()) ExecutableKind.WIDGET else ExecutableKind.APP
 }

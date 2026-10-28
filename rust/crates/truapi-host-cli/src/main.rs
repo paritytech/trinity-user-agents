@@ -71,7 +71,7 @@ use truapi::{
 	},
 	latest::GenericError,
 	platform::{
-		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+		ChatPlatform, ExecutableKind, HostInfo, PermissionStatusHost, PlatformInfo, ProductId,
 	},
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
@@ -364,10 +364,10 @@ enum ExecutionKind {
 }
 
 impl ExecutionKind {
-	fn context(self) -> ProductExecutionKind {
+	fn context(self) -> ExecutableKind {
 		match self {
-			Self::App => ProductExecutionKind::App,
-			Self::Worker => ProductExecutionKind::Worker,
+			Self::App => ExecutableKind::App,
+			Self::Worker => ExecutableKind::Worker,
 		}
 	}
 
@@ -4656,7 +4656,7 @@ mod cli_tests {
 			assert!(socket.exists());
 			let product = frame_server::ProductSelection::new(
 				ProductId::for_test("script-cleanup.testnet"),
-				ProductExecutionKind::App,
+				ExecutableKind::App,
 			);
 			let result = with_frame_server(
 				Arc::new(UnusedRuntimeFactory),

@@ -107,7 +107,7 @@ import uniffi.truapi.NativeBalanceCallbacks
 import uniffi.truapi.NativePaymentCallbacks
 import uniffi.truapi.NativeScannerCallbacks
 import uniffi.truapi.NativeTopUpCallbacks
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -765,7 +765,7 @@ interface ScannerHostBridge {
     @Throws(HostRejection::class)
     suspend fun scanCode(
         productId: ProductId,
-        executionKind: ProductExecutionKind,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan
 }
@@ -773,7 +773,7 @@ interface ScannerHostBridge {
 private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
     override suspend fun scanCode(
         productId: ProductId,
-        executionKind: ProductExecutionKind,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }

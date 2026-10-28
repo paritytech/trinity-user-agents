@@ -14,7 +14,7 @@ protocol ProductManifestParsing {
     func parseRoot(_ rawText: String?) -> RootManifest?
     func parseExecutable(
         _ rawText: String?,
-        kind: ProductExecutionKind,
+        kind: ExecutableKind,
         identifier: ProductId
     ) -> ProductExecutable?
 }
@@ -80,7 +80,7 @@ struct ProductManifestParser: ProductManifestParsing {
     /// `identifier` is the subname the record was read from, and the name its archive resolves under.
     func parseExecutable(
         _ rawText: String?,
-        kind: ProductExecutionKind,
+        kind: ExecutableKind,
         identifier: ProductId
     ) -> ProductExecutable? {
         guard let rawText, !rawText.isEmpty else { return nil }
@@ -93,7 +93,7 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("\(identifier): unsupported $v=\(String(describing: dto.version))")
         }
 
-        let kindLabel = productExecutionKindLabel(kind: kind)
+        let kindLabel = executableKindLabel(kind: kind)
         guard dto.kind == kindLabel else {
             return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kindLabel)'")
         }

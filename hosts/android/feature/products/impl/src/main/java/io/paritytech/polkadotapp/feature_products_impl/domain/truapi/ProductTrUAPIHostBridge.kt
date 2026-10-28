@@ -52,7 +52,7 @@ import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
@@ -277,7 +277,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         productId: ProductId,
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
-        kind: ProductExecutionKind,
+        kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onReadyToInject: suspend (bootstrap: String) -> Unit,

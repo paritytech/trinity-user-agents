@@ -26,7 +26,7 @@ import {
   CoreStorageKey,
   PermissionDecision,
   ProductContext,
-  ProductExecutionKind,
+  ExecutableKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
@@ -613,9 +613,9 @@ describe("ProductContext codec", () => {
   // ProductContext travels the wasm callback boundary encoded in Rust and
   // decoded here.
   it("product context encoding matches the Rust platform codec", () => {
-    expect([...ProductExecutionKind.enc("App")]).toEqual([0]);
-    expect([...ProductExecutionKind.enc("Widget")]).toEqual([1]);
-    expect([...ProductExecutionKind.enc("Worker")]).toEqual([2]);
+    expect([...ExecutableKind.enc("App")]).toEqual([0]);
+    expect([...ExecutableKind.enc("Widget")]).toEqual([1]);
+    expect([...ExecutableKind.enc("Worker")]).toEqual([2]);
 
     const context = {
       productId: asProductId("app.dot"),

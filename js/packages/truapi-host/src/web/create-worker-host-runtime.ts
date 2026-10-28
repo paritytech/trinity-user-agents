@@ -5,7 +5,7 @@ import type {
   LogLevel,
   PermissionAuthorizationRequest,
   PermissionAuthorizationStatus,
-  ProductExecutionKind,
+  ExecutableKind,
   RequiredHostCallbacks,
   TrUApiProductProvider,
   WorkerDemandChange,
@@ -60,7 +60,7 @@ export interface WorkerPairingHostRuntime {
   readonly coreWireSchemaHash: string | undefined;
   createProvider(product: {
     productId: ProductId;
-    executionKind?: ProductExecutionKind;
+    executionKind?: ExecutableKind;
   }): Promise<TrUApiProductProvider>;
   disconnectSession(): Promise<void>;
   cancelPairing(): void;

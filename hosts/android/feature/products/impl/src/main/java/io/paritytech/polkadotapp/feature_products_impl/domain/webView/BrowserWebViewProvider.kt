@@ -29,7 +29,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 
 /**
@@ -55,7 +55,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted private val scope: CoroutineScope,
     @Assisted private val fixedProductId: ProductId?,
     @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
-    @Assisted private val servedExecutable: ProductExecutionKind,
+    @Assisted private val servedExecutable: ExecutableKind,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
     @AssistedFactory
     interface Factory {
@@ -66,7 +66,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
             scope: CoroutineScope,
             fixedProductId: ProductId? = null,
             @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
-            servedExecutable: ProductExecutionKind = ProductExecutionKind.APP,
+            servedExecutable: ExecutableKind = ExecutableKind.APP,
         ): BrowserWebViewProvider
     }
 

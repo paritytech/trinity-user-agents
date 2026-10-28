@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::platform::{
-	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind, ProductId,
+	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	ProductContext, ProductId,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -201,7 +201,7 @@ impl NativeTrUApiHostRuntime {
 			product_control: Arc::new(Mutex::new(None)),
 		});
 
-		if product.execution_kind == ProductExecutionKind::Worker {
+		if product.execution_kind == ExecutableKind::Worker {
 			let previous = self
 				.worker_executions
 				.lock()
@@ -1109,8 +1109,8 @@ mod tests {
 		PairedSsoPeer,
 		native::tests::*,
 		platform::{
-			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-			ProductExecutionKind,
+			ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+			PermissionDecision,
 		},
 	};
 	use futures::stream::StreamExt;
@@ -1131,7 +1131,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 		let worker = host
@@ -1140,7 +1140,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::Worker),
+				native_execution_config("myapp.dot", ExecutableKind::Worker),
 			)
 			.expect("open worker execution");
 
@@ -1176,7 +1176,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 
@@ -1228,7 +1228,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::App),
+				native_execution_config("shared.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let chat_host = Arc::new(EventCallbacks::new());
@@ -1238,7 +1238,7 @@ mod tests {
 				Some(chat_host.clone()),
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("Chat execution should open");
 
@@ -1256,7 +1256,7 @@ mod tests {
 				Some(chat_host.clone()),
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("replacement Chat execution should open");
 		assert!(matches!(
@@ -1282,7 +1282,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chat.dot", ProductExecutionKind::Worker),
+				native_execution_config("chat.dot", ExecutableKind::Worker),
 			)
 			.expect("Worker execution should open");
 
@@ -1332,7 +1332,7 @@ mod tests {
 					None,
 					None,
 					None,
-					native_execution_config(product_id, ProductExecutionKind::Widget),
+					native_execution_config(product_id, ExecutableKind::Widget),
 				)
 				.expect("Widget execution should open");
 			(execution, callbacks)
@@ -1368,7 +1368,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let mut shared_responses = host.events.register_chain(41, 0).unwrap();
@@ -1402,7 +1402,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1438,7 +1438,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1465,7 +1465,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("motion.dot", ProductExecutionKind::App),
+				native_execution_config("motion.dot", ExecutableKind::App),
 			)
 			.unwrap();
 		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
@@ -1507,7 +1507,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::App),
+				native_execution_config("fetch.dot", ExecutableKind::App),
 			)
 			.unwrap()
 		};

@@ -25,9 +25,9 @@ use std::{
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
 use crate::platform::{
-	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-	PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-	ProductExecutionKind, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
+	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
+	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
+	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
 	ScannerPlatform,
 };
 use futures::{
@@ -601,9 +601,9 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 		match get_optional_string_at(value, "executionKind", "runtimeConfig.executionKind")?
 			.as_deref()
 		{
-			None | Some("App") => ProductExecutionKind::App,
-			Some("Widget") => ProductExecutionKind::Widget,
-			Some("Worker") => ProductExecutionKind::Worker,
+			None | Some("App") => ExecutableKind::App,
+			Some("Widget") => ExecutableKind::Widget,
+			Some("Worker") => ExecutableKind::Worker,
 			Some(other) => {
 				return Err(JsValue::from_str(&format!(
 					"runtimeConfig.executionKind must be App, Widget or Worker, got {other:?}"

@@ -528,7 +528,7 @@ impl MethodEmission {
 		if let Some(required) = self.required_execution.as_ref() {
 			writeln!(
 				out,
-				"        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::{required});"
+				"        let execution_allowed = dispatcher.allows_execution(ExecutableKind::{required});"
 			)
 			.unwrap();
 		}
@@ -645,7 +645,7 @@ fn write_imports(out: &mut String, traits: &[&TraitDef]) {
 		r#"
         }};
         use truapi::versioned::{{self, Versioned}};
-        use crate::platform::ProductExecutionKind;
+        use crate::platform::ExecutableKind;
 
         use crate::dispatcher::Dispatcher;
         use crate::frame::downgrade_call_error;

@@ -1,5 +1,5 @@
 import struct TrUAPIHost.ProductId
-import enum TrUAPIHost.ProductExecutionKind
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 import Products
 
@@ -39,7 +39,7 @@ struct SPAConfiguration {
 
     /// Which of the product's executables this screen serves. A Pocket card
     /// opens the widget, everything else the app.
-    var executable: ProductExecutionKind {
+    var executable: ExecutableKind {
         cardFace == nil ? .app : .widget
     }
 

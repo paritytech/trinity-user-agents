@@ -138,7 +138,7 @@ pub struct ProductContext {
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
 	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// Trusted kind of product executable attached to a TrUAPI connection.
@@ -150,7 +150,7 @@ pub struct ProductContext {
 /// the only kind that may serve the Chat modality.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ProductExecutionKind {
+pub enum ExecutableKind {
 	/// Visible full-page entrypoint such as `app/index.html`.
 	#[default]
 	App,
@@ -161,7 +161,7 @@ pub enum ProductExecutionKind {
 	Worker,
 }
 
-impl ProductExecutionKind {
+impl ExecutableKind {
 	/// The dotNS prefix used for this kind's executable records.
 	pub fn dotns_label(self) -> &'static str {
 		match self {
@@ -279,11 +279,11 @@ fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigVali
 impl ProductContext {
 	/// A product context for an app.
 	pub fn new(product_id: ProductId) -> Self {
-		Self::new_with_execution(product_id, ProductExecutionKind::App)
+		Self::new_with_execution(product_id, ExecutableKind::App)
 	}
 
 	/// A product context for a host-selected executable kind.
-	pub fn new_with_execution(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
+	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
 		Self { product_id, execution_kind }
 	}
 }
@@ -1210,7 +1210,12 @@ pub enum CoreStorageKey {
 	/// Pairing device identity used during SSO flows.
 	PairingDeviceIdentity,
 	/// Persisted authorization for one product-scoped permission request.
-	PermissionAuthorization(PermissionStorageKey),
+	PermissionAuthorization {
+		/// Stored full identifier or bare manifest label.
+		scope: String,
+		/// Permission encoded under this scope.
+		request: StoredPermissionRequest,
+	},
 	/// Persisted allowance-slot keys for one paired SSO session.
 	AllowanceKeys {
 		/// Stable host-derived SSO session id.
@@ -1298,15 +1303,6 @@ pub enum CoreStorageKey {
 	FundingSessionPack,
 }
 
-/// Encoded permission scope, which can be a full identity or a manifest label.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct PermissionStorageKey {
-	/// Stored full identifier or bare manifest label.
-	pub scope: String,
-	/// Permission encoded under this scope.
-	pub request: StoredPermissionRequest,
-}
-
 /// Permission storage payload, whose targets can be bare manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum StoredPermissionRequest {
@@ -1392,10 +1388,10 @@ pub fn describe_core_storage_key(
 	let (kind, owner) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-		CoreStorageKey::PermissionAuthorization(key) => {
-			let owner = match key.scope.parse() {
+		CoreStorageKey::PermissionAuthorization { scope, .. } => {
+			let owner = match scope.parse() {
 				Ok(product_id) => CoreStorageKeyOwner::Product(product_id),
-				Err(_) if is_dns_label(&key.scope) => CoreStorageKeyOwner::ProductLabel(key.scope),
+				Err(_) if is_dns_label(&scope) => CoreStorageKeyOwner::ProductLabel(scope),
 				Err(_) => return Err(CoreStorageKeyDescriptionError::InvalidEncoding),
 			};
 			("PermissionAuthorization", Some(owner))
@@ -1440,10 +1436,7 @@ impl CoreStorageKey {
 		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Self {
-		Self::PermissionAuthorization(PermissionStorageKey {
-			scope: product_id.to_string(),
-			request: request.into(),
-		})
+		Self::PermissionAuthorization { scope: product_id.to_string(), request: request.into() }
 	}
 
 	/// Persisted authorization key for one product-scoped device permission.
@@ -1512,12 +1505,12 @@ impl CoreStorageKey {
 		product_id: &ProductId,
 		target_product_id: &ProductId,
 	) -> Self {
-		Self::PermissionAuthorization(PermissionStorageKey {
+		Self::PermissionAuthorization {
 			scope: product_id.bare_label().to_string(),
 			request: StoredPermissionRequest::AccountAccess {
 				target: target_product_id.bare_label().to_string(),
 			},
-		})
+		}
 	}
 
 	/// Signature approval shared by the product's executable subnames.
@@ -1526,13 +1519,13 @@ impl CoreStorageKey {
 		target_product_id: &ProductId,
 		kind: CrossProductSignatureKind,
 	) -> Self {
-		Self::PermissionAuthorization(PermissionStorageKey {
+		Self::PermissionAuthorization {
 			scope: product_id.bare_label().to_string(),
 			request: StoredPermissionRequest::CrossProductSignature {
 				target: target_product_id.bare_label().to_string(),
 				kind,
 			},
-		})
+		}
 	}
 }
 
@@ -2183,13 +2176,13 @@ mod tests {
 		// `product context encoding matches the Rust platform codec` in
 		// `js/packages/truapi-host/src/host-callbacks-adapter.test.ts`, which
 		// asserts the same bytes through that generated codec.
-		assert_eq!(ProductExecutionKind::App.encode(), [0]);
-		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
-		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
+		assert_eq!(ExecutableKind::App.encode(), [0]);
+		assert_eq!(ExecutableKind::Widget.encode(), [1]);
+		assert_eq!(ExecutableKind::Worker.encode(), [2]);
 
 		let context = ProductContext::new_with_execution(
 			ProductId::for_test("app.dot"),
-			ProductExecutionKind::Worker,
+			ExecutableKind::Worker,
 		);
 		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
 		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
@@ -2201,7 +2194,7 @@ mod tests {
 		// apply the same product-id policy as the constructor so decoding
 		// cannot mint a context with an unscoped or empty product id.
 		for product_id in ["evil.com", "", "  "] {
-			let frame = (product_id.to_string(), ProductExecutionKind::App).encode();
+			let frame = (product_id.to_string(), ExecutableKind::App).encode();
 			assert!(
 				ProductContext::decode(&mut frame.as_slice()).is_err(),
 				"{product_id:?} must not decode into a ProductContext"
@@ -2214,7 +2207,7 @@ mod tests {
 		// Derivation and product-scoped storage are keyed by `product_id`, so
 		// a non-canonical id off the wire has to land in the same scope the
 		// constructor would produce rather than opening a second one.
-		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
+		let frame = ("App.DOT".to_string(), ExecutableKind::App).encode();
 		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
 		assert_eq!(decoded.product_id.as_str(), "app.dot");
 		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));

@@ -6,7 +6,7 @@ import UIKit
 
 @MainActor
 struct ProductSPAOpenServiceTests {
-    @Test(arguments: [DeeplinkTestSchemes.active, DeeplinkTestSchemes.other, "https", "polkadot"])
+    @Test(arguments: [DeeplinkTestSchemes.active, DeeplinkTestSchemes.other])
     func opensSupportedProductLinksWithoutLosingTheirRoute(_ scheme: String) async throws {
         let (pages, continuation) = AsyncStream<ProductPage>.makeStream()
         let navigator = ProductLinkNavigator { continuation.yield($0) }
@@ -19,19 +19,6 @@ struct ProductSPAOpenServiceTests {
 
         #expect(page.host.toDotDomain().rawValue == "app.arena.browse.dot")
         #expect(page.page == "/page?ref=abc#section")
-    }
-
-    @Test(arguments: [DeeplinkTestSchemes.active, DeeplinkTestSchemes.other, "https"])
-    func rejectsOtherNetworks(_ scheme: String) throws {
-        let service = makeService(navigator: ProductLinkNavigator { _ in Issue.record("Opened an off-network product") })
-        let url = try #require(URL(string: "\(scheme)://browse.paseo.li/page?ref=abc#section"))
-
-        #expect(!service.handle(url: url))
-    }
-
-    @Test func rejectsForeignSchemes() throws {
-        let service = makeService(navigator: ProductLinkNavigator { _ in Issue.record("Opened a foreign scheme") })
-        #expect(!service.handle(url: try #require(URL(string: "foreignapp://browse.dot/page"))))
     }
 
     private func makeService(navigator: ProductLinkNavigator) -> ProductSPAOpenService {

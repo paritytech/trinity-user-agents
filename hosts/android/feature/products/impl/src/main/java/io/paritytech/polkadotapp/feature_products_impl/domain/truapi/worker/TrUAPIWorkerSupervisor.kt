@@ -31,7 +31,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -142,7 +142,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 productId,
                 chainDirectory.resolve(),
                 ignoredNavigation(),
-                ProductExecutionKind.WORKER,
+                ExecutableKind.WORKER,
                 chat = if (script.includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {

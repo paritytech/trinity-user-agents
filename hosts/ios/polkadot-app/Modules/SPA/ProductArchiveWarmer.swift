@@ -1,5 +1,5 @@
 import struct TrUAPIHost.ProductId
-import enum TrUAPIHost.ProductExecutionKind
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 @preconcurrency import Products
 
@@ -19,7 +19,7 @@ struct ProductArchiveWarmer: Sendable {
 
     /// Warms the archive `kind` is served from, which is not the same name for
     /// every surface: a Pocket card opens the widget where a tab opens the app.
-    func warm(_ productId: ProductId, serving kind: ProductExecutionKind) async throws {
+    func warm(_ productId: ProductId, serving kind: ExecutableKind) async throws {
         let contentId = try await products.resolve(productId).contentId(for: kind)
 
         _ = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)

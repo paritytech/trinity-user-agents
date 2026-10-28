@@ -117,14 +117,14 @@ pub fn product_id_matches_network(product_id: ProductId, network_suffix: String)
 #[uniffi::export]
 pub fn product_id_executable(
 	product_id: ProductId,
-	kind: crate::platform::ProductExecutionKind,
+	kind: crate::platform::ExecutableKind,
 ) -> Result<ProductId, ProductIdError> {
 	product_id.executable(kind)
 }
 
 /// The manifest discriminator and dotNS prefix for an executable kind.
 #[uniffi::export]
-pub fn product_execution_kind_label(kind: crate::platform::ProductExecutionKind) -> String {
+pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
 	kind.dotns_label().to_owned()
 }
 
