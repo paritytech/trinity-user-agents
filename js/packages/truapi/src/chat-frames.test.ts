@@ -198,7 +198,6 @@ const preview: T.ChatRoomPreview = {
         removed: true,
     },
     unseenReactions: 2,
-    lastCall: call,
 };
 
 /** The frame the snapshot keeps under `name`. */

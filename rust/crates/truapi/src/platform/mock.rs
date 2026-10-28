@@ -2331,7 +2331,6 @@ mod tests {
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
-			last_call: None,
 		};
 		let update = latest::ChatFeedUpdate::StatusChanged {
 			message_id: "m1".to_string(),
