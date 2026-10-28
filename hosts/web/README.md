@@ -711,17 +711,18 @@ sample data or from the [invitation demo](#invitation-demo-prototype).
 
 ### Test accounts
 
-On a dev server, the Account picker lists three test accounts, **Alice**, **Bob** and **Carol (test account)**, under
-**Test accounts**, below saved wallets under **Your wallets**. Each is a wallet built into the dev server from a public
-BIP-39 test vector (`fixtures/invitations/test-users.ts`), under a storage scope of its own (`test-account:<id>`). It
-signs in, signs out and runs as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account
-status** follow the same path and read what the core and the chain report for its account. It has no **Forget**, and the
-picker names it alone until it has signed in once. **About test accounts**, a closed fold, shows while the picker points
-at one.
+The Account picker lists three test accounts, **Alice**, **Bob** and **Carol (test account)**, under **Test accounts**,
+below saved wallets under **Your wallets**, in a build as well as on a dev server. Each is a wallet built into the host
+from a public BIP-39 test vector (`src/platform/dev-accounts.ts`), under a storage scope of its own
+(`test-account:<id>`). Visiting the host signs in to none of them: pick one and choose **Sign in**. It signs in, signs
+out and runs as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account status** follow
+the same path and read what the core and the chain report for its account. It has no **Forget**, and the picker names it
+alone until it has signed in once. **About test accounts**, a closed fold, shows while the picker points at one.
 
-The phrases are public, so anyone can sign as these accounts: keep nothing of value on them. The host registers and
-funds nothing for them; an account is registered elsewhere, and once it is, the chain says so here as for any wallet.
-Chat still refuses the Substrate development phrase (`src/chat/nova/gate.ts`), which is not one of these.
+The phrases are public, and so are in every build: anyone can sign as these accounts, so keep nothing of value on them.
+The host registers and funds nothing for them; an account is registered elsewhere, and once it is, the chain says so
+here as for any wallet. Chat still refuses the Substrate development phrase (`src/chat/nova/gate.ts`), which is not one
+of these.
 
 ### Invitation demo (prototype)
 
@@ -891,7 +892,7 @@ The tools' header holds the brand mark, **Developer**, a **Dev wallets** tag, th
 it are five tabs:
 
 - **Account:** the core's state, the network, the wallet (sign in, sign out, forget), Import a wallet and Account
-  status. On a dev server its picker also lists the test accounts.
+  status. Its picker also lists the test accounts.
 - **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
