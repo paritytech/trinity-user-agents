@@ -1,5 +1,89 @@
 # @parity/truapi-host
 
+## 0.27.0
+
+### Major Changes
+
+- 0bd0f9b: Host integrations implement `requestWorkerTransition(productId, transition)` for worker lifecycle requests.
+  `Start` requires the worker to run; `Stop` allows it to stop. Native Rust integrations use
+  `request_worker_transition`, and the ledger controller is `WorkerController` with `install_worker_controller`.
+
+### Minor Changes
+
+- ff34f26: The core builds its own extrinsics through one builder: statement-store and long-term-storage allowances,
+  PGAS claims, Bulletin preimages and the CLI's dotNS registrations. Every extrinsic is mortal, born at the finalized
+  head for 64 blocks, and signs the genesis the host configured. Its version follows the new
+  `transactionExtensionVersions` host callback, in the `extrinsicVersion` group: the chains the host builds as V5
+  general transactions and the transaction extension pipeline each uses; every other chain is V4. A web host
+  implementing `RequiredHostCallbacks` has to answer it; an empty list builds every chain as V4, which leaves the core
+  unable to build the allowance, PGAS and dotNS extrinsics, since those exist only as V5. The `truapi-host` CLI answers
+  People and Asset Hub on pipeline 1.
+- d61da55: `system.info()` reports `truapiVersion`, the TrUAPI release whose runtime the host embeds, so a product can
+  tag telemetry with it. The runtime fills it in on every host, including iOS and Android. A product built before this
+  release ignores the field. A product built with it cannot decode the answer of an older host, so it should treat that
+  error as the version being unknown.
+- 8c23b5e: Add the `NftPurse` API. Native hosts create purses owned by the calling product and list an owner's purses,
+  asking for the new `NftPurseRead` permission before showing Root's or another product's. Its other methods answer
+  unavailable.
+- e9b6d73: Native hosts serve `NftPurse.createItems` and `NftPurse.queryPurse`. `createItems` derives 1 to 1000
+  receiving keys in a purse, on the hard path `//nft//<purse>//<installation>//<index>` under the installation the host
+  reports through the new `currentInstallation` host callback. `queryPurse` pages through the keys that hold an NFT on
+  Asset Hub at the best block, at most 100 at a time. Another owner's purse needs the `NftPurseRead` grant for both. The
+  browser core answers both `Unsupported`.
+- e6621cd: Account access, operation reviews and cross-product signature approvals go through one `ProductConsent` per
+  runtime. An Allow once answer to an account-access prompt now covers that product's later requests until restart,
+  lock, a wallet switch or that product's reset, only one account-access prompt is shown at a time, and a request that
+  waited for it reuses the answer. Requests from a paired host share the phone's stored decisions and are always
+  reviewed on the phone.
+- 747865c: If a product sends a request in a version the host doesn't know, the host rejects it with an
+  `UnsupportedVersion` error instead of failing to decode it, and the call fails as `Unsupported`. Older hosts still
+  answer `MalformedFrame`.
+
+### Patch Changes
+
+- f67e9cb: The core closes a chain connection on which a request has waited 30 s with no frame arriving. The waiting
+  requests fail with `json-rpc connection closed: no frame for 30s while a request waited`, the host is told to close
+  the socket, and the next call opens a new connection without waiting for the host to miss a pong. The deadline
+  outlasts the largest frame a chain sends on a slow link, the 1.3 MB Asset Hub runtime metadata, so a slow answer is
+  not mistaken for a dead socket.
+- 662da7f: Native hosts screen a product-supplied chat room icon through the core rather than reimplementing it.
+  `screen_chat_icon` applies the rules `create_room` and `register_bot` already apply, for a host to call wherever it
+  takes a room icon from a product, and raises `NativeChatFieldError`.
+- f67e9cb: The SDK warns `[truapi] host link lost: <reason>` with the close reason each time its host connection drops,
+  including each refused redial, and the host container warns `[truapi] host link back after N ms` when the link
+  returns, timed from the first loss. The core warns when a json-rpc reply takes more than 5 s, when a json-rpc
+  connection closes while requests wait, naming each with its age, and when `createTransaction` waits more than 2 s for
+  the current block or cannot get it.
+- f67e9cb: Every connection the runtime opens to a chain shares the output of the runtime calls that depend only on the
+  runtime, such as the metadata. Products that start together and the transaction builder of the host download the 1 to
+  1.5 MB metadata of each runtime once between them, keyed by the hash of the runtime code at the block they ask about.
+  A product that asks while the download is on its way waits for it, and is told the operation is inaccessible if that
+  download fails, so it asks again.
+- c18c267: Runtime, CLI, and generated WASM host callbacks use shared error conversions while retaining protocol error
+  variants and JavaScript rejection values. CLI storage and session failures retain nested causes, and allowance
+  exhaustion is recognized through the error chain.
+- f67e9cb: A call made while the SDK has lost its host connection waits for the connection it redials and is sent once
+  that connection completes its handshake. A call or subscription whose frame already reached the host fails with
+  `ConnectionResetError`, since the host may have started it. The waiting call fails with the same error when the SDK
+  stops redialing: the page is hidden, the retries are spent, or the connection was disposed. The 120 s request deadline
+  still bounds the wait.
+- Updated dependencies [f67e9cb]
+- Updated dependencies [b5e1aa4]
+- Updated dependencies [0eb93a9]
+- Updated dependencies [ff34f26]
+- Updated dependencies [d61da55]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [f231850]
+- Updated dependencies [dce190f]
+- Updated dependencies [8c23b5e]
+- Updated dependencies [e9b6d73]
+- Updated dependencies [0c77379]
+- Updated dependencies [747865c]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [c18c267]
+- Updated dependencies [f67e9cb]
+  - @parity/truapi@0.27.0
+
 ## 0.26.0
 
 ### Major Changes

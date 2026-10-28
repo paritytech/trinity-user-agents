@@ -166,23 +166,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Everything the bootstrap reads: the crates and their lockfile, the
-      # toolchain pins, codegen and its npm manifests, the TypeScript client and
-      # container bundled into the host, the scripts that stage the bindings,
-      # the Xcode pin, and the packaging below.
       - name: Hash the core inputs
         id: key
-        run: |
-          set -euo pipefail
-          inputs=(
-            rust ios js/packages/truapi js/container scripts
-            Makefile Cargo.toml Cargo.lock nightly-toolchain
-            package.json package-lock.json
-            .github/actions/bootstrap-ios-core .github/actions/rust-nightly
-            hosts/ios/.github/actions/install .github/workflows/ios-app.yml
-          )
-          hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
-          echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/ios-core-key
 
       - name: Find a core main built from them
         id: find
@@ -279,7 +265,7 @@ jobs:
       # name. Overwriting rather than adding the attempt to the name, because
       # "re-run failed jobs" does not rerun core, and the app jobs would then
       # look for a name that was never uploaded.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}/ios-core.tgz
@@ -291,7 +277,7 @@ jobs:
       # them. Published again when main reuses it, so a core in use never expires.
       - name: Publish the core for reuse
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ needs.core-lookup.outputs.key }}
           path: ${{ runner.temp }}/ios-core.tgz
@@ -801,7 +787,7 @@ jobs:
           KEY: ${{ needs.bindings.outputs.key }}
         run: echo "$KEY $GITHUB_SHA" > "$RUNNER_TEMP/bindings.txt"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ needs.bindings.outputs.key }}
           path: ${{ runner.temp }}/bindings.txt
