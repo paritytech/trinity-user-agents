@@ -133,8 +133,8 @@ grocery code has no prefix to give, and a required prefix would not help anyway:
 there. An App or Widget may scan only while it is the screen the user sees; the host checks that. A Worker has no screen
 of its own, so it may scan only within 5 seconds of the user tapping something the host drew for it, such as its card
 face. Chat messages and actions do not count, because they can come from other people. Either way the host application
-has to be in front when the viewfinder would open. Anything else is answered `NotVisible` and no viewfinder opens. A product therefore cannot open the viewfinder from the background, or open it
-again each time the user closes it.
+has to be in front when the viewfinder would open. Anything else is answered `NotVisible` and no viewfinder opens. A
+product therefore cannot open the viewfinder from the background, or open it again each time the user closes it.
 
 **No permission.** The product never touches the camera, and the user pointing the viewfinder at a code is the consent.
 The OS still asks the host application for camera access the first time. The `Camera` permission and `getUserMedia` do
