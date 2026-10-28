@@ -71,10 +71,10 @@ pub enum NavigateDecision {
 		/// Card named by the `card` query parameter.
 		card_id: String,
 		/// Every other query parameter of an `open` link, still encoded and in
-		/// link order, for the card's page to load with after
-		/// `card`. Empty when there are none, and for `add`, which loads no
-		/// page. Anyone can write the link, so the page reads these as a hint
-		/// of what to show, never as proof of anything.
+		/// link order, for the card's page to load with after `card`. Empty
+		/// when there are none, and for `add`, which loads no page. Anyone can
+		/// write the link, so the page reads these as a hint of what to show,
+		/// never as proof of anything.
 		page_query: String,
 		/// Normalized `polkadotapp://` form of the deeplink, which is what
 		/// `navigate_to` hands the host. The product, card and page parameters
@@ -216,8 +216,8 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			return Some(NavigateDecision::Reject { reason: error.to_string() });
 		},
 	};
-	// Copied still encoded rather than decoded and encoded again, so
-	// the page reads its own params unchanged.
+	// Copied still encoded rather than decoded and encoded again, so the page
+	// reads its own params unchanged.
 	let page_query = match action {
 		PocketDeeplinkAction::Open => url
 			.query()
