@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
@@ -16,11 +17,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownCha
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
+import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
 import kotlinx.coroutines.flow.flowOf
@@ -30,6 +33,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCustomMessage
+import uniffi.truapi.ChatMessageBody
+import uniffi.truapi.ChatMessageOrigin
+import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatPreviewReaction
 import uniffi.truapi.ChatReaction
@@ -40,6 +46,7 @@ import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ChatMessage as CoreChatMessage
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
@@ -230,6 +237,33 @@ class ProductChatHostBridgeTest {
             )
         }
         coVerify { messaging.deleteRoom(room) }
+    }
+
+    // The chat list draws a custom message with the renderer of the product that sent it, as it draws a posted one.
+    @Test
+    fun `a custom last message is drawn by the renderer of the product`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
+        val custom = CoreChatMessage(
+            messageId = "m1",
+            origin = ChatMessageOrigin("contact"),
+            timestamp = 5uL,
+            body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll"),
+            status = ChatMessageStatus.DELIVERED,
+            replyTo = null,
+            replyPreview = null,
+            editedAt = null,
+            reactions = emptyList(),
+            request = false,
+        )
+
+        ProductChatHostBridge(productId, messaging).setRoomPreview(ROOM, ChatRoomPreview(null, null, custom, null, 0u))
+
+        val drawn = ChatMessage.Content.Custom(
+            rendererId = productId.toChatExtensionId(),
+            content = Result.success(ProductsMessageContent("poll", byteArrayOf(1, 2).toDataByteArray(), "A poll")),
+        )
+        coVerify { messaging.setRoomPreview(ProductChatIdParameter(ROOM), match { it.lastMessage?.content == drawn }) }
     }
 
     @Test

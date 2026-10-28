@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.declarations
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRendererId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
@@ -18,16 +17,18 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.toDomain
 import kotlinx.serialization.encodeToByteArray
 import timber.log.Timber
 
-fun ChatRoomDeclarationsLocal.toDomain(): ChatRoomDeclarations = ChatRoomDeclarations(
+// A preview message keeps the stored content of a message. The renderer of the product that sent a custom message
+// encodes and decodes its content, as for a message in the room.
+fun ChatRoomDeclarationsLocal.toDomain(decoder: CustomContentDecoder): ChatRoomDeclarations = ChatRoomDeclarations(
     config = config?.decodeOrNull<ChatRoomConfigLocal>("config")?.toDomain(),
     configGeneration = configGeneration,
     metadata = ChatRoomMetadataModel(description = description),
-    preview = preview?.decodeOrNull<ChatRoomPreviewLocal>("preview")?.toDomain(),
+    preview = preview?.decodeOrNull<ChatRoomPreviewLocal>("preview")?.toDomain(decoder),
 )
 
 fun ChatRoomConfigModel.encode(): ByteArray = BinaryScale.encodeToByteArray(toLocal())
 
-fun ChatRoomPreviewModel.encode(): ByteArray = BinaryScale.encodeToByteArray(toLocal())
+fun ChatRoomPreviewModel.encode(decoder: CustomContentDecoder): ByteArray = BinaryScale.encodeToByteArray(toLocal(decoder))
 
 // A value that does not decode reads as "not declared", so the host default applies until the product declares again.
 private inline fun <reified T> ByteArray.decodeOrNull(part: String): T? =
@@ -51,7 +52,7 @@ fun ChatRoomConfigLocal.toDomain() = ChatRoomConfigModel(
     reportSeen = reportSeen,
 )
 
-fun ChatRoomPreviewModel.toLocal() = ChatRoomPreviewLocal(
+fun ChatRoomPreviewModel.toLocal(decoder: CustomContentDecoder) = ChatRoomPreviewLocal(
     timestamp = timestamp,
     badge = badge?.let {
         when (it) {
@@ -59,12 +60,12 @@ fun ChatRoomPreviewModel.toLocal() = ChatRoomPreviewLocal(
             is ChatRoomBadgeModel.Count -> ChatRoomBadgeLocal.UnreadCount(it.count)
         }
     },
-    lastMessage = lastMessage?.toPreviewLocal(),
-    lastReaction = lastReaction?.let { PreviewReactionLocal(it.emoji, it.byUser, it.message?.toPreviewLocal(), it.removed) },
+    lastMessage = lastMessage?.toPreviewLocal(decoder),
+    lastReaction = lastReaction?.let { PreviewReactionLocal(it.emoji, it.byUser, it.message?.toPreviewLocal(decoder), it.removed) },
     unseenReactions = unseenReactions,
 )
 
-fun ChatRoomPreviewLocal.toDomain() = ChatRoomPreviewModel(
+fun ChatRoomPreviewLocal.toDomain(decoder: CustomContentDecoder) = ChatRoomPreviewModel(
     timestamp = timestamp,
     badge = badge?.let {
         when (it) {
@@ -72,25 +73,16 @@ fun ChatRoomPreviewLocal.toDomain() = ChatRoomPreviewModel(
             is ChatRoomBadgeLocal.UnreadCount -> ChatRoomBadgeModel.Count(it.count)
         }
     },
-    lastMessage = lastMessage?.toDomain(),
-    lastReaction = lastReaction?.let { ChatPreviewReactionModel(it.emoji, it.byUser, it.message?.toDomain(), it.removed) },
+    lastMessage = lastMessage?.toDomain(decoder),
+    lastReaction = lastReaction?.let { ChatPreviewReactionModel(it.emoji, it.byUser, it.message?.toDomain(decoder), it.removed) },
     unseenReactions = unseenReactions,
 )
 
-// A preview message never has a body that a product draws itself.
-private object NoCustomContent : CustomContentDecoder {
-    override fun decode(rendererId: CustomChatMessageRendererId, content: ByteArray): Result<Any?> =
-        Result.failure(IllegalStateException("A preview message has no custom content"))
-
-    override fun encode(rendererId: CustomChatMessageRendererId, value: Any?): Result<ByteArray> =
-        Result.failure(IllegalStateException("A preview message has no custom content"))
-}
-
-private fun ProductRoomMessage.toPreviewLocal() = PreviewMessageLocal(
+private fun ProductRoomMessage.toPreviewLocal(decoder: CustomContentDecoder) = PreviewMessageLocal(
     messageId = messageId,
     participantId = participantId,
     timestamp = timestamp,
-    content = content.toData(NoCustomContent),
+    content = content.toData(decoder),
     status = when (status) {
         ProductMessageStatusModel.PREPARING -> PreviewMessageStatusLocal.PREPARING
         ProductMessageStatusModel.SENT -> PreviewMessageStatusLocal.SENT
@@ -103,11 +95,11 @@ private fun ProductRoomMessage.toPreviewLocal() = PreviewMessageLocal(
     request = request,
 )
 
-private fun PreviewMessageLocal.toDomain() = ProductRoomMessage(
+private fun PreviewMessageLocal.toDomain(decoder: CustomContentDecoder) = ProductRoomMessage(
     messageId = messageId,
     participantId = participantId,
     timestamp = timestamp,
-    content = content.toDomain(NoCustomContent),
+    content = content.toDomain(decoder),
     status = when (status) {
         PreviewMessageStatusLocal.PREPARING -> ProductMessageStatusModel.PREPARING
         PreviewMessageStatusLocal.SENT -> ProductMessageStatusModel.SENT
