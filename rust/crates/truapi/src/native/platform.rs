@@ -698,49 +698,52 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		&self,
 		_product: &ProductContext,
 		room_id: String,
-	) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
-		self.chat.room_config(room_id).await.map_err(v01::GenericError::from)
+	) -> Result<truapi::latest::ChatRoomConfig, truapi::latest::GenericError> {
+		self.chat.room_config(room_id).await.map_err(truapi::latest::GenericError::from)
 	}
 
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomConfigRequest,
-	) -> Result<(), v01::GenericError> {
+	) -> Result<(), truapi::latest::GenericError> {
 		self.chat
 			.set_room_config(request.room_id, request.config)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(truapi::latest::GenericError::from)
 	}
 
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomMetadataRequest,
-	) -> Result<(), v01::GenericError> {
+	) -> Result<(), truapi::latest::GenericError> {
 		self.chat
 			.set_room_metadata(request.room_id, request.metadata)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(truapi::latest::GenericError::from)
 	}
 
 	async fn set_chat_room_preview(
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomPreviewRequest,
-	) -> Result<(), v01::GenericError> {
+	) -> Result<(), truapi::latest::GenericError> {
 		self.chat
 			.set_room_preview(request.room_id, request.preview)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(truapi::latest::GenericError::from)
 	}
 
 	async fn delete_chat_room(
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatDeleteRoomRequest,
-	) -> Result<(), v01::GenericError> {
-		self.chat.delete_room(request.room_id).await.map_err(v01::GenericError::from)?;
+	) -> Result<(), truapi::latest::GenericError> {
+		self.chat
+			.delete_room(request.room_id)
+			.await
+			.map_err(truapi::latest::GenericError::from)?;
 		if let Ok(rooms) = self.chat.list_rooms().await {
 			self.events.notify_chat_rooms_changed(rooms);
 		}
