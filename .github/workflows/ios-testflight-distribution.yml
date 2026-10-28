@@ -31,9 +31,9 @@ jobs:
       - uses: ./.github/actions/mac-preflight
 
       # This workflow calls the distribute action directly rather than through
-      # ios-build-distribute.yml, so it inherits no github-actions[bot] check,
-      # and this is the only thing between a dispatch and a TestFlight build on
-      # the production record.
+      # ios-build-distribute.yml, so it inherits none of that workflow's checks
+      # of who started the upload, and this is the only thing between a dispatch
+      # and a TestFlight build on the production record.
       # Narrower than write access: see the action for why, and
       # IOS_SIGNING_ACTORS for who.
       - name: Require an iOS signing actor
@@ -85,7 +85,6 @@ jobs:
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Upload IPA as artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -12,6 +12,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.text.TextStyle
@@ -29,6 +30,7 @@ fun PolkadotInputField(
     singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     textStyle: TextStyle = PolkadotTheme.typography.body.large,
+    cursorBrush: Brush = SolidColor(PolkadotTheme.colors.fg.primary),
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
@@ -47,7 +49,7 @@ fun PolkadotInputField(
         readOnly = readOnly,
         singleLine = singleLine,
         maxLines = maxLines,
-        cursorBrush = SolidColor(PolkadotTheme.colors.fg.primary),
+        cursorBrush = cursorBrush,
         textStyle = if (textStyle.color.isSpecified) {
             textStyle
         } else {

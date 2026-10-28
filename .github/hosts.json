@@ -41,6 +41,7 @@
         ".github/workflows/ios-main.yml",
         ".github/workflows/ios-firebase-debug-distribution.yml",
         ".github/actions/bootstrap-ios-core/",
+        ".github/actions/ios-core-key/",
         ".github/actions/find-main-artifact/",
         ".github/actions/mac-preflight/",
         ".github/actions/rust-cache/",
@@ -89,7 +90,8 @@
       "scripts/bundle-truapi-dts.mjs",
       "scripts/regen-explorer-versions.mjs",
       "package.json",
-      "package-lock.json"
+      "package-lock.json",
+      ".github/actions/ios-core-key/"
     ],
     "kotlin": [
       "android/",

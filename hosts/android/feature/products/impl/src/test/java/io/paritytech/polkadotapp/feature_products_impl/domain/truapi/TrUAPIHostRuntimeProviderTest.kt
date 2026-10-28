@@ -11,6 +11,7 @@ import io.mockk.unmockkObject
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.test_shared.testDispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -57,6 +58,7 @@ class TrUAPIHostRuntimeProviderTest {
         chainHttpClient = mockk(relaxed = true),
         confirmationLauncher = mockk(relaxed = true),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
