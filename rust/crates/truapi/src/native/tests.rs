@@ -2291,6 +2291,30 @@ fn starting_a_host_proves_the_core_log_channel_reaches_it() {
 	drop(host);
 }
 
+/// The core's log sink must not be what keeps a host alive. It is process-wide
+/// and nothing clears it, so a strong handle would pin a torn-down host's
+/// object graph and go on delivering into it.
+#[test]
+fn the_core_log_sink_does_not_retain_a_dropped_host() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let weak = Arc::downgrade(&callbacks);
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	drop(host);
+	drop(callbacks);
+
+	// Tests share the native executor, so a task still draining can hold the
+	// last strong handle for a moment. A sink holding one never lets go.
+	crate::test_support::wait_until(
+		|| weak.upgrade().is_none(),
+		"the core log sink retained the host's callbacks",
+	);
+}
+
 #[test]
 fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	use futures::SinkExt;

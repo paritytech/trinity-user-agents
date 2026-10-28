@@ -429,3 +429,18 @@ mod tests {
 		assert_eq!(parse_level("trace"), LevelFilter::TRACE);
 	}
 }
+
+#[cfg(test)]
+mod maxlevel_probe {
+	use super::*;
+
+	#[test]
+	fn probe_global_max_level() {
+		init();
+		set_level(DEFAULT_LEVEL);
+		println!("PROBE at ERROR: current={:?}", LevelFilter::current());
+		set_level(LevelFilter::OFF);
+		println!("PROBE at OFF:   current={:?}", LevelFilter::current());
+		println!("PROBE debug enabled? {}", tracing::enabled!(tracing::Level::DEBUG));
+	}
+}

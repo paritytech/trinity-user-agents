@@ -85,10 +85,15 @@ impl NativeTrUApiHostRuntime {
 		// Events the core addresses to a host reach this log regardless of the
 		// trace level, which defaults to ERROR and so drops everything the core
 		// would otherwise say about itself.
+		// Held weakly: the sink is process-wide and nothing clears it, so a
+		// strong handle would pin this host's object graph for the life of the
+		// process and keep delivering into it after it was torn down.
 		crate::logging::set_host_log_sink({
-			let callbacks = callbacks.clone();
+			let callbacks = Arc::downgrade(&callbacks);
 			Arc::new(move |marker: &str, detail: &str| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				if let Some(callbacks) = callbacks.upgrade() {
+					callbacks.on_core_log(marker.to_string(), detail.to_string());
+				}
 			})
 		});
 		// Raised through tracing rather than called directly, so every host log
