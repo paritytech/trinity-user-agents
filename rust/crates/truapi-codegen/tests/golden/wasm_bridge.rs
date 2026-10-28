@@ -337,13 +337,13 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     async fn set_chat_room_config(
         &self,
         _product: &crate::platform::ProductContext,
-        _request: latest::HostChatSetRoomConfigRequest,
+        request: latest::HostChatSetRoomConfigRequest,
     ) -> Result<(), latest::GenericError> {
         invoke_unit(
             &self.bridge.set_chat_room_config,
             vec![
                 Uint8Array::from(_product.encode().as_slice()).into(),
-                Uint8Array::from(_request.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
         .await?;
