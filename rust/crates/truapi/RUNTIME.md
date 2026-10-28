@@ -484,12 +484,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `funding_history` lists every ended session the host recorded or the core
   compacted, as a summary newest first, so a host that lost its history
   rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
+  `request({ direction, amount? })`, which answers at once with its `intent`,
+  and watches it with `statusSubscribe({ intent })`; another product's
+  session reads as `NotFound`. The overlay runs on a task of its own, so no
+  call waits on it; a session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. Sessions and
   the pack are versioned blobs: a corrupt one is set aside under
   `FundingSessionsUnreadable`, and one in a newer format is left untouched
   while funding answers a host failure. Products see a session in flight as

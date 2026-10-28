@@ -26,6 +26,7 @@ import type {
 import type { DiagnosisRow } from "./diagnosis.ts";
 import {
   WAIT_MS,
+  randomId,
   stringify,
   untilComplete,
   waitForTranscript,
@@ -46,11 +47,6 @@ const CANCEL_AMOUNT = 300n;
 const OFFER_AMOUNT = 250n;
 const LATE_AMOUNT = 200n;
 const CANCEL_FEE = 3n;
-
-function randomId(): HexString {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
 
 /** Type one command into the host, as the user at its terminal would. The
  *  battery hands the host this pipe as its stdin. */
