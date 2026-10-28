@@ -25,7 +25,9 @@ public protocol PGasOriginCreating {
 }
 
 public final class PGasOriginFactory {
-    private static let revisionWaitTimeout: Duration = .seconds(30)
+    /// Retries of first claims that missed the revision succeeded 10 to 80 s later,
+    /// so this covers the slowest import seen.
+    private static let revisionWaitTimeout: Duration = .seconds(90)
 
     private let keyResolver: BandersnatchKeyResolving
     private let chainRegistry: ChainResourceProtocol

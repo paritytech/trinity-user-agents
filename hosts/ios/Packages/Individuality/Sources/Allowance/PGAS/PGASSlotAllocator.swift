@@ -34,8 +34,8 @@ public final class PGASSlotAllocator: AllowanceSlotAllocating {
             try await markStallRegion("Submitting") {
                 do {
                     try await self.submit(slot: slot, accountId: accountId)
-                } catch is PGasOriginError {
-                    // Asset Hub never held the ring revision; prove against the current ring once more.
+                } catch PGasOriginError.revisionPruned {
+                    // Asset Hub holds a newer ring revision; prove against the current ring once more.
                     try await self.submit(slot: slot, accountId: accountId)
                 }
             }

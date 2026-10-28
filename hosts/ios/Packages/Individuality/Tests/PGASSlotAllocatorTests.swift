@@ -17,8 +17,8 @@ struct PGASSlotAllocatorTests {
         )
     }
 
-    @Test func revisionFailureRebuildsTheOriginOnce() async throws {
-        let originFactory = FakePGasOriginFactory(failures: [PGasOriginError.revisionTimeout(90)])
+    @Test func prunedRevisionRebuildsTheOriginOnce() async throws {
+        let originFactory = FakePGasOriginFactory(failures: [PGasOriginError.revisionPruned(90)])
         let submitter = FakeSubmitter()
 
         let day = try await makeAllocator(originFactory: originFactory, submitter: submitter)
@@ -40,6 +40,16 @@ struct PGASSlotAllocatorTests {
             try await allocator.assignSlot(accountId: Data([0x01]), priority: .normal)
         }
         #expect(originFactory.calls == 2)
+    }
+
+    @Test func revisionTimeoutIsNotRebuilt() async {
+        let originFactory = FakePGasOriginFactory(failures: [PGasOriginError.revisionTimeout(90)])
+        let allocator = makeAllocator(originFactory: originFactory, submitter: FakeSubmitter())
+
+        await #expect(throws: PGasOriginError.self) {
+            try await allocator.assignSlot(accountId: Data([0x01]), priority: .normal)
+        }
+        #expect(originFactory.calls == 1)
     }
 
     @Test func submissionFailureIsNotRetried() async {
