@@ -14,8 +14,8 @@
 //! beside the snapshot.
 //!
 //! `create_room`, `post_message` and `set_room_footer` keep the frames of the
-//! first Chat methods, because products built against the first SDK call them
-//! through the client the host injects.
+//! first Chat methods. Products that use the first SDK call them through the
+//! client that the host injects.
 
 use std::{fmt::Debug, fs, path::PathBuf};
 
