@@ -122,8 +122,11 @@ import {
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
 import { mountTools } from "../tools/mount.js";
+import { ActivityLog } from "../tools/activity/log.js";
+import type { ActivityCategory } from "./platform/activity.js";
 
-const MAX_LOG_LINES = 500;
+/** The host's activity, which every part of the host reports to and the inspector shows. */
+const activity = new ActivityLog();
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
 const BASE = hostBase(import.meta.env.BASE_URL, window.location.href);
 
@@ -161,7 +164,6 @@ const importForm = element<HTMLFormElement>("import-form");
 const importDetails = element<HTMLDetailsElement>("import");
 const addWalletButton = element<HTMLButtonElement>("add-wallet");
 const walletActions = element("wallet-actions");
-const logList = element("log");
 const productForm = element<HTMLFormElement>("product-form");
 const addressForm = element<HTMLFormElement>("address-form");
 const addressInput = element<HTMLInputElement>("address");
@@ -255,7 +257,7 @@ const novaWorkerMode =
           blockedPeople().some(
             (blocked) => blocked.toLowerCase() === account.toLowerCase(),
           ),
-        log,
+        log: linesFor("workers"),
       })
     : null;
 /**
@@ -266,7 +268,7 @@ const chatV2 = new ChatV2Host({
   media: (productId) => localChatDemo?.media(productId) ?? null,
   contactRooms: (productId) =>
     novaWorkerMode?.isChatProduct(productId) ?? false,
-  log,
+  log: linesFor("workers"),
 });
 /** The host's own names for the people of a chat product's contact rooms. */
 const hostNames = new HostNames();
@@ -293,7 +295,7 @@ const productWorkers = new ProductWorkers({
     runtime === null
       ? undefined
       : tools.tap(channel, runtime.coreWireSchemaHash),
-  log,
+  activity: activity.record,
   chatV2: {
     connect: (productId, port) =>
       chatV2.connect(productId, messagePortBridge(port)),
@@ -314,7 +316,7 @@ const productWorkers = new ProductWorkers({
 const pocketFaces = new PocketFaces({
   workers: productWorkers,
   storage: localStorage,
-  log,
+  log: linesFor("workers"),
 });
 /** The chat providers of the signed-in session: Nova, product rooms, and chat products over the v2 draft bridge. */
 const chatInbox = new ChatInbox({
@@ -328,10 +330,10 @@ const chatInbox = new ChatInbox({
     archiveImage: (productId, path) =>
       productWorkers.archiveImage(productId, path),
     gateway: () => activeNetwork.dotns.contentGateway,
-    log,
+    log: linesFor("workers"),
   },
   workerNames: () => productWorkers.names(),
-  log,
+  log: linesFor("host"),
   chatV2,
   hostChat: () => novaWorkerMode?.hostRuns() ?? true,
   // The Nova chat worker's rooms are named by the host, and it starts chats
@@ -435,7 +437,7 @@ const devSession =
         showProduct: () => void navigation.selectDestination("browse"),
         pickContact: (asker): Promise<{ account: string } | null> =>
           hostContacts.choose(asker),
-        log,
+        log: linesFor("host"),
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The made-up user this tab acts as instead of a wallet, if any. */
@@ -492,7 +494,7 @@ const hostContacts = new HostContacts({
       if (change.type === "session") listener();
     }),
   removed: () => runtime?.notifyContactsChanged(),
-  log,
+  log: linesFor("host"),
 });
 /** The Developer menu's chat engine switch, with the Nova chat worker's state. */
 const engineSwitch =
@@ -614,6 +616,7 @@ const searchStatus = element("search-status");
 const tools = mountTools({
   element,
   productFrame,
+  activity,
   diagnostics: chatDiagnostics,
 });
 
@@ -691,13 +694,14 @@ networkSelect.addEventListener("change", () => {
   window.location.reload();
 });
 
-function log(text: string): void {
-  const line = document.createElement("li");
-  line.textContent = `${new Date().toLocaleTimeString()} ${text}`;
-  logList.append(line);
-  while (logList.childElementCount > MAX_LOG_LINES)
-    logList.firstElementChild?.remove();
-  logList.scrollTop = logList.scrollHeight;
+/** A line for the Activity view from the host page itself. */
+function log(text: string, failed = false): void {
+  activity.record({ category: "host", action: text, failed });
+}
+
+/** A sink for a part of the host that reports in lines, logged under `category`. */
+function linesFor(category: ActivityCategory): (text: string) => void {
+  return (text) => activity.record({ category, action: text });
 }
 
 /** Show or hide the loading pill over the stage. The frame is not touched. */
@@ -739,7 +743,7 @@ const navigation: ProductNavigation = new ProductNavigation({
     recentsMenu.refresh();
     renderProductRecents();
   },
-  log,
+  activity: activity.record,
 });
 /** The signed-in wallet, and how it changes. */
 const walletSession: WalletSession = new WalletSession({
@@ -748,7 +752,7 @@ const walletSession: WalletSession = new WalletSession({
   walletInfo,
   navigation,
   serial,
-  log,
+  activity: activity.record,
 });
 
 /**
@@ -757,7 +761,9 @@ const walletSession: WalletSession = new WalletSession({
  * could start before the first open has a handle to dispose, and leave a
  * product connected under a session it was not opened for.
  */
-const queue = new SerialQueue(renderWallets, (error) => log(String(error)));
+const queue = new SerialQueue(renderWallets, (error) =>
+  log(errorText(error), true),
+);
 
 function serial(
   task: (runtime: WorkerPairingHostRuntime) => Promise<void>,
@@ -818,7 +824,8 @@ function renderWallets(): void {
     notice.disabled = true;
     walletSelect.append(notice);
   }
-  if (problem !== loggedWalletProblem && problem !== null) log(problem);
+  if (problem !== loggedWalletProblem && problem !== null)
+    activity.record({ category: "session", action: problem, failed: true });
   loggedWalletProblem = problem;
   if (saved.some((wallet) => wallet.id === selected))
     walletSelect.value = selected;
@@ -1108,7 +1115,7 @@ function renderHostScreens(): void {
                     activeNetwork.dotns.contentGateway,
                   ),
             open: () => void navigation.openPocketCard(key, pocketStatus),
-            log,
+            log: linesFor("workers"),
           });
         },
       }),
@@ -1397,7 +1404,13 @@ async function refreshProductChain(): Promise<void> {
   } catch (error) {
     if (run !== productChainRun) return;
     productChain = { state: "error", productId, message: errorText(error) };
-    log(`Product account: ${errorText(error)}`);
+    activity.record({
+      category: "products",
+      action: "Account not read",
+      subject: productId,
+      note: errorText(error),
+      failed: true,
+    });
   }
   renderAccountStatus();
 }
@@ -1440,7 +1453,12 @@ async function refreshChainStatus(): Promise<void> {
   } catch (error) {
     if (run !== chainRun) return;
     chainState = { state: "error", message: errorText(error) };
-    log(`People chain status: ${errorText(error)}`);
+    activity.record({
+      category: "session",
+      action: "People chain not read",
+      note: errorText(error),
+      failed: true,
+    });
   }
   renderAccountStatus();
 }
@@ -1489,11 +1507,16 @@ function applySessionUsername(
   void walletSession.change(async (current) => {
     if (walletSession.active !== wallet) return;
     await current.activateLocalSession(wallet.entropy, found ?? undefined);
-    log(
-      found === null
-        ? "session username removed: the People chain has no record"
-        : `session username set to ${found} from the People chain`,
-    );
+    activity.record({
+      category: "session",
+      action:
+        found === null ? "Session username removed" : "Session username set",
+      ...(found === null ? {} : { subject: found }),
+      note:
+        found === null
+          ? "The People chain has no record."
+          : "From the People chain.",
+    });
   });
 }
 
@@ -1514,7 +1537,12 @@ async function syncSessionUsername(): Promise<void> {
     );
     applySessionUsername(publicKey, reading.readings);
   } catch (error) {
-    log(`Session username: ${errorText(error)}`);
+    activity.record({
+      category: "session",
+      action: "Session username not read",
+      note: errorText(error),
+      failed: true,
+    });
   }
 }
 
@@ -1603,7 +1631,11 @@ forgetButton.addEventListener("click", () => {
   recents.forget(walletSelect.value);
   walletInfo.forget(walletSelect.value);
   wallets.forget(walletSelect.value);
-  log(`forgot ${wallet?.name ?? "the wallet"}`);
+  activity.record({
+    category: "session",
+    action: "Wallet forgotten",
+    subject: wallet?.name ?? "the wallet",
+  });
   walletSelect.value = "";
   renderWallets();
 });
@@ -1624,7 +1656,12 @@ importForm.addEventListener("submit", (event) => {
     walletSelect.value = wallet.id;
     void walletSession.signIn(wallet);
   } catch (error) {
-    log(String(error));
+    activity.record({
+      category: "session",
+      action: "Wallet not imported",
+      note: errorText(error),
+      failed: true,
+    });
   }
 });
 
@@ -1640,7 +1677,13 @@ function openAddress(): void {
     address = parseTypedAddress(addressInput.value, activeNetwork);
   } catch (error) {
     productStatus.textContent = searchStatus.textContent = errorText(error);
-    log(productStatus.textContent);
+    activity.record({
+      category: "products",
+      action: "Address not read",
+      subject: addressInput.value.trim(),
+      note: errorText(error),
+      failed: true,
+    });
     return;
   }
   searchStatus.textContent = "";
@@ -1666,7 +1709,12 @@ function openAddress(): void {
   const entered = source === "entered";
   const origin = navigation.overrideOrigin;
   if (entered && origin !== null && origin !== scopeOf(address))
-    log(`product id ${productId} now applies to ${scopeOf(address)}`);
+    activity.record({
+      category: "products",
+      action: "Entered product id moved",
+      subject: productId,
+      details: [{ label: "Now applies to", value: scopeOf(address) }],
+    });
   void serial(async (runtime) => {
     const before = navigation.opened;
     if (await navigation.openTyped(runtime, address, productId, entered))
@@ -1739,7 +1787,7 @@ async function showPersonInChat(person: PickedPerson): Promise<void> {
   if (session !== searchSession || navigation.destination !== "chat") return;
   if (chatTab === "inbox") showChatTab("chats");
   if (!chatScreen.startWith(person))
-    log("Chat cannot start a conversation in this session.");
+    log("Chat cannot start a conversation in this session.", true);
 }
 
 const recentsMenu = bindRecentsMenu({
@@ -1816,7 +1864,12 @@ async function resetAppData(): Promise<void> {
       product?.productId !== productId ||
       how === null
     ) {
-      log("reset skipped: the open product or the wallet changed");
+      activity.record({
+        category: "products",
+        action: "Data reset skipped",
+        subject: productId,
+        note: "The open product or the wallet changed.",
+      });
       return;
     }
     const url = product.url;
@@ -1824,9 +1877,15 @@ async function resetAppData(): Promise<void> {
     const scope = navigation.overrideOrigin ?? "";
     navigation.closeProduct();
     const removed = storage.clearProductData(productId);
-    log(
-      `reset app data of ${productId} for ${wallet.name}: ${removed} stored value${removed === 1 ? "" : "s"} removed`,
-    );
+    activity.record({
+      category: "products",
+      action: "Data reset",
+      subject: productId,
+      details: [
+        { label: "Wallet", value: wallet.name },
+        { label: "Stored values removed", value: String(removed) },
+      ],
+    });
     await navigation.openTarget(
       runtime,
       { ...how, url },
@@ -1888,11 +1947,17 @@ closeButton.addEventListener("click", closeFront);
 async function boot(): Promise<void> {
   const connection = await connectNetwork(activeNetwork);
   chainAccess = connection;
+  activity.record({
+    category: "network",
+    action: "Light client started",
+    subject: activeNetwork.displayName,
+    details: [{ label: "Name suffix", value: connection.networkSuffix }],
+  });
   renderAccountStatus();
   const callbacks = createHostCallbacks({
     network: connection,
     storage,
-    log,
+    activity: activity.record,
     onAuthState: renderSession,
     navigate: (url) => navigation.navigateFromProduct(url),
     onNetworkAsked: (domains) => navigation.askDomains(domains),
@@ -1924,14 +1989,27 @@ async function boot(): Promise<void> {
   coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
   coreState = "ready";
   renderShelf();
-  log("core ready");
+  activity.record({
+    category: "host",
+    action: "Core ready",
+    details: [
+      { label: "Network", value: activeNetwork.displayName },
+      { label: "Wire schema", value: runtime.coreWireSchemaHash ?? "unknown" },
+    ],
+  });
   productWorkers.resume();
   renderVersions(runtime.coreWireSchemaHash);
   if (runtime.coreWireSchemaHash !== TRUAPI_WIRE_SCHEMA_HASH)
-    log(
-      `inspector will group frames without decoding them: the core's wire schema ` +
-        `${runtime.coreWireSchemaHash ?? "(none reported)"} is not this page's ${TRUAPI_WIRE_SCHEMA_HASH}`,
-    );
+    activity.record({
+      category: "host",
+      action: "Wire schema mismatch",
+      note: "The inspector groups frames without decoding them.",
+      failed: true,
+      details: [
+        { label: "Core", value: runtime.coreWireSchemaHash ?? "none reported" },
+        { label: "This page", value: TRUAPI_WIRE_SCHEMA_HASH },
+      ],
+    });
   renderWallets();
 
   const tabWallet =
@@ -1980,5 +2058,10 @@ boot().catch((error: unknown) => {
   coreStatus.textContent = `The core failed to start: ${String(error)}`;
   coreState = "failed";
   renderShelf();
-  log(coreStatus.textContent);
+  activity.record({
+    category: "host",
+    action: "Core failed to start",
+    note: errorText(error),
+    failed: true,
+  });
 });

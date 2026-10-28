@@ -135,6 +135,19 @@ async function chatDemo(page: Page, action: string): Promise<void> {
   await closeMenu(page);
 }
 
+/** Wait for the inspector's Activity view to hold a row of `category` reading `text`. */
+async function logged(
+  page: Page,
+  category: string,
+  text: string,
+): Promise<void> {
+  await page
+    .locator(`#log .activity-row[data-category="${category}"]`, {
+      hasText: text,
+    })
+    .waitFor({ state: "attached" });
+}
+
 async function openSection(page: Page, selector: string): Promise<void> {
   await reveal(page, selector);
   await page
@@ -251,6 +264,42 @@ describe("a product opened by name", () => {
         expect(hostState.workers).toBe(0);
 
         await expectRequestsAreNotGated(frame);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "is named in the inspector's Activity view when it opens and closes",
+    async () => {
+      const context = await newContext();
+      try {
+        const page = await openHost(context);
+        await signIn(page);
+        await logged(page, "session", "Signed in");
+        await openAddress(page, NAME);
+        await productFrame(page, `${host.origin}/product/`);
+        const opened = page.locator(
+          '#log .activity-row[data-category="products"]',
+          { hasText: `Opened ${NAME}` },
+        );
+        await opened.waitFor({ state: "attached" });
+        // The row is the name alone; the loader's URL waits in its details.
+        expect(
+          await opened.locator(".activity-head").innerText(),
+        ).not.toContain("truapi-sandbox");
+        const details = await opened
+          .locator(".activity-details")
+          .evaluate((list) => list.textContent);
+        expect(details).toContain("Execution");
+        expect(details).toContain("App");
+        expect(details).toContain("truapi-sandbox/index.html");
+
+        await openMenu(page, "product");
+        await page.click("#close-product");
+        await logged(page, "products", `Closed ${NAME}`);
       } finally {
         await context.close();
       }
@@ -1147,12 +1196,16 @@ describe("product worker chat", () => {
         expect(keys.length).toBe(2);
         expect(keys.every((key) => key.includes(":network:paseo:"))).toBe(true);
 
+        await logged(page, "workers", `Started ${WORKER_NAME}`);
+
         // Signing out stops the worker and hides its rooms.
         await openMenu(page);
         await page.click("#sign-out");
         await page.waitForFunction(
           () => document.querySelectorAll("#worker-frames iframe").length === 0,
         );
+        await logged(page, "workers", `Stopped ${WORKER_NAME}`);
+        await logged(page, "session", "Signed out");
         await page
           .locator(".chat-empty-title")
           .filter({ hasText: "Sign in to chat" })

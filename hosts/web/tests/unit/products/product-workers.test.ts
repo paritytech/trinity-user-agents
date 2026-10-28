@@ -18,7 +18,7 @@ function listOnly(defaults: string[]) {
     base: "/",
     storage,
     tap: () => undefined,
-    log: () => {},
+    activity: () => {},
     defaults: (network) => (network.id === "paseo" ? defaults : []),
   });
   return { workers, storage };

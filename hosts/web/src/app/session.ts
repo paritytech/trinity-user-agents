@@ -15,6 +15,7 @@ import {
 import type { PocketFaces } from "../pocket/faces.js";
 import { pinnedCards } from "../pocket/pocket.js";
 import type { ProductWorkers } from "../products/product-workers.js";
+import type { ActivitySink } from "../platform/activity.js";
 import type { Network } from "../platform/network.js";
 import type { NetworkConfig } from "../platform/network-config.js";
 import { tabWalletKey } from "../platform/network-choice.js";
@@ -35,7 +36,7 @@ export interface WalletSessionDeps {
   walletInfo: WalletPublicInfoStore;
   navigation: ProductNavigation;
   serial(task: (runtime: Runtime) => Promise<void>): Promise<void>;
-  log(text: string): void;
+  activity: ActivitySink;
 }
 
 /**
@@ -62,7 +63,7 @@ export class WalletSession {
   }
 
   signIn(wallet: Wallet): Promise<void> {
-    const { network, storage, walletInfo, log } = this.deps;
+    const { network, storage, walletInfo, activity } = this.deps;
     return this.change(async (runtime) => {
       if (this.wallet) await this.signOutOf(runtime);
       storage.useWallet(wallet.id, network.id);
@@ -80,7 +81,12 @@ export class WalletSession {
         );
       }
       sessionStorage.setItem(tabWalletKey(network.id), wallet.id);
-      log(`signed in with ${wallet.name}`);
+      activity({
+        category: "session",
+        action: "Signed in",
+        subject: wallet.name,
+        details: [{ label: "Network", value: network.displayName }],
+      });
     });
   }
 
@@ -89,11 +95,15 @@ export class WalletSession {
   }
 
   private async signOutOf(runtime: Runtime): Promise<void> {
-    const { network, storage, log } = this.deps;
+    const { network, storage, activity } = this.deps;
     await runtime.disconnectSession();
     storage.useWallet(null, network.id);
     sessionStorage.removeItem(tabWalletKey(network.id));
-    log(`signed out of ${this.wallet?.name ?? "wallet"}`);
+    activity({
+      category: "session",
+      action: "Signed out",
+      subject: this.wallet?.name ?? "wallet",
+    });
     this.wallet = null;
   }
 }

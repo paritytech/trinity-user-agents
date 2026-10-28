@@ -1,0 +1,289 @@
+/*
+ * The inspector's Activity view. It follows the TrUAPI, Chat and Workers
+ * views' look: a dark monospace box under the inspector's tabs, pill chips
+ * for filters with the active one filled green, and quiet grey for metadata.
+ * The list fills what the box leaves under the controls. These rules also
+ * reset the panel's own pill buttons and fields, which are sized for forms.
+ */
+.activity {
+  --activity-line: rgb(255 255 255 / 0.06);
+  --activity-meta: #8b8f99;
+  --activity-on: #4ade80;
+  --activity-failed: #f87171;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 8px 6px;
+  border: 1px solid #1d1f24;
+  border-radius: 0 0 12px 12px;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  color-scheme: dark;
+}
+
+.activity[hidden] {
+  display: none;
+}
+
+.activity [hidden] {
+  display: none !important;
+}
+
+.activity button,
+.activity input {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  transition: none;
+}
+
+.activity button:active:not(:disabled) {
+  transform: none;
+}
+
+.activity :focus-visible {
+  outline: 1px solid var(--activity-on);
+  outline-offset: 1px;
+}
+
+.activity-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0 4px 6px;
+  font:
+    11.5px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.activity .activity-search {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 13px;
+  background: var(--well);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
+  color: var(--tx);
+}
+
+.activity-chips,
+.activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.activity-chips {
+  flex: 1 1 100%;
+}
+
+.activity .activity-errors {
+  margin-left: 6px;
+}
+
+.activity .activity-chip {
+  padding: 1px 8px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 10px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.activity .activity-chip:hover:not(:disabled) {
+  color: var(--tx);
+}
+
+.activity .activity-chip[aria-pressed="true"] {
+  border-color: var(--activity-on);
+  background: var(--activity-on);
+  color: #0a0a0a;
+}
+
+.activity .activity-errors[aria-pressed="true"] {
+  border-color: var(--activity-failed);
+  background: var(--activity-failed);
+}
+
+.activity .activity-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.activity-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 4px;
+  padding: 0;
+  overflow: auto;
+  border-top: 1px solid var(--activity-line);
+  list-style: none;
+  color: var(--mu);
+  font:
+    11.5px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.activity-row {
+  border-bottom: 1px solid var(--activity-line);
+}
+
+.activity .activity-row {
+  padding: 0;
+}
+
+.activity .activity-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 3px 4px;
+  text-align: left;
+}
+
+.activity button.activity-head {
+  cursor: pointer;
+}
+
+.activity button.activity-head:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.activity-row.open > .activity-head {
+  background: rgb(74 222 128 / 0.1);
+}
+
+.activity-time {
+  color: var(--activity-meta);
+}
+
+.activity-category {
+  width: 8ch;
+  color: var(--activity-meta);
+}
+
+.activity-row[data-category="session"] .activity-category {
+  color: #7dd3fc;
+}
+
+.activity-row[data-category="products"] .activity-category {
+  color: #f9a8d4;
+}
+
+.activity-row[data-category="workers"] .activity-category {
+  color: #c4b5fd;
+}
+
+.activity-row[data-category="network"] .activity-category {
+  color: #fcd34d;
+}
+
+.activity-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activity-action {
+  color: var(--tx);
+}
+
+.activity-subject {
+  color: #e5e7eb;
+}
+
+.activity-note {
+  display: block;
+  color: var(--activity-meta);
+}
+
+.activity-row[data-failed] .activity-action,
+.activity-row[data-failed] .activity-note {
+  color: var(--activity-failed);
+}
+
+.activity button.activity-head::after {
+  content: "▸";
+  position: absolute;
+  right: 6px;
+  color: var(--activity-meta);
+}
+
+.activity button.activity-head {
+  position: relative;
+  padding-right: 18px;
+}
+
+.activity-row.open > button.activity-head::after {
+  content: "▾";
+}
+
+.activity-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0;
+  padding: 4px 8px 8px calc(8ch + 16px);
+  font-size: 11px;
+}
+
+.activity-details dt {
+  color: var(--activity-meta);
+}
+
+.activity-details dd {
+  margin: 0;
+  color: var(--mu);
+  overflow-wrap: anywhere;
+}
+
+.activity-empty {
+  margin: 10px 8px;
+  color: var(--activity-meta);
+  font:
+    11.5px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.activity-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 4px 0;
+  color: var(--activity-meta);
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.activity .activity-newer {
+  color: var(--activity-on);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.activity-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
