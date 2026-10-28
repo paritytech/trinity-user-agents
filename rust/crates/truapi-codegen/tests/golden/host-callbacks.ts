@@ -1439,6 +1439,14 @@ export interface ChatPlatform {
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
 
   /**
+   * The current product-scoped room list, read one time. The core uses it
+   * to check that a product hosts a room. A host that cannot read its
+   * rooms returns an error, not an empty list. A Rust host that does not
+   * implement it gives the first item of the room list subscription.
+   */
+  listChatRooms?(product: ProductContext): Promise<HostChatListSubscribeItem>;
+
+  /**
    * The configuration the product last declared for a room, or the default
    * configuration when it declared none. The core reads it to decide
    * whether a room keeps its messages in the host and which queries the
