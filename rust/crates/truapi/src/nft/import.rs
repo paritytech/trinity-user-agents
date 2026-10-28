@@ -88,9 +88,8 @@ fn import_params(source: ItemKey, destination: ItemKey, give_up_after: u64) -> P
 	TransferParams {
 		source,
 		signer: TransferSigner::Imported,
-		instance: None,
 		destination,
-		signed_state_nonce: None,
+		submitted_attempt: None,
 		give_up_after,
 	}
 	.into()
@@ -191,8 +190,7 @@ mod tests {
 		for params in &params {
 			let expected = TransferParams {
 				signer: TransferSigner::Imported,
-				instance: None,
-				signed_state_nonce: None,
+				submitted_attempt: None,
 				..*params
 			};
 			assert_eq!(*params, expected);

@@ -132,14 +132,12 @@ pub fn plan_transfers(
 	Ok(sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(IdleItem { key: source, slot, instance }, destination)| {
-			let signed_state_nonce = None;
+		.map(|(IdleItem { key: source, slot }, destination)| {
 			TransferParams {
 				source,
 				signer: TransferSigner::Derived(slot),
-				instance: Some(instance),
 				destination,
-				signed_state_nonce,
+				submitted_attempt: None,
 				give_up_after,
 			}
 			.into()

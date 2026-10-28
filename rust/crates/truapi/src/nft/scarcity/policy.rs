@@ -42,7 +42,7 @@ pub enum TransferSigner {
 }
 
 /// What the policy stores with each transfer: the key it spends and where
-/// that key sits, the instance it transfers, the key it goes to, and when it
+/// that key sits, the key it goes to, the attempt it submitted, and when it
 /// stops waiting. Everything a build needs, so it reads no table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct TransferParams {
@@ -50,18 +50,25 @@ pub struct TransferParams {
 	pub source: ItemKey,
 	/// How the secret of `source` is found.
 	pub signer: TransferSigner,
-	/// The instance the transfer moves. `None` for an import until its source
-	/// is first seen holding one; set when an attempt is built.
-	pub instance: Option<u64>,
 	/// The key it goes to.
 	pub destination: ItemKey,
-	/// The `state_nonce` the live attempt signed over, which the oracle
-	/// proves its landing by. `None` until an attempt is built.
-	pub signed_state_nonce: Option<u64>,
+	/// The live attempt. `None` until the first build, which moves whatever
+	/// instance `source` holds then.
+	pub submitted_attempt: Option<TransferAttempt>,
 	/// Unix time, in seconds of the host's clock, after which a transfer that
 	/// still waits is given up. Fixed at registration, so a restart never
 	/// extends it.
 	pub give_up_after: u64,
+}
+
+/// The live attempt of a transfer. Later attempts move the same instance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
+pub struct TransferAttempt {
+	/// The instance the attempt moves.
+	pub instance: u64,
+	/// The `state_nonce` the attempt signed over, which the oracle proves its
+	/// landing by.
+	pub state_nonce: u64,
 }
 
 impl From<TransferParams> for PolicyParams {
@@ -299,11 +306,9 @@ fn ready_preparation(
 	nft_transfer: &NftTransfer,
 	extrinsic: MortalExtrinsic,
 ) -> Preparation {
-	let params = TransferParams {
-		instance: Some(nft_transfer.instance),
-		signed_state_nonce: Some(nft_transfer.state_nonce),
-		..transfer.params
-	};
+	let NftTransfer { instance, state_nonce, .. } = *nft_transfer;
+	let submitted_attempt = Some(TransferAttempt { instance, state_nonce });
+	let params = TransferParams { submitted_attempt, ..transfer.params };
 	Preparation::Ready { extrinsic, params: Some(params.into()) }
 }
 
@@ -351,14 +356,14 @@ fn give_up_after_limit(transfer: &PlannedTransfer, now: u64) -> Option<Preparati
 }
 
 /// What the chain says about `transfer`. A source that does not hold the
-/// instance waits, since a reorg can put it back, and a transfer that names no
-/// instance yet waits for its source to hold any. An occupied destination
+/// instance waits, since a reorg can put it back, and a transfer with no
+/// submitted attempt yet waits for its source to hold any. An occupied destination
 /// fails at once.
 fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> TransferDecision {
 	if transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() {
 		return TransferDecision::GiveUp;
 	}
-	let expected = transfer.params.instance;
+	let expected = transfer.params.submitted_attempt.map(|attempt| attempt.instance);
 	let is_expected =
 		|held: &ScarcityNft| expected.is_none_or(|instance| held.instance == instance);
 	let held = view.source.filter(is_expected);
@@ -481,12 +486,21 @@ mod tests {
 		let params = TransferParams {
 			source,
 			signer: TransferSigner::Derived(slot),
-			instance: Some(INSTANCE),
 			destination: DESTINATION,
-			signed_state_nonce: None,
+			submitted_attempt: None,
 			give_up_after,
 		};
 		scheduled_transfer(params, attempts)
+	}
+
+	/// [`registered_transfer`] after one attempt that moved [`INSTANCE`].
+	fn retried_transfer() -> RegisteredTransfer {
+		let mut registered = registered_transfer(1);
+		let mut params = TransferParams::try_from(&registered.scheduled.plan.params).unwrap();
+		let state_nonce = held_nft().state_nonce;
+		params.submitted_attempt = Some(TransferAttempt { instance: INSTANCE, state_nonce });
+		registered.scheduled.plan.params = params.into();
+		registered
 	}
 
 	/// A scheduled import of [`imported_test_key`] 0 to [`DESTINATION`], as the
@@ -495,9 +509,8 @@ mod tests {
 		let params = TransferParams {
 			source: imported_test_key(0).key(),
 			signer: TransferSigner::Imported,
-			instance: None,
 			destination: DESTINATION,
-			signed_state_nonce: None,
+			submitted_attempt: None,
 			give_up_after,
 		};
 		scheduled_transfer(params, 0)
@@ -611,15 +624,34 @@ mod tests {
 		let Some(Preparation::Ready { params: Some(params), .. }) = prepared else {
 			panic!("built without params: {prepared:?}")
 		};
-		let recorded = TransferParams::try_from(&params).unwrap().signed_state_nonce;
-		assert_eq!(recorded, Some(held_nft().state_nonce));
+		let recorded = TransferParams::try_from(&params).unwrap().submitted_attempt;
+		let state_nonce = held_nft().state_nonce;
+		assert_eq!(recorded, Some(TransferAttempt { instance: INSTANCE, state_nonce }));
 	}
 
-	/// A reorg can briefly show the source key without its NFT, so the transfer
-	/// waits for it to come back rather than failing the operation.
+	/// Products name items by key, so a first attempt moves whatever the key
+	/// holds, even when our records last saw another instance there.
 	#[test]
-	fn a_key_that_does_not_hold_the_instance_waits_for_it() {
+	fn a_first_attempt_moves_whatever_instance_its_key_holds() {
 		let registered = registered_transfer(0);
+		let other = ScarcityNft { instance: INSTANCE + 1, ..held_nft() };
+
+		let prepared = prepare_one(&registered, holding(&registered, other));
+
+		let Some(Preparation::Ready { params: Some(params), .. }) = prepared else {
+			panic!("built without params: {prepared:?}")
+		};
+		let recorded = TransferParams::try_from(&params).unwrap().submitted_attempt;
+		let state_nonce = other.state_nonce;
+		assert_eq!(recorded, Some(TransferAttempt { instance: INSTANCE + 1, state_nonce }));
+	}
+
+	/// A reorg can briefly show the source key without its NFT, and the oracle
+	/// proves a landing by the attempted instance, so a retry waits for that
+	/// instance to come back rather than moving another or failing.
+	#[test]
+	fn a_retry_waits_while_its_key_does_not_hold_the_attempted_instance() {
+		let registered = retried_transfer();
 		let moved_on = ScarcityNft { instance: INSTANCE + 1, ..held_nft() };
 
 		let gone = prepare_one(&registered, ScriptedScarcity::default());
@@ -733,11 +765,9 @@ mod tests {
 			panic!("built without params: {filled:?}")
 		};
 		let registered = TransferParams::try_from(&import.scheduled.plan.params).unwrap();
-		let expected = TransferParams {
-			instance: Some(INSTANCE),
-			signed_state_nonce: Some(held_nft().state_nonce),
-			..registered
-		};
+		let state_nonce = held_nft().state_nonce;
+		let submitted_attempt = Some(TransferAttempt { instance: INSTANCE, state_nonce });
+		let expected = TransferParams { submitted_attempt, ..registered };
 		assert_eq!(TransferParams::try_from(&params).unwrap(), expected);
 	}
 
