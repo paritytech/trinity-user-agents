@@ -6,7 +6,6 @@ import dev.detekt.test.lint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi.ProductId
 
 class HardcodedComposeTextTest {
 
