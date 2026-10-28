@@ -1,6 +1,6 @@
 import { bytesToHex } from "@parity/truapi/scale";
 import { Reader } from "../../src/chat/nova/codec.js";
-import { sanitizeReason } from "./diagnostics.js";
+import { sanitizeReason } from "../../src/chat/nova/events.js";
 import { ACKNOWLEDGED } from "../../src/chat/nova/protocol.js";
 import { statementHash } from "../../src/chat/nova/statement.js";
 

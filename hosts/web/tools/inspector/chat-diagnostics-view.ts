@@ -22,13 +22,13 @@ import {
   kindLabel,
   outcomeWord,
   relatedKeys,
-  shortHex,
   type ChatDiagnostics,
   type ChatEvent,
   type EventDirection,
   type EventOutcome,
   type RelatedBy,
 } from "./diagnostics.js";
+import { shortHex } from "../../src/chat/nova/events.js";
 
 /**
  * The inspector's Chat view: the chat engine's events. It is a separate list

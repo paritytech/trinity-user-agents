@@ -38,7 +38,7 @@ import {
   NOVA_WORKER_PRODUCT,
   NovaWorkerMode,
 } from "../tools/demos/worker-mode.js";
-import { sessionChatKeys } from "./chat/nova-provider.js";
+import { sessionChatKeys } from "./chat/nova-session.js";
 import { createHostCallbacks } from "./app/callbacks.js";
 import { gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";

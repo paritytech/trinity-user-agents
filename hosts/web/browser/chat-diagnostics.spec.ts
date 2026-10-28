@@ -12,7 +12,7 @@ import {
   startHost,
   testBrowser,
 } from "./support/fixtures.js";
-import type { ChatEventBody } from "../tools/inspector/diagnostics.js";
+import type { ChatEventBody } from "../src/chat/nova/events.js";
 import type { ScenarioValues } from "./support/chat-transport-scenario.js";
 
 const STEP_MS = 60_000;

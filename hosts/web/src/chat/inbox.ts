@@ -1,11 +1,11 @@
-import type { ChatDiagnostics } from "../../tools/inspector/diagnostics.js";
+import type { ChatObserver } from "./nova/events.js";
 import type { ChatContact, ChatProvider, ProviderEvent } from "./provider.js";
 import type { ChatV2Host } from "./draft/host.js";
 import {
   ChatV2Provider,
   type ChatV2ProviderOptions,
 } from "./draft/provider.js";
-import { startNovaChat, type ChatSession } from "./nova-provider.js";
+import { startNovaChat, type ChatSession } from "./nova-session.js";
 import {
   ProductRoomProvider,
   type ProductRoomDeps,
@@ -38,7 +38,7 @@ export interface ChatInboxView {
 
 export interface ChatInboxDeps {
   storage: Storage;
-  diagnostics: ChatDiagnostics;
+  diagnostics: ChatObserver;
   rooms: ProductRoomDeps;
   /** The products whose workers are listed for the session. */
   workerNames(): string[];
