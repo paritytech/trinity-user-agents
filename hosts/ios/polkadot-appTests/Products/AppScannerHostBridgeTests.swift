@@ -74,7 +74,7 @@ struct AppScannerHostBridgeTests {
         try await waitUntil { page.presentedViewController is StubScanner }
         let scanner = try #require(page.presentedViewController)
         try await waitUntil { !scanner.isBeingPresented }
-        await present(UIAlertController(title: nil, message: nil, preferredStyle: .alert), over: scanner)
+        await present(UIAlertController(title: "Camera", message: nil, preferredStyle: .alert), over: scanner)
         scan.cancel()
         _ = try await scan.value
 
