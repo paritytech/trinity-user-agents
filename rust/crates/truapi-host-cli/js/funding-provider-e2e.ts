@@ -48,7 +48,6 @@ const OFFER_AMOUNT = 250n;
 const LATE_AMOUNT = 200n;
 const CANCEL_FEE = 3n;
 
-
 /** Type one command into the host, as the user at its terminal would. The
  *  battery hands the host this pipe as its stdin. */
 export function actAsUser(command: string) {
