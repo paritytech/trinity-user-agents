@@ -9,8 +9,14 @@
 use core::time::Duration;
 use std::sync::Arc;
 
-use futures::{StreamExt, channel::mpsc::UnboundedReceiver, stream::BoxStream};
-use parity_scale_codec::Encode;
+use futures::{
+	FutureExt, StreamExt,
+	channel::mpsc::UnboundedReceiver,
+	future::{Fuse, FusedFuture},
+	select,
+	stream::BoxStream,
+};
+use parity_scale_codec::{DecodeLimit, Encode};
 use rusqlite::{OptionalExtension, Row, Transaction, named_params};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
@@ -18,7 +24,7 @@ use truapi::latest::{
 };
 
 use crate::{
-	native::decode_renderer_node,
+	native::MAX_FACE_DEPTH,
 	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
 	store::{Db, DbError},
 	time::Timer,
@@ -157,7 +163,7 @@ impl PocketCards {
 			})
 			.await?;
 		Ok(kept.and_then(|bytes| {
-			decode_renderer_node(bytes)
+			RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
 				.inspect_err(|error| tracing::warn!(%error, "a kept Pocket face no longer decodes"))
 				.ok()
 		}))
@@ -179,7 +185,7 @@ impl PocketCards {
 
 	/// Keeps the newest of `faces`, each with the unix milliseconds it was
 	/// drawn at, as the card's face: at once, then at most every
-	/// [`FACE_WRITE_INTERVAL`], and once more after `faces` ends.
+	/// [`FACE_WRITE_INTERVAL`], and at once again when `faces` ends.
 	pub async fn keep_faces(
 		&self,
 		product_id: ProductId,
@@ -187,17 +193,38 @@ impl PocketCards {
 		mut faces: UnboundedReceiver<(RendererNode, u64)>,
 		timer: Arc<dyn Timer>,
 	) {
-		while let Some(mut drawn) = faces.next().await {
-			while let Ok(newer) = faces.try_recv() {
-				drawn = newer;
+		let mut newest = None;
+		let mut interval = Fuse::terminated();
+		loop {
+			select! {
+				drawn = faces.next() => match drawn {
+					Some(drawn) => newest = Some(drawn),
+					None => break,
+				},
+				() = interval => {},
 			}
-			let (face, drawn_at) = drawn;
-			if let Err(error) =
-				self.keep_face(product_id.clone(), card_id.clone(), face, drawn_at).await
+			if interval.is_terminated() &&
+				let Some(drawn) = newest.take()
 			{
-				tracing::warn!(%error, card_id, "a Pocket face was not kept");
+				self.keep_newest(&product_id, &card_id, drawn).await;
+				interval = timer.sleep(FACE_WRITE_INTERVAL).fuse();
 			}
-			timer.sleep(FACE_WRITE_INTERVAL).await;
+		}
+		if let Some(drawn) = newest {
+			self.keep_newest(&product_id, &card_id, drawn).await;
+		}
+	}
+
+	async fn keep_newest(
+		&self,
+		product_id: &ProductId,
+		card_id: &str,
+		(face, drawn_at): (RendererNode, u64),
+	) {
+		if let Err(error) =
+			self.keep_face(product_id.clone(), card_id.to_owned(), face, drawn_at).await
+		{
+			tracing::warn!(%error, card_id, "a Pocket face was not kept");
 		}
 	}
 }
@@ -255,7 +282,8 @@ const DROP_UNPINNED: &str = "DELETE FROM pocket_card WHERE privileged = 0 AND ad
 
 const ADD: &str = "INSERT INTO pocket_card (product_id, card_id, title, added_at)
 	VALUES (:product, :card, :title, unixepoch())
-	ON CONFLICT (product_id, card_id) DO UPDATE SET title = excluded.title,
+	ON CONFLICT (product_id, card_id) DO UPDATE
+		SET title = CASE WHEN privileged THEN title ELSE excluded.title END,
 		added_at = COALESCE(added_at, excluded.added_at)";
 
 const PRIVILEGED: &str =

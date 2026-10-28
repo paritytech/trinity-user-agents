@@ -2871,22 +2871,6 @@ fn a_native_status_read_follows_the_os_gate() {
 	);
 }
 
-/// A face kept and read back is the same face, so a card draws at a cold
-/// start exactly as its product last drew it.
-#[test]
-fn a_kept_face_reads_back_as_itself() {
-	let json = std::fs::read_to_string(format!(
-		"{}/tests/fixtures/pocket_faces/devicehood.json",
-		env!("CARGO_MANIFEST_DIR")
-	))
-	.expect("fixture");
-	let face = parse_renderer_node_json(json).expect("fixture reads");
-
-	let kept = encode_renderer_node(face.clone());
-
-	assert_eq!(decode_renderer_node(kept).expect("reads back"), face);
-}
-
 /// A face a real product ships, kept here as well as in the iOS host so the
 /// reader is measured against the protocol shape rather than against what
 /// this code happens to accept. One is enough for that, and the hosts keep
@@ -2959,17 +2943,6 @@ fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
 		read_face_on_stack(nested_boxes(1), no_thread_has_this_much_stack),
 		Err(NativeRendererError::ReaderUnavailable { .. })
 	));
-}
-
-/// A kept face is read back only if it is exactly what was kept: bytes past
-/// the tree mean the row is not a face this host wrote, and drawing its
-/// prefix would show a card nobody drew.
-#[test]
-fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
-	let mut kept = encode_renderer_node(latest::RendererNode::Nil);
-	kept.push(0);
-
-	assert!(matches!(decode_renderer_node(kept), Err(NativeRendererError::Malformed { .. })));
 }
 
 /// A title is drawn and an id is addressed, so they cannot share one rule:

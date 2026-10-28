@@ -1,13 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoveError
+import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.RendererNode
 
 class RealPocketCollectionTest {
     private val humanity = pinnedCard(personhoodProduct, "humanity")
@@ -60,5 +63,17 @@ class RealPocketCollectionTest {
     @Test
     fun `a pinned card with nothing drawn yet still shows the face bundled with the app`() = runTest {
         assertEquals(humanity.face, collection.cachedFace(humanity.card.key))
+    }
+
+    // Reading a kept face goes through the runtime, which may not have started yet.
+    @Test
+    fun `a pinned card shows its bundled face when the kept one cannot be read`() = runTest {
+        val unreadable = object : PocketCardRepository by repository {
+            override suspend fun face(key: PocketCardKey): RendererNode? = error("runtime unavailable")
+        }
+
+        val offline = RealPocketCollection(FakePinnedPocketCards(listOf(humanity)), unreadable)
+
+        assertEquals(humanity.face, offline.cachedFace(humanity.card.key))
     }
 }

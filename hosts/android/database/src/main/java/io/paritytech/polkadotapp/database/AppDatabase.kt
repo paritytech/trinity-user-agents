@@ -281,7 +281,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 69, to = 70, spec = Migration69To70Spec::class),
         // Add chat_requests delivery state (deliveryStatus, deliveredVia, lastDeliveredPeriod)
         AutoMigration(from = 70, to = 71),
-        // Drop the Pocket tables: the core keeps the Pocket collection now
+        // Drop the Pocket card and face tables
         AutoMigration(from = 71, to = 72, spec = Migration71To72Spec::class),
     ]
 )

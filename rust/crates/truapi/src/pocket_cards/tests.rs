@@ -141,11 +141,18 @@ fn a_pinned_card_keeps_its_last_face_across_starts() {
 }
 
 #[test]
-fn adding_a_pinned_card_keeps_it_pinned() {
+fn adding_a_pinned_card_keeps_it_pinned_under_the_host_title() {
 	let (_dir, cards) = open(vec![humanity()]);
 	add(&cards, PERSONHOOD, "humanity", "approved");
 
 	assert_eq!(listed(&cards), vec![entry(PERSONHOOD, "humanity", true)]);
+	let titles: Vec<String> = block_on(cards.observe().next())
+		.unwrap()
+		.unwrap()
+		.into_iter()
+		.map(|card| card.title)
+		.collect();
+	assert_eq!(titles, vec!["Humanity".to_string()]);
 	assert_eq!(
 		block_on(cards.remove(product(PERSONHOOD), "humanity".into())).unwrap(),
 		PocketCardRemoval::Privileged
@@ -176,6 +183,38 @@ fn an_older_face_never_replaces_a_newer_one() {
 
 	keep(&cards, LOYALTY, "stamps", "newer", approved_at + 1_000);
 	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(face("newer")));
+}
+
+#[test]
+fn a_kept_face_reads_back_as_the_product_drew_it() {
+	// The card draws at a cold start exactly as its product last drew it.
+	let json = std::fs::read_to_string(format!(
+		"{}/tests/fixtures/pocket_faces/devicehood.json",
+		env!("CARGO_MANIFEST_DIR")
+	))
+	.unwrap();
+	let devicehood = crate::native::parse_renderer_node_json(json).unwrap();
+	let (_dir, cards) = open(Vec::new());
+
+	block_on(cards.add(product(LOYALTY), "stamps".into(), "Stamps".into(), devicehood.clone()))
+		.unwrap();
+
+	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(devicehood));
+}
+
+#[test]
+fn a_kept_face_with_bytes_past_its_tree_reads_as_none() {
+	// Drawing the prefix of a row that is not a face the core wrote would
+	// show a card nobody drew.
+	let (_dir, cards) = open(Vec::new());
+	add(&cards, LOYALTY, "stamps", "stamps");
+	block_on(cards.db.write(|tx| {
+		tx.execute("UPDATE pocket_card_face SET face = CAST(face || x'00' AS BLOB)", [])?;
+		Ok(())
+	}))
+	.unwrap();
+
+	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), None);
 }
 
 #[test]
@@ -222,10 +261,10 @@ fn a_product_cannot_remove_a_pinned_card() {
 }
 
 #[test]
-fn the_newest_face_is_kept_at_most_every_interval_and_once_more_when_drawing_stops() {
+fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops() {
 	// Faces arrive at frame rate. Writing each one would keep the database
-	// busy for nothing, and the last one must still be kept when the card
-	// scrolls away mid-interval.
+	// busy for nothing, and the last one must be kept as soon as the card
+	// scrolls away, since the app may be stopped right after.
 	let (_dir, cards) = open(Vec::new());
 	add(&cards, LOYALTY, "stamps", "approved");
 	let timer = Arc::new(ManualTimer::default());
@@ -251,6 +290,5 @@ fn the_newest_face_is_kept_at_most_every_interval_and_once_more_when_drawing_sto
 
 	faces.unbounded_send(drawn("4")).unwrap();
 	drop(faces);
-	timer.advance(FACE_WRITE_INTERVAL);
-	wait_until(|| kept() == Some(face("4")), "the last face is kept when drawing stops");
+	wait_until(|| kept() == Some(face("4")), "the last face is kept as soon as drawing stops");
 }

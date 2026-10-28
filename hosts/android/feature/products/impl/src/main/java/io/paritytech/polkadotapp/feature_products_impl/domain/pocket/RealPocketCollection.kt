@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
@@ -33,5 +34,6 @@ class RealPocketCollection @Inject constructor(
 
     /** The newest face the product drew, else the one bundled with a pinned card for its first run. */
     override suspend fun cachedFace(key: PocketCardKey): RendererNode? =
-        repository.face(key) ?: pinnedPocketCards.pinned(key)?.face
+        runCatching { repository.face(key) }.logFailure("pocket: no kept face for ${key.cardId.value}").getOrNull()
+            ?: pinnedPocketCards.pinned(key)?.face
 }

@@ -53,7 +53,6 @@ pub use runtime::{
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
-use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
@@ -131,7 +130,7 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 /// Largest nesting a face may carry, matching what the core accepts on the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
-const MAX_FACE_DEPTH: u32 = 64;
+pub(crate) const MAX_FACE_DEPTH: u32 = 64;
 
 /// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
@@ -247,23 +246,6 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
 
 	Some(deepest + 1)
-}
-
-/// The bytes to keep a face under, so it can be drawn again at a cold start.
-///
-/// SCALE, the encoding the tree already travels in, rather than a shape a host
-/// invents for its own store: a host that writes its own cannot read back what
-/// the protocol later adds, and two hosts disagree about what they kept.
-#[uniffi::export]
-pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
-	node.encode()
-}
-
-/// Read back a face kept as [`encode_renderer_node`] wrote it.
-#[uniffi::export]
-pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
-		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call
