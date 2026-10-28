@@ -113,6 +113,7 @@ fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
     is ChatUserActionModel.ReactionPlaced -> ChatUserAction.ReactionPlaced(messageId, emoji)
     is ChatUserActionModel.ReactionRemoved -> ChatUserAction.ReactionRemoved(messageId, emoji)
     is ChatUserActionModel.Seen -> ChatUserAction.Seen(messageId)
+    is ChatUserActionModel.DeleteMessage -> ChatUserAction.DeleteMessage(messageId)
 }
 
 fun ProductChatMessagesQueryItem.toModel(productId: ProductId) =

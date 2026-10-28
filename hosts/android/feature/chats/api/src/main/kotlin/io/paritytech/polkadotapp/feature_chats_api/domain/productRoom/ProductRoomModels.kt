@@ -70,6 +70,8 @@ sealed interface ChatUserActionModel {
     data class ReactionRemoved(val messageId: String, val emoji: String) : ChatUserActionModel
 
     data class Seen(val messageId: String) : ChatUserActionModel
+
+    data class DeleteMessage(val messageId: String) : ChatUserActionModel
 }
 
 sealed interface ChatUserActionOutcome {

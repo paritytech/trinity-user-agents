@@ -217,6 +217,7 @@ class ProductChatExtension(
             is ChatUserActionModel.ReactionPlaced -> copy(messageId = productId(messageId))
             is ChatUserActionModel.ReactionRemoved -> copy(messageId = productId(messageId))
             is ChatUserActionModel.Seen -> copy(messageId = productId(messageId))
+            is ChatUserActionModel.DeleteMessage -> copy(messageId = productId(messageId))
         }
     }
 

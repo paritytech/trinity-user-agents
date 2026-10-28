@@ -370,6 +370,35 @@ class ProductMessageSourceTest {
     }
 
     @Test
+    fun `a message that the product deleted leaves the window and the cache`() = runBlocking<Unit> {
+        val cache = ProductMessageCache()
+        val querying = ScriptedProductChatQuerying(answerPage = ProductRoomHistory(count = 3, participant = "user").answer)
+        val source = openedSource(querying, cache = cache)
+
+        val outcome = source.perform(ChatSourceAction.Delete("m1"))
+
+        assertEquals(ChatSourceActionOutcome.Done, outcome)
+        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.DeleteMessage("m1")), querying.actionRequests)
+        assertEquals(listOf("m0", "m2"), source.oldestFirstIds())
+        assertEquals(listOf("m0", "m2"), cache.entry(productRoom)?.messages?.map { it.messageId })
+    }
+
+    // The window drops the message only once the product has deleted it, so a refusal leaves it where it was.
+    @Test
+    fun `a deletion that the product refuses keeps the message and shows the reason`() = runBlocking<Unit> {
+        val querying = ScriptedProductChatQuerying(
+            answerPage = ProductRoomHistory(count = 3, participant = "user").answer,
+            answerAction = { Result.failure(ProductChatQueryException.Rejected("Locked")) },
+        )
+        val source = openedSource(querying)
+
+        val outcome = source.perform(ChatSourceAction.Delete("m1"))
+
+        assertEquals(ChatSourceActionOutcome.Refused("Locked"), outcome)
+        assertEquals(listOf("m0", "m1", "m2"), source.oldestFirstIds())
+    }
+
+    @Test
     fun `as in a person chat, a new emoji replaces the reaction of the user`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 2)
         val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
