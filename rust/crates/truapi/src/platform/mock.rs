@@ -1737,8 +1737,8 @@ mod tests {
 	fn preimage_lookup_receives_a_later_insert() {
 		let p = MockPlatform::new();
 		let key = MockPlatform::new().insert_preimage(vec![1, 2, 3]);
-		let mut waiting = p.lookup_preimage(key);
-		let mut other = p.lookup_preimage(vec![9; 32]);
+		let mut waiting = p.lookup_preimage(key.try_into().expect("a blake2b-256 key is 32 bytes"));
+		let mut other = p.lookup_preimage([9; 32]);
 		assert_eq!(block_on(waiting.next()).unwrap().unwrap(), None);
 		assert_eq!(block_on(other.next()).unwrap().unwrap(), None);
 
@@ -1752,8 +1752,8 @@ mod tests {
 	#[test]
 	fn a_dropped_preimage_lookup_leaves_no_subscriber_behind() {
 		let p = MockPlatform::new();
-		let first = p.lookup_preimage(vec![9; 32]);
-		let second = p.lookup_preimage(vec![9; 32]);
+		let first = p.lookup_preimage([9; 32]);
+		let second = p.lookup_preimage([9; 32]);
 
 		drop(first);
 		assert_eq!(p.preimage_subscribers.lock().unwrap()[&vec![9; 32]].len(), 1);
@@ -1766,7 +1766,7 @@ mod tests {
 	fn reinserting_a_held_preimage_does_not_deliver_it_again() {
 		let p = MockPlatform::new();
 		let key = p.insert_preimage(vec![1, 2, 3]);
-		let mut lookup = p.lookup_preimage(key);
+		let mut lookup = p.lookup_preimage(key.try_into().expect("a blake2b-256 key is 32 bytes"));
 		assert_eq!(block_on(lookup.next()).unwrap().unwrap(), Some(vec![1, 2, 3]));
 
 		p.insert_preimage(vec![1, 2, 3]);
@@ -1777,8 +1777,8 @@ mod tests {
 	#[test]
 	fn a_dropped_lookup_is_pruned_when_the_next_one_registers() {
 		let p = MockPlatform::new();
-		drop(p.lookup_preimage(vec![9; 32]));
-		let _open = p.lookup_preimage(vec![9; 32]);
+		drop(p.lookup_preimage([9; 32]));
+		let _open = p.lookup_preimage([9; 32]);
 		let subscribers = p.preimage_subscribers.lock().unwrap();
 		assert_eq!(subscribers.get(&vec![9; 32]).map(Vec::len), Some(1));
 	}
