@@ -541,13 +541,13 @@ mod tests {
 #[cfg(feature = "runtime")]
 mod runtime {
 	use super::{ProductId, ProductIdError};
-	use crate::platform::ExecutableKind;
+	use crate::{host_logic::dotns::PRODUCT_SHARE_SUFFIX, platform::ExecutableKind};
 
 	impl ProductId {
-		/// Parse only a supported `.li` share host, without a URL or network lookup.
+		/// Parse only a supported share host, without a URL or network lookup.
 		pub fn from_share_host(input: &str) -> Option<Self> {
 			let hostname = crate::dotns_name::normalize_host(input);
-			let identifier = hostname.strip_suffix(".li")?.parse::<Self>().ok()?;
+			let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
 			identifier.network_suffix()?;
 			Some(identifier)
 		}
