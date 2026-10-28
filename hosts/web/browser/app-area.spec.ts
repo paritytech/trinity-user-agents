@@ -20,7 +20,7 @@ import {
   showAddress,
   startHost,
   testBrowser,
-} from "./fixtures.js";
+} from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 180_000;

@@ -48,12 +48,12 @@ import {
   choosePreview,
   previewFill,
   type DevTab,
-} from "./fixtures.js";
+} from "./support/fixtures.js";
 import { PASEO_DOTNS } from "../src/dotns.js";
 import type {
   SyntheticChatProduct,
   SyntheticSeen,
-} from "./synthetic-chat-product.js";
+} from "../fixtures/products/synthetic-chat-product.js";
 
 const NAME = "smoke.paseo";
 const STEP_MS = 60_000;
@@ -1925,7 +1925,7 @@ describe("Pocket's Humanity card", () => {
     icon: { cid: "bafkfixtureicon", format: "png" },
   });
 
-  /** A Widget built from `browser/pocket-widget.ts`. */
+  /** A Widget built from `fixtures/products/pocket-widget.ts`. */
   async function publishWidget() {
     return publishApp({
       "index.html":

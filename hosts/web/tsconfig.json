@@ -14,5 +14,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "browser", "vite.config.ts"]
+  "include": [
+    "src",
+    "tools",
+    "fixtures",
+    "tests",
+    "browser",
+    "vite.config.ts"
+  ]
 }
