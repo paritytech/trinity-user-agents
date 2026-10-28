@@ -126,9 +126,9 @@ impl ProductLink {
 		{
 			return None;
 		}
-		let hostname = normalize_host(parsed.host_str()?);
-		let identifier =
-			ProductId::from_share_host(&hostname).or_else(|| hostname.parse::<ProductId>().ok())?;
+		let hostname = parsed.host_str()?;
+		let identifier = ProductId::from_share_host(hostname)
+			.or_else(|| normalize_host(hostname).parse::<ProductId>().ok())?;
 		if !identifier.matches_network(network_suffix) {
 			return None;
 		}
@@ -424,6 +424,7 @@ mod tests {
 			"otherwallet://browse.dot",
 			"polkadotapp://pocket",
 			"https://invalid_name.dot.li",
+			"https://browse.dot.li..",
 			"https://dot.li",
 			"https://stg.revx.dev/editor?mod=other.dot",
 		] {
