@@ -396,11 +396,11 @@ impl ProductRuntimeHost {
 	) -> Result<String, RoomRefusal> {
 		let room_id = normalize_chat_identifier("roomId", room_id)
 			.map_err(|error| RoomRefusal::Failed(error.to_string()))?;
-		let rooms = match platform.subscribe_chat_rooms(&self.connection.product).next().await {
-			Some(Ok(item)) => item.rooms,
-			Some(Err(error)) => return Err(RoomRefusal::Failed(error.reason)),
-			None => return Err(RoomRefusal::Failed("the host published no room list".to_string())),
-		};
+		let rooms = platform
+			.list_chat_rooms(&self.connection.product)
+			.await
+			.map_err(|error| RoomRefusal::Failed(error.reason))?
+			.rooms;
 		match rooms.iter().find(|room| room.room_id == room_id) {
 			None => return Err(RoomRefusal::UnknownRoom),
 			Some(room) if room.participating_as != latest::ChatRoomParticipation::RoomHost => {
@@ -568,6 +568,8 @@ mod tests {
 		icons: Mutex<Vec<String>>,
 		feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
 		calls: Mutex<Vec<String>>,
+		/// The reason `list_chat_rooms` fails with, if any.
+		room_list_failure: Mutex<Option<String>>,
 	}
 
 	impl RecordingHost {
@@ -587,6 +589,20 @@ mod tests {
 
 		fn calls(&self) -> Vec<String> {
 			self.calls.lock().unwrap().clone()
+		}
+
+		fn room_list(&self) -> latest::HostChatListSubscribeItem {
+			let rooms = self
+				.rooms
+				.lock()
+				.unwrap()
+				.iter()
+				.map(|(room_id, participating_as)| latest::ChatRoom {
+					room_id: room_id.clone(),
+					participating_as: *participating_as,
+				})
+				.collect();
+			latest::HostChatListSubscribeItem { rooms }
 		}
 	}
 
@@ -638,17 +654,17 @@ mod tests {
 			&self,
 			_product: &ProductContext,
 		) -> BoxStream<'static, Result<latest::HostChatListSubscribeItem, latest::GenericError>> {
-			let rooms = self
-				.rooms
-				.lock()
-				.unwrap()
-				.iter()
-				.map(|(room_id, participating_as)| latest::ChatRoom {
-					room_id: room_id.clone(),
-					participating_as: *participating_as,
-				})
-				.collect();
-			futures::stream::iter([Ok(latest::HostChatListSubscribeItem { rooms })]).boxed()
+			futures::stream::iter([Ok(self.room_list())]).boxed()
+		}
+
+		async fn list_chat_rooms(
+			&self,
+			_product: &ProductContext,
+		) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
+			match self.room_list_failure.lock().unwrap().clone() {
+				Some(reason) => Err(latest::GenericError { reason }),
+				None => Ok(self.room_list()),
+			}
 		}
 
 		async fn read_chat_room_config(
@@ -939,6 +955,31 @@ mod tests {
 		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
 		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
 		assert_eq!(chat.calls(), ["delete support"]);
+	}
+
+	// A room list the host cannot read is a host failure. If the core read it
+	// as an empty list, a delete would succeed and leave the room in place.
+	#[test]
+	fn a_delete_fails_when_the_host_cannot_list_its_rooms() {
+		let chat = RecordingHost::with_rooms(&[hosted("support")]);
+		*chat.room_list_failure.lock().unwrap() = Some("store locked".to_string());
+		let runtime = chat_runtime(chat.clone());
+
+		let deleted = block_on(Chat::delete_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+				room_id: "support".to_string(),
+			}),
+		));
+
+		assert_eq!(
+			deleted,
+			Err(CallError::Domain(HostChatDeleteRoomError::V1(
+				latest::HostChatDeleteRoomError::Unknown { reason: "store locked".to_string() }
+			)))
+		);
+		assert!(chat.calls().is_empty());
 	}
 
 	// A room keeps the default configuration, a room the host stores, until

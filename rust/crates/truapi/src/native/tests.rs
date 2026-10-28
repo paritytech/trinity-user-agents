@@ -164,6 +164,8 @@ pub struct EventCallbacks {
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
 	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
+	/// The reason `list_rooms` throws with, if any.
+	pub chat_list_rejection: Mutex<Option<String>>,
 	/// Chat declarations the core handed over, as `"<callback> <room>"`.
 	pub chat_declared: Mutex<Vec<String>>,
 	pub chat_room_configs: Mutex<HashMap<String, truapi::latest::ChatRoomConfig>>,
@@ -230,6 +232,7 @@ impl EventCallbacks {
 			chat_bot_rejection: Mutex::new(None),
 			chat_post_rejection: Mutex::new(None),
 			chat_room_footers: Mutex::new(Vec::new()),
+			chat_list_rejection: Mutex::new(None),
 			chat_declared: Mutex::new(Vec::new()),
 			chat_room_configs: Mutex::new(HashMap::new()),
 			chat_feed: Mutex::new(Vec::new()),
@@ -549,6 +552,11 @@ impl NativeChatCallbacks for EventCallbacks {
 	}
 
 	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection> {
+		if let Some(reason) =
+			self.chat_list_rejection.lock().expect("list rejection mutex poisoned").clone()
+		{
+			return Err(HostRejection::Rejected { reason });
+		}
 		let mut room_ids: Vec<String> = self
 			.chat_created_rooms
 			.lock()
@@ -2012,6 +2020,22 @@ fn room_preview() -> truapi::latest::ChatRoomPreview {
 		last_reaction: None,
 		unseen_reactions: 0,
 	}
+}
+
+// The core checks a room against this list before it deletes the room, so a
+// list the host cannot read must reach the core as a failure, not as no rooms.
+#[test]
+fn native_chat_adapter_surfaces_a_room_list_rejection() {
+	let (callbacks, platform, product) = chat_adapter();
+	*callbacks.chat_list_rejection.lock().expect("list rejection mutex poisoned") =
+		Some("store locked".to_string());
+
+	assert_eq!(
+		futures::executor::block_on(crate::platform::ChatPlatform::list_chat_rooms(
+			&platform, &product,
+		)),
+		Err(truapi::latest::GenericError { reason: "store locked".to_string() })
+	);
 }
 
 // Creating a room declares nothing, new or not: a room keeps the
