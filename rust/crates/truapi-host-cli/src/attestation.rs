@@ -19,17 +19,23 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use std::{collections::BTreeSet, sync::Mutex};
 use tracing::{debug, warn};
-use truapi::host_logic::{
-	attestation::build_lite_registration,
-	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
-	product_account::{
-		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+use truapi::{
+	host_logic::{
+		attestation::{
+			SIGNING_CONTEXT_CONSTANT, build_lite_registration, signing_context_from_constant,
+		},
+		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
+		product_account::{
+			ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
+			derive_root_keypair_from_entropy, identity_product_id, product_public_key_to_address,
+		},
 	},
+	statement_allowance as alloc,
 };
 
 use crate::{
-	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::NetworkConfig,
 };
 
 /// Env var carrying an optional bearer token for the identity backend.
@@ -238,8 +244,9 @@ where
 
 /// Inputs for one attestation run.
 pub struct AttestConfig {
-	/// The network whose identity backend takes the registration and whose
-	/// Asset Hub serves the reservation timestamp and the dotNS username poll.
+	/// The network whose identity backend takes the registration, whose People
+	/// and Asset Hub give the signing contexts, and whose Asset Hub serves the
+	/// reservation timestamp and the dotNS username poll.
 	pub network: NetworkConfig,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
@@ -318,6 +325,11 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
+	let chains = CliChainProvider::new(&config.network);
+	let people_signing_context =
+		signing_context_of(&chains, config.network.people_genesis, PEOPLE_LITE_PALLET).await?;
+	let asset_hub_signing_context =
+		signing_context_of(&chains, config.network.asset_hub_genesis, DOTNS_GATEWAY_PALLET).await?;
 	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
@@ -326,6 +338,8 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		&config.username_base,
 		config.reserved_username.as_deref(),
 		signed_at,
+		people_signing_context,
+		asset_hub_signing_context,
 	)
 	.map_err(|reason| anyhow::anyhow!("failed to build registration params: {reason}"))?;
 	debug!(
@@ -340,6 +354,31 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		wait_for_lite_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
 	Ok(lite_username)
+}
+
+/// The pallet that checks the candidate and consumer registration signatures.
+const PEOPLE_LITE_PALLET: &str = "PeopleLite";
+/// The pallet that checks the dotNS reservation signature.
+const DOTNS_GATEWAY_PALLET: &str = "DotnsGateway";
+
+/// The signing context `pallet` on the chain `genesis_hash` names checks account
+/// signatures in, read from its `SigningContext` constant. `None` means the
+/// message alone.
+async fn signing_context_of(
+	chains: &CliChainProvider,
+	genesis_hash: [u8; 32],
+	pallet: &str,
+) -> Result<Option<[u8; 32]>> {
+	let rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(genesis_hash)
+			.await
+			.with_context(|| format!("connect to the chain holding {pallet}"))?,
+	);
+	let metadata = alloc::fetch_metadata(&rpc)
+		.await
+		.with_context(|| format!("read {pallet} metadata"))?;
+	Ok(signing_context_from_constant(metadata.constant(pallet, SIGNING_CONTEXT_CONSTANT)))
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -707,8 +746,9 @@ mod tests {
 		let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
 		let entropy = [7u8; 16];
-		let registration =
-			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123)?;
+		let registration = build_lite_registration(
+			&entropy, "paseo", [9u8; 32], "testing", None, 123, None, None,
+		)?;
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 		let mut network = crate::network::Network::default().config();
 		network.identity_backend_base = Some(Box::leak(backend_base.into_boxed_str()));
