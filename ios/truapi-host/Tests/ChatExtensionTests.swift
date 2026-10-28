@@ -137,7 +137,7 @@ struct ChatQueryTests {
             messageId: "payment",
             timestamp: 1_700_000_000_000,
             totalValue: "5000000",
-            coinKeys: [Data(repeating: 0x11, count: 64)]
+            sr25519SecretKeys: [Data(repeating: 0x11, count: 64)]
         )
         let seen = ChatUserAction.seen(messageId: "message")
 
