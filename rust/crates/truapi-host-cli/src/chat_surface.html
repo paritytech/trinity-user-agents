@@ -881,6 +881,13 @@ function submit() {
   renderFooter(room);
 }
 
+// The product removes the message, and the host sends `messageDeleted`.
+function deleteMessage(roomId, msg) {
+  ask("delete", { roomId, messageId: msg.messageId }, (frame) => {
+    if (frame.error || frame.kind === "error") setStatus(`delete: ${describeError(frame.error) || frame.message}`, "err");
+  });
+}
+
 function react(roomId, msg, emoji, placed) {
   ask("react", { roomId, messageId: msg.messageId, emoji, placed }, (frame) => {
     if (frame.error || frame.kind === "error") setStatus(`reaction: ${describeError(frame.error) || frame.message}`, "err");
@@ -912,8 +919,9 @@ function menuItem(label, onClick, options) {
   return b;
 }
 
-// Copy, reply, edit of an own text, react and who reacted. A send the
-// product did not take offers Retry and Discard.
+// Copy, reply, edit of an own text, react, who reacted, and delete of an own
+// message in a room the product keeps. A send the product did not take
+// offers Retry and Discard.
 function menuItems(room, msg, temp) {
   const items = [];
   const mine = msg.origin === USER;
@@ -939,6 +947,7 @@ function menuItems(room, msg, temp) {
   }
   items.push(picker);
   if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
+  if (mine && room.config.productSource) items.push(menuItem("Delete", () => deleteMessage(room.roomId, msg), { id: "Delete", destructive: true }));
   return items;
 }
 
@@ -1052,6 +1061,16 @@ function handle(frame) {
       if (known || frame.persisted || state.opened === frame.roomId) upsertMessage(frame.roomId, frame.message);
       renderRooms();
       if (frame.roomId === state.selected) renderRoom(frame.message.origin === USER);
+      break;
+    }
+    case "messageDeleted": {
+      const room = state.rooms.get(frame.roomId);
+      if (room && frame.list) room.list = frame.list;
+      state.messages.set(frame.roomId, messagesOf(frame.roomId).filter((m) => m.messageId !== frame.messageId));
+      if (state.editing === frame.messageId) state.editing = null;
+      if (state.replyTo === frame.messageId) state.replyTo = null;
+      renderRooms();
+      if (frame.roomId === state.selected) renderRoom(false);
       break;
     }
     case "workers": {

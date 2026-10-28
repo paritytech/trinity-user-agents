@@ -237,6 +237,13 @@ enum PageOp {
 		emoji: String,
 		placed: bool,
 	},
+	/// The user deletes a message.
+	Delete {
+		#[serde(default)]
+		req_id: u64,
+		room_id: String,
+		message_id: String,
+	},
 	/// The newest message on screen.
 	Seen {
 		#[serde(default)]
@@ -476,7 +483,7 @@ impl ChatSurface {
 		let source = config.product_source;
 		let host_kept = || {
 			Applied::Now(error_reply(format!(
-				"the room {room_id:?} keeps its messages in the host, which takes edits and reactions from the product only"
+				"the room {room_id:?} keeps its messages in the host, which takes edits, deletions and reactions from the product only"
 			)))
 		};
 		match op {
@@ -507,6 +514,13 @@ impl ChatSurface {
 					ChatUserAction::ReactionRemoved { message_id, emoji }
 				};
 				self.later_action("react", *req_id, room_id, action)
+			},
+			PageOp::Delete { req_id, message_id, .. } => {
+				if !source {
+					return host_kept();
+				}
+				let action = ChatUserAction::DeleteMessage { message_id: message_id.clone() };
+				self.later_action("delete", *req_id, room_id, action)
 			},
 			PageOp::Seen { req_id, message_id, .. } => {
 				if source && config.report_seen {
@@ -710,6 +724,7 @@ fn op_room(op: &PageOp) -> &str {
 		PageOp::Post { room_id, .. } |
 		PageOp::Edit { room_id, .. } |
 		PageOp::React { room_id, .. } |
+		PageOp::Delete { room_id, .. } |
 		PageOp::Seen { room_id, .. } |
 		PageOp::Messages { room_id, .. } |
 		PageOp::Reactions { room_id, .. } => room_id,
@@ -721,6 +736,7 @@ fn op_req_id(op: &PageOp) -> u64 {
 		PageOp::Post { req_id, .. } |
 		PageOp::Edit { req_id, .. } |
 		PageOp::React { req_id, .. } |
+		PageOp::Delete { req_id, .. } |
 		PageOp::Seen { req_id, .. } |
 		PageOp::Messages { req_id, .. } |
 		PageOp::Reactions { req_id, .. } => *req_id,
@@ -1132,7 +1148,7 @@ mod tests {
 	}
 
 	#[test]
-	fn a_room_the_host_keeps_takes_no_edit_or_reaction_from_the_page() {
+	fn a_room_the_host_keeps_takes_no_edit_deletion_or_reaction_from_the_page() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
 		let posted = now(&surface, json!({"op":"post","reqId":1,"roomId":"daily","text":"hi"}));
@@ -1147,10 +1163,13 @@ mod tests {
 			json!({"op":"react","reqId":3,"roomId":"daily","messageId":id,"emoji":"+1","placed":true}),
 		);
 		let seen = now(&surface, json!({"op":"seen","reqId":4,"roomId":"daily","messageId":id}));
+		let delete =
+			now(&surface, json!({"op":"delete","reqId":5,"roomId":"daily","messageId":id}));
 
 		// A refusal names the request it refuses.
 		assert_eq!((edit["kind"].clone(), edit["reqId"].clone()), (json!("error"), json!(2)));
 		assert_eq!((react["kind"].clone(), react["reqId"].clone()), (json!("error"), json!(3)));
+		assert_eq!((delete["kind"].clone(), delete["reqId"].clone()), (json!("error"), json!(5)));
 		assert_eq!(seen, json!({"kind":"answer","op":"seen","reqId":4,"ok":{"type":"Kept"}}));
 		assert_eq!(worker.payloads(), vec![posted_text("hi")]);
 	}
@@ -1292,8 +1311,10 @@ mod tests {
 	async fn the_users_changes_in_a_room_the_product_keeps_are_user_actions() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
-		surface.chat().cache_page("kept", &[product_message("s-1", "user")]);
-		for _ in 0..3 {
+		surface
+			.chat()
+			.cache_page("kept", &[product_message("s-1", "user"), product_message("s-2", "user")]);
+		for _ in 0..4 {
 			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionItem::Acknowledged));
 		}
 
@@ -1309,15 +1330,19 @@ mod tests {
 			json!({"op":"edit","reqId":4,"roomId":"kept","messageId":"s-1","text":"new"}),
 		)
 		.await;
+		let delete =
+			run(&surface, json!({"op":"delete","reqId":5,"roomId":"kept","messageId":"s-2"})).await;
 
-		for reply in [&react, &seen, &edit] {
+		for reply in [&react, &seen, &edit, &delete] {
 			assert_eq!(reply["ok"], json!({"type":"Acknowledged"}), "{reply}");
 		}
 		let actions: Vec<_> = worker.asked();
-		assert_eq!(actions.len(), 3);
+		assert_eq!(actions.len(), 4);
 		assert!(actions[0].contains("ReactionPlaced"));
 		assert!(actions[1].contains("Seen"));
 		assert!(actions[2].contains("EditMessage"));
+		assert!(actions[3].contains("DeleteMessage"));
+		assert!(surface.chat().message("kept", "s-2").is_none());
 		let cached = surface.chat().message("kept", "s-1").expect("cached");
 		assert_eq!(cached.body, ChatMessageBody::Text { text: "new".to_string() });
 		assert!(cached.reactions[0].reacted_by_user);

@@ -263,25 +263,26 @@ in-memory host keeps.
   and a `Call` and a `Payment` as one line each. Messages show "edited",
   status ticks, reactions (yours highlighted, click to toggle) and a reply
   quote that jumps to its message. A `Replaced` feed update draws a message
-  again in place, with no edit mark.
+  again in place, with no edit mark, and a `Deleted` one removes it.
 - **Menus.** The message menu has Copy, Reply, Edit for your own text, React,
-  and "Who reacted" (`reactions_query`) when the room sets `reaction_details`.
+  "Who reacted" (`reactions_query`) when the room sets `reaction_details`, and
+  Delete for your own message in a room the product keeps.
   A send the product did not take offers Retry and Discard.
 - **Footer.** `TextInput`, or `Empty`. Text you send is a message, which a
   room the product keeps receives with the id and the time the page chose.
 
 A room the host keeps takes only what you send: it stores the message and
 tells the product with a first-version `MessagePosted` on
-`chat.actionSubscribe()`. It refuses edits and reactions, and `seen` there only
-marks the room seen. A room the product keeps (`product_source`) is paged from
-the product with `messages_query`, newest page first and older pages as you
-scroll up; what you send carries a message id the page chose and shows as
-`Preparing` until `user_action` answers `MessageCreated`, and your edits,
-reactions and seen reports go there too. The host waits 10 s for a page, 30 s
-for a send, 10 s for another action and 5 s for who reacted, asks an
-`unavailable` query once more after 1 s, and draws the host default when the
-product answers `NotAvailable`. `?room=<id>` opens a room as soon as the
-product declares it.
+`chat.actionSubscribe()`. It refuses edits, deletions and reactions, and
+`seen` there only marks the room seen. A room the product keeps
+(`product_source`) is paged from the product with `messages_query`, newest
+page first and older pages as you scroll up; what you send carries a message
+id the page chose and shows as `Preparing` until `user_action` answers
+`MessageCreated`, and your edits, deletions, reactions and seen reports go
+there too. The host waits 10 s for a page, 30 s for a send, 10 s for another
+action and 5 s for who reacted, asks an `unavailable` query once more
+after 1 s, and draws the host default when the product answers `NotAvailable`.
+`?room=<id>` opens a room as soon as the product declares it.
 
 The worker runs as a module script in the page, so its console is the page's.
 The **Logs** pane shows it: every line levelled from its `[INF]`/`[WRN]`/`[ERR]`

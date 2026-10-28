@@ -78,7 +78,7 @@ impl RoomRecord {
 	fn new(participating_as: ChatRoomParticipation, name: String, icon_url: String) -> Self {
 		Self {
 			participating_as,
-			metadata: ChatRoomMetadata { name, description: None },
+			metadata: ChatRoomMetadata { name, description: None, icon: None },
 			icon_url,
 			config: ChatRoomConfig::default(),
 			preview: None,
@@ -412,6 +412,13 @@ impl CliChatHost {
 		let Some(room) = state.rooms.get_mut(room_id) else {
 			return;
 		};
+		if let ChatUserAction::DeleteMessage { message_id } = action {
+			if let Some(index) = room.position(message_id) {
+				room.messages.remove(index);
+				Self::announce_deletion(&mut state, room_id, message_id);
+			}
+			return;
+		}
 		let changed = match (action, answer) {
 			(
 				ChatUserAction::NewMessage { .. },
@@ -444,6 +451,7 @@ impl CliChatHost {
 				room.last_seen = Some(message_id.clone());
 				None
 			},
+			(ChatUserAction::DeleteMessage { .. }, _) => unreachable!("handled above"),
 			// A send the product only acknowledged changes no message the
 			// screen holds, and the page sends no payment or contact action.
 			(
@@ -473,6 +481,21 @@ impl CliChatHost {
 			"roomId": room_id,
 			"persisted": room.host_store(),
 			"message": message_json(&room.messages[index].message),
+			"list": list_json(room),
+		});
+		Self::broadcast(state, event);
+	}
+
+	/// Tell every observer a message left a room, with the chat-list view of
+	/// its room, which the deletion can change.
+	fn announce_deletion(state: &mut State, room_id: &str, message_id: &str) {
+		let Some(room) = state.rooms.get(room_id) else {
+			return;
+		};
+		let event = json!({
+			"kind": "messageDeleted",
+			"roomId": room_id,
+			"messageId": message_id,
 			"list": list_json(room),
 		});
 		Self::broadcast(state, event);
@@ -583,15 +606,23 @@ impl CliChatHost {
 	}
 }
 
-/// Apply one feed update to `room`. The answer is the index of the message
-/// that changed. With `persist` the room is the host's store and the host refuses
-/// what a store cannot hold; without it the update is for the screen only,
-/// and an update for a message the cache never saw changes nothing.
+/// What a feed update changed in a room.
+enum FeedChange {
+	/// The message at this index is new or changed.
+	Message(usize),
+	/// The message with this id left the room.
+	Deleted(String),
+}
+
+/// Apply one feed update to `room`. The answer is what changed. With `persist`
+/// the room is the host's store and the host refuses what a store cannot hold;
+/// without it the update is for the screen only, and an update for a message
+/// the cache never saw changes nothing.
 fn apply_feed(
 	room: &mut RoomRecord,
 	update: &ChatFeedUpdate,
 	persist: bool,
-) -> Result<Option<usize>, HostChatUpdateFeedError> {
+) -> Result<Option<FeedChange>, HostChatUpdateFeedError> {
 	let missing = || if persist { Err(HostChatUpdateFeedError::UnknownMessage) } else { Ok(None) };
 	let index = match update {
 		ChatFeedUpdate::New(message) => {
@@ -599,15 +630,16 @@ fn apply_feed(
 				Some(_) if persist => Err(HostChatUpdateFeedError::DuplicateMessage),
 				Some(index) => {
 					room.messages[index] = StoredMessage::new(message.clone());
-					Ok(Some(index))
+					Ok(Some(FeedChange::Message(index)))
 				},
 				None => {
 					room.messages.push(StoredMessage::new(message.clone()));
-					Ok(Some(room.messages.len() - 1))
+					Ok(Some(FeedChange::Message(room.messages.len() - 1)))
 				},
 			};
 		},
 		ChatFeedUpdate::Edited { message_id, .. } |
+		ChatFeedUpdate::Deleted { message_id } |
 		ChatFeedUpdate::ReactionPlaced { message_id, .. } |
 		ChatFeedUpdate::ReactionRemoved { message_id, .. } |
 		ChatFeedUpdate::StatusChanged { message_id, .. } => match room.position(message_id) {
@@ -619,9 +651,17 @@ fn apply_feed(
 			None => return missing(),
 		},
 	};
+	if let ChatFeedUpdate::Deleted { message_id } = update {
+		// In the host store, the user's words are the user's own.
+		if persist && room.messages[index].message.origin.participant_id == USER {
+			return Err(HostChatUpdateFeedError::NotOwner);
+		}
+		room.messages.remove(index);
+		return Ok(Some(FeedChange::Deleted(message_id.clone())));
+	}
 	let stored = &mut room.messages[index];
 	match update {
-		ChatFeedUpdate::New(_) => unreachable!("handled above"),
+		ChatFeedUpdate::New(_) | ChatFeedUpdate::Deleted { .. } => unreachable!("handled above"),
 		ChatFeedUpdate::Edited { body, edited_at, .. } => {
 			// In the host's store the user's words are the user's own.
 			if persist && stored.message.origin.participant_id == USER {
@@ -658,7 +698,7 @@ fn apply_feed(
 		},
 		ChatFeedUpdate::StatusChanged { status, .. } => stored.message.status = *status,
 	}
-	Ok(Some(index))
+	Ok(Some(FeedChange::Message(index)))
 }
 
 /// The variant name and target message of a feed update, for the transcript.
@@ -670,6 +710,7 @@ fn feed_target(update: &ChatFeedUpdate) -> (&'static str, &str) {
 		ChatFeedUpdate::ReactionPlaced { message_id, .. } => ("ReactionPlaced", message_id),
 		ChatFeedUpdate::ReactionRemoved { message_id, .. } => ("ReactionRemoved", message_id),
 		ChatFeedUpdate::StatusChanged { message_id, .. } => ("StatusChanged", message_id),
+		ChatFeedUpdate::Deleted { message_id } => ("Deleted", message_id),
 	}
 }
 
@@ -1046,6 +1087,9 @@ impl ChatPlatform for CliChatHost {
 	) -> Result<(), GenericError> {
 		self.declare("metadata", &request.room_id, &request, |room| {
 			room.metadata = request.metadata.clone();
+			if let Some(icon) = &request.metadata.icon {
+				room.icon_url = icon.clone();
+			}
 		})
 	}
 
@@ -1089,8 +1133,14 @@ impl ChatPlatform for CliChatHost {
 			.rooms
 			.get_mut(&request.room_id)
 			.ok_or(HostChatUpdateFeedError::UnknownRoom)?;
-		if let Some(index) = apply_feed(room, &request.update, persist)? {
-			Self::announce_message(&mut state, &request.room_id, index);
+		match apply_feed(room, &request.update, persist)? {
+			Some(FeedChange::Message(index)) => {
+				Self::announce_message(&mut state, &request.room_id, index);
+			},
+			Some(FeedChange::Deleted(message_id)) => {
+				Self::announce_deletion(&mut state, &request.room_id, &message_id);
+			},
+			None => {},
 		}
 		drop(state);
 		let (update, message_id) = feed_target(&request.update);
@@ -1388,25 +1438,74 @@ mod tests {
 		assert_eq!(read("never-created"), ChatRoomConfig::default());
 	}
 
+	// A metadata without an icon keeps the icon the room has.
 	#[test]
-	fn metadata_replaces_the_name_and_description() {
+	fn metadata_replaces_the_name_description_and_icon() {
 		let host = host_with_rooms(None);
 		let (_, mut events) = host.observe();
-		futures::executor::block_on(host.set_chat_room_metadata(
-			&product(),
-			HostChatSetRoomMetadataRequest {
-				room_id: "support".to_string(),
-				metadata: ChatRoomMetadata {
-					name: "Help desk".to_string(),
-					description: Some("We answer".to_string()),
+		let mut declare = |name: &str, icon: Option<&str>| {
+			futures::executor::block_on(host.set_chat_room_metadata(
+				&product(),
+				HostChatSetRoomMetadataRequest {
+					room_id: "support".to_string(),
+					metadata: ChatRoomMetadata {
+						name: name.to_string(),
+						description: Some("We answer".to_string()),
+						icon: icon.map(str::to_string),
+					},
 				},
-			},
-		))
-		.expect("the room exists");
+			))
+			.expect("the room exists");
+			events.try_recv().expect("the room event")
+		};
 
-		let event = events.try_recv().expect("the room event");
+		let event = declare("Help desk", Some("https://icons.example/desk.png"));
 		assert_eq!(event["name"], "Help desk");
 		assert_eq!(event["description"], "We answer");
+		assert_eq!(event["icon"], "https://icons.example/desk.png");
+		let event = declare("Front desk", None);
+		assert_eq!(
+			(event["name"].clone(), event["icon"].clone()),
+			(json!("Front desk"), json!("https://icons.example/desk.png"))
+		);
+	}
+
+	// In the host store a product deletes only its own messages, as it edits
+	// only its own. The page learns that the message left the room.
+	#[test]
+	fn a_deleted_message_leaves_the_room() {
+		let host = host_with_rooms(None);
+		let user = host.post_user_message("support", body("mine"), None).expect("the room exists");
+		feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "hi")), true)
+			.expect("a new message is stored");
+		let (_, mut events) = host.observe();
+		let deleted = |id: &str| ChatFeedUpdate::Deleted { message_id: id.to_string() };
+
+		assert_eq!(
+			feed(&host, "support", deleted(&user.message_id), true),
+			Err(HostChatUpdateFeedError::NotOwner)
+		);
+		assert_eq!(
+			feed(&host, "support", deleted("p-9"), true),
+			Err(HostChatUpdateFeedError::UnknownMessage)
+		);
+		feed(&host, "support", deleted("p-1"), true).expect("the product deletes its message");
+
+		let events = drain(&mut events);
+		assert_eq!(events.len(), 1);
+		assert_eq!(
+			(events[0]["kind"].clone(), events[0]["messageId"].clone()),
+			(json!("messageDeleted"), json!("p-1"))
+		);
+		assert!(host.message("support", "p-1").is_none());
+		assert!(host.message("support", &user.message_id).is_some());
+
+		// A room the product keeps deletes what its cache holds, and an
+		// update for a message off screen changes nothing.
+		host.cache_page("kept", &[message("s-1", USER, "cached")]);
+		feed(&host, "kept", deleted("s-0"), false).expect("a message off screen is fine");
+		feed(&host, "kept", deleted("s-1"), false).expect("the screen drops the message");
+		assert!(host.message("kept", "s-1").is_none());
 	}
 
 	#[test]
