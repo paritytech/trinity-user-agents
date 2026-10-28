@@ -224,8 +224,8 @@ schemes.
   signatures 64 bytes, and `contracts` addresses are 20-byte Asset Hub contract addresses.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
   rules as a pointer.
-- URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
-  is a URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+- URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. One exception is a
+  URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`), which MAY use `http` or `ws`, so a stack running on a laptop can be
   read on the same network. A hostname never qualifies for it, so DNS cannot turn a public name into a private address.
   A `web-gateway` has an exception of its own, below.
@@ -235,9 +235,9 @@ schemes.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given.
 - A `web-gateway` URL MUST name a host, never an address, use `https`, carry no fragment, and have a path that ends in
-  `/` as written. It MAY carry a query, so one gateway can serve several stacks. A gateway whose host is exactly
+  `/` as written. It MAY carry a query, so one gateway can serve several stacks. A gateway whose host is written exactly
   `localhost` MAY use `http`: a gateway puts a name's label in front of its host, so it cannot be a literal address, and
-  `localhost` is the one name that stays on the reader's machine
+  `localhost` and the names under it stay on the reader's machine
   ([RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)). It suits a stack run on that machine, such as
   `http://localhost:5173/`.
 
