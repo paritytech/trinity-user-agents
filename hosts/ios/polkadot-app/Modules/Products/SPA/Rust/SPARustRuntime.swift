@@ -142,10 +142,12 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
-        let content = try await contentLoader.open(configuration.page.host.toDotDomain(), policy: .untilCancelled)
+        let served = try await contentLoader.open(
+            configuration.page.host.toDotDomain(),
+            kind: configuration.executable,
+            policy: .untilCancelled
+        ).archive
         try checkNotDisposed()
-
-        let served = try content.served(for: configuration.executable)
 
         guard served != servedContent else { return }
 
@@ -163,9 +165,8 @@ private extension SPARustRuntime {
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let content = try await contentLoader.open(domain, policy: .untilCancelled)
-
-        let served = try content.served(for: configuration.executable)
+        let served = try await contentLoader.open(domain, kind: configuration.executable, policy: .untilCancelled)
+            .archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 

@@ -9,16 +9,18 @@ protocol SPAProductReloading: AnyObject {
 
 @MainActor
 protocol ProductPresenceRegistering: AnyObject {
-    func register(productId: ProductId, reloader: SPAProductReloading) -> UUID
+    /// `contentId` names the archive the screen serves, which is what an update waits on.
+    func register(productId: ProductId, contentId: ProductId, reloader: SPAProductReloading) -> UUID
     func unregister(_ presenceId: UUID)
     func requestRefresh(of productId: ProductId)
-    func applyPendingUpdate(of productId: ProductId) -> Bool
+    func applyPendingUpdate(of contentId: ProductId) -> Bool
 }
 
 @MainActor
 final class ProductUpdateCoordinator {
     private struct Presence {
         let productId: ProductId
+        let contentId: ProductId
         weak var reloader: SPAProductReloading?
     }
 
@@ -27,7 +29,7 @@ final class ProductUpdateCoordinator {
     private let logger: LoggerProtocol
 
     private var presences: [UUID: Presence] = [:]
-    private var pendingUpdates: [ProductId: ProductUpdate] = [:]
+    private var pendingUpdates: [ProductId: ProductContentUpdate] = [:]
     private var updatesTask: Task<Void, Never>?
     private var foregroundTask: Task<Void, Never>?
 
@@ -50,11 +52,7 @@ final class ProductUpdateCoordinator {
         guard updatesTask == nil else { return }
 
         let updates = contentLoader.updates()
-        updatesTask = Task { [weak self, contentLoader] in
-            for update in await contentLoader.pendingUpdates() {
-                self?.handle(update)
-            }
-
+        updatesTask = Task { [weak self] in
             do {
                 for try await update in updates {
                     self?.handle(update)
@@ -74,16 +72,16 @@ final class ProductUpdateCoordinator {
 }
 
 extension ProductUpdateCoordinator: ProductPresenceRegistering {
-    func register(productId: ProductId, reloader: SPAProductReloading) -> UUID {
+    func register(productId: ProductId, contentId: ProductId, reloader: SPAProductReloading) -> UUID {
         let presenceId = UUID()
-        presences[presenceId] = Presence(productId: productId.lowercased(), reloader: reloader)
+        presences[presenceId] = Presence(productId: productId, contentId: contentId, reloader: reloader)
         return presenceId
     }
 
     func unregister(_ presenceId: UUID) {
         guard let presence = presences.removeValue(forKey: presenceId),
-              !isPresented(presence.productId),
-              let update = pendingUpdates.removeValue(forKey: presence.productId) else {
+              !isPresented(presence.contentId),
+              let update = pendingUpdates.removeValue(forKey: presence.contentId) else {
             return
         }
 
@@ -96,10 +94,8 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
         }
     }
 
-    func applyPendingUpdate(of productId: ProductId) -> Bool {
-        let key = productId.lowercased()
-
-        guard let update = pendingUpdates.removeValue(forKey: key) else {
+    func applyPendingUpdate(of contentId: ProductId) -> Bool {
+        guard let update = pendingUpdates.removeValue(forKey: contentId) else {
             return false
         }
 
@@ -110,37 +106,35 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
 }
 
 private extension ProductUpdateCoordinator {
-    func handle(_ update: ProductUpdate) {
-        let key = update.productId.lowercased()
-
-        guard isPresented(key) else {
+    func handle(_ update: ProductContentUpdate) {
+        guard isPresented(update.contentId) else {
             apply(update, reloadingPresentations: false)
             return
         }
 
-        pendingUpdates[key] = update
+        pendingUpdates[update.contentId] = update
     }
 
-    func apply(_ update: ProductUpdate, reloadingPresentations: Bool) {
-        let key = update.productId.lowercased()
+    func apply(_ update: ProductContentUpdate, reloadingPresentations: Bool) {
+        let contentId = update.contentId
 
-        logger.debug("Applying product update for \(key), reloading open SPAs: \(reloadingPresentations)")
+        logger.debug("Applying the update of \(contentId), reloading open SPAs: \(reloadingPresentations)")
 
         Task { [weak self, contentLoader] in
             await contentLoader.apply(update)
 
             if reloadingPresentations {
-                self?.reloaders(of: key).forEach { $0.serveAppliedBuild() }
+                self?.reloaders(of: contentId).forEach { $0.serveAppliedBuild() }
             }
         }
     }
 
-    func isPresented(_ productId: ProductId) -> Bool {
-        !reloaders(of: productId).isEmpty
+    func isPresented(_ contentId: ProductId) -> Bool {
+        !reloaders(of: contentId).isEmpty
     }
 
-    func reloaders(of productId: ProductId) -> [SPAProductReloading] {
-        presences.values.filter { $0.productId == productId }.compactMap(\.reloader)
+    func reloaders(of contentId: ProductId) -> [SPAProductReloading] {
+        presences.values.filter { $0.contentId == contentId }.compactMap(\.reloader)
     }
 
     func refreshPresentedProducts() {

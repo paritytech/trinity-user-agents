@@ -20,7 +20,8 @@ public struct DotNsResolvedContent: Equatable, Sendable {
 
 /// Protocol for resolving .dot domain names to local content directories.
 public protocol DotNsResolverProtocol {
-    /// Resolve a .dot domain name to a local URL containing the extracted content files.
+    /// The applied archive of a .dot name, downloaded and applied only when none is applied yet.
+    /// A newer published archive replaces it through `ProductContentLoader`, never here.
     func resolveToLocalURL(dotNsName: String) async throws -> URL
 
     /// Clear all cached content and hash mappings.
@@ -46,8 +47,16 @@ public final class DotNsResolver: DotNsResolverProtocol {
     }
 
     public func resolveToLocalURL(dotNsName: String) async throws -> URL {
+        if let applied = appliedContentDirectory(of: dotNsName) {
+            return applied
+        }
+
         let content = try await stageContent(dotNsName: dotNsName)
-        contentHashCache.putContentHash(name: dotNsName, hash: content.contentHash)
+
+        if appliedContentDirectory(of: dotNsName) == nil {
+            contentHashCache.putContentHash(name: dotNsName, hash: content.contentHash)
+        }
+
         return content.localURL
     }
 
@@ -88,6 +97,10 @@ public final class DotNsResolver: DotNsResolverProtocol {
 }
 
 extension DotNsResolver {
+    private func appliedContentDirectory(of dotNsName: String) -> URL? {
+        contentHashCache.getContentHash(name: dotNsName).flatMap(contentStorage.getContentDirectory(contentHash:))
+    }
+
     private func saveResolvedContent(carFileURL: URL, hexHash: String, dotNsName: String) throws -> URL {
         // Removing temp item
         defer { try? FileManager.default.removeItem(at: carFileURL) }

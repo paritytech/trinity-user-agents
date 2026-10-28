@@ -168,7 +168,7 @@ private extension ProductBotProvider {
     /// published product's bot needs its worker subname, so it needs a resolve that succeeded.
     func resolveForBot(_ product: Product) async -> ResolvedProduct? {
         do {
-            return try await contentLoader.open(product.identifier, policy: .attempts(3)).resolved
+            return try await contentLoader.openWorker(product.identifier)
         } catch ProductResolutionError.malformedManifest {
             logger.error("Skipping the chat bot for \(product.identifier): its manifest is malformed")
             return nil

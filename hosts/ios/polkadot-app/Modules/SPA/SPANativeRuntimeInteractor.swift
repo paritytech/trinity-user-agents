@@ -104,7 +104,9 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
             return
         }
 
-        guard presenceRegistry?.applyPendingUpdate(of: productDomain) != true else { return }
+        if let servedContentId, presenceRegistry?.applyPendingUpdate(of: servedContentId) == true {
+            return
+        }
 
         serveAppliedBuild()
     }
@@ -204,10 +206,15 @@ private extension SPANativeRuntimeInteractor {
 
             // Bytes come from the executable's own subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let content = try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler())
+            let content = try await contentLoader.open(
+                domain,
+                kind: configuration.executable,
+                policy: .untilCancelled,
+                onPhase: phaseHandler()
+            )
             resolvedProduct = content.resolved
 
-            let served = try content.served(for: configuration.executable)
+            let served = content.archive
             let contentURL = served.localURL
             let schemeHandler = makeSchemeHandler(
                 domain: domain,
@@ -284,6 +291,10 @@ private extension SPANativeRuntimeInteractor {
         configuration.page.host.toDotDomain()
     }
 
+    var servedContentId: ProductId? {
+        resolvedProduct?.contentId(for: configuration.executable)
+    }
+
     func phaseHandler() -> ProductLoadPhaseHandler {
         { [weak self] phase in
             Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
@@ -291,16 +302,18 @@ private extension SPANativeRuntimeInteractor {
     }
 
     func registerPresence() {
-        guard presenceId == nil else { return }
+        guard presenceId == nil, let servedContentId else { return }
 
-        presenceId = presenceRegistry?.register(productId: productDomain, reloader: self)
+        presenceId = presenceRegistry?.register(productId: productDomain, contentId: servedContentId, reloader: self)
     }
 
     func performServeAppliedBuild() async {
         do {
-            let content = try await contentLoader.open(productDomain, policy: .untilCancelled)
-
-            let served = try content.served(for: configuration.executable)
+            let served = try await contentLoader.open(
+                productDomain,
+                kind: configuration.executable,
+                policy: .untilCancelled
+            ).archive
 
             if served != servedContent {
                 let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: served.localURL)

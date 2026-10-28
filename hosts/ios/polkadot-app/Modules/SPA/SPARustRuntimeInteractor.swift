@@ -90,7 +90,9 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             return
         }
 
-        guard presenceRegistry?.applyPendingUpdate(of: productDomain) != true else { return }
+        if let servedContentId, presenceRegistry?.applyPendingUpdate(of: servedContentId) == true {
+            return
+        }
 
         serveAppliedBuild()
     }
@@ -145,7 +147,12 @@ private extension SPARustRuntimeInteractor {
 
         switch configuration.contentSource {
         case .dotNs:
-            return try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler()).resolved
+            return try await contentLoader.open(
+                domain,
+                kind: configuration.executable,
+                policy: .untilCancelled,
+                onPhase: phaseHandler()
+            ).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
         #if DEBUG
@@ -234,6 +241,10 @@ private extension SPARustRuntimeInteractor {
         configuration.page.host.toDotDomain()
     }
 
+    var servedContentId: ProductId? {
+        resolvedProduct?.contentId(for: configuration.executable)
+    }
+
     func phaseHandler() -> ProductLoadPhaseHandler {
         { [weak self] phase in
             Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
@@ -244,8 +255,8 @@ private extension SPARustRuntimeInteractor {
         isServing = true
         servedContent = await runtime.servedBuild()
 
-        guard servedContent != nil, presenceId == nil else { return }
+        guard servedContent != nil, presenceId == nil, let servedContentId else { return }
 
-        presenceId = presenceRegistry?.register(productId: productDomain, reloader: self)
+        presenceId = presenceRegistry?.register(productId: productDomain, contentId: servedContentId, reloader: self)
     }
 }

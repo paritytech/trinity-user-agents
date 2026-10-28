@@ -13,7 +13,7 @@ final class ProductContentLoaderTests {
     private let contentHash: Data
     private let updatedContentHash: Data
 
-    private let versionsDirectory = FileManager.default.temporaryDirectory
+    private let manifestsDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("ProductContentLoaderTests-\(UUID().uuidString)")
     private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
     private let clock = ManualClock()
@@ -28,7 +28,7 @@ final class ProductContentLoaderTests {
     }
 
     deinit {
-        try? FileManager.default.removeItem(at: versionsDirectory)
+        try? FileManager.default.removeItem(at: manifestsDirectory)
         contentHashCache.removeContentHash(name: productId)
     }
 
@@ -36,24 +36,24 @@ final class ProductContentLoaderTests {
         contracts.failNextReads(with: Array(repeating: chainUnreachable, count: 4))
         let environment = try Environment(self)
 
-        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
 
         for delay in [1, 2, 4, 4] {
             await clock.resumeSleep(for: .seconds(delay))
         }
 
-        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.archive.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func retriesAGatewayThatCannotReachTheContentYet() async throws {
         let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 504)])
 
-        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.archive.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 2)
     }
 
@@ -64,7 +64,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
 
         await #expect(throws: DotNsContractError.self) {
-            try await environment.loader.open(self.productId, policy: .untilCancelled)
+            try await environment.loader.open(self.productId, kind: .app, policy: .untilCancelled)
         }
 
         #expect(environment.fetcher.fetchCount == 0)
@@ -74,7 +74,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 404)])
 
         await #expect(throws: HTTPResponseError.self) {
-            try await environment.loader.open(self.productId, policy: .untilCancelled)
+            try await environment.loader.open(self.productId, kind: .app, policy: .untilCancelled)
         }
 
         #expect(environment.fetcher.fetchCount == 1)
@@ -87,19 +87,19 @@ final class ProductContentLoaderTests {
             isPathSatisfied: false
         )
 
-        let open = Task { try await environment.loader.open(productId, policy: .attempts(1)) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .attempts(1)) }
 
         await environment.path.waitForStreamRequests(2)
         environment.path.simulate(isSatisfied: true)
 
-        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.archive.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 2)
     }
 
     @Test func givesUpOnceThePolicyAttemptsAreSpent() async throws {
         let environment = try Environment(self, fetchFailures: Array(repeating: URLError(.timedOut), count: 3))
 
-        let open = Task { try await environment.loader.open(productId, policy: .attempts(2)) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .attempts(2)) }
 
         await clock.resumeSleep(for: .seconds(1))
 
@@ -110,18 +110,18 @@ final class ProductContentLoaderTests {
     @Test func retriesAnAttemptCutShortByTheBackgroundWindow() async throws {
         let environment = try Environment(self, expiringBackgroundRuns: 1)
 
-        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.archive.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func stopsRetryingWhenTheCallerCancels() async throws {
         let environment = try Environment(self, fetchFailures: Array(repeating: URLError(.timedOut), count: 10))
 
-        let open = Task { try await environment.loader.open(productId, policy: .untilCancelled) }
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
 
         await clock.waitForSleep(for: .seconds(1))
         open.cancel()
@@ -134,7 +134,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
         let phases = PhaseRecorder()
 
-        _ = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled, onPhase: phases.record)
 
         #expect(phases.recorded == [
             .resolving,
@@ -152,7 +152,12 @@ final class ProductContentLoaderTests {
         let phases = PhaseRecorder()
 
         let open = Task {
-            try await environment.loader.open(self.productId, policy: .untilCancelled, onPhase: phases.record)
+            try await environment.loader.open(
+                self.productId,
+                kind: .app,
+                policy: .untilCancelled,
+                onPhase: phases.record
+            )
         }
 
         await environment.path.waitForStreamRequests(2)
@@ -166,10 +171,10 @@ final class ProductContentLoaderTests {
 
     @Test func cachedOpenReportsNoPhases() async throws {
         let environment = try Environment(self)
-        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
         let phases = PhaseRecorder()
 
-        let cached = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled, onPhase: phases.record)
 
         #expect(environment.fetcher.fetchCount == 1)
         #expect(phases.recorded.isEmpty)
@@ -177,73 +182,83 @@ final class ProductContentLoaderTests {
 
     @Test func openedProductOpensAgainFromTheCacheWithoutTheNetwork() async throws {
         let environment = try Environment(self)
-        let first = try await environment.loader.open(productId, policy: .untilCancelled)
+        let first = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
         contracts.failAllReads(with: Unreachable())
         environment.path.simulate(isSatisfied: false)
 
-        let second = try await environment.loader.open(productId, policy: .untilCancelled)
+        let second = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
         #expect(environment.fetcher.fetchCount == 1)
-        #expect(second.contents == first.contents)
-        #expect(second.version == first.version)
+        #expect(second == first)
     }
 
-    @Test func refreshPublishesAnUpdateOnlyOnceTheNewVersionIsOnDisk() async throws {
+    @Test func refreshPublishesAnUpdateOnlyOnceTheNewArchiveIsOnDisk() async throws {
         let environment = try Environment(self)
-        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
         var updates = environment.loader.updates().makeAsyncIterator()
 
         contracts.set(contentHash: updatedContentHash, name: productId)
-        let update = try #require(await environment.loader.refresh(productId))
+        let update = try #require(await environment.loader.refresh(productId).first)
 
-        #expect(update.previous == opened.version)
-        #expect(update.latest.content(for: .app)?.contentHash == updatedContentHash.toHex())
+        #expect(update.contentId == productId)
+        #expect(update.archive?.contentHash == updatedContentHash.toHex())
         #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
         #expect(try await updates.next() == update)
     }
 
-    @Test func refreshLeavesTheAppliedVersionServedUntilTheUpdateIsApplied() async throws {
+    @Test func refreshLeavesTheAppliedArchiveServedUntilTheUpdateIsApplied() async throws {
         let environment = try Environment(self)
-        let opened = try await environment.loader.open(productId, policy: .untilCancelled)
+        let opened = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
         contracts.set(contentHash: updatedContentHash, name: productId)
-        let update = try #require(await environment.loader.refresh(productId))
+        let update = try #require(await environment.loader.refresh(productId).first)
 
-        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == opened.version)
+        #expect(try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) == opened)
 
         await environment.loader.apply(update)
 
-        #expect(try await environment.loader.open(productId, policy: .untilCancelled).version == update.latest.version)
+        #expect(try await environment.loader.open(productId, kind: .app, policy: .untilCancelled).archive
+            == update.archive)
     }
 
     @Test func refreshPublishesNothingWhenTheProductIsUnchanged() async throws {
         let environment = try Environment(self)
-        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
-        #expect(await environment.loader.refresh(productId) == nil)
+        #expect(await environment.loader.refresh(productId).isEmpty)
     }
 
-    @Test func pendingUpdateIsNotPublishedAgain() async throws {
+    @Test func resolvingAnAppliedNameOutsideTheLoaderLeavesItsUpdateToTheLoader() async throws {
         let environment = try Environment(self)
-        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        let opened = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+        let resolver = DotNsResolver(
+            contractApi: contracts,
+            carFetcher: StubCarFetcher(),
+            contentStorage: storage,
+            contentHashCache: contentHashCache
+        )
 
         contracts.set(contentHash: updatedContentHash, name: productId)
 
-        #expect(await environment.loader.refresh(productId) != nil)
-        #expect(await environment.loader.refresh(productId) == nil)
+        #expect(try await resolver.resolveToLocalURL(dotNsName: productId) == opened.archive.localURL)
+        #expect(await environment.loader.refresh(productId).first?.archive?.contentHash == updatedContentHash.toHex())
     }
 
-    @Test func unpublishedProductIsDroppedFromTheCache() async throws {
+    @Test func unpublishedArchiveStaysServedUntilItsRemovalIsApplied() async throws {
         let environment = try Environment(self)
-        _ = try await environment.loader.open(productId, policy: .untilCancelled)
+        let opened = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
         contracts.removeContentHash(name: productId)
+        let removal = try #require(await environment.loader.refresh(productId).first)
 
-        #expect(await environment.loader.refresh(productId) == nil)
+        #expect(removal == ProductContentUpdate(contentId: productId, archive: nil))
+        #expect(try await environment.loader.open(productId, kind: .app, policy: .attempts(1)) == opened)
+
+        await environment.loader.apply(removal)
 
         await #expect(throws: DotNsContractError.self) {
-            try await environment.loader.open(self.productId, policy: .attempts(1))
+            try await environment.loader.open(self.productId, kind: .app, policy: .attempts(1))
         }
     }
 }
@@ -277,11 +292,12 @@ private extension ProductContentLoaderTests {
                     hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
                     resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
                 ),
-                cache: ProductVersionCache(
-                    store: ProductVersionFileStore(directory: suite.versionsDirectory),
+                cache: ProductContentCache(
+                    store: ProductManifestFileStore(directory: suite.manifestsDirectory),
                     storage: localStorage,
                     tldProvider: StubTldProvider(),
-                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger())
+                    resolverFactory: ProductResolverFactory(screening: .passingThrough, logger: SilentLogger()),
+                    logger: SilentLogger()
                 ),
                 environment: ProductContentLoader.Environment(
                     pathProvider: path,

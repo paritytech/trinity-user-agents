@@ -8,10 +8,14 @@ import UIKit
 @MainActor
 struct ProductUpdateCoordinatorTests {
     private static let productId = "shop.dot"
-    private static let otherProductId = "other.dot"
+    private static let appId = "app.shop.dot"
+    private static let workerId = "worker.shop.dot"
+    private static let otherAppId = "app.other.dot"
 
     private let loader = StubProductContentLoader()
     private let coordinator: ProductUpdateCoordinator
+    private let first = StubSPAProductReloader()
+    private let second = StubSPAProductReloader()
 
     init() {
         coordinator = Self.makeCoordinator(loader: loader)
@@ -27,21 +31,27 @@ struct ProductUpdateCoordinatorTests {
         #expect(loader.appliedUpdates == [update])
     }
 
-    @Test func updateForAnOpenProductWaitsUntilTheLastSPACloses() async {
-        let first = StubSPAProductReloader()
-        let second = StubSPAProductReloader()
-        let firstId = coordinator.register(productId: Self.productId, reloader: first)
-        let secondId = coordinator.register(productId: Self.productId, reloader: second)
+    @Test func updateForAnOpenProductStaysPendingWhileAnotherSPAShowsIt() async {
+        let firstId = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: first)
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: second)
+        coordinator.start()
+
+        await deliver(Self.makeUpdate())
+
+        coordinator.unregister(firstId)
+
+        #expect(coordinator.applyPendingUpdate(of: Self.appId))
+    }
+
+    @Test func updateForAnOpenProductIsAppliedOnceTheLastSPACloses() async {
+        let firstId = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: first)
+        let secondId = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: second)
         coordinator.start()
 
         let update = Self.makeUpdate()
-        loader.simulate(update: update)
-        loader.simulate(update: Self.makeUpdate(productId: Self.otherProductId))
-        await loader.waitForApplies(1)
+        await deliver(update)
 
         coordinator.unregister(firstId)
-        #expect(loader.appliedUpdates.map(\.productId) == [Self.otherProductId])
-
         coordinator.unregister(secondId)
         await loader.waitForApplies(2)
 
@@ -50,38 +60,35 @@ struct ProductUpdateCoordinatorTests {
         #expect(second.serveCount == 0)
     }
 
-    @Test func refreshAppliesAPendingUpdateAndReloadsEveryOpenSPA() async {
-        let first = StubSPAProductReloader()
-        let second = StubSPAProductReloader()
-        _ = coordinator.register(productId: Self.productId, reloader: first)
-        _ = coordinator.register(productId: Self.productId, reloader: second)
+    @Test func updateOfAnotherExecutableOfAnOpenProductIsApplied() async {
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: first)
         coordinator.start()
 
-        loader.simulate(update: Self.makeUpdate())
-        loader.simulate(update: Self.makeUpdate(productId: Self.otherProductId))
+        let workerUpdate = Self.makeUpdate(contentId: Self.workerId)
+        loader.simulate(update: workerUpdate)
         await loader.waitForApplies(1)
 
-        #expect(coordinator.applyPendingUpdate(of: Self.productId))
+        #expect(loader.appliedUpdates == [workerUpdate])
+        #expect(!coordinator.applyPendingUpdate(of: Self.appId))
+    }
+
+    @Test func refreshAppliesAPendingUpdateAndReloadsEveryOpenSPA() async {
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: first)
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: second)
+        coordinator.start()
+
+        await deliver(Self.makeUpdate())
+
+        #expect(coordinator.applyPendingUpdate(of: Self.appId))
         await first.waitForServes(1)
         await second.waitForServes(1)
 
         #expect(loader.appliedUpdates.count == 2)
-        #expect(!coordinator.applyPendingUpdate(of: Self.productId))
-    }
-
-    @Test func updatePublishedBeforeStartIsStillHandled() async {
-        let update = Self.makeUpdate()
-        let loader = StubProductContentLoader(pendingUpdates: [update])
-        let coordinator = Self.makeCoordinator(loader: loader)
-
-        coordinator.start()
-        await loader.waitForApplies(1)
-
-        #expect(loader.appliedUpdates == [update])
+        #expect(!coordinator.applyPendingUpdate(of: Self.appId))
     }
 
     @Test func returningToTheForegroundRefreshesOpenProducts() async {
-        _ = coordinator.register(productId: Self.productId, reloader: StubSPAProductReloader())
+        _ = coordinator.register(productId: Self.productId, contentId: Self.appId, reloader: first)
         coordinator.start()
 
         NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
@@ -92,6 +99,16 @@ struct ProductUpdateCoordinatorTests {
 }
 
 private extension ProductUpdateCoordinatorTests {
+    /// Updates are handled in the order they arrive, so once an update for a product nobody has
+    /// open is applied, `update` has been handled too.
+    func deliver(_ update: ProductContentUpdate) async {
+        let applied = loader.appliedUpdates.count
+
+        loader.simulate(update: update)
+        loader.simulate(update: Self.makeUpdate(contentId: Self.otherAppId))
+        await loader.waitForApplies(applied + 1)
+    }
+
     static func makeCoordinator(loader: StubProductContentLoader) -> ProductUpdateCoordinator {
         ProductUpdateCoordinator(
             contentLoader: loader,
@@ -100,14 +117,10 @@ private extension ProductUpdateCoordinatorTests {
         )
     }
 
-    static func makeUpdate(productId: ProductId = productId) -> ProductUpdate {
-        let resolved = ResolvedProduct.legacy(id: productId, displayName: "Shop")
-        let previous = ProductVersion(productId: productId, records: [:], contentHashes: [productId: "01"])
-        let appContent = DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
-
-        return ProductUpdate(
-            previous: previous,
-            latest: ProductContent(resolved: resolved, records: [:], contents: [productId: appContent])
+    static func makeUpdate(contentId: ProductId = appId) -> ProductContentUpdate {
+        ProductContentUpdate(
+            contentId: contentId,
+            archive: DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
         )
     }
 }

@@ -89,15 +89,15 @@ public actor ProductResolver: ProductResolving {
 
 private struct ResolvedExecutable: Sendable {
     let executable: ProductExecutable?
-    let recordKey: ProductVersion.RecordKey
-    let record: DotNsSnapshotRecord
+    let recordKey: ProductManifest.RecordKey
+    let record: ProductManifest.Record
 }
 
 private extension ProductResolver {
     func resolveFromChain(_ baseName: ProductId) async throws -> ProductManifest {
-        let rootKey = ProductVersion.RecordKey(name: baseName, key: ProductManifestRecords.rootKey)
+        let rootKey = ProductManifest.RecordKey(name: baseName, key: ProductManifestRecords.rootKey)
         let rootText = try await metadataRepository.fetchMetadata(name: rootKey.name, key: rootKey.key)
-        let rootRecords = [rootKey: DotNsSnapshotRecord(rootText)]
+        let rootRecords = [rootKey: ProductManifest.Record(rootText)]
 
         // No record is the legacy path: an app rooted at the base name, named after its domain.
         guard let rootText, !rootText.isEmpty else {
@@ -128,7 +128,7 @@ private extension ProductResolver {
 
     func resolveExecutables(
         _ baseName: ProductId
-    ) async throws -> (ProductExecutables, [ProductVersion.RecordKey: DotNsSnapshotRecord]) {
+    ) async throws -> (ProductExecutables, [ProductManifest.RecordKey: ProductManifest.Record]) {
         try await withThrowingTaskGroup(of: ResolvedExecutable.self) { group in
             for kind in Self.resolvedKinds {
                 group.addTask { try await self.resolveExecutable(baseName, kind: kind) }
@@ -149,7 +149,7 @@ private extension ProductResolver {
     /// it actually publishes, and every surface would serve the base archive until the next launch.
     func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ResolvedExecutable {
         let subname = ProductManifestRecords.subname(base: baseName, kind: kind)
-        let recordKey = ProductVersion.RecordKey(name: subname, key: ProductManifestRecords.executableKey)
+        let recordKey = ProductManifest.RecordKey(name: subname, key: ProductManifestRecords.executableKey)
 
         let text = try await metadataRepository.fetchMetadata(name: recordKey.name, key: recordKey.key)
 
@@ -157,7 +157,7 @@ private extension ProductResolver {
         return ResolvedExecutable(
             executable: parser.parseExecutable(text, kind: kind, identifier: subname),
             recordKey: recordKey,
-            record: DotNsSnapshotRecord(text)
+            record: ProductManifest.Record(text)
         )
     }
 }

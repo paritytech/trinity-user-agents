@@ -1,33 +1,33 @@
 import Foundation
 
-public enum DotNsSnapshotError: Error, Equatable {
-    case recordNotSnapshotted(name: String, key: String)
-    case contentHashNotSnapshotted(name: String)
-    case archiveNotOnDisk
+public enum ProductManifestCacheError: Error, Equatable {
+    case recordNotCached(name: String, key: String)
 }
 
-public struct SnapshotProductMetadataRepository: ProductMetadataRepositoryProtocol {
-    private let store: ProductVersionStoring
+/// Answers manifest record reads from the records a product was last resolved from.
+public struct CachedProductMetadataRepository: ProductMetadataRepositoryProtocol {
+    private let store: ProductManifestStoring
 
-    public init(store: ProductVersionStoring) {
+    public init(store: ProductManifestStoring) {
         self.store = store
     }
 
     public func fetchMetadata(name: String, key: String) async throws -> String? {
-        let version = store.version(of: ProductManifestRecords.baseName(of: name))
+        let records = store.records(of: ProductManifestRecords.baseName(of: name))
 
-        return switch version?.records[ProductVersion.RecordKey(name: name, key: key)] {
+        return switch records?[ProductManifest.RecordKey(name: name, key: key)] {
         case let .value(record):
             record
         case .absent:
             nil
         case nil:
-            throw DotNsSnapshotError.recordNotSnapshotted(name: name, key: key)
+            throw ProductManifestCacheError.recordNotCached(name: name, key: key)
         }
     }
 }
 
-public struct SnapshotDotNsTldProvider: DotNsTldProviding {
+/// Answers with the TLD already known on the device and never reads it from the chain.
+public struct CachedDotNsTldProvider: DotNsTldProviding {
     private let tldProvider: DotNsTldProviding
 
     public init(tldProvider: DotNsTldProviding) {

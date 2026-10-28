@@ -8,8 +8,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private struct State {
         var openedIds: [ProductId] = []
         var refreshedIds: [ProductId] = []
-        var appliedUpdates: [ProductUpdate] = []
-        var pendingUpdates: [ProductUpdate] = []
+        var appliedUpdates: [ProductContentUpdate] = []
         var contentHash = "00"
         var refreshWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
         var applyWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
@@ -18,24 +17,23 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     let contentURL = URL(fileURLWithPath: "/tmp/spa-test-content")
 
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let updateStream = AsyncStream<ProductUpdate>.makeStream()
+    private let updateStream = AsyncStream<ProductContentUpdate>.makeStream()
 
     private let product: ResolvedProduct?
 
-    init(pendingUpdates: [ProductUpdate] = [], product: ResolvedProduct? = nil) {
+    init(product: ResolvedProduct? = nil) {
         self.product = product
-        state.withLock { $0.pendingUpdates = pendingUpdates }
     }
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
-    var appliedUpdates: [ProductUpdate] { state.withLock { $0.appliedUpdates } }
+    var appliedUpdates: [ProductContentUpdate] { state.withLock { $0.appliedUpdates } }
 
     func simulate(appliedContentHash: String) {
         state.withLock { $0.contentHash = appliedContentHash }
     }
 
-    func simulate(update: ProductUpdate) {
+    func simulate(update: ProductContentUpdate) {
         updateStream.continuation.yield(update)
     }
 
@@ -55,6 +53,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
 
     func open(
         _ productId: ProductId,
+        kind: ExecutableKind,
         policy _: ProductLoadPolicy,
         onPhase _: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
@@ -64,18 +63,19 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
 
         let resolved = product ?? .legacy(id: productId)
-        let contentIds = Set(ExecutableKind.allCases.map(resolved.contentId(for:)))
-        let contents = Dictionary(uniqueKeysWithValues: contentIds.map { contentId in
-            (
-                contentId,
-                DotNsResolvedContent(contentHash: contentHash, localURL: contentURL.appendingPathComponent(contentId))
-            )
-        })
+        let archive = DotNsResolvedContent(
+            contentHash: contentHash,
+            localURL: contentURL.appendingPathComponent(resolved.contentId(for: kind))
+        )
 
-        return ProductContent(resolved: resolved, records: [:], contents: contents)
+        return ProductContent(resolved: resolved, kind: kind, archive: archive)
     }
 
-    func refresh(_ productId: ProductId) async -> ProductUpdate? {
+    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+        product ?? .legacy(id: productId)
+    }
+
+    func refresh(_ productId: ProductId) async -> [ProductContentUpdate] {
         let ready = state.withLock { state in
             state.refreshedIds.append(productId)
             let count = state.refreshedIds.count
@@ -85,10 +85,10 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
 
         ready.forEach { $0.continuation.resume() }
-        return nil
+        return []
     }
 
-    func apply(_ update: ProductUpdate) async {
+    func apply(_ update: ProductContentUpdate) async {
         let ready = state.withLock { state in
             state.appliedUpdates.append(update)
             let count = state.appliedUpdates.count
@@ -114,11 +114,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
     }
 
-    func pendingUpdates() async -> [ProductUpdate] {
-        state.withLock { $0.pendingUpdates }
-    }
-
-    func updates() -> AnyAsyncSequence<ProductUpdate> {
+    func updates() -> AnyAsyncSequence<ProductContentUpdate> {
         updateStream.stream.eraseToAnyAsyncSequence()
     }
 }
