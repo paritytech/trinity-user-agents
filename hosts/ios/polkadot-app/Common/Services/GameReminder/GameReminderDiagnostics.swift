@@ -10,7 +10,7 @@ struct GameReminderDiagnostics: Sendable {
     init(
         recorder: any HostEventRecording = NoopHostEventRecorder(),
         origin: HostEventOrigin = .current,
-        monotonicMilliseconds: @escaping @Sendable () -> Int = HostEventClock.monotonicMilliseconds
+        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
     ) {
         self.recorder = recorder
         self.origin = origin
