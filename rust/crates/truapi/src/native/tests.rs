@@ -2267,6 +2267,30 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 	drop(host);
 }
 
+/// Creating a host installs the core's log sink, and the marker the core
+/// raises through tracing on the way up proves the layer that forwards marked
+/// targets actually reaches a host. Raised at `INFO`, below the console floor,
+/// because a host's log must not depend on anyone lowering the trace level.
+///
+/// The sink is process-wide and the last host to start owns it, so this reads
+/// every host's callbacks rather than only its own.
+#[test]
+fn starting_a_host_proves_the_core_log_channel_reaches_it() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
+	assert!(
+		seen.iter().any(|marker| marker == "truapi.core.started"),
+		"the core's start marker never reached the host: {seen:?}",
+	);
+	drop(host);
+}
+
 #[test]
 fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	use futures::SinkExt;

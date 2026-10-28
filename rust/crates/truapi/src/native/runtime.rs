@@ -91,6 +91,15 @@ impl NativeTrUApiHostRuntime {
 				callbacks.on_core_log(marker.to_string(), detail.to_string());
 			})
 		});
+		// Raised through tracing rather than called directly, so every host log
+		// opens with proof that the layer forwarding marked targets is alive.
+		// A host that reaches a later condition and sees nothing can tell a
+		// quiet core from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
