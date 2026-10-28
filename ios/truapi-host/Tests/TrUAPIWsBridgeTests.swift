@@ -8,19 +8,27 @@ struct TrUAPIWsBridgeTests {
     /// with proof that the channel carrying every later marker reaches Swift at
     /// all. It is raised below the core's console floor on purpose, so this also
     /// covers a host log that does not depend on the trace level.
+    ///
+    /// The core's sink is process-wide and tests here run in parallel, so a
+    /// sibling building its own runtime can take it in the window before the
+    /// marker is raised. A miss is retried; a sink that does not route misses
+    /// every attempt.
     @Test(.timeLimit(.minutes(1)))
     func testStartingARuntimeReportsTheCoreLogChannel() throws {
-        let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(
-            bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
-        )
-        defer { _ = runtime }
-
-        #expect(
-            bridge.coreLogs.contains { $0.hasPrefix("truapi.core.started") },
-            "the core's start marker did not reach the host: \(bridge.coreLogs)"
-        )
+        var lastSeen: [String] = []
+        for _ in 0 ..< 8 {
+            let bridge = StubHostBridge()
+            let runtime = try TrUAPIHostRuntime(
+                bridge: bridge,
+                runtimeConfig: Self.makeHostRuntimeConfig()
+            )
+            let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
+            if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
+                return
+            }
+            lastSeen = seen
+        }
+        Issue.record("the core's start marker did not reach the host: \(lastSeen)")
     }
 
     @Test(.timeLimit(.minutes(1)))

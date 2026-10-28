@@ -245,6 +245,11 @@ pub trait RuntimeChainProvider: Send + Sync {
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
 }
 
+/// Follows a node allows per connection, as [`ConnectionScope`] describes. A
+/// connection holding this many refuses the next one, whichever caller it
+/// belongs to.
+const FOLLOWS_A_NODE_BUDGETS: usize = 4;
+
 /// Which caller a chain connection belongs to.
 ///
 /// A node allows four `chainHead_v1_follow` subscriptions and sixteen concurrent
@@ -252,11 +257,6 @@ pub trait RuntimeChainProvider: Send + Sync {
 /// those budgets collide: four products plus the core's own client is a fifth
 /// follow the node refuses. Each product runtime gets its own connection, and
 /// the core's internal traffic keeps one of its own.
-/// Follows a node allows per connection, as [`ConnectionScope`] describes. A
-/// connection holding this many refuses the next one, whichever caller it
-/// belongs to.
-const FOLLOWS_A_NODE_BUDGETS: usize = 4;
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum ConnectionScope {
 	/// The core's own traffic: metadata, transaction assembly, internal reads.
@@ -1147,6 +1147,11 @@ struct ChainConnection {
 	/// one metadata cache.
 	chain_config: OnceLock<SubstrateConfig>,
 	legacy_connection: Mutex<Option<LegacyConnection>>,
+	/// Whether this connection has already reported itself at the budget.
+	/// dotNS opens and drops a follow per lookup, so a connection sitting at
+	/// the budget would otherwise repeat the line on every lookup, into a
+	/// device log the level filter cannot quiet.
+	budget_reported: AtomicBool,
 }
 
 impl ChainConnection {
@@ -1164,6 +1169,7 @@ impl ChainConnection {
 			subxt_connection_generation: AtomicU64::new(0),
 			chain_config: OnceLock::new(),
 			legacy_connection: Mutex::new(None),
+			budget_reported: AtomicBool::new(false),
 		})
 	}
 
@@ -1530,7 +1536,12 @@ impl ChainConnection {
 		follow.abort = Some(abort);
 		let holding = Self::follows_holding_a_slot(&follows);
 		drop(follows);
-		if holding.len() >= FOLLOWS_A_NODE_BUDGETS {
+		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
+		// Reported on the way into the budget and again only after the
+		// connection has come back out of it, so a connection that sits there
+		// says so once rather than on every follow that renews the condition.
+		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
+		if at_budget && !already_reported {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it

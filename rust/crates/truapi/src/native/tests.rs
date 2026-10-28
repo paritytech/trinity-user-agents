@@ -2272,23 +2272,28 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 /// targets actually reaches a host. Raised at `INFO`, below the console floor,
 /// because a host's log must not depend on anyone lowering the trace level.
 ///
-/// The sink is process-wide and the last host to start owns it, so this reads
-/// every host's callbacks rather than only its own.
+/// The sink is process-wide and nothing makes installing it atomic with the
+/// marker, so another test's host can take it in between and collect this
+/// one's line. That is retried rather than serialised: a sink that does not
+/// route misses every attempt, which is the regression worth catching.
 #[test]
 fn starting_a_host_proves_the_core_log_channel_reaches_it() {
-	let callbacks = Arc::new(EventCallbacks::new());
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		callbacks.clone(),
-		native_host_runtime_config(),
-	)
-	.expect("create host");
-
-	let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
-	assert!(
-		seen.iter().any(|marker| marker == "truapi.core.started"),
-		"the core's start marker never reached the host: {seen:?}",
-	);
-	drop(host);
+	let mut last = Vec::new();
+	for _ in 0..8 {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			native_host_runtime_config(),
+		)
+		.expect("create host");
+		let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
+		drop(host);
+		if seen.iter().any(|marker| marker == "truapi.core.started") {
+			return;
+		}
+		last = seen;
+	}
+	panic!("the core's start marker never reached the host: {last:?}");
 }
 
 /// The core's log sink must not be what keeps a host alive. It is process-wide
