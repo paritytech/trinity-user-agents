@@ -49,9 +49,9 @@ fn a_footer_answers_in_the_callers_version() {
 	assert_eq!(HostChatSetRoomFooterResponse::from_latest((), 2).version(), 2);
 }
 
-// Products built against the first SDK create rooms, set footers and post
-// in these shapes through whichever client the host injects, so the v1
-// envelopes keep their first wire.
+// Products that use the first SDK create rooms, set footers and post messages
+// in these shapes. They call the client that the host injects, so these
+// methods keep their first wire.
 #[test]
 fn a_room_its_footer_and_a_post_keep_the_first_wire() {
 	assert_eq!(HostChatCreateRoomRequest::LATEST, 1);
