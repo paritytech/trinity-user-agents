@@ -562,7 +562,8 @@ pub enum RenderContext {
 	ChatMessage {
 		/// Room the message was posted in.
 		room_id: String,
-		/// Message id, as returned by `Chat::post_message`.
+		/// Message id, as returned by `Chat::post_message`, or the
+		/// `message_id` of a `ChatMessage` with a `Custom` body.
 		message_id: String,
 		/// Product-defined discriminator, as stored in
 		/// `ChatCustomMessage::message_type`.

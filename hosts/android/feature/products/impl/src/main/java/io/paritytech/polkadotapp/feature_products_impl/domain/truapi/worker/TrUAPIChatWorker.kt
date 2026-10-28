@@ -104,7 +104,7 @@ class TrUAPIChatWorker(
         pageSize: Int,
     ): Result<ProductMessagesPage> = query { execution ->
         execution.chatMessagesQuery(ProductChatMessagesQueryRequest(roomId.value, anchor.toCore(), pageSize.toUInt()))
-            .toModel()
+            .toModel(productId)
     }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an

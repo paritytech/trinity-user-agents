@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
@@ -13,13 +14,16 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCallRecord
 import uniffi.truapi.ChatContactEvent
+import uniffi.truapi.ChatCustomMessage
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMediaItem
 import uniffi.truapi.ChatMediaMeta
@@ -74,9 +78,9 @@ class ProductChatHostBridgeFeedTest {
     // The events, the calls and the payments of a contact room come with the Chat Extension v2 additions.
     @Test
     fun `contact events, calls and payments draw as unsupported messages`() {
-        assertTrue(ChatMessageBody.Event(ChatContactEvent.CONTACT_ADDED).toContent() is ChatMessage.Content.Unsupported)
-        assertTrue(ChatMessageBody.Call(ChatCallRecord(video = true, answeredAt = null, closed = null)).toContent() is ChatMessage.Content.Unsupported)
-        assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent() is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Event(ChatContactEvent.CONTACT_ADDED).toContent(productId) is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Call(ChatCallRecord(video = true, answeredAt = null, closed = null)).toContent(productId) is ChatMessage.Content.Unsupported)
+        assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent(productId) is ChatMessage.Content.Unsupported)
     }
 
     @Test
@@ -84,13 +88,29 @@ class ProductChatHostBridgeFeedTest {
         val hop = ChatResource.Hop(identifier = ByteArray(32) { 1 }, ticket = ByteArray(32) { 2 }, node = "wss://hop.example", size = 12uL)
         val image = ChatMediaItem.Image(hop, ChatMediaMeta("image/png", 12uL, 2u, 1u, placeholder = null, alt = "a dot", durationMs = null))
 
-        val content = ChatMessageBody.RichText("Look", listOf(image)).toContent()
+        val content = ChatMessageBody.RichText("Look", listOf(image)).toContent(productId)
 
         val body = (content as ChatMessage.Content.ProductBody).body as ProductMessageBody.RichText
         assertEquals("Look", body.text)
         val item = body.media.single() as ChatMediaItemModel.Image
         assertEquals("a dot", item.meta.alt)
         assertEquals("wss://hop.example", (item.resource as ChatResourceModel.Hop).node)
+    }
+
+    // The renderer of the product draws a custom body, as it draws a custom message that the product posts.
+    @Test
+    fun `a custom body is stored for the renderer of the product`() = runTest {
+        val update = slot<ProductFeedUpdateModel>()
+        coEvery { messaging.applyFeedUpdate(room, capture(update)) } returns Result.success(Unit)
+        val body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll")
+
+        bridge.updateFeed(ROOM, ChatFeedUpdate.Edited("m1", body, 1uL), persist = true)
+
+        val expected = ChatMessage.Content.Custom(
+            rendererId = productId.toChatExtensionId(),
+            content = Result.success(ProductsMessageContent("poll", byteArrayOf(1, 2).toDataByteArray(), "A poll")),
+        )
+        assertEquals(expected, (update.captured as ProductFeedUpdateModel.Edited).content)
     }
 
     @Test
@@ -140,7 +160,7 @@ class ProductChatHostBridgeFeedTest {
         val reply = coreMessage(ChatMessageBody.Text("yes"))
             .copy(replyPreview = ChatReplyPreview(ChatMessageOrigin("contact"), ChatMessageBody.Text("lunch?")))
 
-        val preview = requireNotNull(reply.toModel().replyPreview)
+        val preview = requireNotNull(reply.toModel(productId).replyPreview)
 
         assertEquals("contact", preview.participantId)
         assertEquals("lunch?", (preview.content as ChatMessage.Content.Text).text)
