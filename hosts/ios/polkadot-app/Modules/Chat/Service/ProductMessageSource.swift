@@ -106,6 +106,11 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         }
 
         apply(update)
+
+        // The cached page does not follow the open window. The next open must not show a deleted message.
+        if case .deleted = update {
+            await cache.apply(update, productId: productId, roomId: roomId)
+        }
     }
 
     // MARK: - ChatMessageSourcing
