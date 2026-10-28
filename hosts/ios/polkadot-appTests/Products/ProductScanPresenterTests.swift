@@ -43,15 +43,15 @@ struct ProductScanPresenterTests {
     func codeUnderAnotherScreenWaits() async throws {
         let scanner = try await OpenScanner()
         let prompt = UIViewController()
-        await present(prompt, over: scanner.view)
+        await present(prompt, over: scanner.screen)
 
         scanner.presenter.handle(codes: [receipt])
         try await Task.sleep(for: .milliseconds(200))
         #expect(scanner.answers.scans.isEmpty)
-        #expect(scanner.view.presentedViewController === prompt)
+        #expect(scanner.screen.presentedViewController === prompt)
 
         prompt.dismiss(animated: false)
-        try await waitUntil { scanner.view.presentedViewController == nil }
+        try await waitUntil { scanner.screen.presentedViewController == nil }
         scanner.presenter.handle(codes: [receipt])
         try await waitUntil { !scanner.answers.scans.isEmpty }
 
@@ -127,6 +127,8 @@ private final class StubCaptureService: QRCaptureServiceProtocol {
 private struct OpenScanner {
     let presenter: ProductScanPresenter
     let view: QRScannerViewController
+    /// What the router presents, and what other screens are presented over.
+    let screen: UINavigationController
     let wireframe: StubWireframe
     let answers: Answers
     let window: UIWindow
@@ -149,8 +151,9 @@ private struct OpenScanner {
         )
         view = QRScannerViewController(presenter: presenter)
         presenter.view = view
+        screen = UINavigationController(rootViewController: view)
         self.wireframe = wireframe
         self.window = window
-        try await present(view, over: #require(window.rootViewController))
+        try await present(screen, over: #require(window.rootViewController))
     }
 }
