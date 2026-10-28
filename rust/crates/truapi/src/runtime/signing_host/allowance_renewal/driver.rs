@@ -13,11 +13,11 @@ use tracing::{debug, info, warn};
 
 use super::{
 	RenewalState, SigningHost, StatementRenewalError, StatementRenewalTarget,
-	TrackedStatementRenewalTarget, owner_key, read_entries, write_entries,
+	TrackedStatementRenewalTarget, owner_key, read_ledger, write_ledger,
 };
 use crate::{
 	host_logic::product_account::{derive_identity_keypair, derive_sr25519_hard_path},
-	platform::CoreStorage,
+	platform::{CoreStorage, ProductId},
 	runtime::{
 		RuntimeServices,
 		authority::ProductAuthority,
@@ -25,8 +25,8 @@ use crate::{
 		statement_allowance::{
 			self, fetch_metadata, find_including_rings,
 			renewal::{
-				RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport,
-				next_tick_delay, renew_targets,
+				RenewalChainContext, ResolvedRenewalTarget, StatementRenewalOutcome,
+				StatementRenewalReport, TargetRenewalStatus, next_tick_delay, renew_targets,
 			},
 		},
 	},
@@ -75,7 +75,7 @@ async fn list_entries(
 	ledger_lock: &Mutex<()>,
 ) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
-	read_entries(storage).await
+	Ok(read_ledger(storage).await?.entries)
 }
 
 async fn untrack_account(
@@ -85,9 +85,9 @@ async fn untrack_account(
 	account_id: &[u8; 32],
 ) -> Result<bool, StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
-	let mut entries = read_entries(storage).await?;
-	let original_len = entries.len();
-	entries.retain(|entry| {
+	let mut ledger = read_ledger(storage).await?;
+	let original_len = ledger.entries.len();
+	ledger.entries.retain(|entry| {
 		entry.owner != Some(owner) ||
 			!matches!(
 				&entry.target,
@@ -97,10 +97,10 @@ async fn untrack_account(
 				} if existing == account_id
 			)
 	});
-	if entries.len() == original_len {
+	if ledger.entries.len() == original_len {
 		return Ok(false);
 	}
-	write_entries(storage, &entries).await?;
+	write_ledger(storage, &ledger).await?;
 	Ok(true)
 }
 
@@ -168,15 +168,15 @@ pub async fn untrack_account_for_signing_host(
 }
 
 /// Skip unusable entries so they cannot prevent renewal of other targets.
-fn resolve_targets(
+fn resolve_targets<'a>(
 	entropy: &[u8],
 	network_suffix: &str,
-	targets: &[StatementRenewalTarget],
-) -> Vec<ResolvedRenewalTarget> {
+	targets: &'a [StatementRenewalTarget],
+) -> Vec<(&'a StatementRenewalTarget, ResolvedRenewalTarget)> {
 	targets
 		.iter()
 		.filter_map(|target| match resolve_target(entropy, network_suffix, target) {
-			Ok(resolved) => Some(resolved),
+			Ok(resolved) => Some((target, resolved)),
 			Err(reason) => {
 				warn!(?target, %reason, "skipping an unresolvable renewal target");
 				None
@@ -185,21 +185,83 @@ fn resolve_targets(
 		.collect()
 }
 
-/// Wallet and device targets first, since pairing depends on them, then products
-/// rotated by `period` so a full period does not skip the same products every day.
-fn renewal_order(targets: Vec<StatementRenewalTarget>, period: u32) -> Vec<StatementRenewalTarget> {
-	let (mut products, mut order): (Vec<_>, Vec<_>) = targets.into_iter().partition(|target| {
-		matches!(target, StatementRenewalTarget::ProductStatementAllowance { .. })
-	});
-	if !products.is_empty() {
-		let len = products.len();
-		products.rotate_left(period as usize % len);
-	}
-	order.extend(products);
+/// Indices of `targets` in the order a pass renews them.
+///
+/// Wallet and device targets come first, since pairing depends on them. Products
+/// follow by the last period they held a slot in, never-renewed first, so the free
+/// slots of a full period go to the products that have waited longest. Ties keep
+/// ledger order.
+fn renewal_order(targets: &[&StatementRenewalTarget], renewed: &[(ProductId, u32)]) -> Vec<usize> {
+	// `None` for a non-product sorts before every product, and a product's
+	// `Some(None)` (never renewed) before any `Some(Some(period))`.
+	let last_renewed = |target: &StatementRenewalTarget| match target {
+		StatementRenewalTarget::ProductStatementAllowance { product_id } => {
+			Some(renewed.iter().find(|(id, _)| id == product_id).map(|&(_, period)| period))
+		},
+		StatementRenewalTarget::WalletSso | StatementRenewalTarget::Account { .. } => None,
+	};
+	let mut order: Vec<usize> = (0..targets.len()).collect();
+	order.sort_by_key(|&index| last_renewed(targets[index]));
 	order
 }
 
-/// The ledger targets `owner` promised, dropping any it did not.
+/// Put items produced in `order` back at the ledger positions it names.
+fn in_ledger_order<T>(order: &[usize], items: Vec<T>) -> Vec<T> {
+	let mut placed: Vec<(usize, T)> = order.iter().copied().zip(items).collect();
+	placed.sort_by_key(|&(index, _)| index);
+	placed.into_iter().map(|(_, item)| item).collect()
+}
+
+/// Products in `targets` that hold a slot this period, per the paired outcomes.
+fn renewed_products(
+	targets: &[&StatementRenewalTarget],
+	outcomes: &[StatementRenewalOutcome],
+) -> Vec<ProductId> {
+	targets
+		.iter()
+		.zip(outcomes)
+		.filter_map(|(target, outcome)| match (target, &outcome.status) {
+			(
+				StatementRenewalTarget::ProductStatementAllowance { product_id },
+				TargetRenewalStatus::Registered { .. } |
+				TargetRenewalStatus::AlreadyAllocated { .. },
+			) => Some(product_id.clone()),
+			_ => None,
+		})
+		.collect()
+}
+
+/// Record that `products` held a slot in `period`, for the next pass's order.
+async fn record_renewed(
+	storage: &(impl CoreStorage + ?Sized),
+	ledger_lock: &Mutex<()>,
+	period: u32,
+	products: Vec<ProductId>,
+) -> Result<(), StatementRenewalError> {
+	let _guard = ledger_lock.lock().await;
+	let mut ledger = read_ledger(storage).await?;
+	let mut changed = false;
+	for product_id in products {
+		match ledger.renewed.iter_mut().find(|(id, _)| *id == product_id) {
+			Some((_, last)) if *last == period => {},
+			Some((_, last)) => {
+				*last = period;
+				changed = true;
+			},
+			None => {
+				ledger.renewed.push((product_id, period));
+				changed = true;
+			},
+		}
+	}
+	if !changed {
+		return Ok(());
+	}
+	write_ledger(storage, &ledger).await
+}
+
+/// The ledger targets `owner` promised, dropping any it did not, with the
+/// products' last renewed periods.
 ///
 /// An entry promised by a different identity would consume this one's slots for
 /// an account it never promised, so it is removed rather than skipped — the cost
@@ -218,21 +280,23 @@ async fn owned_targets(
 	storage: &(impl CoreStorage + ?Sized),
 	ledger_lock: &Mutex<()>,
 	owner: [u8; 32],
-) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), StatementRenewalError> {
+) -> Result<(Vec<StatementRenewalTarget>, Vec<String>, Vec<(ProductId, u32)>), StatementRenewalError>
+{
 	let _guard = ledger_lock.lock().await;
-	let (owned, foreign): (Vec<_>, Vec<_>) = read_entries(storage)
-		.await?
+	let mut ledger = read_ledger(storage).await?;
+	let (owned, foreign): (Vec<_>, Vec<_>) = core::mem::take(&mut ledger.entries)
 		.into_iter()
 		.partition(|entry| entry.is_owned_by(owner));
 	let pruned: Vec<String> = foreign.iter().map(|entry| target_label(&entry.target)).collect();
+	ledger.entries = owned;
 	if !foreign.is_empty() {
 		warn!(
 			dropped = ?pruned,
 			"pruning renewal targets promised by a previous identity"
 		);
-		write_entries(storage, &owned).await?;
+		write_ledger(storage, &ledger).await?;
 	}
-	Ok((owned.into_iter().map(|entry| entry.target).collect(), pruned))
+	Ok((ledger.entries.into_iter().map(|entry| entry.target).collect(), pruned, ledger.renewed))
 }
 
 /// One renewal pass: resolve the ledger against the active session and renew
@@ -243,14 +307,16 @@ pub async fn renew_now(
 ) -> Result<StatementRenewalReport, StatementRenewalError> {
 	let entropy = signing_host.root_entropy()?;
 	let period = statement_allowance::slot::current_period(current_unix_secs()?);
-	let (targets, pruned) = owned_targets(
+	let (targets, pruned, renewed) = owned_targets(
 		signing_host.platform.as_ref(),
 		signing_host.renewal.ledger_lock(),
 		owner_key(&entropy)?,
 	)
 	.await?;
-	let targets = renewal_order(targets, period);
-	let resolved = resolve_targets(&entropy, signing_host.network_suffix(), &targets);
+	let (targets, resolved): (Vec<_>, Vec<_>) =
+		resolve_targets(&entropy, signing_host.network_suffix(), &targets)
+			.into_iter()
+			.unzip();
 	if resolved.is_empty() {
 		return Ok(StatementRenewalReport {
 			period,
@@ -287,9 +353,22 @@ pub async fn renew_now(
 		collections: &collections,
 		memberships: &memberships,
 	};
+	let order = renewal_order(&targets, &renewed);
+	let ordered: Vec<_> = order.iter().map(|&index| resolved[index].clone()).collect();
 	let mut report =
-		renew_targets(&context, period, &resolved, signing_host.renewal.registration_lock()).await;
+		renew_targets(&context, period, &ordered, signing_host.renewal.registration_lock()).await;
+	report.outcomes = in_ledger_order(&order, report.outcomes);
 	report.pruned = pruned;
+	if let Err(reason) = record_renewed(
+		signing_host.platform.as_ref(),
+		signing_host.renewal.ledger_lock(),
+		period,
+		renewed_products(&targets, &report.outcomes),
+	)
+	.await
+	{
+		warn!(%reason, "could not record which products were renewed");
+	}
 	Ok(report)
 }
 
@@ -356,7 +435,7 @@ fn absorb_tick(
 #[cfg(test)]
 mod tests {
 	use super::{
-		super::{CoreStorageKey, decode_entries, track_targets},
+		super::{CoreStorageKey, Ledger, track_targets},
 		*,
 	};
 	use parity_scale_codec::Encode;
@@ -583,7 +662,8 @@ mod tests {
 			track_targets(&storage, &lock(), OTHER_OWNER, vec![device]).await.unwrap();
 			track_targets(&storage, &lock(), OWNER, vec![product("a.dot")]).await.unwrap();
 
-			let (targets, pruned) = owned_targets(&storage, &lock(), OWNER).await.unwrap();
+			let (targets, pruned, _renewed) =
+				owned_targets(&storage, &lock(), OWNER).await.unwrap();
 
 			assert_eq!(targets, vec![product("a.dot")]);
 			// Reported, not just dropped: the pass is a host's only view of the
@@ -591,7 +671,7 @@ mod tests {
 			assert_eq!(pruned, vec!["device".to_string()]);
 			// Dropped, not merely skipped, so the cost is paid once.
 			assert_eq!(
-				read_entries(&storage).await.unwrap(),
+				read_ledger(&storage).await.unwrap().entries,
 				vec![TrackedStatementRenewalTarget::new(product("a.dot"), OWNER)]
 			);
 		});
@@ -608,9 +688,9 @@ mod tests {
 
 			assert_eq!(
 				owned_targets(&storage, &lock(), OWNER).await.unwrap(),
-				(Vec::new(), vec!["device".to_string()])
+				(Vec::new(), vec!["device".to_string()], Vec::new())
 			);
-			assert_eq!(read_entries(&storage).await.unwrap(), Vec::new());
+			assert_eq!(read_ledger(&storage).await.unwrap().entries, Vec::new());
 		});
 	}
 
@@ -622,7 +702,8 @@ mod tests {
 			track_targets(&storage, &lock(), OWNER, vec![product("a.dot")]).await.unwrap();
 			let after_seeding = storage.writes();
 
-			let (targets, _pruned) = owned_targets(&storage, &lock(), OWNER).await.unwrap();
+			let (targets, _pruned, _renewed) =
+				owned_targets(&storage, &lock(), OWNER).await.unwrap();
 
 			assert_eq!(targets, vec![product("a.dot")]);
 			// Every tick calls this; rewriting the ledger each time would be waste.
@@ -640,8 +721,9 @@ mod tests {
 		storage: &(impl CoreStorage + ?Sized),
 		owner: [u8; 32],
 	) -> Result<Vec<StatementRenewalTarget>, StatementRenewalError> {
-		Ok(read_entries(storage)
+		Ok(read_ledger(storage)
 			.await?
+			.entries
 			.into_iter()
 			.filter(|entry| entry.is_owned_by(owner))
 			.map(|entry| entry.target)
@@ -799,7 +881,7 @@ mod tests {
 	fn ledger_rejects_trailing_bytes() {
 		let mut blob = vec![TrackedStatementRenewalTarget::new(product("a.dot"), OWNER)].encode();
 		blob.push(0xff);
-		assert!(decode_entries(&blob).is_err());
+		assert!(Ledger::from_bytes(&blob).is_err());
 	}
 
 	#[test]
@@ -831,39 +913,81 @@ mod tests {
 		});
 	}
 
-	/// With more products than slots, a fixed order would leave the same
-	/// products unrenewed every day.
+	/// With more products than free slots, a fixed or rotating order can leave a
+	/// product unrenewed for days in a row and past the grace window.
 	#[test]
-	fn renewal_puts_wallet_targets_first_and_rotates_products_by_period() {
+	fn renewal_puts_wallet_targets_first_then_the_longest_waiting_products() {
 		let device = StatementRenewalTarget::Account { account_id: [1; 32], label: "d".into() };
-		let ledger = vec![
+		let ledger = [
 			product("a.dot"),
 			StatementRenewalTarget::WalletSso,
 			product("b.dot"),
-			device.clone(),
+			device,
 			product("c.dot"),
+			product("d.dot"),
+		];
+		let targets: Vec<_> = ledger.iter().collect();
+		let renewed = [(ProductId::for_test("a.dot"), 9), (ProductId::for_test("c.dot"), 8)];
+
+		// Wallet, device, then never-renewed b and d in ledger order, then c
+		// (period 8) before a (period 9).
+		assert_eq!(renewal_order(&targets, &renewed), vec![1, 3, 2, 5, 4, 0]);
+	}
+
+	/// Hosts match outcomes to their ledger by position, so the pass hands them
+	/// back in ledger order whatever order it renewed in.
+	#[test]
+	fn outcomes_return_to_ledger_order() {
+		let order = [1, 3, 2, 0];
+		let renewed_in_order = vec!["b", "d", "c", "a"];
+		assert_eq!(in_ledger_order(&order, renewed_in_order), vec!["a", "b", "c", "d"]);
+	}
+
+	/// A product that held a slot moves behind the ones still waiting, which is
+	/// what makes the order fair across days.
+	#[test]
+	fn a_renewed_product_is_recorded_and_tracking_keeps_the_record() {
+		let storage = MemStorage::default();
+		let ledger = [product("a.dot"), product("b.dot"), StatementRenewalTarget::WalletSso];
+		let targets: Vec<_> = ledger.iter().collect();
+		let outcome = |label: &str, status| StatementRenewalOutcome { label: label.into(), status };
+		let outcomes = [
+			outcome("product:a.dot", TargetRenewalStatus::AlreadyAllocated { seq: 0 }),
+			outcome("product:b.dot", TargetRenewalStatus::SkippedExhausted),
+			outcome(
+				"wallet-sso",
+				TargetRenewalStatus::Registered { seq: 1, block_hash: "0x".into() },
+			),
 		];
 
+		futures::executor::block_on(async {
+			track_targets(&storage, &lock(), OWNER, ledger.to_vec()).await.unwrap();
+			let products = renewed_products(&targets, &outcomes);
+			assert_eq!(products, vec![ProductId::for_test("a.dot")]);
+			record_renewed(&storage, &lock(), 7, products.clone()).await.unwrap();
+			let writes = storage.writes();
+			record_renewed(&storage, &lock(), 7, products).await.unwrap();
+			assert_eq!(storage.writes(), writes, "an unchanged record is not rewritten");
+
+			track_targets(&storage, &lock(), OWNER, vec![product("c.dot")]).await.unwrap();
+			let (_targets, _pruned, renewed) =
+				owned_targets(&storage, &lock(), OWNER).await.unwrap();
+			assert_eq!(renewed, vec![(ProductId::for_test("a.dot"), 7)]);
+		});
+	}
+
+	/// A ledger written without a renewal history still reads, so an upgrade keeps
+	/// every promised target.
+	#[test]
+	fn a_ledger_without_renewal_history_decodes() {
+		let entries = vec![TrackedStatementRenewalTarget::new(product("a.dot"), OWNER)];
 		assert_eq!(
-			renewal_order(ledger.clone(), 3),
-			vec![
-				StatementRenewalTarget::WalletSso,
-				device.clone(),
-				product("a.dot"),
-				product("b.dot"),
-				product("c.dot"),
-			]
+			Ledger::from_bytes(&entries.encode()).unwrap(),
+			Ledger { entries: entries.clone(), renewed: Vec::new() }
 		);
-		assert_eq!(
-			renewal_order(ledger, 4),
-			vec![
-				StatementRenewalTarget::WalletSso,
-				device,
-				product("b.dot"),
-				product("c.dot"),
-				product("a.dot"),
-			]
-		);
+
+		let ledger = Ledger { entries, renewed: vec![(ProductId::for_test("a.dot"), 7)] };
+		assert_eq!(Ledger::from_bytes(&ledger.to_bytes()).unwrap(), ledger);
 	}
 
 	#[test]
