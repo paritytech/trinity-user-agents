@@ -108,14 +108,14 @@ class TrUAPIChatWorker(
         pageSize: Int,
     ): Result<ProductMessagesPage> = query { execution ->
         execution.chatMessagesQuery(ProductChatMessagesQueryRequest(roomId.value, anchor.toCore(), pageSize.toUInt()))
-            .toModel()
+            .toModel(productId)
     }
 
     override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
         val coreAction = action.toCore()
             ?: return Result.failure(ProductChatQueryException.Failed("the message has no body that the product can take"))
         return query { execution ->
-            execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel()
+            execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel(productId)
         }
     }
 
