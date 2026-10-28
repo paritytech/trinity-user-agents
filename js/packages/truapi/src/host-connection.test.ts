@@ -92,7 +92,7 @@ const permission: T.RemotePermissionRequest = {
     permission: { tag: "Remote", value: { domains: ["denied.example"] } },
 };
 
-function controlledHost() {
+function controlledHost(url = "ws://127.0.0.1:9955") {
     const originalSocket = globalThis.WebSocket;
     const sockets: ControlledSocket[] = [];
     const statuses: string[] = [];
@@ -144,7 +144,7 @@ function controlledHost() {
         }
     }
     globalThis.WebSocket = ControlledSocket as unknown as typeof WebSocket;
-    const connection = createHostConnection("ws://127.0.0.1:9955");
+    const connection = createHostConnection(url);
     connection.subscribeConnectionStatus((status) => statuses.push(status));
     cleanup.push(() => {
         try {
@@ -342,8 +342,13 @@ describe("shared SDK connection failure timing", () => {
         expect(condition()).toBe(true);
     }
 
+    // A browser opens a socket in a later task, once every pending microtask has run.
+    async function nextTask() {
+        for (let turn = 0; turn < 200; turn++) await Promise.resolve();
+    }
+
     it.each([0, -60_000])(
-        "checks a stale OPEN socket before sending a side effect after a %i ms clock adjustment",
+        "checks a stale OPEN socket and sends the side effect on its replacement after a %i ms clock adjustment",
         async (clockAdjustment) => {
             const fixture = controlledHost();
             const client = fixture.connection.client;
@@ -356,9 +361,7 @@ describe("shared SDK connection failure timing", () => {
             jest.setSystemTime(Date.now() + clockAdjustment);
             fixture.advance(10_001);
             fixture.respond(false);
-            const navigation = Promise.resolve(
-                client.system.navigateTo({ url: "https://example.com" }),
-            ).catch((error) => error);
+            const navigation = client.system.navigateTo({ url: "https://example.com" });
             await untilPrepared(() => stale.sent.length === 3);
             expect([stale.sent[2]!.payload.traitId, stale.sent[2]!.payload.methodId]).toEqual([
                 W.SYSTEM_HANDSHAKE.trait,
@@ -366,20 +369,43 @@ describe("shared SDK connection failure timing", () => {
             ]);
             expect(stale.readyState).toBe(WebSocket.OPEN);
             fixture.advance(10_000);
-            expect((await navigation).name).toBe("ConnectionResetError");
+            await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
             fixture.respond(true);
             fixture.advance(0);
-            fixture.sockets[1]!.open();
-            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
-            expect(
-                fixture.sockets
-                    .flatMap((socket) => socket.sent)
-                    .filter(
-                        (message) =>
-                            message.payload.traitId === W.SYSTEM_NAVIGATE_TO.trait &&
-                            message.payload.methodId === W.SYSTEM_NAVIGATE_TO.method,
-                    ),
-            ).toEqual([]);
+            await nextTask();
+            const replacement = fixture.sockets[1]!;
+            replacement.open();
+            await untilPrepared(() => replacement.sent.length === 2);
+            replacement.reply(
+                replacement.sent.find(
+                    (message) =>
+                        message.payload.traitId === W.SYSTEM_NAVIGATE_TO.trait &&
+                        message.payload.methodId === W.SYSTEM_NAVIGATE_TO.method,
+                )!,
+                Uint8Array.of(0, 0),
+            );
+            expect({
+                outcome: (await navigation)._unsafeUnwrap(),
+                navigations: fixture.sockets.map(
+                    (socket) =>
+                        socket.sent.filter(
+                            (message) =>
+                                message.payload.traitId === W.SYSTEM_NAVIGATE_TO.trait &&
+                                message.payload.methodId === W.SYSTEM_NAVIGATE_TO.method,
+                        ).length,
+                ),
+                replacementFrames: replacement.sent.map((message) => [
+                    message.payload.traitId,
+                    message.payload.methodId,
+                ]),
+            }).toEqual({
+                outcome: undefined,
+                navigations: [0, 1],
+                replacementFrames: [
+                    [W.SYSTEM_HANDSHAKE.trait, W.SYSTEM_HANDSHAKE.method],
+                    [W.SYSTEM_NAVIGATE_TO.trait, W.SYSTEM_NAVIGATE_TO.method],
+                ],
+            });
         },
     );
 
@@ -460,6 +486,161 @@ describe("shared SDK connection failure timing", () => {
         fixture.advance(120_000);
         expect(fixture.sockets).toHaveLength(5);
     });
+
+    it("sends calls and subscription starts made during a refused redial on the connection that completes its handshake", async () => {
+        visibleDocument();
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        fixture.sockets[0]!.close();
+        const response = client.permissions.requestRemotePermission(permission);
+        client.theme.subscribe().subscribe();
+        fixture.advance(0);
+        fixture.sockets[1]!.close();
+        fixture.advance(250);
+        await nextTask();
+        const replacement = fixture.sockets[2]!;
+        replacement.open();
+        await untilPrepared(() => replacement.sent.length === 3);
+        replacement.reply(
+            replacement.sent.find(
+                (message) =>
+                    message.payload.traitId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait &&
+                    message.payload.methodId === W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.method,
+            )!,
+            Uint8Array.of(0, 0, 0),
+        );
+        expect({
+            decision: (await response)._unsafeUnwrap(),
+            frames: fixture.sockets.map((socket) =>
+                socket.sent.map((message) => [message.payload.traitId, message.payload.methodId]),
+            ),
+        }).toEqual({
+            decision: { granted: false },
+            frames: [
+                [[W.SYSTEM_HANDSHAKE.trait, W.SYSTEM_HANDSHAKE.method]],
+                [],
+                [
+                    [W.SYSTEM_HANDSHAKE.trait, W.SYSTEM_HANDSHAKE.method],
+                    [
+                        W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.trait,
+                        W.PERMISSIONS_REQUEST_REMOTE_PERMISSION.method,
+                    ],
+                    [W.THEME_SUBSCRIBE.trait, W.THEME_SUBSCRIBE.method],
+                ],
+            ],
+        });
+    });
+
+    it("rejects a call waiting for a redial once no further dial is scheduled", async () => {
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        fixture.sockets[0]!.close();
+        const pending = Promise.resolve(
+            client.permissions.requestRemotePermission(permission),
+        ).catch((error) => error);
+        fixture.advance(0);
+        fixture.sockets[1]!.close();
+        const error = await pending;
+        fixture.advance(120_000);
+        expect({ error: error.name, sockets: fixture.sockets.length }).toEqual({
+            error: "ConnectionResetError",
+            sockets: 2,
+        });
+    });
+
+    it("rejects a waiting call when a visible page spends its retries", async () => {
+        visibleDocument();
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        fixture.sockets[0]!.close();
+        const pending = Promise.resolve(
+            client.permissions.requestRemotePermission(permission),
+        ).catch((error) => error);
+        for (const delay of [0, 250, 1_000, 4_000]) {
+            fixture.advance(delay);
+            fixture.sockets.at(-1)!.close();
+        }
+        const error = await pending;
+        fixture.advance(120_000);
+        expect({ error: error.name, sockets: fixture.sockets.length }).toEqual({
+            error: "ConnectionResetError",
+            sockets: 5,
+        });
+    });
+
+    it("fails a call whose connection retired before its frame could be written", async () => {
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        let failure: Error | undefined;
+        void Promise.resolve(client.permissions.requestRemotePermission(permission)).catch(
+            (error) => {
+                failure = error;
+            },
+        );
+        await Promise.resolve();
+        fixture.sockets[0]!.close();
+        await untilPrepared(() => failure !== undefined);
+        expect(failure!.name).toBe("ConnectionResetError");
+    });
+
+    it("warns once with the close reason when a connection retires", async () => {
+        const fixture = controlledHost();
+        const client = fixture.connection.client;
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+        const warnings: unknown[][] = [];
+        const originalWarn = console.warn;
+        console.warn = (...args: unknown[]) => {
+            warnings.push(args);
+        };
+        try {
+            const pending = Promise.resolve(
+                client.permissions.requestRemotePermission(permission),
+            ).catch((error) => error);
+            await untilPrepared(() => fixture.sockets[0]!.sent.length === 2);
+            fixture.sockets[0]!.close();
+            await pending;
+        } finally {
+            console.warn = originalWarn;
+        }
+        expect(warnings).toEqual([
+            ["[truapi] host link lost: websocket closed (ws://127.0.0.1:9955)"],
+        ]);
+    });
+
+    it.each([
+        ["close", "websocket closed"],
+        ["error", "websocket error"],
+    ])(
+        "keeps the bridge token in the URL query out of the warning a socket %s causes",
+        async (event, reason) => {
+            const fixture = controlledHost("ws://127.0.0.1:9955/?t=0123456789abcdef");
+            void fixture.connection.client;
+            fixture.sockets[0]!.open();
+            await untilPrepared(() => fixture.statuses.at(-1) === "connected");
+            const warnings: unknown[][] = [];
+            const originalWarn = console.warn;
+            console.warn = (...args: unknown[]) => {
+                warnings.push(args);
+            };
+            try {
+                fixture.sockets[0]!.dispatchEvent(new Event(event));
+            } finally {
+                console.warn = originalWarn;
+            }
+            expect(warnings).toEqual([
+                [`[truapi] host link lost: ${reason} (ws://127.0.0.1:9955)`],
+            ]);
+        },
+    );
 
     it("wakes existing subscription listeners when a failed background replacement becomes visible", async () => {
         const previousDocument = globalThis.document;

@@ -76,8 +76,8 @@ use truapi::{
 		},
 		system::{
 			HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-			HostGetProductContextRequest, HostGetProductContextResponse, HostNavigateToError,
-			HostNavigateToRequest, HostNavigateToResponse,
+			HostGetProductContextRequest, HostGetProductContextResponse, HostInfoRequest,
+			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::HostThemeSubscribeItem,
 		worker::{
@@ -177,6 +177,25 @@ fn feature_supported_round_trips_through_runtime() {
 	let response = futures::executor::block_on(host.feature_supported(&cx, request)).unwrap();
 	let HostFeatureSupportedResponse::V1(inner) = response;
 	assert!(inner.supported);
+}
+
+#[test]
+fn host_info_reports_the_truapi_release_the_runtime_was_built_from() {
+	// Telemetry groups products' errors by this value, so it has to be the
+	// runtime's own release rather than anything the embedding app configures.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	let response =
+		futures::executor::block_on(host.host_info(&CallContext::default(), HostInfoRequest::V1))
+			.unwrap();
+	assert_eq!(
+		response,
+		HostInfoResponse::V1(v01::HostInfo {
+			platform: truapi::latest::HostPlatform::Web,
+			name: "Polkadot Web".to_string(),
+			version: String::new(),
+			truapi_version: env!("CARGO_PKG_VERSION").to_string(),
+		})
+	);
 }
 
 #[test]
@@ -9304,10 +9323,14 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	};
 	let unknown = select("q-never");
 	let chosen = select("q1");
-	let offered_after_assign =
+	// The reconciler drops an assigned session's quotes on its next pass.
+	let offered = || {
 		services
 			.funding_quotes()
-			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis());
+			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis())
+	};
+	eventually(5, || offered().is_none());
+	let offered_after_assign = offered();
 
 	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
 	let final_state = |provider: &str| {
