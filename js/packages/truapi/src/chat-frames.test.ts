@@ -380,15 +380,7 @@ describe("chat extension v2 frames", () => {
                         tag: "V1",
                         value: {
                             roomId: "room",
-                            action: {
-                                tag: "SendPayment",
-                                value: {
-                                    messageId: "m2",
-                                    timestamp: 1_700_000_000_000n,
-                                    totalValue: 5_000_000n,
-                                    sr25519SecretKeys: [`0x${"11".repeat(64)}`],
-                                },
-                            },
+                            action: { tag: "SendPayment", value: undefined },
                         },
                     }),
                 ),
