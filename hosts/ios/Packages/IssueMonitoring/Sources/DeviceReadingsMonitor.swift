@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 #if SENTRY_ENABLED
+    import os
     import Sentry
 #endif
 
@@ -208,16 +209,25 @@ private extension timeval {
 
 #if SENTRY_ENABLED
     extension DeviceReadings {
+        private static let launchTotalsSent = OSAllocatedUnfairLock(initialState: false)
+
         func sendSentryGauges() {
             guard SentrySDK.isEnabled else { return }
 
+            if let storageTotalBytes {
+                Self.launchTotalsSent.withLock { sent in
+                    guard !sent else { return }
+
+                    gauge("device.memory.total", memoryTotalBytes, unit: .byte)
+                    gauge("device.storage.total", storageTotalBytes, unit: .byte)
+                    sent = true
+                }
+            }
             gauge("device.cpu.process_usage", processCPUUsagePercent, unit: .percent)
             gauge("device.cpu.cores", Double(coreCount))
-            gauge("device.memory.total", memoryTotalBytes, unit: .byte)
             gauge("device.memory.available", memoryAvailableBytes, unit: .byte)
             gauge("device.memory.process", processMemoryBytes, unit: .byte)
             gauge("device.storage.free", storageFreeBytes, unit: .byte)
-            gauge("device.storage.total", storageTotalBytes, unit: .byte)
             gauge("device.thermal.state.ios", Double(thermalState))
             gauge("device.battery.level", batteryLevelPercent, unit: .percent)
             gauge("device.battery.charging", charging.map { $0 ? 1 : 0 })

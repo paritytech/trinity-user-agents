@@ -6,6 +6,8 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import io.paritytech.polkadotapp.app.monitoring.DeviceReadingsInitializer
+import io.paritytech.polkadotapp.app.monitoring.RealSentryMetricsCapture
+import io.paritytech.polkadotapp.app.monitoring.SentryMetricsCapture
 import io.paritytech.polkadotapp.app.root.RealActivityIntentProvider
 import io.paritytech.polkadotapp.app.root.RealAppLifecycleObserver
 import io.paritytech.polkadotapp.app.root.data.debug.RealIssueReportApi
@@ -58,6 +60,9 @@ internal interface AppModule {
 
     @Binds
     fun bindSentryEventCapture(impl: RealSentryEventCapture): SentryEventCapture
+
+    @Binds
+    fun bindSentryMetricsCapture(impl: RealSentryMetricsCapture): SentryMetricsCapture
 
     @Binds
     fun bindHostTelemetryEnabledProvider(

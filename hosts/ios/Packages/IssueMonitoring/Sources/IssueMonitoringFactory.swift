@@ -49,6 +49,8 @@ public enum IssueMonitoringFactory {
 
     /// Writes a line of device readings to the given log once a minute in the foreground, and sends them
     /// as gauges when this build links reporting support.
+    ///
+    /// Memory and storage totals do not change while the app runs, so their gauges go out once per launch.
     public static func createDeviceReadingsMonitor(log: @escaping (String) -> Void) -> DeviceReadingsMonitoring {
         DeviceReadingsMonitor { readings in
             log("Device readings: \(readings.logLine)")
