@@ -130,8 +130,8 @@ mod tests {
 		assert_eq!(HostChatPostMessageResponse::from_latest(response, 2).version(), 2);
 	}
 
-	// Products built against the first SDK create rooms, set footers and post
-	// in these shapes through whichever client the host injects, so these
+	// Products that use the first SDK create rooms, set footers and post messages
+	// in these shapes. They call the client that the host injects, so these
 	// methods keep their first wire.
 	#[test]
 	fn a_room_its_footer_and_a_post_keep_the_first_wire() {
