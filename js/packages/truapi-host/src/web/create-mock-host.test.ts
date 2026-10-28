@@ -655,8 +655,8 @@ describe("createMockHost TestHostAPI parity", () => {
   });
 
   it("deletes the messages of a deleted chat room", async () => {
-    // The Rust `MockPlatform::delete_chat_room` drops them too, so a test
-    // reads the same message log on either host.
+    // The Rust `MockPlatform::delete_chat_room` also removes them, so a test
+    // reads the same message log on the two hosts.
     const host = createMockHost();
     const product = {
       productId: "p",
@@ -931,8 +931,8 @@ describe("createMockHost TestHostAPI parity", () => {
         payload: { tag: "Text", value: { text: "hi" } },
       }),
     ).rejects.toThrow("chat down");
-    // A failed room read must not look like a host with no rooms: the core
-    // would answer a delete of a room that still exists with success.
+    // A failed room read is not an empty room list. If the core gets an empty
+    // list, it accepts the delete of a room that still exists.
     await expect(chat.callbacks.chat!.listChatRooms!(product)).rejects.toThrow(
       "chat down",
     );
