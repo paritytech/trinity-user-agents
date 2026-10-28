@@ -186,9 +186,9 @@ async function runStartupDiagnosis(): Promise<void> {
 }
 
 /**
- * Makes the Chat Extension v2 calls on a room of their own, so the diagnosis
- * room keeps its messages and a host without these calls reports only these
- * rows red. After the first failure, the calls that did not run fail with it.
+ * Makes the Chat Extension v2 calls on a separate room. The diagnosis room
+ * keeps its messages, and a host without these calls shows only these rows red.
+ * After the first failure, the calls that did not run fail with it.
  */
 async function runRoomDeclarationProbe(): Promise<void> {
   // The calls of the probe, in the order it makes them.
@@ -214,21 +214,27 @@ async function runRoomDeclarationProbe(): Promise<void> {
     diagnosis.pass(methods[step], details);
     step += 1;
   };
+  let created = false;
   try {
     await ensureRoom(roomId, `TrUAPI Diagnosis v2 ${runId}`);
+    created = true;
 
+    // These values are not the defaults, so a host that ignores the declaration
+    // keeps other values. No call reads the config back.
     const config = await chat.setRoomConfig({
       roomId,
       config: {
         productSource: false,
-        reactionDetails: false,
-        reportSeen: false,
+        reactionDetails: true,
+        reportSeen: true,
       },
     });
     if (config.isErr()) {
       throw new Error(`setRoomConfig failed: ${JSON.stringify(config.error)}`);
     }
-    done("declared a room the host stores");
+    done(
+      "declared a room the host stores, with reaction details and seen reports; no call reads the config back",
+    );
 
     const metadata = await chat.setRoomMetadata({
       roomId,
@@ -296,10 +302,14 @@ async function runRoomDeclarationProbe(): Promise<void> {
       throw new Error(`deleteRoom failed: ${JSON.stringify(deleted.error)}`);
     }
     done("deleted the room");
+    created = false;
   } catch (error) {
     for (const id of methods.slice(step)) {
       diagnosis.fail(id, error);
     }
+  } finally {
+    // A failed run removes its room, so no diagnosis room stays in the chat list.
+    if (created) await chat.deleteRoom({ roomId });
   }
 }
 
@@ -339,7 +349,7 @@ async function ensureRoom(roomId: string, name: string): Promise<void> {
   const result = await chat.createRoom({ roomId, name, icon: "" });
   if (result.isErr()) {
     throw new Error(
-      `Unable to create the Playground room: ${JSON.stringify(result.error)}`,
+      `Unable to create the room ${roomId}: ${JSON.stringify(result.error)}`,
     );
   }
 }
