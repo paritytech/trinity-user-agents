@@ -3430,13 +3430,24 @@
         }
       }
     },
+    "spa.action.closeApp" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close app"
+          }
+        }
+      }
+    },
     "spa.action.openChat" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Open chat"
+            "value" : "Proceed in Chat"
           }
         }
       }
@@ -3458,7 +3469,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Refresh"
+            "value" : "Reload"
           }
         }
       }

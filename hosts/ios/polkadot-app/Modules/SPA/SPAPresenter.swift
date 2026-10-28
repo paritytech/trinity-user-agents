@@ -65,10 +65,6 @@ extension SPAPresenter: SPAPresenterProtocol {
         )
     }
 
-    func didTapMinimize() {
-        wireframe.minimize()
-    }
-
     func didTapClose() {
         guard let browserTabId = configuration.browserTabId else { return }
 
