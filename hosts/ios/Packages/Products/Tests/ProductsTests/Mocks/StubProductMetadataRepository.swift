@@ -1,9 +1,8 @@
-import AsyncExtensions
 import Foundation
 @testable import Products
 
 /// Serves canned text records and counts reads, so tests can assert on resolution caching.
-final class StubDotNsResolver: DotNsResolverProtocol, @unchecked Sendable {
+final class StubProductMetadataRepository: ProductMetadataRepositoryProtocol, @unchecked Sendable {
     /// Keyed by `"<name>|<key>"`; an absent entry reads as an empty record.
     var records: [String: String] = [:]
     /// Thrown by every read while set.
@@ -27,27 +26,17 @@ final class StubDotNsResolver: DotNsResolverProtocol, @unchecked Sendable {
         records["\(name)|\(key)"] = value
     }
 
-    func getMetadataEntry(dotNsName: String, key: String) async throws -> String? {
-        lock.withLock { reads.append(dotNsName) }
+    func fetchMetadata(name: String, key: String) async throws -> String? {
+        lock.withLock { reads.append(name) }
 
         if let readError {
             throw readError
         }
 
-        if failingNames.contains(dotNsName) {
+        if failingNames.contains(name) {
             throw URLError(.timedOut)
         }
 
-        return records["\(dotNsName)|\(key)"]
+        return records["\(name)|\(key)"]
     }
-
-    func resolveToLocalURL(dotNsName _: String) async throws -> URL {
-        URL(fileURLWithPath: "/dev/null")
-    }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
-    }
-
-    func clearCache() throws {}
 }
