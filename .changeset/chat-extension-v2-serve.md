@@ -5,7 +5,7 @@
 The core serves the Chat Extension v2 requests of `chat`: `setRoomConfig`, `setRoomMetadata`, `setRoomPreview`,
 `deleteRoom` and `updateFeed`. It screens every field, checks that the product hosts the room, and paces `updateFeed`
 and `setRoomPreview` for each room. A room the product declares no configuration for is a room the host stores, and in
-such a room a product cannot write a message as the user.
+such a room a product cannot write, replace or react as the user.
 
 Breaking for a web host that serves chat: its `chat` callbacks must now also implement `listChatRooms`,
 `readChatRoomConfig`, `setChatRoomConfig`, `setChatRoomMetadata`, `setChatRoomPreview`, `deleteChatRoom` and
