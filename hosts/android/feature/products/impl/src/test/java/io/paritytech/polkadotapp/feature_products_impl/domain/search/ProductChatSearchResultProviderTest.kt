@@ -14,6 +14,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import uniffi.truapi.ProductId
 
 class ProductChatSearchResultProviderTest {
@@ -25,17 +26,17 @@ class ProductChatSearchResultProviderTest {
     fun setUp() {
         val products = listOf(
             Product(
-                id = ProductId.parse("coinflip.dot"),
+                id = ProductId.parse("coinflip.dot").getOrThrow(),
                 name = "Coinflip",
                 icon = null,
             ),
             Product(
-                id = ProductId.parse("gamble.dot"),
+                id = ProductId.parse("gamble.dot").getOrThrow(),
                 name = "Gamble Game",
                 icon = null,
             ),
             Product(
-                id = ProductId.parse("nft.dot"),
+                id = ProductId.parse("nft.dot").getOrThrow(),
                 name = "NFT Gallery",
                 icon = null,
             ),
@@ -104,7 +105,14 @@ class ProductChatSearchResultProviderTest {
     fun `opens spa browser for the selected result`() = runBlocking<Unit> {
         provider.onAppResultSelected(appResult("coinflip.dot"))
 
-        verify(productsRouter).openSpaBrowser(SpaBrowserPayload.ByProductId(ProductId.parse("coinflip.dot")))
+        verify(productsRouter).openSpaBrowser(SpaBrowserPayload.ByProductId(ProductId.parse("coinflip.dot").getOrThrow()))
+    }
+
+    @Test
+    fun `ignores selected results with invalid product ids`() = runBlocking<Unit> {
+        provider.onAppResultSelected(appResult("some invalid product"))
+
+        verifyNoInteractions(productsRouter)
     }
 
     @Test

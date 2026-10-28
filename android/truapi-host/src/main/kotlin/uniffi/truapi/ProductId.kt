@@ -7,13 +7,17 @@ import android.os.Parcelable
 class ProductId private constructor(val value: String) : Parcelable {
     companion object {
         /** Validate and normalize an identifier using the core's product rules. */
-        fun parse(value: String): ProductId = parseProductId(value)
+        fun parse(value: String): Result<ProductId> = try {
+            Result.success(parseProductId(value))
+        } catch (error: ProductIdException) {
+            Result.failure(error)
+        }
 
         internal fun fromRust(value: String): ProductId = ProductId(value)
 
         @JvmField
         val CREATOR: Parcelable.Creator<ProductId> = object : Parcelable.Creator<ProductId> {
-            override fun createFromParcel(parcel: Parcel): ProductId = parse(requireNotNull(parcel.readString()))
+            override fun createFromParcel(parcel: Parcel): ProductId = parse(requireNotNull(parcel.readString())).getOrThrow()
 
             override fun newArray(size: Int): Array<ProductId?> = arrayOfNulls(size)
         }

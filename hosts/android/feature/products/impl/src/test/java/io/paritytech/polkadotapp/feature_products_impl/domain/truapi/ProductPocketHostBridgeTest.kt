@@ -103,7 +103,7 @@ class ProductPocketHostBridgeTest {
     fun `another product's removal request cannot touch this product's card`() = runTest {
         val scope = executionScope()
         store.addCard(loyalty)
-        val otherProduct = ProductId.parse("other.dot")
+        val otherProduct = ProductId.parse("other.dot").getOrThrow()
         val bridge = ProductPocketHostBridge(otherProduct, store, scope)
         bridge.start {}
         advanceUntilIdle()

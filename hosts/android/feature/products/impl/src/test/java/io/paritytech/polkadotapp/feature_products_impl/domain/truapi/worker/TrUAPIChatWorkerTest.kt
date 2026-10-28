@@ -57,7 +57,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 
 class TrUAPIChatWorkerTest {
-    private val productId = ProductId.parse("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val roomId = ProductChatIdParameter("room-1")
     private val messageId: ChatMessageId = "msg-1"
     private val messageType = "custom.widget"

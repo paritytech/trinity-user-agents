@@ -35,7 +35,7 @@ class RealProductPermissionGuardTest {
     private val repository: ProductPermissionRepository = mock()
     private val requester: ProductPermissionRequester = mock()
 
-    private val productId = ProductId.parse("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
     private val permission = RemotePermission.WebRtcAccess
 
     private lateinit var guard: RealProductPermissionGuard

@@ -14,7 +14,7 @@ import uniffi.truapi.ProductId
 
 class PrefsDebugPocketCardsTest {
     private val prefs: SharedPreferences = mock()
-    private val productId = ProductId.parse("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
 
     private fun cards(isDebugBuild: Boolean = true) = PrefsDebugPocketCards(prefs, isDebugBuild)
 

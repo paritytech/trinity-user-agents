@@ -99,10 +99,10 @@ sealed interface ProductPermission {
         fun fromLocal(typeName: String, key: String): ProductPermission {
             return when (typeName) {
                 DeviceCapability.TYPE_NAME -> DeviceCapability(DeviceCapabilityType.valueOf(key))
-                AccountAccess.TYPE_NAME -> AccountAccess(ProductId.parse(key))
+                AccountAccess.TYPE_NAME -> AccountAccess(ProductId.parse(key).getOrThrow())
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
-                NftPurseRead.TYPE_NAME -> NftPurseRead(key.takeIf { it.isNotEmpty() }?.let(ProductId::parse))
+                NftPurseRead.TYPE_NAME -> NftPurseRead(key.takeIf { it.isNotEmpty() }?.let { ProductId.parse(it).getOrThrow() })
                 RemotePermission.NetworkAccess.TYPE_NAME -> RemotePermission.NetworkAccess(key)
                 RemotePermission.WebRtcAccess.TYPE_NAME -> RemotePermission.WebRtcAccess
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess

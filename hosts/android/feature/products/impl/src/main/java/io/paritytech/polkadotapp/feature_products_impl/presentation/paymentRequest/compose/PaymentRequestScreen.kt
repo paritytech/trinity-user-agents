@@ -120,7 +120,7 @@ private fun PaymentRequestScreenPreview() {
         PolkadotTheme {
             PaymentRequestScreenInternal(
                 state = PaymentRequestUiState(
-                    productId = ProductId.parse("alice.dot"),
+                    productId = ProductId.parse("alice.dot").getOrThrow(),
                     amount = TokenAmountModel.mock,
                     step = PaymentRequestStep.Confirm,
                 ),

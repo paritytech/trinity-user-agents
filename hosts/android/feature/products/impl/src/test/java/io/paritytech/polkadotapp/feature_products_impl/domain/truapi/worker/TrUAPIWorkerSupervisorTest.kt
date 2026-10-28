@@ -147,7 +147,7 @@ class TrUAPIWorkerSupervisorTest {
     }
 
     private companion object {
-        val PRODUCT = ProductId.parse("worker.paseo")
+        val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
     }
 }

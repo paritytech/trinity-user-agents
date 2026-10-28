@@ -132,7 +132,7 @@ private fun TrUAPIConfirmationScreenPreview() {
         TrUAPIConfirmationScreenInternal(
             state = TrUAPIConfirmationUiState(
                 titleRes = RCommon.string.truapi_confirm_title_create_proof,
-                productId = ProductId.parse("browse.dot"),
+                productId = ProductId.parse("browse.dot").getOrThrow(),
                 details = persistentListOf(
                     TrUAPIConfirmationDetail(
                         RCommon.string.truapi_confirm_label_ring,

@@ -31,7 +31,7 @@ import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProductWorkerRefCounterTest {
-    private val productId = ProductId.parse("coinflip.dot")
+    private val productId = ProductId.parse("coinflip.dot").getOrThrow()
     private val hostApiInteractor: HostApiInteractor = mock()
 
     private class FakeWorker : ProductWorker {

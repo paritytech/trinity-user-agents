@@ -29,7 +29,7 @@ class ProductAccountIdTupleAdapter : JsonSerializer<ProductAccountId>, JsonDeser
         val index = indexAdapter.deserialize(json[1], DerivationIndexWire::class.java, context)
 
         return ProductAccountId(
-            productId = ProductId.parse(json[0].asString),
+            productId = ProductId.parse(json[0].asString).getOrThrow(),
             index = index.toDomain().getOrThrow(),
         )
     }

@@ -29,7 +29,7 @@ private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
 
 class ProductChatHostBridgeTest {
-    private val productId = ProductId.parse("dim2.dot")
+    private val productId = ProductId.parse("dim2.dot").getOrThrow()
 
     @Test
     fun `a text message is posted to the room the core names`() = runTest {

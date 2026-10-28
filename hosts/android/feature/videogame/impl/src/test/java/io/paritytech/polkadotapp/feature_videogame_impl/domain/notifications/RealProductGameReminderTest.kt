@@ -54,8 +54,8 @@ class RealProductGameReminderTest {
         telemetry,
     )
 
-    private val game = ProductId.parse("game.dot")
-    private val other = ProductId.parse("acme.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
+    private val other = ProductId.parse("acme.dot").getOrThrow()
 
     @Test
     fun `schedule stores the game, arms its alarm and drops a posted notification`() = runTest {

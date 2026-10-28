@@ -22,7 +22,7 @@ import uniffi.truapi.ProductId
 
 class RealFundingProductsWarmUpTest {
     private val base = "getcash.dot"
-    private val productId = ProductId.parse(base)
+    private val productId = ProductId.parse(base).getOrThrow()
 
     private val fundingDomainProvider: FundingDomainProvider = mock()
     private val resolveProductUseCase: ResolveProductUseCase = mock()

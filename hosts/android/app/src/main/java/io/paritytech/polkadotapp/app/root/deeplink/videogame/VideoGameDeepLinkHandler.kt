@@ -35,8 +35,9 @@ class VideoGameDeepLinkHandler @Inject constructor(
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(coroutineDispatchers.io) {
         runCancellableCatching {
-            val productId = data.pathSegments.getOrNull(1)?.let(ProductId::parse)
+            val productIdValue = data.pathSegments.getOrNull(1)
                 ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            val productId = ProductId.parse(productIdValue).getOrElse { return@withContext Result.failure(it) }
             val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull()
                 ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
             if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp

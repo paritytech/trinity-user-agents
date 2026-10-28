@@ -28,7 +28,7 @@ import uniffi.truapi.ProductId
 class VideoGameDeepLinkHandlerTest {
     private val tld = requireNotNull(DotNsTld.parse("dot"))
     private val game = ReservedProductIds.game(tld)
-    private val other = ProductId.parse("acme.dot")
+    private val other = ProductId.parse("acme.dot").getOrThrow()
 
     private val router: VideoGameRouter = mock(VideoGameRouter::class.java)
     private val reminder: ProductGameReminder = mock(ProductGameReminder::class.java)

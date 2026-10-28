@@ -18,7 +18,7 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `an empty value is a value, not a miss`() = runTest {
-        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot"))
+        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow())
 
         storage.write("k", ByteArray(0))
 
@@ -29,7 +29,7 @@ class EncryptedTrUAPIStorageTest {
     /** `EncryptionUtil` returns "" instead of throwing when encryption fails. */
     @Test
     fun `a silently failed write is reported`() = runTest {
-        val storage = EncryptedHostStorage(prefs.swallowingWrites(), ProductId.parse("a.dot"))
+        val storage = EncryptedHostStorage(prefs.swallowingWrites(), ProductId.parse("a.dot").getOrThrow())
 
         val failure = runCatching { storage.write("k", byteArrayOf(9)) }.exceptionOrNull()
 
@@ -38,7 +38,7 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `an undecryptable value reads as a miss, not empty bytes`() = runTest {
-        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot"))
+        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow())
         storage.write("k", byteArrayOf(9))
         prefs.corrupt()
 
@@ -47,26 +47,26 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `products cannot read each other's keys`() = runTest {
-        EncryptedHostStorage(prefs, ProductId.parse("a.dot")).write("shared", byteArrayOf(7))
+        EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow()).write("shared", byteArrayOf(7))
 
-        assertNull(EncryptedHostStorage(prefs, ProductId.parse("b.dot")).read("shared"))
+        assertNull(EncryptedHostStorage(prefs, ProductId.parse("b.dot").getOrThrow()).read("shared"))
     }
 
     /** The core addresses a granted foreign read with the owner's key. */
     @Test
     fun `a foreign read reaches the owner's storage`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo")).write(key, byteArrayOf(7))
+        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow()).write(key, byteArrayOf(7))
 
-        assertArrayEquals(byteArrayOf(7), EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo")).read(key))
+        assertArrayEquals(byteArrayOf(7), EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo").getOrThrow()).read(key))
     }
 
     /** Only reads follow the owner in the key, so another product's store can never be written or cleared. */
     @Test
     fun `writes and clears stay in the caller's namespace`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        val owner = EncryptedHostStorage(prefs, ProductId.parse("counter.paseo"))
-        val other = EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo"))
+        val owner = EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow())
+        val other = EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo").getOrThrow())
         owner.write(key, byteArrayOf(1))
 
         other.write(key, byteArrayOf(2))
@@ -78,14 +78,14 @@ class EncryptedTrUAPIStorageTest {
     @Test
     fun `own keys keep their physical key`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo")).write(key, byteArrayOf(1))
+        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow()).write(key, byteArrayOf(1))
 
         assertNotNull(prefs.getDecryptedString("truapi/product/counter.paseo/$key"))
     }
 
     @Test
     fun `the owner is read from the core key format`() {
-        assertEquals(ProductId.parse("counter.paseo"), productStorageKeyOwner("truapi:product-storage:v1:13:counter.paseo:a:b"))
+        assertEquals(ProductId.parse("counter.paseo").getOrThrow(), productStorageKeyOwner("truapi:product-storage:v1:13:counter.paseo:a:b"))
         listOf(
             "truapi:product-storage:v1:7:caf\u00e9.p:k",
             "truapi:product-storage:v1:13:counter.paseo",

@@ -36,7 +36,7 @@ private const val ROOM_1 = "room-1"
 private const val ROOM_2 = "room-2"
 
 class TrUAPIChatRoomForwardingTest {
-    private val productId = ProductId.parse("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val execution: TrUAPIProductExecution = mock()
 
     private class Forwarding(val scope: CoroutineScope, val job: Job)

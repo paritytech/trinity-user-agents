@@ -92,7 +92,7 @@ private fun TransactionSignScreenLoadedPreview() {
                         callName = "Balances.transfer",
                         detailsJson = """{"address": "13Qbq8...", "call": {"module": "Balances", "function": "transfer"}}"""
                     ),
-                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot"), "0"),
+                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot").getOrThrow(), "0"),
                 )
             ),
             onApproveClicked = {},
@@ -115,7 +115,7 @@ private fun TransactionSignScreenRawMessagePreview() {
                     content = SigningContent.RawMessage(
                         hexData = "0x48656c6c6f20576f726c6421"
                     ),
-                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot"), "1"),
+                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot").getOrThrow(), "1"),
                 )
             ),
             onApproveClicked = {},

@@ -29,7 +29,7 @@ private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 private const val GATEWAY_URL = "https://gateway.example/ipfs/$CID"
 
 class ProductIconFetcherTest {
-    private val productId = ProductId.parse("dim2.paseo")
+    private val productId = ProductId.parse("dim2.paseo").getOrThrow()
     private val resolveProduct: ResolveProductUseCase = mockk()
     private val ipfsContentLookup: IpfsContentLookup = mockk {
         coEvery { getIpfsLinkFor(CID) } returns Result.success(GATEWAY_URL)

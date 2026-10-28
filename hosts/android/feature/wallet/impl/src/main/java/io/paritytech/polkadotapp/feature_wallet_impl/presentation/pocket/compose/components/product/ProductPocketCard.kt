@@ -98,7 +98,7 @@ private fun ProductPocketCardPreview() {
     PolkadotTheme {
         ProductPocketCard(
             card = PocketCardUiModel.ProductCard(
-                key = PocketCardKey(ProductId.parse("game.dot"), PocketCardId("loyalty")),
+                key = PocketCardKey(ProductId.parse("game.dot").getOrThrow(), PocketCardId("loyalty")),
                 title = "Loyalty",
                 pinned = false
             ),

@@ -17,8 +17,7 @@ fun productIdFromUrl(uri: Uri, tld: DotNsTld): Result<ProductId> = runCatching {
 }
 
 /** Executable URLs share the owning product's navigation and permission state. */
-fun productIdFromHost(host: String, tld: DotNsTld): Result<ProductId> = runCatching {
-    val identifier = ProductId.parse(host)
+fun productIdFromHost(host: String, tld: DotNsTld): Result<ProductId> = ProductId.parse(host).mapCatching { identifier ->
     require(productIdMatchesNetwork(identifier, tld.value)) { "Not a $tld product id: $host" }
     productIdOwner(identifier)
 }

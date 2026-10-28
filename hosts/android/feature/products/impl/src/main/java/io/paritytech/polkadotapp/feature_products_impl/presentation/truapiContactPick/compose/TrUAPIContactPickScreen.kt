@@ -104,7 +104,7 @@ private fun TrUAPIContactPickScreenPreview() {
     PolkadotTheme {
         TrUAPIContactPickScreenInternal(
             state = TrUAPIContactPickUiState(
-                productId = ProductId.parse("browse.dot"),
+                productId = ProductId.parse("browse.dot").getOrThrow(),
                 contacts = persistentListOf(
                     TrUAPIContactPickRow(index = 0, name = "alice"),
                     TrUAPIContactPickRow(index = 1, name = null),

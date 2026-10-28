@@ -341,7 +341,7 @@ private fun PocketScreenPreview() {
                         syncInProgress = false,
                     ),
                     PocketCardUiModel.ProductCard(
-                        key = PocketCardKey(ProductId.parse("peopl.dot"), PocketCardId("humanity")),
+                        key = PocketCardKey(ProductId.parse("peopl.dot").getOrThrow(), PocketCardId("humanity")),
                         title = "Humanity",
                         pinned = true
                     )

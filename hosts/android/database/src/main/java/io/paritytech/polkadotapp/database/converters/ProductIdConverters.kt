@@ -8,5 +8,5 @@ class ProductIdConverters {
     fun encode(value: ProductId?): String? = value?.value
 
     @TypeConverter
-    fun decode(value: String?): ProductId? = value?.let(ProductId::parse)
+    fun decode(value: String?): ProductId? = value?.let { ProductId.parse(it).getOrThrow() }
 }

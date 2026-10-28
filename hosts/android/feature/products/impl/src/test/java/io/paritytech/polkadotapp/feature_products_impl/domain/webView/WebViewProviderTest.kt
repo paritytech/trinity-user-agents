@@ -67,7 +67,7 @@ class WebViewProviderTest {
         dispatchers: CoroutineDispatchers,
         private val views: Iterator<WebView>,
     ) : WebViewProvider(dispatchers) {
-        override val callingProductIdProvider = FixedProductId(ProductId.parse("product.paseo"))
+        override val callingProductIdProvider = FixedProductId(ProductId.parse("product.paseo").getOrThrow())
 
         override suspend fun createWebView(): WebView = views.next()
 

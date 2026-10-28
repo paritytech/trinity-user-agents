@@ -43,7 +43,7 @@ class SigningContextHolderTest {
         override val requesterName = "product.dot"
         override val requesterIconUrl = ""
         override val signingRequestBody = SigningRequestBody.SignVrf(
-            account = ProductAccountId(ProductId.parse("product.dot"), DerivationIndex32.default()),
+            account = ProductAccountId(ProductId.parse("product.dot").getOrThrow(), DerivationIndex32.default()),
             transcriptLabel = ByteArray(0),
             items = emptyList(),
         )

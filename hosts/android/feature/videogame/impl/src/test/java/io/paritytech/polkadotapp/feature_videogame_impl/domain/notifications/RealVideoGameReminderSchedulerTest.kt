@@ -19,7 +19,7 @@ class RealVideoGameReminderSchedulerTest {
 
     private val scheduler = RealVideoGameReminderScheduler(alarms, FakeTimeProvider { NOW }, telemetry)
 
-    private val game = ProductId.parse("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     @Test
     fun `an exact alarm is reported as scheduled for alarm delivery`() {

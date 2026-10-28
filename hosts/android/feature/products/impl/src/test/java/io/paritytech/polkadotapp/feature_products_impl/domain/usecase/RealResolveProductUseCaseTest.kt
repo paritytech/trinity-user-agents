@@ -28,7 +28,7 @@ class RealResolveProductUseCaseTest {
     private val manifestParser = ManifestParser(Gson())
 
     private val base = "coinflip.dot"
-    private val productId = ProductId.parse(base)
+    private val productId = ProductId.parse(base).getOrThrow()
 
     private var debugCard: DebugPocketCard? = null
     private val debugPocketCards = object : DebugPocketCards {

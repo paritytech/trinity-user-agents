@@ -122,7 +122,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
             }
         }
 
-        private val PRODUCT = ProductId.parse("recovery.paseo")
+        private val PRODUCT = ProductId.parse("recovery.paseo").getOrThrow()
         private const val ORIGIN = "http://localhost"
         private const val PAGE_URL = "$ORIGIN/"
         private val CONFIG = HostRuntimeConfig(

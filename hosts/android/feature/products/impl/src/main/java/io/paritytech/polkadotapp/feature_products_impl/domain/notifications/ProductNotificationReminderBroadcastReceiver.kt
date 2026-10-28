@@ -32,7 +32,7 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
         if (!intent.hasExtra(EXTRA_NOTIFICATION_ID)) return
         val notificationIdValue = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
 
-        val productId = runCatching { ProductId.parse(productIdValue) }.getOrNull() ?: return
+        val productId = ProductId.parse(productIdValue).getOrNull() ?: return
         val notificationId = NotificationId(notificationIdValue)
 
         launchAsyncJob {

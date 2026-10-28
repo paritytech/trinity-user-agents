@@ -162,7 +162,7 @@ private fun ResourceAllocationRequestScreenStalledPreview() {
 }
 
 private fun previewState(isAllocating: Boolean) = ResourceAllocationRequestUiState(
-    productId = ProductId.parse("alice.dot"),
+    productId = ProductId.parse("alice.dot").getOrThrow(),
     resourceLabels = persistentListOf(
         RCommon.string.product_resource_allocation_bulletin,
         RCommon.string.product_resource_allocation_statement_store,

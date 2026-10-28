@@ -66,7 +66,7 @@ class E2EHookReceiver : BroadcastReceiver() {
             seedIdentity(hooks, username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME)
         }
 
-        val productId = intent.stringExtra(EXTRA_PRODUCT_ID)?.let { runCatching { ProductId.parse(it) }.getOrNull() }
+        val productId = intent.stringExtra(EXTRA_PRODUCT_ID)?.let { ProductId.parse(it).getOrNull() }
         val message = intent.stringExtra(EXTRA_MESSAGE)
 
         val workerUrl = intent.stringExtra(EXTRA_WORKER_URL)

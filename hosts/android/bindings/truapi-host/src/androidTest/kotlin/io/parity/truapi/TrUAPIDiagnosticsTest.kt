@@ -121,7 +121,7 @@ class TrUAPIDiagnosticsTest {
         val runtime = TrUAPIHostRuntime(bridge, config)
         val execution = runtime.openProductExecution(
             bridge = bridge,
-            configuration = ProductExecutionConfig(ProductId.parse("dotli.dot"), ExecutableKind.APP),
+            configuration = ProductExecutionConfig(ProductId.parse("dotli.dot").getOrThrow(), ExecutableKind.APP),
         )
         chainProvider.attach(
             onResponse = execution::notifyChainResponse,

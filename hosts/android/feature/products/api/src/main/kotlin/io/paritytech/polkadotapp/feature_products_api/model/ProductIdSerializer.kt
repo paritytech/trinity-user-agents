@@ -12,5 +12,5 @@ object ProductIdSerializer : KSerializer<ProductId> {
 
     override fun serialize(encoder: Encoder, value: ProductId) = encoder.encodeString(value.value)
 
-    override fun deserialize(decoder: Decoder): ProductId = ProductId.parse(decoder.decodeString())
+    override fun deserialize(decoder: Decoder): ProductId = ProductId.parse(decoder.decodeString()).getOrThrow()
 }

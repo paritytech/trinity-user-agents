@@ -51,7 +51,7 @@ class AutoAllowProductPermissionRequesterTest {
         assertEquals(listOf(productId("arena.getcash.dot")), delegate.promptCalls)
     }
 
-    private fun productId(value: String) = ProductId.parse(value)
+    private fun productId(value: String) = ProductId.parse(value).getOrThrow()
 
     private fun networkAccess() = RemotePermission.NetworkAccess("example.com")
 }

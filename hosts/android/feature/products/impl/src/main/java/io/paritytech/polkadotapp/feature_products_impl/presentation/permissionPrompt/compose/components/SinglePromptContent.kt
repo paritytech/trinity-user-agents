@@ -55,7 +55,7 @@ private fun SinglePromptContentPreview() {
     PolkadotTheme {
         Column {
             SinglePromptContent(
-                productId = ProductId.parse("alice.dot"),
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permission = ProductPermission.BalanceAccess,
             )
         }

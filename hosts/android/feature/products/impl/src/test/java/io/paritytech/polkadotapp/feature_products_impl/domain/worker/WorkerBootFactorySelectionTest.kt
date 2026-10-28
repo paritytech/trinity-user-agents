@@ -25,7 +25,7 @@ import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactorySelectionTest {
-    private val productId = ProductId.parse("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val botApi = BindableProductsBotApi(mock(), mock())
 
     private fun TestScope.factory(

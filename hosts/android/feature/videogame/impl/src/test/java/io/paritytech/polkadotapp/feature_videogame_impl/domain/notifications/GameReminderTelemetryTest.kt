@@ -15,7 +15,7 @@ import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class GameReminderTelemetryTest {
-    private val game = ProductId.parse("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
     private val timeProvider = mockk<TimeProvider> {
         every { now() } returns Instant.fromEpochMilliseconds(NOW)
     }

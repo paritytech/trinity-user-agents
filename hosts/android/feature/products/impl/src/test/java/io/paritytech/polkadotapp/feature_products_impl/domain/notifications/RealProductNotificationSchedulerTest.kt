@@ -22,7 +22,7 @@ class RealProductNotificationSchedulerTest {
     private val alarmManager: AlarmManager = mock()
     private val repository: ScheduledProductNotificationRepository = mock()
 
-    private val productId = ProductId.parse("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
     private val scheduledAt = Instant.fromEpochMilliseconds(2_000_000_000_000L)
 
     private lateinit var scheduler: RealProductNotificationScheduler

@@ -25,7 +25,7 @@ class ProductServingHostResolverTest {
     private val resolver = ProductServingHostResolver(resolveProductUseCase, dotNsTldProvider)
 
     private fun resolvedWith(appHost: String?, widgetHost: String?) = ResolvedProduct(
-        product = Product(id = ProductId.parse("coinflip.dot"), name = "Coinflip", icon = null),
+        product = Product(id = ProductId.parse("coinflip.dot").getOrThrow(), name = "Coinflip", icon = null),
         description = null,
         executables = Executables(
             app = appHost?.let { ProductExecutable.App(ExecutableHost(it), SemVer.ZERO) },
@@ -37,7 +37,7 @@ class ProductServingHostResolverTest {
     )
 
     private suspend fun stubResolution(appHost: String?, widgetHost: String? = null) {
-        whenever(resolveProductUseCase.resolve(ProductId.parse("coinflip.dot")))
+        whenever(resolveProductUseCase.resolve(ProductId.parse("coinflip.dot").getOrThrow()))
             .thenReturn(Result.success(resolvedWith(appHost, widgetHost)))
     }
 

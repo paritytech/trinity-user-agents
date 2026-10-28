@@ -45,7 +45,7 @@ class IsolationProbeTest {
 
     @Test
     fun isolationProbe() = runBlocking {
-        engine.initialize(ProductId.parse("isolation-test.dot"))
+        engine.initialize(ProductId.parse("isolation-test.dot").getOrThrow())
         engine.state.first { it is JsEngineState.Ready }
 
         // Load container script (includes isolation overrides)

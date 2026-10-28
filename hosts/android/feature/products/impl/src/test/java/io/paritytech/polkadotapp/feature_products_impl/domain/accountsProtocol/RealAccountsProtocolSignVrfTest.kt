@@ -33,8 +33,8 @@ class RealAccountsProtocolSignVrfTest {
         productSigningScreenLauncher = signingScreenLauncher,
     )
 
-    private val callingProduct = ProductId.parse("lottery.dot")
-    private val account = ProductAccountId(ProductId.parse("lottery.dot"), DerivationIndex32.default())
+    private val callingProduct = ProductId.parse("lottery.dot").getOrThrow()
+    private val account = ProductAccountId(ProductId.parse("lottery.dot").getOrThrow(), DerivationIndex32.default())
     private val label = "pop:airdrop".toByteArray()
 
     @Test

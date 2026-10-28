@@ -33,7 +33,7 @@ class PermissionPromptCancellationTest {
     private val holder = PermissionContextHolder()
     private val router = PromptNavigation()
     private val requester = RealProductPermissionRequester(holder, router)
-    private val product = ProductId.parse("product.paseo")
+    private val product = ProductId.parse("product.paseo").getOrThrow()
 
     @Before
     fun setUp() {

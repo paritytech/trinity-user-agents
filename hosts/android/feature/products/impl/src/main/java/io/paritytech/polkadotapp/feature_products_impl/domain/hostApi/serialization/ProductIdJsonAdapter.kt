@@ -10,5 +10,5 @@ class ProductIdJsonAdapter : TypeAdapter<ProductId>() {
         writer.value(value.value)
     }
 
-    override fun read(reader: JsonReader): ProductId = ProductId.parse(reader.nextString())
+    override fun read(reader: JsonReader): ProductId = ProductId.parse(reader.nextString()).getOrThrow()
 }

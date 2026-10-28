@@ -148,7 +148,7 @@ private fun PermissionPromptScreenPreview() {
     PolkadotTheme {
         PermissionPromptScreenInternal(
             state = PermissionPromptUiState.Single(
-                productId = ProductId.parse("alice.dot"),
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permission = ProductPermission.RemotePermission.NetworkAccess(domain = "example.com"),
             ),
             onAllowOnceClicked = {},

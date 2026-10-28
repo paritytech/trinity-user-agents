@@ -52,7 +52,7 @@ class ProductPocketCardDetailsLoadingTest {
     }
 
     private val card = PocketCardUiModel.ProductCard(
-        key = PocketCardKey(ProductId.parse("pocketdemo.dot"), PocketCardId("loyalty")),
+        key = PocketCardKey(ProductId.parse("pocketdemo.dot").getOrThrow(), PocketCardId("loyalty")),
         title = "Loyalty",
         pinned = false,
     )

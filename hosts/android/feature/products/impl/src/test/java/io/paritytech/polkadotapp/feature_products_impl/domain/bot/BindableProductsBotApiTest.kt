@@ -20,7 +20,7 @@ import org.mockito.Mockito.mock
 import uniffi.truapi.ProductId
 
 class BindableProductsBotApiTest {
-    private val productId = ProductId.parse("coinflip.dot")
+    private val productId = ProductId.parse("coinflip.dot").getOrThrow()
     private val hostApiInteractor: HostApiInteractor = mock()
     private val chatIdParam = ProductChatIdParameter("room")
 

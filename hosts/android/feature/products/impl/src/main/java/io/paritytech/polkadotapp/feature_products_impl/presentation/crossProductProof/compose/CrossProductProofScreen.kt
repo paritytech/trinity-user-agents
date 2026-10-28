@@ -103,8 +103,8 @@ private fun CrossProductProofScreenPreview() {
     PolkadotTheme {
         CrossProductProofScreenInternal(
             state = CrossProductProofUiState(
-                callingProduct = ProductId.parse("voting.dot"),
-                onBehalfOf = ProductId.parse("identity.dot"),
+                callingProduct = ProductId.parse("voting.dot").getOrThrow(),
+                onBehalfOf = ProductId.parse("identity.dot").getOrThrow(),
                 suffix = "period/3",
                 message = "0xdeadbeef",
             ),

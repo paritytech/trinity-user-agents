@@ -59,7 +59,7 @@ class ProductPocketCardThemeTest {
             PolkadotTheme(theme = pickedTheme) {
                 ProductPocketCard(
                     card = PocketCardUiModel.ProductCard(
-                        key = PocketCardKey(ProductId.parse("pocketdemo.dot"), PocketCardId("loyalty")),
+                        key = PocketCardKey(ProductId.parse("pocketdemo.dot").getOrThrow(), PocketCardId("loyalty")),
                         title = "Loyalty",
                         pinned = false,
                     ),

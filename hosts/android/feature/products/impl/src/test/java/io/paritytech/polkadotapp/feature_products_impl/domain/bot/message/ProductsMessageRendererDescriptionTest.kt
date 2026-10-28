@@ -24,7 +24,7 @@ class ProductsMessageRendererDescriptionTest {
     private val context: Context = mockk {
         every { getString(RCommon.string.products_message_custom_preview) } returns "Custom message"
     }
-    private val product = Product(ProductId.parse("dim2.dot"), "Jollity", icon = null)
+    private val product = Product(ProductId.parse("dim2.dot").getOrThrow(), "Jollity", icon = null)
 
     // The sender describes each card, so the line says what this one shows rather than what the product is.
     @Test

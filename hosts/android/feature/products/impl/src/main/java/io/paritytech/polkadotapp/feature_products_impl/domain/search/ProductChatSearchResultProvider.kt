@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.search
 
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.search.ChatListSearchResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
@@ -34,7 +35,8 @@ class ProductChatSearchResultProvider(
     }
 
     override suspend fun onAppResultSelected(result: ChatListSearchResult.App) {
-        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(ProductId.parse(result.id)))
+        val productId = ProductId.parse(result.id).logFailure("Invalid product search result").getOrNull() ?: return
+        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(productId))
     }
 }
 

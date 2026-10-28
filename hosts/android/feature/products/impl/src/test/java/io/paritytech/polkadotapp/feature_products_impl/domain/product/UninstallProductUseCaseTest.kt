@@ -20,7 +20,7 @@ class UninstallProductUseCaseTest {
     private val productGameReminder: ProductGameReminder = mock()
     private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
 
-    private val productId = ProductId.parse("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
 
     @Test
     fun `cancels scheduled notifications before deleting product`() = runBlocking {

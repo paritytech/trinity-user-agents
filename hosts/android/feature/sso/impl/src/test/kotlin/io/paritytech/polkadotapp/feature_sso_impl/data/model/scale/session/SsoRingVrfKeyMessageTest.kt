@@ -24,8 +24,8 @@ private val SESSION_ID = SsoSessionId("session")
 private val TLD = requireNotNull(DotNsTld.parse("dot"))
 private const val REQUEST_ID = "request"
 
-private val CALLER = ProductId.parse("game.dot")
-private val KEY_HANDLE = ProductAccountId(ProductId.parse("peopl.dot"), DerivationIndex32.fromUInt(0u))
+private val CALLER = ProductId.parse("game.dot").getOrThrow()
+private val KEY_HANDLE = ProductAccountId(ProductId.parse("peopl.dot").getOrThrow(), DerivationIndex32.fromUInt(0u))
 
 private val RING = RingLocation(
     chainId = ByteArray(32) { 7 }.toDataByteArray(),
@@ -63,7 +63,7 @@ class SsoRingVrfKeyMessageTest {
         val request = requestWith(
             SsoSessionRequest.Content.ListRingVrfKeysRequest(
                 callingProduct = CALLER,
-                owner = ProductId.parse("peopl.dot"),
+                owner = ProductId.parse("peopl.dot").getOrThrow(),
                 disclosure = RingVrfKeyDisclosure.PUBLIC_KEY,
             )
         )
@@ -114,7 +114,7 @@ class SsoRingVrfKeyMessageTest {
 
         assertEquals(
             18,
-            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest(ProductId.parse("game.dot"), DerivationIndex32.fromUInt(0u).toScale(), ringScale))
+            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest(ProductId.parse("game.dot").getOrThrow(), DerivationIndex32.fromUInt(0u).toScale(), ringScale))
         )
         assertEquals(
             19,
@@ -122,7 +122,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             20,
-            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest(ProductId.parse("game.dot"), ProductId.parse("peopl.dot"), RingVrfKeyDisclosureScale.Anonymized))
+            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest(ProductId.parse("game.dot").getOrThrow(), ProductId.parse("peopl.dot").getOrThrow(), RingVrfKeyDisclosureScale.Anonymized))
         )
         assertEquals(
             21,
@@ -130,7 +130,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             22,
-            variantIndexOf(SsoMessageContent.RingVrfSignRequest(ProductId.parse("game.dot"), KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
+            variantIndexOf(SsoMessageContent.RingVrfSignRequest(ProductId.parse("game.dot").getOrThrow(), KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
         )
         assertEquals(
             23,

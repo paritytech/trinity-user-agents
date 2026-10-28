@@ -31,7 +31,7 @@ import uniffi.truapi.RemotePermissionRequest
 import java.net.URI
 
 class WebViewPermissionClientTest {
-    private val productId = ProductId.parse("product.paseo")
+    private val productId = ProductId.parse("product.paseo").getOrThrow()
     private var currentProduct = productId
     private val guard = mock(ProductPermissionGuard::class.java)
     private val execution = mock(TrUAPIProductExecution::class.java)
@@ -82,7 +82,7 @@ class WebViewPermissionClientTest {
     @Test
     fun `a different current product cannot borrow the execution authorization`() = runBlocking<Unit> {
         client.useTrUAPIPermissions(productId, execution, scope)
-        currentProduct = ProductId.parse("other.paseo")
+        currentProduct = ProductId.parse("other.paseo").getOrThrow()
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 

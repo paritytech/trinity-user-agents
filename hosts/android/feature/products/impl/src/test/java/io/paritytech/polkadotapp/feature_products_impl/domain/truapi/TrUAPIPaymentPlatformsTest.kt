@@ -80,7 +80,7 @@ class TrUAPIPaymentPlatformsTest {
     private val pushedPayments = MutableStateFlow<List<HostPaymentStatusSubscribeItem>>(emptyList())
     private val pushedBalances = MutableStateFlow<List<Balance>>(emptyList())
 
-    private val product = ProductId.parse("product.dot")
+    private val product = ProductId.parse("product.dot").getOrThrow()
     private val rawId = ByteArray(32) { 4 }
     private val topUpId = PaymentTopUpId.fromBytes(rawId.toDataByteArray()).getOrThrow()
     private val paymentId = ProductPaymentRequestId.fromBytes(rawId.toDataByteArray()).getOrThrow()

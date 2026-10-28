@@ -20,7 +20,7 @@ class GameReminderAlarmHandlerTest {
 
     private val handler = GameReminderAlarmHandler(publisher, lifecycle, reminder, telemetry)
 
-    private val game = ProductId.parse("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     @Test
     fun `a background alarm for a held game is reported as fired and posts the notification`() {

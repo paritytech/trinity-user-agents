@@ -30,7 +30,7 @@ class RealProductContentWarmUpTest {
     }
     private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver, runtimeSettings)
 
-    private val productId = ProductId.parse("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val archive: Uri = mock()
 
     // The archive is keyed by the host that serves the card, which for a manifest product is its

@@ -92,8 +92,9 @@ Rust exposes this version-independent type as `truapi::ProductId`.
 The client receives typed IDs from the host; `asProductId` brands an explicit
 string without parsing or loading WASM. Rust validates IDs at the host boundary.
 Swift's `try ProductId("my-product.dot")` and Kotlin's
-`ProductId.parse("my-product.dot")` call Rust once and return immutable values
-owned by the native application. Browser hosts can use their existing worker
+`ProductId.parse("my-product.dot")` call Rust once. Kotlin returns
+`Result<ProductId>` so callers explicitly handle invalid input. Both platforms
+own the resulting immutable values. Browser hosts can use their existing worker
 runtime's `parseProductId` method for the same validation and normalization.
 Native callers use Rust for product names, executable ownership and share-link parsing.
 Both native hosts use Rust's `ExecutableKind` for executable selection and

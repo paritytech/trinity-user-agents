@@ -86,7 +86,7 @@ private fun BatchedPromptContentPreview() {
     PolkadotTheme {
         Column {
             BatchedPromptContent(
-                productId = ProductId.parse("alice.dot"),
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permissions = persistentListOf(
                     RemotePermission.NetworkAccess(domain = "example.com"),
                     RemotePermission.WebRtcAccess,

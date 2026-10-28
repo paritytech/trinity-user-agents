@@ -58,7 +58,7 @@ class RealRequestPaymentUseCaseTest {
         productsRouter = router,
     )
 
-    private val product = ProductId.parse("product.dot")
+    private val product = ProductId.parse("product.dot").getOrThrow()
     private val id = ProductPaymentRequestId.fromBytes(DataByteArray(ByteArray(32) { 1 })).getOrThrow()
     private val key = ExternalPaymentKey(origin = product.value, id = id.asHex())
     private val destination = byteArrayOf(7).intoAccountId()

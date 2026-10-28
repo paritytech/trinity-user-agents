@@ -13,7 +13,7 @@ import uniffi.truapi.ProductId
 
 class ProductTabSessionFactoryTest {
     private val devServer = DevServerProduct(
-        productId = ProductId.parse("humanity.dot"),
+        productId = ProductId.parse("humanity.dot").getOrThrow(),
         origin = "http://192.168.1.59:3000",
         url = "http://192.168.1.59:3000/app?product_id=humanity.dot",
     )
@@ -44,7 +44,7 @@ class ProductTabSessionFactoryTest {
 
         factory.create(devServer.url, scope) {}
 
-        val productId = ProductId.parse("humanity.dot")
+        val productId = ProductId.parse("humanity.dot").getOrThrow()
         verify {
             webViewProviders.create(devServer.url, any(), true, scope, productId, devServer.origin, any())
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)

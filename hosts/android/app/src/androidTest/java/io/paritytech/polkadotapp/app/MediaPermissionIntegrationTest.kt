@@ -73,7 +73,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.paseo"), ExecutableKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.paseo").getOrThrow(), ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -81,7 +81,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                     webView.settings.javaScriptEnabled = true
                     webView.webChromeClient = ProductWebChromeClient(
                         unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
-                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.paseo")), scope, null,
+                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.paseo").getOrThrow()), scope, null,
                     )
                     webView.addJavascriptInterface(reports, "mediaReport")
                     webView.webViewClient = object : WebViewClient() {

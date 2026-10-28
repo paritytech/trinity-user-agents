@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProductOperationServiceTest {
-    private val productId = ProductId.parse("coinflip.dot")
+    private val productId = ProductId.parse("coinflip.dot").getOrThrow()
 
     private class FakeRefCounter : ProductWorkerRefCounter {
         val acquires = AtomicInteger(0)
@@ -123,7 +123,7 @@ class ProductOperationServiceTest {
         val repo = FakeRepository()
         // Simulate records left open by a previous run.
         val id1 = repo.insert(productId, "a").getOrThrow()
-        repo.insert(ProductId.parse("arena.dot"), "b").getOrThrow()
+        repo.insert(ProductId.parse("arena.dot").getOrThrow(), "b").getOrThrow()
 
         val service = RealProductOperationService(refCounter, repo)
         service.resumeOpenOperations()

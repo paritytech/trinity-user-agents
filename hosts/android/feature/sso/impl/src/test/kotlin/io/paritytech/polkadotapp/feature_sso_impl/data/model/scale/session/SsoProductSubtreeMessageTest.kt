@@ -53,7 +53,7 @@ class SsoProductSubtreeMessageTest {
      */
     @Test
     fun `product subtree variants sit at wire indices 16 and 17`() {
-        assertEquals(16, variantIndexOf(SsoMessageContent.ProductSubtreeRequest(ProductId.parse("browse.dot"))))
+        assertEquals(16, variantIndexOf(SsoMessageContent.ProductSubtreeRequest(ProductId.parse("browse.dot").getOrThrow())))
 
         val response = SsoMessageContent.ProductSubtreeResponse(REQUEST_ID, BSResult.Err("e"))
         assertEquals(17, variantIndexOf(response))
@@ -62,7 +62,7 @@ class SsoProductSubtreeMessageTest {
     private fun productSubtreeRequest() = SsoSessionRequest(
         sessionId = SESSION_ID,
         requestId = REQUEST_ID,
-        content = SsoSessionRequest.Content.ProductSubtreeRequest(ProductId.parse("browse.dot")),
+        content = SsoSessionRequest.Content.ProductSubtreeRequest(ProductId.parse("browse.dot").getOrThrow()),
     )
 
     private fun decodeResponseContent(content: SsoSessionResponse.Content): SsoMessageContent.ProductSubtreeResponse {

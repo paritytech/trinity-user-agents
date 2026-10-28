@@ -159,7 +159,7 @@ private fun PartialPaymentContent(state: TopUpRequestUiState.PartialPayment) {
 private fun TopUpRequestFailurePreview() {
     PolkadotTheme {
         TopUpRequestScreenInternal(
-            state = TopUpRequestUiState.Failure(productId = ProductId.parse("alice.dot")),
+            state = TopUpRequestUiState.Failure(productId = ProductId.parse("alice.dot").getOrThrow()),
             onDismiss = {},
         )
     }
@@ -175,7 +175,7 @@ private fun TopUpRequestPartialPaymentPreview() {
         PolkadotTheme {
             TopUpRequestScreenInternal(
                 state = TopUpRequestUiState.PartialPayment(
-                    productId = ProductId.parse("alice.dot"),
+                    productId = ProductId.parse("alice.dot").getOrThrow(),
                     requestedAmount = TokenAmountModel.mock,
                     creditedAmount = TokenAmountModel.mock,
                 ),

@@ -112,6 +112,6 @@ class TrUAPISessionStarterTest {
 
     private companion object {
         const val PRODUCT_URL = "https://product.paseo/app"
-        val PRODUCT_ID = ProductId.parse("product.paseo")
+        val PRODUCT_ID = ProductId.parse("product.paseo").getOrThrow()
     }
 }

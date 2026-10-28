@@ -79,7 +79,9 @@ internal fun productStorageKeyOwner(key: String): ProductId? {
     val length = rest.decodeToString(0, colon).toIntOrNull()?.takeIf { it > 0 } ?: return null
     val start = colon + 1
     if (length > rest.size - start - 1 || rest[start + length] != ':'.code.toByte()) return null
-    return runCatching { ProductId.parse(rest.decodeToString(start, start + length, throwOnInvalidSequence = true)) }.getOrNull()
+    val productIdValue = runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+        ?: return null
+    return ProductId.parse(productIdValue).getOrNull()
 }
 
 /**

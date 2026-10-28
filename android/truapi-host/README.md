@@ -63,7 +63,8 @@ configuration update in the embedding app's package upgrade.
 
 Product identities use `uniffi.truapi.ProductId`. Construct values with
 `ProductId.parse("browse.dot")`, which calls Rust for validation and
-normalization and throws `ProductIdException` for invalid input. Kotlin owns
+normalization and returns `Result<ProductId>`. Invalid input produces a failure
+containing `ProductIdException`; callers choose recovery or propagation. Kotlin owns
 the resulting immutable string value; equality, hashing and display do not
 call Rust. Use `.value` at text or persistence boundaries. The value supports
 `Parcelable` for Android navigation.
@@ -138,7 +139,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("chat.dot"), ExecutableKind.WORKER),
+    configuration = ProductExecutionConfig(ProductId.parse("chat.dot").getOrThrow(), ExecutableKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()
@@ -432,7 +433,7 @@ check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
 val container = ContainerScriptBundle.load(webView.context)
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig(ProductId.parse("my-product.dot"), ExecutableKind.APP),
+    configuration = ProductExecutionConfig(ProductId.parse("my-product.dot").getOrThrow(), ExecutableKind.APP),
 )
 val endpoint = execution.startWsBridge()
 

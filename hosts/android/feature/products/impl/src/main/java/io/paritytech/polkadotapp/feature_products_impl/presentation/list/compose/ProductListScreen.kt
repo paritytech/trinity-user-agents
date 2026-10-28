@@ -93,17 +93,17 @@ private fun ProductListScreenPreview() {
             state = LoadingState.Loaded(
                 listOf(
                     ProductListItemUiModel(
-                        id = ProductId.parse("1.dot"),
+                        id = ProductId.parse("1.dot").getOrThrow(),
                         name = "Web3 Summit",
                         iconUrl = null,
                     ),
                     ProductListItemUiModel(
-                        id = ProductId.parse("2.dot"),
+                        id = ProductId.parse("2.dot").getOrThrow(),
                         name = "Polkadot Decoded",
                         iconUrl = null,
                     ),
                     ProductListItemUiModel(
-                        id = ProductId.parse("3.dot"),
+                        id = ProductId.parse("3.dot").getOrThrow(),
                         name = "Sub0 Conference",
                         iconUrl = null,
                     )

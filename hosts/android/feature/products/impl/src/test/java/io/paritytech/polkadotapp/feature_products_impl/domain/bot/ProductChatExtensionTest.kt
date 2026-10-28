@@ -43,7 +43,7 @@ import uniffi.truapi.ProductId
 private const val ROOM = "truapi-playground"
 
 class ProductChatExtensionTest {
-    private val product = Product(ProductId.parse("truapi-playground.dot"), "TrUAPI Playground", icon = null)
+    private val product = Product(ProductId.parse("truapi-playground.dot").getOrThrow(), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =

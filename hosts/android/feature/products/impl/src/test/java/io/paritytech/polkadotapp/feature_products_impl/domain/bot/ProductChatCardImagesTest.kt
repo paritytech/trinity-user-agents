@@ -31,7 +31,7 @@ import java.io.File
  * serves the chat, and the Bulletin gateway.
  */
 class ProductChatCardImagesTest {
-    private val product = Product(ProductId.parse("game.paseo"), "Game", icon = null)
+    private val product = Product(ProductId.parse("game.paseo").getOrThrow(), "Game", icon = null)
     private val archive: ProductWorkerArchive = mockk()
     private val ipfsContentLookup: IpfsContentLookup = mockk()
     private val picture: Uri = mockk()

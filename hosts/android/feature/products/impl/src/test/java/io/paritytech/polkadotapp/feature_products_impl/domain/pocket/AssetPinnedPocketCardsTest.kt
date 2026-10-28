@@ -89,7 +89,7 @@ class AssetPinnedPocketCardsTest {
         val cards = bundledImages()
         val personhood = ReservedProductIds.personhood(tld)
 
-        assertFalse(cards.bundlesImage(ProductId.parse("someone.testnet"), "pocket/card-mark.webp"))
+        assertFalse(cards.bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp"))
         listOf("pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp").forEach {
             assertFalse(it, cards.bundlesImage(personhood, it))
         }
@@ -109,7 +109,7 @@ class AssetPinnedPocketCardsTest {
     // Listing the app's assets reads the APK, on whichever thread resolves the first image.
     @Test
     fun `another product's image does not list the app's assets`() {
-        bundledImages().bundlesImage(ProductId.parse("someone.testnet"), "pocket/card-mark.webp")
+        bundledImages().bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp")
 
         verify(assets, never()).list("pocket")
     }
@@ -127,7 +127,7 @@ class AssetPinnedPocketCardsTest {
         val cards = AssetPinnedPocketCards(context, neverAnswers)
 
         assertEquals(pinnedKey, cards.pinned(pinnedKey)?.card?.key)
-        assertNull(cards.pinned(PocketCardKey(ProductId.parse("game.testnet"), PocketCardId("humanity"))))
+        assertNull(cards.pinned(PocketCardKey(ProductId.parse("game.testnet").getOrThrow(), PocketCardId("humanity"))))
         assertNull(cards.pinned(PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("loyalty"))))
     }
 }

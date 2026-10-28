@@ -27,8 +27,8 @@ class ProductGameAutoOpenerTest {
     private val lifecycle: AppLifecycleObserver = mock()
     private val lifecycleState = MutableStateFlow(AppLifecycleState.FOREGROUND)
 
-    private val game = ProductId.parse("game.dot")
-    private val other = ProductId.parse("acme.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
+    private val other = ProductId.parse("acme.dot").getOrThrow()
     private val scheduledGame = ScheduledProductGame(game, startsAtMillis = 60_000)
     private val scheduledOther = ScheduledProductGame(other, startsAtMillis = 120_000)
 

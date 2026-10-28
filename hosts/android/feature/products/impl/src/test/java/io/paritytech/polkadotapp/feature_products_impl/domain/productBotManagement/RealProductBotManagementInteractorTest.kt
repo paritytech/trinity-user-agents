@@ -149,7 +149,7 @@ class RealProductBotManagementInteractorTest {
         const val APP_URL = "http://127.0.0.1:5173/"
         const val WORKER_URL = "http://127.0.0.1:5173/worker.js"
 
-        val PRODUCT = ProductId.parse("coinflip.dot")
+        val PRODUCT = ProductId.parse("coinflip.dot").getOrThrow()
 
         val CARD = DebugPocketCard(
             cardId = PocketCardId("loyalty"),

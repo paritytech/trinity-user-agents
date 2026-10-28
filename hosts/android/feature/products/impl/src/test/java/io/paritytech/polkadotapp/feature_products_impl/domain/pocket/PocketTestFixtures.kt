@@ -10,8 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
-internal val gameProduct = ProductId.parse("game.dot")
-internal val personhoodProduct = ProductId.parse("peopl.dot")
+internal val gameProduct = ProductId.parse("game.dot").getOrThrow()
+internal val personhoodProduct = ProductId.parse("peopl.dot").getOrThrow()
 
 internal fun cardKey(productId: ProductId, cardId: String) = PocketCardKey(productId, PocketCardId(cardId))
 

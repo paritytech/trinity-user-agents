@@ -9,8 +9,8 @@ import org.junit.Test
 import uniffi.truapi.ProductId
 
 class ProductDeepLinkGateTest {
-    private val onramp = ProductId.parse("fund.dot")
-    private val arbitrary = ProductId.parse("anything.dot")
+    private val onramp = ProductId.parse("fund.dot").getOrThrow()
+    private val arbitrary = ProductId.parse("anything.dot").getOrThrow()
 
     private class FundingProducts(private val ids: Set<ProductId>) : FundingDomainProvider {
         override suspend fun getFundingConfig(): Result<FundingConfig> =

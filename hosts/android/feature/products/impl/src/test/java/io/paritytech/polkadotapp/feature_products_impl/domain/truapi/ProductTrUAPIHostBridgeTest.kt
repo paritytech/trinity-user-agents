@@ -38,7 +38,7 @@ class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
 
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
-    private val game = ProductId.parse("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     private fun TestScope.bridge(
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -61,7 +61,7 @@ class ProductTrUAPIHostBridgeTest {
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
             runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
-            productId = ProductId.parse("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ExecutableKind.APP,
@@ -87,7 +87,7 @@ class ProductTrUAPIHostBridgeTest {
 
         bridge.attach(
             runtime = runtime,
-            productId = ProductId.parse("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ExecutableKind.WORKER,

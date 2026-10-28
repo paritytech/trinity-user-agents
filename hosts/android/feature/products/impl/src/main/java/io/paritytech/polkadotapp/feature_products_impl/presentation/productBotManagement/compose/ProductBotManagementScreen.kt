@@ -365,8 +365,8 @@ private fun ProductBotManagementScreenPreview() {
         ProductBotManagementScreenInternal(
             state = ProductBotManagementState(
                 products = listOf(
-                    ProductUiModel(id = ProductId.parse("1.dot"), name = "Test Product", appUrl = "https://1.dot"),
-                    ProductUiModel(id = ProductId.parse("2.dot"), name = "Another Product", appUrl = "https://2.dot"),
+                    ProductUiModel(id = ProductId.parse("1.dot").getOrThrow(), name = "Test Product", appUrl = "https://1.dot"),
+                    ProductUiModel(id = ProductId.parse("2.dot").getOrThrow(), name = "Another Product", appUrl = "https://2.dot"),
                 ),
             ),
             onBackClick = {},

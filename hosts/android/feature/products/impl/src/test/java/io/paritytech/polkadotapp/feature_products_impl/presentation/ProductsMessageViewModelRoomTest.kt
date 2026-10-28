@@ -23,7 +23,7 @@ private const val MESSAGE_TYPE = "weekly-draw"
 
 class ProductsMessageViewModelRoomTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val product = Product(ProductId.parse("dim2.dot"), "Jollity", icon = null)
+    private val product = Product(ProductId.parse("dim2.dot").getOrThrow(), "Jollity", icon = null)
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)

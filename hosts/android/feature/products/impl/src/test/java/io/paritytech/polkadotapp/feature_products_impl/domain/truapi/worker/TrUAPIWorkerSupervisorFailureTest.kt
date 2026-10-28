@@ -24,7 +24,7 @@ import org.mockito.Mockito.mock
 import uniffi.truapi.ProductId
 
 class TrUAPIWorkerSupervisorFailureTest {
-    private val productId = ProductId.parse("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
 
     private class FailingScriptResolver(private val error: Throwable) : ProductScriptResolver {
         override suspend fun resolveWorker(productId: ProductId): Result<ProductExecutable.Worker> =

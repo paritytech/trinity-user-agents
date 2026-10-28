@@ -137,13 +137,13 @@ class PocketViewModelTest {
     }
 
     private fun productCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.parse("game.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("game.dot").getOrThrow(), PocketCardId(cardId)),
         title = cardId,
         privileged = false,
     )
 
     private fun privilegedCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.parse("peopl.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("peopl.dot").getOrThrow(), PocketCardId(cardId)),
         title = cardId,
         privileged = true,
     )
