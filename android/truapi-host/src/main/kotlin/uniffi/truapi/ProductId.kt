@@ -10,6 +10,13 @@ class ProductId private constructor(val value: String) {
             Result.failure(error)
         }
 
+        /** Construct a product name on an explicitly supplied network. */
+        fun fromName(name: String, networkSuffix: String): Result<ProductId> = try {
+            Result.success(productIdFromName(name, networkSuffix))
+        } catch (error: ProductIdException) {
+            Result.failure(error)
+        }
+
         internal fun fromRust(value: String): ProductId = ProductId(value)
     }
 

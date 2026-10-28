@@ -9,7 +9,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
-import uniffi.truapi.productIdFromName
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class CollectiblesUrlResolver @Inject constructor(
@@ -19,7 +19,7 @@ class CollectiblesUrlResolver @Inject constructor(
     suspend fun resolveUrl(): Result<Uri?> = runCancellableCatching {
         if (!isEnabled()) return@runCancellableCatching null
         val tld = dotNsTldProvider.getTldRetrying()
-        productIdFromName(PRODUCT_LABEL, tld.value).toUri()
+        ProductId.fromName(PRODUCT_LABEL, tld.value).getOrThrow().toUri()
     }
 
     private suspend fun isEnabled(): Boolean {

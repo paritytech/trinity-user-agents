@@ -5,7 +5,7 @@
 
 Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
 
-Kotlin `ProductId.parse` returns `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate the failure.
+Kotlin `ProductId.parse` and `ProductId.fromName` return `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate the failure.
 
 Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>` that writes the string value and validates it through Rust when restoring.
 

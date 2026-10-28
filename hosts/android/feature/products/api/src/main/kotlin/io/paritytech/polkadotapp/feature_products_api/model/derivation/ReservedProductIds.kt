@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_api.model.derivation
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import uniffi.truapi.ProductId
-import uniffi.truapi.productIdFromName
 
 /**
  * RFC-0022 governance-reserved dotNS identities for built-in app features.
@@ -12,11 +11,11 @@ import uniffi.truapi.productIdFromName
  * network-specific product providers (individuality#1300).
  */
 object ReservedProductIds {
-    fun game(tld: DotNsTld): Result<ProductId> = runCatching { productIdFromName("dim2", tld.value) }
+    fun game(tld: DotNsTld): Result<ProductId> = ProductId.fromName("dim2", tld.value)
 
-    fun funding(tld: DotNsTld): Result<ProductId> = runCatching { productIdFromName("fund", tld.value) }
+    fun funding(tld: DotNsTld): Result<ProductId> = ProductId.fromName("fund", tld.value)
 
-    fun lightPersonIdentity(tld: DotNsTld): Result<ProductId> = runCatching { productIdFromName("uid", tld.value) }
+    fun lightPersonIdentity(tld: DotNsTld): Result<ProductId> = ProductId.fromName("uid", tld.value)
 
-    fun personhood(tld: DotNsTld): Result<ProductId> = runCatching { productIdFromName("peopl", tld.value) }
+    fun personhood(tld: DotNsTld): Result<ProductId> = ProductId.fromName("peopl", tld.value)
 }
