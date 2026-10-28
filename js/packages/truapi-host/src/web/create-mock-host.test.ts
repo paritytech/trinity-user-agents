@@ -616,6 +616,14 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       seeded!._unsafeUnwrap().rooms.map((room: ChatRoom) => room.roomId),
     ).toEqual(["alpha", "mike", "zulu"]);
+    // The core checks a room against the one-time read, so it must list the
+    // same rooms as the subscription.
+    const listed = await host.callbacks.chat!.listChatRooms!(product);
+    expect(listed.rooms.map((room: ChatRoom) => room.roomId)).toEqual([
+      "alpha",
+      "mike",
+      "zulu",
+    ]);
   });
 
   it("keeps the declarations of each chat room until the room is deleted", async () => {
@@ -896,6 +904,11 @@ describe("createMockHost TestHostAPI parity", () => {
         payload: { tag: "Text", value: { text: "hi" } },
       }),
     ).rejects.toThrow("chat down");
+    // A failed room read must not look like a host with no rooms: the core
+    // would answer a delete of a room that still exists with success.
+    await expect(chat.callbacks.chat!.listChatRooms!(product)).rejects.toThrow(
+      "chat down",
+    );
     // The subscription reports the same fault rather than opening a stream
     // that looks healthy and never carries a room.
     const rooms = chat.callbacks.chat!.subscribeChatRooms();

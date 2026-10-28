@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use futures::stream::BoxStream;
+use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::{Decode, Encode};
 use unicode_normalization::UnicodeNormalization;
 
@@ -3529,6 +3529,19 @@ pub trait ChatPlatform: Send + Sync {
 		&self,
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+
+	/// The current product-scoped room list, read one time. The core uses it
+	/// to check that a product hosts a room. A host that cannot read its
+	/// rooms returns an error, not an empty list. A Rust host that does not
+	/// implement it gives the first item of the room list subscription.
+	async fn list_chat_rooms(
+		&self,
+		product: &ProductContext,
+	) -> Result<HostChatListSubscribeItem, GenericError> {
+		self.subscribe_chat_rooms(product).next().await.unwrap_or_else(|| {
+			Err(GenericError { reason: "the host published no room list".to_string() })
+		})
+	}
 
 	/// The configuration the product last declared for a room, or the default
 	/// configuration when it declared none. The core reads it to decide

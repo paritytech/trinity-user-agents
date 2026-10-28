@@ -33,6 +33,7 @@ pub struct JsBridge {
     pub post_chat_message: Function,
     pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
+    pub list_chat_rooms: Function,
     pub read_chat_room_config: Function,
     pub set_chat_room_config: Function,
     pub set_chat_room_metadata: Function,
@@ -92,6 +93,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
+            list_chat_rooms: get_optional_function(callbacks, "listChatRooms")?
+                .unwrap_or_else(|| missing_callback("listChatRooms")),
             read_chat_room_config: get_optional_function(callbacks, "readChatRoomConfig")?
                 .unwrap_or_else(|| missing_callback("readChatRoomConfig")),
             set_chat_room_config: get_optional_function(callbacks, "setChatRoomConfig")?
@@ -150,6 +153,7 @@ impl JsBridge {
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some()
+                && get_optional_function(callbacks, "listChatRooms")?.is_some()
                 && get_optional_function(callbacks, "readChatRoomConfig")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomConfig")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomMetadata")?.is_some()
@@ -294,6 +298,21 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             Some(Uint8Array::from(product.encode().as_slice()).into()),
             parse_host_chat_list_subscribe_item_item,
         )
+    }
+
+    async fn list_chat_rooms(
+        &self,
+        product: &crate::platform::ProductContext,
+    ) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.list_chat_rooms,
+            vec![Uint8Array::from(product.encode().as_slice()).into()],
+        )
+        .await?;
+        Ok(decode_bytes::<latest::HostChatListSubscribeItem>(
+            bytes,
+            "listChatRooms response did not decode",
+        )?)
     }
 
     async fn read_chat_room_config(
