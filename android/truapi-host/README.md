@@ -66,8 +66,8 @@ Product identities use `uniffi.truapi.ProductId`. Construct values with
 normalization and returns `Result<ProductId>`. Invalid input produces a failure
 containing `ProductIdException`; callers choose recovery or propagation. Kotlin owns
 the resulting immutable string value; equality, hashing and display do not
-call Rust. Use `.value` at text or persistence boundaries. The value supports
-`Parcelable` for Android navigation.
+call Rust. Use `.value` at text or persistence boundaries. Android navigation
+uses an app-owned `Parceler<ProductId>` that restores values through `parse`.
 
 Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 

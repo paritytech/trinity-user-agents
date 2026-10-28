@@ -1,6 +1,5 @@
 package io.parity.truapi
 
-import android.os.Parcel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.ProductId
@@ -12,18 +11,5 @@ class ProductIdTest {
         val second = ProductId.parse("peopl.dot").getOrThrow()
 
         assertEquals(mapOf(second to "account"), mapOf(first to "account"))
-    }
-
-    @Test
-    fun parcelRoundTripPreservesIdentity() {
-        val product = ProductId.parse("localhost:3000").getOrThrow()
-        val parcel = Parcel.obtain()
-        try {
-            product.writeToParcel(parcel, 0)
-            parcel.setDataPosition(0)
-            assertEquals(product, ProductId.CREATOR.createFromParcel(parcel))
-        } finally {
-            parcel.recycle()
-        }
     }
 }
