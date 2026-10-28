@@ -955,8 +955,10 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == CLAIM_PAGE_MAX {
+			// A warning leaves the device, so the user is named by a handle
+			// rather than in full.
 			warn!(
-				user = %hex::encode(user),
+				user = %crate::logging::account_handle(&user[..]),
 				read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
 				"pending-claim page cap reached; later entries, if any, are not resolved"
 			);

@@ -103,6 +103,19 @@ pub const HOST_SINK_LEVEL: LevelFilter = LevelFilter::WARN;
 /// [`HOST_SINK_LEVEL`] as an event level, for comparing one event against it.
 const HOST_SINK_EVENT_LEVEL: Level = Level::WARN;
 
+/// How much of an account a line that leaves the device may name.
+const ACCOUNT_HANDLE_BYTES: usize = 4;
+
+/// A short handle for an account, for a line that leaves the device.
+///
+/// Enough to tell two accounts apart within one log, and not the identifier
+/// itself. A host ships these lines to a crash reporter, where a whole account
+/// id is a public key that indexes everything that account has ever done. Lines
+/// that stay on the device can name it in full.
+pub fn account_handle(account: &[u8]) -> String {
+	hex::encode(&account[..account.len().min(ACCOUNT_HANDLE_BYTES)])
+}
+
 /// Longest detail the host sink forwards, in characters.
 ///
 /// A warning can carry a host exception message, which is unbounded and can
