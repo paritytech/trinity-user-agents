@@ -2824,14 +2824,14 @@ mod tests {
 				limit: CHAT_HOP_FILE_MAX_BYTES as usize
 			})
 		);
-		// A file of no bytes is empty, not too long.
+		// A file with zero bytes is empty, not too long.
 		assert_eq!(
 			validate_chat_media_resource("media", hop("wss://hop.example", 0)),
 			Err(ChatFieldError::Empty { field: "media" })
 		);
 	}
 
-	// The host shows the length of a video, so the screen must keep it.
+	// The host shows the length of a video, so the validation must keep it.
 	#[test]
 	fn a_video_keeps_its_length() {
 		let video = ChatMediaItem::Video {
@@ -3101,9 +3101,9 @@ mod tests {
 		}
 	}
 
-	// The Rust defaults state the contract of the Swift and Kotlin bridges: a
-	// host that does not serve the declarations yet accepts the declarations
-	// that change nothing it shows, and refuses every other one.
+	// The Rust defaults have the same contract as the Swift and Kotlin bridges.
+	// A host without the declaration callbacks accepts the declarations that
+	// change nothing, and refuses all other declarations.
 	#[test]
 	fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
 		let host = ChatHostWithoutDeclarations;
@@ -3585,10 +3585,10 @@ pub trait ChatPlatform: Send + Sync {
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 
-	/// The current product-scoped room list, read one time. The core uses it
-	/// to check that a product hosts a room. A host that cannot read its
-	/// rooms returns an error, not an empty list. A Rust host that does not
-	/// implement it gives the first item of the room list subscription.
+	/// The current product-scoped room list, read one time. The core uses it to
+	/// check that a product hosts a room. A host that cannot read its rooms
+	/// returns an error, not an empty list. If a Rust host does not implement
+	/// this method, the core uses the first item of the room list subscription.
 	async fn list_chat_rooms(
 		&self,
 		product: &ProductContext,
@@ -3611,9 +3611,9 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// Replace the configuration of a room whole and keep it across restarts.
-	/// The core has already checked the product hosts the room. A Rust host
-	/// that does not implement it accepts only the default configuration,
-	/// which keeps the behaviour the host serves anyway.
+	/// The core checks that the product hosts the room before this call. If a
+	/// Rust host does not implement this method, it accepts only the default
+	/// configuration. That configuration changes nothing that the host shows.
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -3625,9 +3625,9 @@ pub trait ChatPlatform: Send + Sync {
 		Ok(())
 	}
 
-	/// Replace the name and description of a room. A Rust host that does not
-	/// implement it ignores the metadata and keeps the name and icon the room
-	/// was created with.
+	/// Replace the name and description of a room. If a Rust host does not
+	/// implement this method, it ignores the metadata. The room keeps the name
+	/// and icon of `create_chat_room`.
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
