@@ -1601,7 +1601,11 @@ impl ChainConnection {
 			// arrives whatever the level is, and hosts run at `ERROR`.
 			let genesis = encode_hex(&self.genesis_hash);
 			let held = holding.len();
-			let occupants = holding.join(", ");
+			let occupants = holding
+				.iter()
+				.map(|held| Self::occupant_name(held))
+				.collect::<Vec<_>>()
+				.join(", ");
 			warn!(
 				target: "truapi.chain.follow_budget_reached",
 				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
@@ -1624,6 +1628,23 @@ impl ChainConnection {
 			.collect();
 		holding.sort();
 		holding
+	}
+
+	/// Name one follow holding a slot, for a line that leaves the device.
+	///
+	/// The core's own follow ids are its own words and are named in full. A
+	/// product's follow id is built from the request id it chose, which is
+	/// arbitrary text off the wire, so only the runtime it belongs to is named.
+	/// Which products hold how many is the diagnostic; what a product called
+	/// its request is not, and is not ours to repeat.
+	fn occupant_name(local_follow_id: &str) -> String {
+		if local_follow_id.starts_with("truapi:") {
+			return local_follow_id.to_string();
+		}
+		match local_follow_id.split_once(':') {
+			Some((runtime, _)) => format!("{runtime}:product"),
+			None => "product".to_string(),
+		}
 	}
 
 	/// Abort every follow pump on this connection.
@@ -4546,5 +4567,33 @@ mod tests {
 			item,
 			Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
 		)
+	}
+}
+
+#[cfg(test)]
+mod occupant_name_tests {
+	use super::ChainConnection;
+
+	/// A product mints its follow id from the request id it chose, which is
+	/// arbitrary text off the wire. The line naming the occupants leaves the
+	/// device, so it names the runtime and not what the product called itself.
+	#[test]
+	fn a_product_follow_is_named_without_the_id_it_chose() {
+		assert_eq!(ChainConnection::occupant_name("c7:p:41"), "c7:product");
+		assert_eq!(
+			ChainConnection::occupant_name("c7:tarik@example.invalid"),
+			"c7:product",
+			"a request id the product chose reached the line",
+		);
+		assert_eq!(ChainConnection::occupant_name("anything"), "product");
+	}
+
+	/// The core's own ids are its own words, and say which read holds the slot.
+	#[test]
+	fn a_core_follow_is_named_in_full() {
+		assert_eq!(
+			ChainConnection::occupant_name("truapi:dotns:3:identity"),
+			"truapi:dotns:3:identity"
+		);
 	}
 }

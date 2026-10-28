@@ -172,26 +172,45 @@ pub(crate) fn host_sink_installed() -> bool {
 	HOST_SINK.read().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some()
 }
 
-/// Keeps a host sink installed until dropped.
-#[must_use = "dropping the registration removes the sink"]
+/// Keeps a host sink installed until dropped, and puts back whatever it
+/// displaced.
+///
+/// Restoring rather than clearing is what lets a host install its sink before
+/// the rest of its startup, which may fail: a runtime that does not finish
+/// starting leaves the one already running still logging.
+#[must_use = "dropping the registration puts back the sink it displaced"]
 pub struct HostSinkRegistration {
 	slot: &'static RwLock<Option<HostSink>>,
 	sink: HostSink,
+	displaced: Option<HostSink>,
 }
 
 impl HostSinkRegistration {
 	fn install(slot: &'static RwLock<Option<HostSink>>, sink: HostSink) -> Self {
-		*slot.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sink.clone());
-		Self { slot, sink }
+		// `replace` hands the previous sink back rather than dropping it here,
+		// so no host code runs under the write lock.
+		let displaced = slot
+			.write()
+			.unwrap_or_else(|poisoned| poisoned.into_inner())
+			.replace(sink.clone());
+		Self { slot, sink, displaced }
 	}
 }
 
 impl Drop for HostSinkRegistration {
 	fn drop(&mut self) {
-		let mut installed = self.slot.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-		if installed.as_ref().is_some_and(|installed| Arc::ptr_eq(installed, &self.sink)) {
-			*installed = None;
-		}
+		let displaced = self.displaced.take();
+		let dropped = {
+			let mut installed = self.slot.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+			if installed.as_ref().is_some_and(|installed| Arc::ptr_eq(installed, &self.sink)) {
+				core::mem::replace(&mut *installed, displaced)
+			} else {
+				// A later registration owns the slot, so it owns what it
+				// displaced too, and this one has nothing to put back.
+				displaced
+			}
+		};
+		drop(dropped);
 	}
 }
 
@@ -619,7 +638,16 @@ mod tests {
 		drop(second);
 		warn_through_sink();
 
-		assert_eq!(*lines.lock().unwrap(), vec!["second"]);
+		// Dropping the one that does not own the slot changes nothing, and
+		// dropping the owner puts back what it displaced. Restoring is what
+		// lets a host install before the rest of its startup: a runtime that
+		// fails to start leaves the one already running still logging.
+		//
+		// The second line here is the cost of that: `first` was already
+		// dropped, so its sink is put back with nobody behind it. A native
+		// host's sink holds its callbacks weakly and goes quiet when its
+		// runtime does, so a restored sink with no runtime says nothing.
+		assert_eq!(*lines.lock().unwrap(), vec!["second", "first"]);
 	}
 
 	/// A host exception message is unbounded and leaves the device, so the

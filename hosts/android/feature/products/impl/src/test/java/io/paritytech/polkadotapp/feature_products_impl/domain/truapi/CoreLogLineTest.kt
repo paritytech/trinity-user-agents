@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.util.Log
-import io.mockk.confirmVerified
 import io.mockk.spyk
 import io.mockk.verify
 import org.junit.After
@@ -36,9 +35,13 @@ class CoreLogLineTest {
             tree.log(Log.DEBUG, "truapi.core", "truapi.native.callback.push_notification: hello", null)
             tree.log(Log.INFO, "truapi.core", "truapi.tracing.warn: truapi::runtime: chain call failed", null)
         }
-        // Without this a regression that *also* logged the notification line at info would pass,
-        // which is the leak this test exists to catch.
-        confirmVerified(tree)
+        // Stated as its own negative, because a notification body reaching info is the leak this
+        // test exists to catch. `confirmVerified` cannot stand in for it: Timber calls
+        // `getExplicitTag`, the 3-arg `log` and `getTag` on a planted tree before the call verified
+        // above, so acknowledging every interaction is not something a Timber spy allows.
+        verify(exactly = 0) {
+            tree.log(Log.INFO, "truapi.core", "truapi.native.callback.push_notification: hello", null)
+        }
     }
 
     /**
@@ -57,6 +60,5 @@ class CoreLogLineTest {
             tree.log(Log.INFO, "truapi.core", "truapi.core.started: truapi 0.0.0", null)
             tree.log(Log.INFO, "truapi.core", "truapi.ws_bridge.connection_open: one of eight", null)
         }
-        confirmVerified(tree)
     }
 }
