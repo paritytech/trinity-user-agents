@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check for paritytech/platform-bugs#153: a signing-host CLI asks for
-# a PGAS allowance while Asset Hub has not imported the claim's ring revision
-# for as long as the host waits on it (a local proxy routed by
-# `HOST_CLI_ASSET_HUB_WS` hides `MembersSubscriber.RingRoots` until the host
-# rebuilds its proof). The host has to rebuild the proof and still answer
+# a PGAS allowance while Asset Hub appears to have skipped the claim's ring
+# revision (a local proxy routed by `HOST_CLI_ASSET_HUB_WS` serves
+# `MembersSubscriber.RingRoots` as pruned until the host reads it again for a
+# rebuilt proof). The host has to rebuild the proof, submit it, and still answer
 # `Allocated`.
 #
 # Submits one real claim on paseo-next-v2 and spends one of the day's slots.
@@ -36,7 +36,7 @@ cargo build -q -p truapi-host-cli
 host="target/debug/truapi-host"
 
 echo "==> starting the Asset Hub proxy"
-bun "$proxy_script" "$asset_hub_ws" "$state/proxy-port" &
+bun "$proxy_script" "$asset_hub_ws" "$state/proxy-port" "$state/events" &
 proxy_pid=$!
 for _ in $(seq 1 100); do
   [ -s "$state/proxy-port" ] && break
@@ -46,10 +46,20 @@ done
 [ -s "$state/proxy-port" ] || { echo "the proxy did not start listening" >&2; exit 1; }
 export HOST_CLI_ASSET_HUB_WS="ws://127.0.0.1:$(cat "$state/proxy-port")"
 
-echo "==> requesting a PGAS allowance while Asset Hub lags the ring revision"
+echo "==> requesting a PGAS allowance while Asset Hub appears to skip the ring revision"
 "$host" signing-host \
   --network paseo-next-v2 \
   --auto-accept \
-  --script "$script"
+  --script "$script" 2>&1 | tee "$state/host.log"
+
+events="$(tr '\n' ' ' < "$state/events" 2>/dev/null || true)"
+if [ "$events" != "pruned rebuilt submitted " ]; then
+  echo "expected the proxy to see a pruned read, a rebuilt read and a submission; saw: ${events:-nothing}" >&2
+  exit 1
+fi
+if ! grep -q "rebuilding the PGAS proof" "$state/host.log"; then
+  echo "the host never logged rebuilding its PGAS proof" >&2
+  exit 1
+fi
 
 echo "==> PGAS ring revision e2e passed"

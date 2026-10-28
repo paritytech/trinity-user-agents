@@ -536,7 +536,7 @@ e2e-trusted-device-permission: ## Send a notification as a trusted product on th
 e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
 	scripts/chain-head-failure-cause-e2e.sh
 
-e2e-pgas-ring-revision: ## Claim PGAS on the signing-host CLI while Asset Hub lags the ring revision past the host's wait; the claim must still be allocated.
+e2e-pgas-ring-revision: ## Claim PGAS on the signing-host CLI while Asset Hub appears to skip the ring revision; the host must rebuild its proof and still be allocated.
 	scripts/pgas-ring-revision-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.

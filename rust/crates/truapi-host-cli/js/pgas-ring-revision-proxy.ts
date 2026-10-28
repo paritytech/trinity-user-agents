@@ -1,40 +1,60 @@
 // WebSocket proxy for `scripts/pgas-ring-revision-e2e.sh` and native host
-// checks. It makes Asset Hub look as if it had not imported the claim's ring
-// revision until the host rebuilds its proof, and passes everything else
-// through. A host that polls `state_getStorage` reads `MembersSubscriber.RingRoots`
-// as empty until it pauses its polling for REBUILD_GAP_MS after polling for at
-// least MIN_WAIT_MS; a host that uses
-// `state_subscribeStorage` sees RingRoots as empty in its first subscription
-// and unchanged in every later one.
-// Usage: bun pgas-ring-revision-proxy.ts <upstream-ws-url> <port-file>
+// checks. It makes Asset Hub look as if it had skipped the claim's ring
+// revision, and passes everything else through.
+//
+// The host's first `MembersSubscriber.RingRoots` read, or its first RingRoots
+// subscription, is answered with one root at revision u32::MAX, so whatever
+// revision the proof names reads as pruned. A host that rebuilds its proof
+// reads RingRoots again, and that second read is the release: it and every
+// later one are served unchanged. A host that does not rebuild never reads
+// again, so it is never released.
+//
+// Each step is appended to <events-file> as one line: `pruned` when the forged
+// roots are served, `rebuilt` when the host reads RingRoots again, and
+// `submitted` when it submits an extrinsic after that.
+//
+// Usage: bun pgas-ring-revision-proxy.ts <upstream-ws-url> <port-file> <events-file>
 // (the listening port is written to <port-file>).
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 
 // twox128("MembersSubscriber") ++ twox128("RingRoots").
 const RING_ROOTS_PREFIX =
   "0xc8d053ab324196afc756c5ae3fbd29178034a4ffd558299b9ac8097424772405";
-const REBUILD_GAP_MS = 5_000;
-// Just under the host's 30 s wait, so a slow read mid-wait is not taken for a rebuild.
-const MIN_WAIT_MS = 25_000;
+// Offset of `revision` in one RingRoots record: it follows the 288-byte root,
+// as in truapi's `paseo-next-asset-hub-ring-5-roots.scale` fixture.
+const REVISION_OFFSET = 288;
+const NEWEST_REVISION = 0xffff_ffff;
+const SUBMIT_METHODS = new Set([
+  "author_submitExtrinsic",
+  "author_submitAndWatchExtrinsic",
+]);
 
-const [upstreamUrl, portFile] = process.argv.slice(2);
-if (!upstreamUrl || !portFile) {
-  console.error("usage: pgas-ring-revision-proxy.ts <upstream> <port-file>");
+const [upstreamUrl, portFile, eventsFile] = process.argv.slice(2);
+if (!upstreamUrl || !portFile || !eventsFile) {
+  console.error(
+    "usage: pgas-ring-revision-proxy.ts <upstream> <port-file> <events-file>",
+  );
   process.exit(2);
 }
 
-let firstHeldRead: number | undefined;
-let lastHeldRead: number | undefined;
-let released = false;
-let ringRootsSubscriptions = 0;
+type Phase = "waiting" | "pruned" | "rebuilt";
+let phase: Phase = "waiting";
+let submitted = false;
+
+function record(event: string, detail: string) {
+  appendFileSync(eventsFile, `${event}\n`);
+  console.log(`proxy: ${detail}`);
+}
 
 interface Link {
   upstream: WebSocket;
   pending: string[];
-  /** Ids of the RingRoots subscribe requests whose subscription is held. */
-  heldRequests: Set<string>;
-  /** Subscription ids whose RingRoots changes are answered as empty. */
-  heldSubscriptions: Set<string>;
+  /** Ids of RingRoots reads whose response is served as pruned. */
+  prunedReads: Set<string>;
+  /** Ids of RingRoots subscribe requests whose subscription is served as pruned. */
+  prunedSubscribeRequests: Set<string>;
+  /** Subscription ids whose RingRoots changes are served as pruned. */
+  prunedSubscriptions: Set<string>;
 }
 
 interface Message {
@@ -60,59 +80,96 @@ function parse(frame: string): Message | undefined {
 const isRingRootsKey = (key: unknown) =>
   typeof key === "string" && key.startsWith(RING_ROOTS_PREFIX);
 
-/** The id of a RingRoots read to answer as empty, or undefined to forward. */
-function heldReadId(request: Message): unknown {
-  const params = Array.isArray(request.params) ? request.params : [];
-  if (request.method !== "state_getStorage" || !isRingRootsKey(params[0])) {
-    return undefined;
+/** A SCALE compact length and the offset of what follows it. */
+function decodeCompact(bytes: Buffer): { value: number; offset: number } {
+  const mode = bytes[0] & 0b11;
+  if (mode === 0) return { value: bytes[0] >> 2, offset: 1 };
+  if (mode === 1) return { value: bytes.readUInt16LE(0) >> 2, offset: 2 };
+  if (mode === 2) return { value: bytes.readUInt32LE(0) >>> 2, offset: 4 };
+  throw new Error("RingRoots holds more records than a proxy check expects");
+}
+
+/** `value` reduced to its last record, re-numbered as the newest revision. */
+function prunedRoots(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const bytes = Buffer.from(value.slice(2), "hex");
+  const { value: count, offset } = decodeCompact(bytes);
+  if (count === 0) return value;
+  const size = (bytes.length - offset) / count;
+  if (!Number.isInteger(size) || size < REVISION_OFFSET + 4) {
+    console.error(
+      `proxy: a RingRoots record of ${size} bytes has no revision at ${REVISION_OFFSET}`,
+    );
+    process.exit(1);
   }
-  if (released) return undefined;
-  const now = Date.now();
-  if (firstHeldRead === undefined || lastHeldRead === undefined) {
-    firstHeldRead = now;
-    console.log("proxy: hiding RingRoots until the host rebuilds its proof");
+  const last = Buffer.from(bytes.subarray(bytes.length - size));
+  last.writeUInt32LE(NEWEST_REVISION, REVISION_OFFSET);
+  return `0x${Buffer.concat([Buffer.from([1 << 2]), last]).toString("hex")}`;
+}
+
+/** Whether this RingRoots read or subscription is served as pruned. */
+function prunesRingRoots(): boolean {
+  if (phase === "waiting") {
+    phase = "pruned";
+    record(
+      "pruned",
+      "serving RingRoots as pruned until the host rebuilds its proof",
+    );
+    return true;
+  }
+  if (phase === "pruned") {
+    phase = "rebuilt";
+    record(
+      "rebuilt",
+      "the host read RingRoots again for its rebuilt proof, serving it unchanged",
+    );
+  }
+  return false;
+}
+
+/** Notes the request on `link` if its RingRoots answer is to be pruned. */
+function watchRequest(link: Link, request: Message) {
+  const params = Array.isArray(request.params) ? request.params : [];
+  const id = JSON.stringify(request.id);
+  if (request.method === "state_getStorage" && isRingRootsKey(params[0])) {
+    if (prunesRingRoots()) link.prunedReads.add(id);
   } else if (
-    now - lastHeldRead >= REBUILD_GAP_MS &&
-    lastHeldRead - firstHeldRead >= MIN_WAIT_MS
+    request.method === "state_subscribeStorage" &&
+    Array.isArray(params[0]) &&
+    params[0].some(isRingRootsKey)
   ) {
-    released = true;
-    console.log("proxy: the host paused its polling, serving RingRoots again");
-    return undefined;
-  }
-  lastHeldRead = now;
-  return request.id;
-}
-
-/** Holds the first RingRoots subscription and releases RingRoots on the next. */
-function watchSubscribe(link: Link, request: Message) {
-  const params = Array.isArray(request.params) ? request.params : [];
-  const keys = Array.isArray(params[0]) ? params[0] : [];
-  if (
-    request.method !== "state_subscribeStorage" ||
-    !keys.some(isRingRootsKey)
+    if (prunesRingRoots()) link.prunedSubscribeRequests.add(id);
+  } else if (
+    request.method !== undefined &&
+    SUBMIT_METHODS.has(request.method) &&
+    phase === "rebuilt" &&
+    !submitted
   ) {
-    return;
-  }
-  ringRootsSubscriptions += 1;
-  if (ringRootsSubscriptions === 1) {
-    link.heldRequests.add(JSON.stringify(request.id));
-    console.log("proxy: hiding RingRoots in the host's first subscription");
-  } else if (!released) {
-    released = true;
-    console.log("proxy: the host subscribed again, serving RingRoots");
+    submitted = true;
+    record("submitted", "the host submitted its rebuilt proof");
   }
 }
 
-/** The upstream frame to send on, with held RingRoots changes emptied. */
+/** The upstream frame to send on, with pruned RingRoots answers rewritten. */
 function rewriteUpstream(link: Link, frame: string): string {
-  if (link.heldRequests.size === 0 && link.heldSubscriptions.size === 0) {
+  if (
+    link.prunedReads.size === 0 &&
+    link.prunedSubscribeRequests.size === 0 &&
+    link.prunedSubscriptions.size === 0
+  ) {
     return frame;
   }
   const message = parse(frame);
   if (!message) return frame;
   const requestId = JSON.stringify(message.id);
-  if (message.id !== undefined && link.heldRequests.delete(requestId)) {
-    link.heldSubscriptions.add(JSON.stringify(message.result));
+  if (message.id !== undefined && link.prunedReads.delete(requestId)) {
+    return JSON.stringify({ ...message, result: prunedRoots(message.result) });
+  }
+  if (
+    message.id !== undefined &&
+    link.prunedSubscribeRequests.delete(requestId)
+  ) {
+    link.prunedSubscriptions.add(JSON.stringify(message.result));
     return frame;
   }
   const params = message.params as
@@ -120,13 +177,13 @@ function rewriteUpstream(link: Link, frame: string): string {
     | undefined;
   if (
     message.method !== "state_storage" ||
-    !link.heldSubscriptions.has(JSON.stringify(params?.subscription)) ||
+    !link.prunedSubscriptions.has(JSON.stringify(params?.subscription)) ||
     !Array.isArray(params?.result?.changes)
   ) {
     return frame;
   }
   params.result.changes = params.result.changes.map(([key, value]) =>
-    isRingRootsKey(key) ? [key, null] : [key, value],
+    isRingRootsKey(key) ? [key, prunedRoots(value)] : [key, value],
   );
   return JSON.stringify(message);
 }
@@ -139,8 +196,9 @@ const server = Bun.serve<Link>({
     const data: Link = {
       upstream,
       pending: [],
-      heldRequests: new Set(),
-      heldSubscriptions: new Set(),
+      prunedReads: new Set(),
+      prunedSubscribeRequests: new Set(),
+      prunedSubscriptions: new Set(),
     };
     if (server.upgrade(request, { data })) {
       return undefined;
@@ -164,14 +222,7 @@ const server = Bun.serve<Link>({
     message(ws, message) {
       const frame = String(message);
       const request = parse(frame);
-      if (request) {
-        const id = heldReadId(request);
-        if (id !== undefined) {
-          ws.send(JSON.stringify({ jsonrpc: "2.0", id, result: null }));
-          return;
-        }
-        watchSubscribe(ws.data, request);
-      }
+      if (request) watchRequest(ws.data, request);
       if (ws.data.upstream.readyState === WebSocket.OPEN) {
         ws.data.upstream.send(frame);
       } else {

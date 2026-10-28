@@ -405,7 +405,7 @@ make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
 make e2e-funding-cli                # funding requests and statuses against a scripted funding host
-make e2e-pgas-ring-revision         # PGAS claim while Asset Hub lags the ring revision (spends a daily slot)
+make e2e-pgas-ring-revision         # PGAS proof rebuilt after Asset Hub skips its ring revision (spends a daily slot)
 ```
 
 The Pocket phase runs its product as a Worker execution, the only execution
