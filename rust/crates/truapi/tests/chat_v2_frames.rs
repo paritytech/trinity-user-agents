@@ -116,6 +116,24 @@ fn call() -> v01::ChatMessage {
 	}
 }
 
+fn custom() -> v01::ChatMessage {
+	v01::ChatMessage {
+		message_id: "x1".into(),
+		origin: v01::ChatMessageOrigin { participant_id: "contact".into() },
+		timestamp: 1_700_000_000_000,
+		body: v01::ChatMessageBody::Custom {
+			message: v01::ChatCustomMessage { message_type: "poll".into(), payload: vec![1, 2] },
+			alt: Some("A poll".into()),
+		},
+		status: v01::ChatMessageStatus::Sent,
+		reply_to: None,
+		reply_preview: None,
+		edited_at: None,
+		reactions: Vec::new(),
+		request: false,
+	}
+}
+
 fn config() -> v01::ChatRoomConfig {
 	v01::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true }
 }
@@ -343,6 +361,15 @@ fn frames() -> Vec<String> {
 			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
 				room_id: room(),
 				update: v01::ChatFeedUpdate::Replaced(call()),
+			}),
+		),
+		line(
+			"11.update_feed.custom",
+			wire_table::CHAT_UPDATE_FEED,
+			MESSAGE_TYPE_REQUEST,
+			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+				room_id: room(),
+				update: v01::ChatFeedUpdate::New(custom()),
 			}),
 		),
 		line(
