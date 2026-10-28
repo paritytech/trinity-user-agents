@@ -228,6 +228,8 @@ The ledger persists across launches, and an entry is dropped when the identity t
 
 Only `Account` can be untracked. `WalletSso` and `ProductStatementAllowance` are recipes with no removal path, so a product you no longer run keeps being resolved and renewed until the promising identity changes.
 
+A pass renews wallet and device targets first, then the products that have gone longest without a slot, so a full period does not keep skipping the same ones. Its report lists outcomes in ledger order, one per target that resolved under the active identity.
+
 Then run a pass from a `WorkManager` worker. It submits extrinsics and blocks until they are included, so keep it off the main thread. It needs an active session too, which is the whole difficulty here: a worker on a cold start has none until you restore one, and the pass then fails with the bare reason `Disconnected`. Restore the session first, and read that reason as "not ready" rather than as a renewal failure. `startStatementAllowanceRenewal()` does not need this care, since its loop skips a tick with no session and retries.
 
 ```kotlin

@@ -177,7 +177,8 @@ pub struct RenewalChainContext<'a> {
 /// Once the period is full, later targets are only scanned: one that already
 /// holds a slot reports `AlreadyAllocated`, the rest `SkippedExhausted`. A
 /// caller deciding whether a target is still allowed must not read exhaustion
-/// earlier in the ledger as that target losing its slot.
+/// earlier in the pass as that target losing its slot. Outcomes come back in
+/// the order of `targets`.
 ///
 /// `registration_lock` is held for one target operation at a time, not for the
 /// whole pass. Each target is scanned and registered under one guard so no
@@ -304,7 +305,7 @@ fn log_target_result(
 	}
 }
 
-/// Pair each target with its result, in ledger order. `Ok(None)` is a target
+/// Pair each target with its result, in `targets` order. `Ok(None)` is a target
 /// that holds no slot and was not registered because the period was full.
 fn fold_outcomes(
 	period: u32,
