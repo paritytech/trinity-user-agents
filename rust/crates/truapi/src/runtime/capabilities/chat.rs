@@ -137,12 +137,12 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				// The same normalization create_room applied, so a product's own
-				// spelling of a room id still resolves to the stored room.
+				// Apply the normalization of `create_room`, so each spelling of
+				// a room id finds the stored room.
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(post_field_error)?;
-				// Content is product-authored and host-rendered, so it gets the same
-				// treatment the room fields get rather than reaching a host raw.
+				// The product writes the content and the host shows it. Thus
+				// the core screens the content as it screens the room fields.
 				request.payload =
 					validate_chat_message_content(request.payload).map_err(post_field_error)?;
 				request.alt = request
@@ -287,8 +287,8 @@ impl Chat for ProductRuntimeHost {
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
 				match self.hosted_room(&platform, &request.room_id).await {
-					// Deleting a room that is gone already succeeds, so a product
-					// can retry a delete whose answer it lost.
+					// A delete of a room that does not exist succeeds. Thus a
+					// product can send a delete again when it lost the answer.
 					Err(RoomRefusal::UnknownRoom) => Ok(()),
 					Err(refusal) => Err(CallError::Domain(refusal.into())),
 					Ok(room_id) => {
@@ -297,8 +297,9 @@ impl Chat for ProductRuntimeHost {
 							.delete_chat_room(&self.connection.product, request)
 							.await
 							.map_err(room_host_error)?;
-						// Only a room the host deleted gives up its budgets: a room
-						// that stays keeps what it spent.
+						// Forget the budgets only after the host deletes the
+						// room. A room that stays keeps the budget that it
+						// spent.
 						let limits = &self.connection.services.chat_rate_limits;
 						let product_id = self.connection.product.product_id.as_str();
 						limits.feed.forget(product_id, &room_id);
@@ -335,8 +336,9 @@ impl Chat for ProductRuntimeHost {
 						})
 					})?;
 				let persist = !config.product_source;
-				// In a room the host stores, the host's user writes and reacts only
-				// through the host, so a product cannot put words in the user's mouth.
+				// In a room that the host stores, the user writes and reacts
+				// only through the host. A product cannot write or react as the
+				// user.
 				if persist && names_the_user(&request.update) {
 					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
 				}
@@ -394,8 +396,8 @@ impl From<RoomRefusal> for latest::HostChatDeleteRoomError {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			// A delete of a room that does not exist succeeds before it
-			// reaches its error.
+			// A delete of a room that does not exist succeeds, so the core does
+			// not use this arm.
 			RoomRefusal::UnknownRoom => Self::Unknown { reason: "unknown room".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
@@ -525,8 +527,8 @@ impl ProductRuntimeHost {
 		}
 	}
 
-	/// Spend one call of the budget that `limiter` holds `room_id` to.
-	/// `false` when the room spent its budget for now.
+	/// Spend one call of the budget of `room_id` in `limiter`. Returns `false`
+	/// when the room has no budget left.
 	fn take_room_budget(&self, limiter: &ChatRateLimiter, room_id: &str) -> bool {
 		limiter.try_acquire(
 			self.connection.product.product_id.as_str(),
@@ -562,9 +564,9 @@ mod tests {
 		icons: Mutex<Vec<String>>,
 		feed: Mutex<Vec<(latest::HostChatUpdateFeedRequest, bool)>>,
 		calls: Mutex<Vec<String>>,
-		/// The reason `list_chat_rooms` fails with, if any.
+		/// The failure reason of `list_chat_rooms`, if any.
 		room_list_failure: Mutex<Option<String>>,
-		/// The reason `delete_chat_room` fails with, if any.
+		/// The failure reason of `delete_chat_room`, if any.
 		delete_failure: Mutex<Option<String>>,
 	}
 
@@ -881,9 +883,10 @@ mod tests {
 		]
 	}
 
-	// The host's user writes and reacts only through the host, so in a room
-	// the host stores no update may name the user as its author. A host that
-	// trusted the core here would store words the user never wrote.
+	// In a room that the host stores, the user writes and reacts only through
+	// the host. Thus no update from a product can name the user as its author.
+	// Without this check, a host that trusts the core stores words that the
+	// user did not write.
 	#[test]
 	fn a_product_cannot_write_as_the_user_in_a_room_the_host_keeps() {
 		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
@@ -900,8 +903,8 @@ mod tests {
 		assert!(chat.feed.lock().unwrap().is_empty());
 	}
 
-	// A room the product keeps reports what happens in it, the user's own
-	// messages and reactions included, so the host only shows them.
+	// In a room that the product keeps, the product reports all changes, also
+	// the messages and reactions of the user. The host only shows them.
 	#[test]
 	fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
 		let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
@@ -938,7 +941,7 @@ mod tests {
 		);
 	}
 
-	// The 21st update in one second is refused, before the host sees it.
+	// The core refuses the 21st update in one second, before the host sees it.
 	#[test]
 	fn the_feed_of_a_room_is_paced() {
 		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
@@ -956,7 +959,7 @@ mod tests {
 		assert_eq!(chat.feed.lock().unwrap().len(), CHAT_FEED_UPDATES_PER_SECOND as usize);
 	}
 
-	// The 6th preview in one second is refused, before the host sees it.
+	// The core refuses the 6th preview in one second, before the host sees it.
 	#[test]
 	fn the_preview_of_a_room_is_paced() {
 		let chat = RecordingHost::with_rooms(&[hosted("support")]);
@@ -1037,9 +1040,9 @@ mod tests {
 		assert_eq!(chat.calls(), ["delete support"]);
 	}
 
-	// A delete the host refuses leaves the room in place, so the room keeps
-	// the budget it spent. Otherwise a product that alternates a failing
-	// delete and a burst of updates could send without limit.
+	// If the host refuses a delete, the room stays and keeps the budget that it
+	// spent. If not, a product can send a failed delete before each burst of
+	// updates and send without limit.
 	#[test]
 	fn a_room_the_host_does_not_delete_keeps_its_spent_budget() {
 		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
@@ -1071,8 +1074,8 @@ mod tests {
 		);
 	}
 
-	// A room list the host cannot read is a host failure. If the core read it
-	// as an empty list, a delete would succeed and leave the room in place.
+	// A room list that the host cannot read is a host failure. If the core
+	// reads it as an empty list, a delete succeeds and the room stays.
 	#[test]
 	fn a_delete_fails_when_the_host_cannot_list_its_rooms() {
 		let chat = RecordingHost::with_rooms(&[hosted("support")]);
