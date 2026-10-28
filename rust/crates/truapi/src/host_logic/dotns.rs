@@ -59,7 +59,8 @@ pub enum NavigateDecision {
 		canonical_url: String,
 	},
 	/// A Pocket action on one card of a dotNS product:
-	/// `polkadotapp://pocket/<action>?product=<id>&card=<id>[&<page params>]`. The deeplink is the
+	/// `polkadotapp://pocket/<action>?product=<id>&card=<id>`, which `open` may
+	/// follow with page params. The deeplink is the
 	/// host's own, so no path of any product is read as one.
 	Pocket {
 		/// Normalized dotNS name of the product that backs the card, from the
@@ -69,10 +70,11 @@ pub enum NavigateDecision {
 		action: PocketDeeplinkAction,
 		/// Card named by the `card` query parameter.
 		card_id: String,
-		/// Every other query parameter, percent-encoded and in link order, for
-		/// the card's page to load with after `card`. Empty when there are none.
-		/// Anyone can write the link, so the page reads these as a hint of what
-		/// to show, never as proof of anything.
+		/// Every other query parameter of an `open` link, as the link wrote
+		/// them and in its order, for the card's page to load with after
+		/// `card`. Empty when there are none, and for `add`, which loads no
+		/// page. Anyone can write the link, so the page reads these as a hint
+		/// of what to show, never as proof of anything.
 		page_query: String,
 		/// Normalized `polkadotapp://` form of the deeplink, which is what
 		/// `navigate_to` hands the host. The product, card and page parameters
@@ -214,12 +216,22 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			return Some(NavigateDecision::Reject { reason: error.to_string() });
 		},
 	};
-	// The arguments arrive percent-decoded, so they are encoded again here: a
-	// raw `#` or `&` in a card id would make the canonical form parse as a
-	// different deeplink.
-	let page_query = form_urlencoded::Serializer::new(String::new())
-		.extend_pairs(url.query_pairs().filter(|(key, _)| key != "product" && key != "card"))
-		.finish();
+	// Copied as the link wrote them rather than decoded and encoded again, so
+	// the page reads its own params unchanged.
+	let page_query = match action {
+		PocketDeeplinkAction::Open => url
+			.query()
+			.unwrap_or_default()
+			.split('&')
+			.filter(|pair| {
+				!pair.is_empty() &&
+					!form_urlencoded::parse(pair.as_bytes())
+						.any(|(key, _)| key == "product" || key == "card")
+			})
+			.collect::<Vec<_>>()
+			.join("&"),
+		PocketDeeplinkAction::Add => String::new(),
+	};
 	if page_query.len() > MAX_PAGE_QUERY_LEN {
 		return Some(NavigateDecision::Reject {
 			reason: format!(
@@ -227,6 +239,9 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			),
 		});
 	}
+	// The arguments arrive percent-decoded, so they are encoded again here: a
+	// raw `#` or `&` in a card id would make the canonical form parse as a
+	// different deeplink.
 	let query = form_urlencoded::Serializer::new(String::new())
 		.append_pair("product", identifier.as_str())
 		.append_pair("card", &card_id)
@@ -486,6 +501,11 @@ mod tests {
 				name: "pocket open deeplink with mixed case and arguments in either order",
 				input: "polkadotapp://Pocket/open?card=loyalty&product=Game.DOT",
 				expected: pocket("game.dot", PocketDeeplinkAction::Open, "loyalty"),
+			},
+			TestCase {
+				name: "pocket add deeplink loads no page, so it forwards no page params",
+				input: "polkadotapp://pocket/add?product=game.dot&card=loyalty&open=scratch",
+				expected: pocket("game.dot", PocketDeeplinkAction::Add, "loyalty"),
 			},
 			TestCase {
 				name: "pocket deeplink without a card is rejected",
@@ -832,23 +852,23 @@ mod tests {
 	#[test]
 	fn pocket_deeplink_forwards_other_params_to_the_card_page() {
 		// A product picks the screen its card opens on through its own params,
-		// so they reach the page in order, repeats included, with `&` and `#`
-		// still encoded so a value cannot turn into another param. `product`
+		// so they reach the page exactly as written, in order and with repeats,
+		// and an encoded `&` or `#` cannot turn into another param. `product`
 		// and `card` name the card and are never forwarded, even when repeated.
 		let input = "polkadotapp://pocket/open?open=scratch&product=game.dot&card=loyalty\
-		             &tag=a&card=other&tag=b%26c%23d&product=else.dot";
+		             &tag=a&card=other&tag=b%26c%23d&product=else.dot&flag&sp=a+b%20c";
 		let NavigateDecision::Pocket { card_id, page_query, canonical_url, .. } =
 			parse_navigate(input)
 		else {
 			panic!("expected a Pocket decision for {input}");
 		};
 		assert_eq!(card_id, "loyalty");
-		assert_eq!(page_query, "open=scratch&tag=a&tag=b%26c%23d");
+		assert_eq!(page_query, "open=scratch&tag=a&tag=b%26c%23d&flag&sp=a+b%20c");
 		// A product's `navigateTo` hands the host only the canonical form, so
 		// the params have to survive in it.
 		assert_eq!(
 			canonical_url,
-			"polkadotapp://pocket/open?product=game.dot&card=loyalty&open=scratch&tag=a&tag=b%26c%23d"
+			"polkadotapp://pocket/open?product=game.dot&card=loyalty&open=scratch&tag=a&tag=b%26c%23d&flag&sp=a+b%20c"
 		);
 		let NavigateDecision::Pocket { page_query: again, .. } = parse_navigate(&canonical_url)
 		else {
