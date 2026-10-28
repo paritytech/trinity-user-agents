@@ -49,7 +49,7 @@ RFC must state what the host is and is not obliged to recover.
 - Chain-exposed operations are asynchronous. A call only registers the operation under an idempotency key;
   `observe_operation_status` follows it. Registering a key twice fails.
 - The host tracks which items are in use, either by an active operation or because they were handed off in a cheque,
-  and refuses to consume them again. `revoke_cheque` releases items handed off in a cheque.
+  and refuses to consume them again. `revoke_cheque` moves items handed off in a cheque into fresh keys of their purse.
 - Products cannot sign arbitrary transactions with purse items, because the host could then not track item status.
   `transfer_item` covers the one external transfer products need.
 - Backup recovery restores assets only. In-use statuses and purse-to-product ownership are not guaranteed to survive,
@@ -110,7 +110,8 @@ enum ItemStatus {
     // Available for operations
     Idle,
     // In use by an active operation, or handed off in a cheque.
-    // Reverts to Idle if the operation fails terminally or the cheque is revoked.
+    // Reverts to Idle if the operation fails terminally. A handed-off key stays InUse:
+    // revoking the cheque moves its item to a fresh Idle key instead.
     InUse,
 }
 ```
@@ -220,8 +221,10 @@ enum RebalancePurseError {
 
 #### Operation status
 
-`rebalance_purse`, `deposit`, `refund` and `transfer_item` register an operation under an idempotency key, and
-`observe_operation_status` follows any of them.
+`rebalance_purse`, `deposit`, `refund`, `revoke_cheque` and `transfer_item` register an operation under an
+idempotency key, and `observe_operation_status` follows any of them. A deposit is registered under its cheque id, a
+refund under `blake2_256("nft-purse/refund" ‖ cheque_id)` and a revoke under `blake2_256("nft-purse/revoke" ‖
+cheque_id)`, each scoped to the calling product like any other key.
 
 ```rust
 // Chosen by the product, scoped to it: another product's key is never visible.
@@ -407,7 +410,7 @@ enum ListenForPaymentError {
 // Only the recipient can claim the items, but the cheque carries privacy-sensitive
 // cleartext (item keys, recipient), so the transmission channel must add its own
 // encryption layer.
-// The items become InUse and stay InUse until the cheque is revoked with `revoke_cheque`.
+// The items become InUse for good. `revoke_cheque` moves them into fresh keys instead.
 // The cheque id is the idempotency key, scoped to the calling product: creating a second
 // cheque with the same id fails with OperationExists.
 // Asks for a confirmation if owner(from) != PurseOwner::Product(self).
@@ -433,22 +436,28 @@ enum CreateChequeError {
 #### Revoke cheque
 
 ```rust
-// Release the items handed off in the cheque back to Idle.
-// The product must be certain the handoff did not happen, i.e. the recipient
-// does not know the cheque's secrets.
-// After revocation the host rotates the item keys (allocates new keys and
-// transfers the items to them) without product involvement. This is not optional.
-// Revoking the same cheque twice is a no-op.
-// Denied if `cheque_id` was not created by this product.
+// Move whatever sits at the cheque's keys back into fresh keys of the purse they left,
+// so the cheque's secrets no longer reach the items.
+// The product must be certain the recipient will not deposit the cheque: a deposit that
+// lands first keeps the items.
+// Needs no confirmation: the items return to the purse they left, which the product
+// was allowed to drain when it created the cheque.
+// Returns once the moves are registered; follow them with `observe_operation_status`
+// under blake2_256("nft-purse/revoke" ‖ cheque_id).
+// Revoking again registers moves only for keys whose last move failed, for example after
+// the recipient refunded; it is a no-op while every key is moving or moved.
+// A cheque this product did not create is ChequeNotFound.
 fn revoke_cheque(cheque_id: ChequeId) -> Result<(), RevokeChequeError>;
 
 enum RevokeChequeError {
-    // The cheque was not created by this product
-    Denied,
+    // This product created no cheque with this id
     ChequeNotFound,
     Other(GenericError),
 }
 ```
+
+Each move waits up to 30 minutes for its key to hold an NFT. A key the recipient emptied first is reported in
+`Status::Incomplete.failed`.
 
 #### Deposit a cheque
 
@@ -495,21 +504,36 @@ then is reported in `Status::Incomplete.failed`.
 #### Refund a cheque
 
 ```rust
-// Receiver side: return the items of a previously deposited cheque to their original keys.
-// The cheque id is the idempotency key: refunding the same cheque again fails with OperationExists.
-// Minted items that are no longer Idle are reported in Status::Incomplete.failed.
-// Denied if `what` was not deposited by this product.
+// Receiver side: return the items of a previously deposited cheque to the cheque's keys.
+// Refused with DepositInProgress until every move of the deposit has finalized or failed.
+// Refunding the same cheque again fails with OperationExists.
 // Asks for a confirmation if the purse it was deposited into is not owned by PurseOwner::Product(self).
-fn refund(what: ChequeId) -> Result<(), RefundError>;
+// Returns once the moves are registered; follow them with `observe_operation_status`
+// under blake2_256("nft-purse/refund" ‖ cheque_id).
+fn refund(what: ChequeId) -> Result<RefundResponse, RefundError>;
+
+struct RefundResponse {
+    // Items whose move back to their cheque key started
+    started: Vec<ItemKey>,
+    // Items the deposit brought in that were spent since, and stay
+    unavailable: Vec<ItemKey>,
+}
 
 enum RefundError {
-    // The cheque was not deposited by this product
+    // The user did not confirm draining the purse
     Denied,
+    // This product deposited no cheque with this id
     ChequeNotFound,
+    // Some move of the deposit has not finalized or failed yet
+    DepositInProgress,
     OperationExists,
+    // Every item the deposit brought in was spent since
+    ItemUnavailable,
     Other(GenericError),
 }
 ```
+
+The items go back to the keys the cheque handed off, so the sender reclaims them with `revoke_cheque`.
 
 ### Transfer item
 
