@@ -3371,8 +3371,10 @@ mod tests {
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
+		// The render fails rather than finishing, so the host opens it again on
+		// the next connection; the failure is where its reference is released.
 		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
 
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
