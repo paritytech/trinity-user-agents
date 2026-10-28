@@ -5,14 +5,12 @@ use core::{ops::ControlFlow, time::Duration};
 
 use super::Timer;
 
-/// Runs `attempt` until it returns `Break`, and returns the value it breaks
-/// with.
+/// Runs `attempt` until it returns `Break`, sleeping on `timer` between attempts.
 ///
-/// An attempt returns `Continue` with a failure worth retrying, and `Break`
-/// with anything else, including a failure that retrying cannot fix.
-/// `pause_after` receives each failure to retry, can log it, and returns how
-/// long to wait on `timer` before the next attempt. To give up after a number
-/// of failures, count them in `attempt` and return `Break`.
+/// `Continue` carries a failure worth retrying; `pause_after` takes it and
+/// returns how long to wait. `Break` carries the result, including a failure
+/// retrying cannot fix. To give up after some number of failures, count them
+/// in `attempt`.
 pub async fn retry<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	mut attempt: impl FnMut() -> AttemptFuture,
