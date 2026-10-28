@@ -16,6 +16,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
+  useTestAccount,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -259,11 +260,7 @@ describe("workers in the menu", () => {
         expect(await page.inputValue("#worker-name")).toBe("myapp.paseo");
 
         // A test user has no wallet session, so no workers or chat demo.
-        await setMenu(page, true, "more");
-        await Promise.all([
-          page.waitForEvent("load"),
-          page.selectOption("#test-user", "alice"),
-        ]);
+        await useTestAccount(page, "alice");
         await ready(page);
         await setMenu(page, true, "product");
         expect(await status(page)).toBe(

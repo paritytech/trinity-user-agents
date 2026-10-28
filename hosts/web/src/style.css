@@ -2768,6 +2768,11 @@ body[data-surface="test-product"] .stage-empty {
   display: none;
 }
 
+/* Below the app's circles, as a product's frame is. */
+.product-frame[data-app-chrome="true"] .test-product {
+  top: var(--app-top);
+}
+
 .test-product iframe {
   display: block;
   width: 100%;

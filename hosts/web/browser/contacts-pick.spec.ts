@@ -20,6 +20,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
+  useTestAccount,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -106,14 +107,23 @@ async function setMenu(
   else await closeTools(page);
 }
 
-/** Menu → Developer → Test user. The tab reloads as that user. */
+/**
+ * Account → the test account → Sign in, then More → Open Example Chat. The
+ * tab reloads as that user, and Example Chat opens only when asked.
+ */
 async function actAs(page: Page, user: string): Promise<void> {
-  await setMenu(page, true, "more");
-  await Promise.all([
-    page.waitForEvent("load"),
-    page.selectOption("#test-user", user),
-  ]);
+  await useTestAccount(page, user);
   await ready(page);
+  await page
+    .locator("#session")
+    .filter({ hasNotText: "Signed out" })
+    .waitFor({ state: "attached" });
+  await setMenu(page, true, "more");
+  await page.click('[data-action="open-example-chat"]');
+  await page
+    .frameLocator(".test-product iframe")
+    .locator('[data-action="pick-contact"]')
+    .waitFor();
   await setMenu(page, false);
 }
 
