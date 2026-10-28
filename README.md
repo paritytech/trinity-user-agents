@@ -15,6 +15,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Building the apps for development](docs/local-app-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -390,6 +391,12 @@ so `make dev` leaves the board empty with no error.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
 
+Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
+`async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript
+`onMethod` handler returning a typed result, carried by a one-item subscription.
+A method returning `Subscription` generates a streaming handler. See the
+[client handler contract](js/packages/truapi/README.md#host-initiated-requests).
+
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
 ## Develop
@@ -593,6 +600,9 @@ Then open `hosts/ios/polkadot-app.xcodeproj`. Rerun it after changing anything
 the bindings are generated from, which is the `truapi` or `truapi-provider`
 crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
+`make ios-sim-run` builds the app for the simulator with the dev configuration
+and launches it, bootstrapping first when the core is missing; see
+[docs/local-app-builds.md](docs/local-app-builds.md) for the credentials it needs.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. CI's `iOS app` job,
