@@ -163,6 +163,36 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
+	/// Declare the parts of a room the product serves itself: its messages
+	/// (`productSource`), who reacted (`reactionDetails`) and the reports of
+	/// what the user saw (`reportSeen`). The host keeps the configuration
+	/// across restarts, and a new one replaces the previous one completely. A
+	/// room the product declared no configuration for keeps the behaviour of a
+	/// room the host stores. Declare it right after `createRoom`, before the
+	/// room shows messages.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.setRoomConfig({
+	///   roomId: "test-room",
+	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
+	/// });
+	/// assert(result.isOk(), "setRoomConfig failed:", result);
+	/// ```
+	#[wire(id = 7)]
+	async fn set_room_config(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomConfigRequest,
+	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
+	}
+
 	/// Replace the name and description of a room.
 	///
 	/// ```ts
@@ -307,7 +337,7 @@ pub trait Chat: Send + Sync {
 	///   });
 	/// });
 	/// ```
-	#[wire(host_initiated, id = 16)]
+	#[wire(host_initiated, id = 12)]
 	fn messages_query(
 		&self,
 		_cx: &CallContext,
@@ -362,7 +392,7 @@ pub trait Chat: Send + Sync {
 	///   send({ tag: "Acknowledged" });
 	/// });
 	/// ```
-	#[wire(host_initiated, id = 17)]
+	#[wire(host_initiated, id = 13)]
 	fn user_action(
 		&self,
 		_cx: &CallContext,
@@ -381,42 +411,12 @@ pub trait Chat: Send + Sync {
 	///   send({ reactions: [{ participantId: "user", emoji: "👍", timestamp: BigInt(Date.now()) }] });
 	/// });
 	/// ```
-	#[wire(host_initiated, id = 18)]
+	#[wire(host_initiated, id = 14)]
 	fn reactions_query(
 		&self,
 		_cx: &CallContext,
 		_request: ProductChatReactionsQueryRequest,
 	) -> Subscription<ProductChatReactionsQueryItem, CallError<ProductChatQueryError>> {
 		Subscription::interrupted(CallError::unavailable())
-	}
-
-	/// Declare the parts of a room the product serves itself: its messages
-	/// (`productSource`), who reacted (`reactionDetails`) and the reports of
-	/// what the user saw (`reportSeen`). The host keeps the configuration
-	/// across restarts, and a new one replaces the previous one completely. A
-	/// room the product declared no configuration for keeps the behaviour of a
-	/// room the host stores. Declare it right after `createRoom`, before the
-	/// room shows messages.
-	///
-	/// ```ts
-	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
-	///   name: "Test Room",
-	///   icon: "",
-	/// });
-	/// assert(created.isOk(), "createRoom failed:", created);
-	/// const result = await truapi.chat.setRoomConfig({
-	///   roomId: "test-room",
-	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
-	/// });
-	/// assert(result.isOk(), "setRoomConfig failed:", result);
-	/// ```
-	#[wire(id = 31)]
-	async fn set_room_config(
-		&self,
-		_cx: &CallContext,
-		_request: HostChatSetRoomConfigRequest,
-	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
-		Err(CallError::unavailable())
 	}
 }

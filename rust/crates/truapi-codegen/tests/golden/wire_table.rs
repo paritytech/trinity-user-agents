@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "47eab07b99062574";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "07906d8ad6822f47";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -260,6 +260,12 @@ pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
     method_id: 6,
 };
 
+/// Wire discriminants for `chat_set_room_config`.
+pub const CHAT_SET_ROOM_CONFIG: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 7,
+};
+
 /// Wire discriminants for `chat_set_room_metadata`.
 pub const CHAT_SET_ROOM_METADATA: MethodIds = MethodIds {
     trait_id: 4,
@@ -287,25 +293,19 @@ pub const CHAT_UPDATE_FEED: MethodIds = MethodIds {
 /// Wire discriminants for `chat_messages_query`.
 pub const CHAT_MESSAGES_QUERY: MethodIds = MethodIds {
     trait_id: 4,
-    method_id: 16,
+    method_id: 12,
 };
 
 /// Wire discriminants for `chat_user_action`.
 pub const CHAT_USER_ACTION: MethodIds = MethodIds {
     trait_id: 4,
-    method_id: 17,
+    method_id: 13,
 };
 
 /// Wire discriminants for `chat_reactions_query`.
 pub const CHAT_REACTIONS_QUERY: MethodIds = MethodIds {
     trait_id: 4,
-    method_id: 18,
-};
-
-/// Wire discriminants for `chat_set_room_config`.
-pub const CHAT_SET_ROOM_CONFIG: MethodIds = MethodIds {
-    trait_id: 4,
-    method_id: 31,
+    method_id: 14,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -859,6 +859,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
     },
     WireEntry {
+        method: "chat_set_room_config",
+        kind: WireKind::Request(CHAT_SET_ROOM_CONFIG),
+    },
+    WireEntry {
         method: "chat_set_room_metadata",
         kind: WireKind::Request(CHAT_SET_ROOM_METADATA),
     },
@@ -885,10 +889,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_reactions_query",
         kind: WireKind::Subscription(CHAT_REACTIONS_QUERY),
-    },
-    WireEntry {
-        method: "chat_set_room_config",
-        kind: WireKind::Request(CHAT_SET_ROOM_CONFIG),
     },
     WireEntry {
         method: "coin_payment_create_purse",
