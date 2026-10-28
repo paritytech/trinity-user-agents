@@ -50,6 +50,7 @@ final class SPAViewController: UIViewController, ViewHolder {
     override func loadView() {
         let webViewConfiguration = WKWebViewConfiguration()
 
+        webViewConfiguration.applicationNameForUserAgent = ProductUserAgent.applicationName
         webViewConfiguration.allowsInlineMediaPlayback = true
         webViewConfiguration.mediaTypesRequiringUserActionForPlayback = []
 
