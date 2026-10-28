@@ -68,7 +68,13 @@
   row-gap: 6px;
 }
 
+/*
+ * The shared rule's `flex: 1` starts the chips from no width, so beside Chat's
+ * wider controls they get only the room left over and wrap one chip a line.
+ * From their own width, they move to a line of their own instead.
+ */
 .chat-diagnostics .ins-channels {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
