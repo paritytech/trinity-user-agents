@@ -1,6 +1,7 @@
 import Foundation
 import Operation_iOS
 import Products
+import TrUAPIHost
 
 @Observable
 final class DebugProductsViewModel {
@@ -13,19 +14,22 @@ final class DebugProductsViewModel {
     private let scriptDownloader: ProductScriptDownloaderProtocol
     private let scriptStorage: ChatScriptStorageProtocol
     private let notificationScheduler: ProductNotificationScheduling
+    private let authTokens: AuthTokenHostBridge
 
     init(
         productRepository: AnyDataProviderRepository<Product>,
         chatRepositoryFactory: ChatRepositoryMaking,
         scriptDownloader: ProductScriptDownloaderProtocol = HTTPProductScriptDownloader(),
         scriptStorage: ChatScriptStorageProtocol = FileChatScriptStorage(),
-        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared
+        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared,
+        authTokens: AuthTokenHostBridge = AuthTokenKeychainStore()
     ) {
         self.productRepository = productRepository
         self.chatRepositoryFactory = chatRepositoryFactory
         self.scriptDownloader = scriptDownloader
         self.scriptStorage = scriptStorage
         self.notificationScheduler = notificationScheduler
+        self.authTokens = authTokens
     }
 
     func loadProducts() {
@@ -61,8 +65,10 @@ final class DebugProductsViewModel {
             forFilter: .roomChatsForExtension(product.extensionId)
         )
 
-        Task { @MainActor [notificationScheduler] in
+        Task { @MainActor [notificationScheduler, authTokens] in
             try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            // A reinstall signs in again rather than finding the old tokens.
+            try? await authTokens.clearAuthTokens(productId: product.identifier)
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()
             try? scriptStorage.deleteScript(productId: product.identifier)

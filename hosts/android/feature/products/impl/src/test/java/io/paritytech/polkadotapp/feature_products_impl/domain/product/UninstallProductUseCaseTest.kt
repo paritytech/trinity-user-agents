@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameRem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.EncryptedAuthTokenStore
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -18,7 +19,8 @@ class UninstallProductUseCaseTest {
     private val productRepository: ProductRepository = mock()
     private val scheduler: ProductNotificationScheduler = mock()
     private val productGameReminder: ProductGameReminder = mock()
-    private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder)
+    private val authTokens: EncryptedAuthTokenStore = mock()
+    private val useCase = UninstallProductUseCase(productRepository, scheduler, productGameReminder, authTokens)
 
     private val productId = ProductId.fromStoredValue("acme.dot")
 
@@ -41,6 +43,29 @@ class UninstallProductUseCaseTest {
         val order = inOrder(productGameReminder, productRepository)
         order.verify(productGameReminder).cancel(productId)
         order.verify(productRepository).deleteProduct(productId)
+    }
+
+    @Test
+    fun `drops the product's auth tokens before deleting it`() = runBlocking<Unit> {
+        givenSchedulerCancelsSuccessfully()
+
+        uninstallProduct()
+
+        val order = inOrder(authTokens, productRepository)
+        order.verify(authTokens).clearAuthTokens(productId.value)
+        order.verify(productRepository).deleteProduct(productId)
+    }
+
+    @Test
+    fun `does not delete product when its auth tokens cannot be dropped`() = runBlocking {
+        givenSchedulerCancelsSuccessfully()
+        val failure = IllegalStateException("token clear failed")
+        whenever(authTokens.clearAuthTokens(productId.value)).thenThrow(failure)
+
+        val result = uninstallProduct()
+
+        assertEquals(failure, result.exceptionOrNull())
+        assertProductNotDeleted()
     }
 
     @Test

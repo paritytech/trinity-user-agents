@@ -23,7 +23,7 @@ import javax.inject.Singleton
  * to both for counting and clearing. A key enters the index before its token is written and leaves it if
  * the write fails, so clearing always finds every token. An index that no longer decodes is dropped
  * with every entry, so the store starts over empty rather than losing track of tokens. The core
- * clears tokens whenever a session ends and when a product's state is cleared.
+ * clears tokens whenever a session ends and when a product's state is cleared; uninstalling a product clears its own.
  */
 @Singleton
 class EncryptedAuthTokenStore @Inject constructor(

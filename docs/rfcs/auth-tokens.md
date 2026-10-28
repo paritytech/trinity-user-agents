@@ -24,7 +24,7 @@ an authentication client for third parties.
 
 ### Protocol
 
-Trait `AuthTokens`, wire id 26. Any execution of the product may call it.
+Trait `AuthTokens`, wire id 27. Any execution of the product may call it.
 
 | Id | Method   | Request                         | Response                       | Errors                                                                                               |
 | -- | -------- | ------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -65,9 +65,10 @@ without a session gets `Denied`; a host that cannot keep tokens answers `Unsuppo
 - **Clearing.** The core drops every token whenever the session ends: on logout, on a disconnect the host or the wallet
   starts, on session reset, when a stored session cannot be read, and when the wallet switches to another account. It
   drops a product's tokens when that product's state is cleared. A clear that fails after the session has ended is
-  logged; the tokens stay keyed to the old account, so no other account can read them. The host does not have to track sign-out itself, though it
-  also drops them when it wipes the user's data. Tokens belong to the signed-in account, which is also why a product
-  without a session is refused.
+  logged; the tokens stay keyed to the old account, so no other account can read them. The host does not have to track
+  sign-out itself. It drops the tokens itself only in the two flows the core does not see: wiping the user's data drops
+  them all, and uninstalling a product drops that product's, so a reinstall signs in again. Tokens belong to the
+  signed-in account, which is also why a product without a session is refused.
 - **No host-side auth.** The host neither signs in to a product's service nor refreshes a token. `expires_at` is
   informational; the worker decides when to refresh and stores the new token itself.
 - **Not for device tokens.** The device-uniqueness backend's tokens stay inside the host and never pass through this
