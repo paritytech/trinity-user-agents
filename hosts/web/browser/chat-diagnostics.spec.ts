@@ -205,6 +205,51 @@ const detail = (page: Page) => page.locator(".ins-detail .cdv-detail");
 const statusText = (page: Page) => page.locator(".ins-status").innerText();
 
 describe("chat diagnostics view", () => {
+  // The direction chips keep to one row, beside the controls or on a line of
+  // their own; they never stack into a column that takes the trace's room.
+  for (const [label, width, tallest] of [
+    // At most: the controls and the chips on two lines when wide; the four
+    // short lines a narrow panel stacks.
+    ["a wide bottom dock", 1200, 70],
+    ["a narrow right dock", 460, 130],
+  ] as const)
+    test(
+      `keeps the direction chips on one row in ${label}`,
+      async () => {
+        const { context, page } = await newPage();
+        try {
+          await page.setViewportSize({ width, height: 700 });
+          const layout = await page.evaluate(() => {
+            const top = document.querySelector(".chat-diagnostics .ins-top")!;
+            const chips = [
+              ...document.querySelectorAll(
+                ".chat-diagnostics .ins-channels .ins-chan",
+              ),
+            ]
+              .map((chip) => chip.getBoundingClientRect())
+              .filter((box) => box.width > 0);
+            return {
+              rows: new Set(chips.map((box) => Math.round(box.top))).size,
+              top: Math.round(top.getBoundingClientRect().height),
+              sideways:
+                document.documentElement.scrollWidth - window.innerWidth,
+            };
+          });
+          const directory = process.env.CHAT_SCREENSHOTS;
+          if (directory)
+            await page.screenshot({
+              path: `${directory}/diagnostics-toolbar-${width}.png`,
+            });
+          expect(layout.rows).toBe(1);
+          expect(layout.top).toBeLessThanOrEqual(tallest);
+          expect(layout.sideways).toBeLessThanOrEqual(0);
+        } finally {
+          await context.close();
+        }
+      },
+      STEP_MS,
+    );
+
   test(
     "filters by search, direction, type and problems, and names message kinds",
     async () => {
