@@ -330,7 +330,7 @@ describe("chat extension v2 frames", () => {
                                     messageId: "m2",
                                     timestamp: 1_700_000_000_000n,
                                     totalValue: 5_000_000n,
-                                    coinKeys: [`0x${"11".repeat(64)}`],
+                                    sr25519SecretKeys: [`0x${"11".repeat(64)}`],
                                 },
                             },
                         },
