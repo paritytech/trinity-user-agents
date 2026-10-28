@@ -1459,7 +1459,9 @@ export interface ChatPlatform {
 
   /**
    * Replace the configuration of a room whole and keep it across restarts.
-   * The core has already checked the product hosts the room.
+   * The core has already checked the product hosts the room. A Rust host
+   * that does not implement it accepts only the default configuration,
+   * which keeps the behaviour the host serves anyway.
    */
   setChatRoomConfig?(
     product: ProductContext,
@@ -1467,7 +1469,9 @@ export interface ChatPlatform {
   ): Promise<void>;
 
   /**
-   * Replace the name and description of a room.
+   * Replace the name and description of a room. A Rust host that does not
+   * implement it ignores the metadata and keeps the name and icon the room
+   * was created with.
    */
   setChatRoomMetadata?(
     product: ProductContext,
