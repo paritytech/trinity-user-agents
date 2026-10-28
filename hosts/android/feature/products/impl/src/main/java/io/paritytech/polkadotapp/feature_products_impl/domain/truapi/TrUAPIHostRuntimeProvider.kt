@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -75,6 +76,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
@@ -136,6 +138,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             onClosed = runtime::notifyChainClosed,
         )
         observeAppLifecycle()
+        scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
     }
 
