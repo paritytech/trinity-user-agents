@@ -27,7 +27,7 @@ final class ProductExecutableCacheTests {
     @Test func savedManifestResolvesWithoutTheChain() async throws {
         publishManifestProduct()
         let fetched = try await makeFetcher().fetchManifest(baseName)
-        await makeCache().save(fetched, applying: nil)
+        await makeCache().adopt(fetched)
         let calls = contracts.callCount
 
         let cached = try await makeCache().manifest(baseName)
@@ -39,7 +39,7 @@ final class ProductExecutableCacheTests {
     @Test func legacyProductResolvesFromItsSavedManifest() async throws {
         contracts.set(contentHash: Self.appHash, name: baseName)
         let fetched = try await makeFetcher().fetchManifest(baseName)
-        await makeCache().save(fetched, applying: nil)
+        await makeCache().adopt(fetched)
 
         let resolved = try await makeCache().manifest(baseName).product
 
@@ -49,7 +49,7 @@ final class ProductExecutableCacheTests {
 
     @Test func cachedManifestNeedsAKnownTldInsteadOfFallingBackToLegacy() async throws {
         publishManifestProduct()
-        try await makeCache().save(makeFetcher().fetchManifest(baseName), applying: nil)
+        try await makeCache().adopt(makeFetcher().fetchManifest(baseName))
 
         await #expect(throws: DotNsContractError.self) {
             try await self.makeCache(tldProvider: FailingTldProvider()).manifest(self.baseName)
@@ -202,7 +202,7 @@ final class ProductExecutableCacheTests {
 
         let update = try await updates.next()
         let latestRecord = try await makeFetcher().fetchManifest(baseName).records[workerRecordKey]
-        #expect(update == ProductContentUpdate(
+        #expect(update == ExecutableRelease(
             contentId: workerName,
             archive: DotNsResolvedContent(
                 contentHash: Self.updatedWorkerHash.toHex(),

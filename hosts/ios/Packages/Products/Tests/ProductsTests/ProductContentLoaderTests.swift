@@ -252,7 +252,7 @@ final class ProductContentLoaderTests {
         contracts.removeContentHash(name: productId)
         let removal = try #require(await environment.loader.refresh(productId).first)
 
-        #expect(removal == ProductContentUpdate(contentId: productId, archive: nil))
+        #expect(removal == ExecutableRelease(contentId: productId, archive: nil))
         #expect(try await environment.loader.open(productId, kind: .app, policy: .attempts(1)) == opened)
 
         await environment.loader.apply(removal)

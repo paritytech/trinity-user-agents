@@ -8,7 +8,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     private struct State {
         var openedIds: [ProductId] = []
         var refreshedIds: [ProductId] = []
-        var appliedUpdates: [ProductContentUpdate] = []
+        var appliedUpdates: [ExecutableRelease] = []
         var contentHash = "00"
         var refreshWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
         var applyWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
@@ -17,7 +17,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     let contentURL = URL(fileURLWithPath: "/tmp/spa-test-content")
 
     private let state = OSAllocatedUnfairLock(initialState: State())
-    private let updateStream = AsyncStream<ProductContentUpdate>.makeStream()
+    private let updateStream = AsyncStream<ExecutableRelease>.makeStream()
 
     private let product: ResolvedProduct?
 
@@ -27,13 +27,13 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
-    var appliedUpdates: [ProductContentUpdate] { state.withLock { $0.appliedUpdates } }
+    var appliedUpdates: [ExecutableRelease] { state.withLock { $0.appliedUpdates } }
 
     func simulate(appliedContentHash: String) {
         state.withLock { $0.contentHash = appliedContentHash }
     }
 
-    func simulate(update: ProductContentUpdate) {
+    func simulate(update: ExecutableRelease) {
         updateStream.continuation.yield(update)
     }
 
@@ -75,7 +75,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         product ?? .legacy(id: productId)
     }
 
-    func refresh(_ productId: ProductId) async -> [ProductContentUpdate] {
+    func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let ready = state.withLock { state in
             state.refreshedIds.append(productId)
             let count = state.refreshedIds.count
@@ -88,7 +88,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         return []
     }
 
-    func apply(_ update: ProductContentUpdate) async {
+    func apply(_ update: ExecutableRelease) async {
         let ready = state.withLock { state in
             state.appliedUpdates.append(update)
             let count = state.appliedUpdates.count
@@ -114,7 +114,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
     }
 
-    func updates() -> AnyAsyncSequence<ProductContentUpdate> {
+    func updates() -> AnyAsyncSequence<ExecutableRelease> {
         updateStream.stream.eraseToAnyAsyncSequence()
     }
 }

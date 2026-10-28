@@ -34,11 +34,10 @@ public struct ProductContent: Equatable, Sendable {
     }
 }
 
-/// A newer archive, already on disk, for an executable whose applied archive differs. A nil
-/// archive means the executable is no longer published, so applying it drops the applied one.
-/// `record` is the executable's manifest record from the same release, applied with the archive;
-/// nil for a legacy product, whose base name has no executable record.
-public struct ProductContentUpdate: Equatable, Sendable {
+/// One executable as a release publishes it: its manifest record and its archive, already on disk.
+/// A nil archive means the release no longer publishes it, so applying it removes the applied one.
+/// `record` is nil for a legacy product, whose base name has no executable record.
+public struct ExecutableRelease: Equatable, Sendable {
     public let contentId: ProductId
     public let archive: DotNsResolvedContent?
     public let record: ProductManifest.Record?
@@ -67,9 +66,9 @@ public protocol ProductContentLoading: Sendable {
     func openWorker(_ productId: ProductId) async throws -> ResolvedProduct
     /// Re-reads the manifest and every executable the device has applied. Executables it never
     /// opened are not downloaded.
-    func refresh(_ productId: ProductId) async -> [ProductContentUpdate]
-    func apply(_ update: ProductContentUpdate) async
-    func updates() -> AnyAsyncSequence<ProductContentUpdate>
+    func refresh(_ productId: ProductId) async -> [ExecutableRelease]
+    func apply(_ release: ExecutableRelease) async
+    func updates() -> AnyAsyncSequence<ExecutableRelease>
 }
 
 public extension ProductContentLoading {

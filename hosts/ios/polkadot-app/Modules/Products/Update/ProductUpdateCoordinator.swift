@@ -29,7 +29,7 @@ final class ProductUpdateCoordinator {
     private let logger: LoggerProtocol
 
     private var presences: [UUID: Presence] = [:]
-    private var pendingUpdates: [ProductId: ProductContentUpdate] = [:]
+    private var pendingUpdates: [ProductId: ExecutableRelease] = [:]
     private var updatesTask: Task<Void, Never>?
     private var foregroundTask: Task<Void, Never>?
 
@@ -106,7 +106,7 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
 }
 
 private extension ProductUpdateCoordinator {
-    func handle(_ update: ProductContentUpdate) {
+    func handle(_ update: ExecutableRelease) {
         guard isPresented(update.contentId) else {
             apply(update, reloadingPresentations: false)
             return
@@ -115,7 +115,7 @@ private extension ProductUpdateCoordinator {
         pendingUpdates[update.contentId] = update
     }
 
-    func apply(_ update: ProductContentUpdate, reloadingPresentations: Bool) {
+    func apply(_ update: ExecutableRelease, reloadingPresentations: Bool) {
         let contentId = update.contentId
 
         logger.debug("Applying the update of \(contentId), reloading open SPAs: \(reloadingPresentations)")

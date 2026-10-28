@@ -5,14 +5,16 @@ import SDKLogger
 /// network. Manifests are cached per product and archives per executable, so one executable can
 /// be opened or updated without touching the others.
 public protocol ProductContentCaching: Sendable {
+    /// The product as applied: its root record and each executable's applied record.
     func manifest(_ productId: ProductId) async throws -> ProductManifest
-    /// Keeps the stored record of an executable whose applied archive came with it, except for
-    /// `applyingContentId`: a record and its archive change together, through `apply`.
-    func save(_ manifest: ProductManifest, applying applyingContentId: ProductId?) async
     /// Nil when nothing is applied under `contentId` or its archive is no longer on disk.
     func appliedArchive(of contentId: ProductId) async -> DotNsResolvedContent?
-    func apply(_ archive: DotNsResolvedContent, record: ProductManifest.Record?, to contentId: ProductId) async
-    func drop(_ contentId: ProductId, record: ProductManifest.Record?) async
+    /// Takes the root record, and the records of executables nothing is applied for yet. An
+    /// applied executable keeps its record until a release of it is applied.
+    func adopt(_ manifest: ProductManifest) async
+    /// Applies one executable's release: its record with its archive, or its removal when the
+    /// archive is nil.
+    func apply(_ release: ExecutableRelease) async
 }
 
 public actor ProductContentCache {
@@ -51,15 +53,11 @@ extension ProductContentCache: ProductContentCaching {
         ).resolveProductManifest(productId)
     }
 
-    public func save(_ manifest: ProductManifest, applying applyingContentId: ProductId?) {
+    public func adopt(_ manifest: ProductManifest) {
         let stored = store.records(of: manifest.product.id) ?? [:]
 
         save(manifest.records.filter { recordKey, _ in
-            guard
-                recordKey.key == ProductManifestRecords.executableKey,
-                recordKey.name != applyingContentId,
-                stored[recordKey] != nil
-            else {
+            guard recordKey.key == ProductManifestRecords.executableKey, stored[recordKey] != nil else {
                 return true
             }
 
@@ -78,24 +76,23 @@ extension ProductContentCache: ProductContentCaching {
         return DotNsResolvedContent(contentHash: contentHash, localURL: localURL)
     }
 
-    public func apply(_ archive: DotNsResolvedContent, record: ProductManifest.Record?, to contentId: ProductId) {
-        save(record, of: contentId)
-        storage.contentHashes.putContentHash(name: contentId, hash: archive.contentHash)
-    }
+    public func apply(_ release: ExecutableRelease) {
+        if let record = release.record {
+            save([ProductManifest.RecordKey(
+                name: release.contentId,
+                key: ProductManifestRecords.executableKey
+            ): record])
+        }
 
-    public func drop(_ contentId: ProductId, record: ProductManifest.Record?) {
-        save(record, of: contentId)
-        storage.contentHashes.removeContentHash(name: contentId)
+        if let archive = release.archive {
+            storage.contentHashes.putContentHash(name: release.contentId, hash: archive.contentHash)
+        } else {
+            storage.contentHashes.removeContentHash(name: release.contentId)
+        }
     }
 }
 
 private extension ProductContentCache {
-    func save(_ record: ProductManifest.Record?, of contentId: ProductId) {
-        guard let record else { return }
-
-        save([ProductManifest.RecordKey(name: contentId, key: ProductManifestRecords.executableKey): record])
-    }
-
     func save(_ records: [ProductManifest.RecordKey: ProductManifest.Record]) {
         do {
             try store.save(records)

@@ -101,7 +101,7 @@ struct ProductUpdateCoordinatorTests {
 private extension ProductUpdateCoordinatorTests {
     /// Updates are handled in the order they arrive, so once an update for a product nobody has
     /// open is applied, `update` has been handled too.
-    func deliver(_ update: ProductContentUpdate) async {
+    func deliver(_ update: ExecutableRelease) async {
         let applied = loader.appliedUpdates.count
 
         loader.simulate(update: update)
@@ -117,8 +117,8 @@ private extension ProductUpdateCoordinatorTests {
         )
     }
 
-    static func makeUpdate(contentId: ProductId = appId) -> ProductContentUpdate {
-        ProductContentUpdate(
+    static func makeUpdate(contentId: ProductId = appId) -> ExecutableRelease {
+        ExecutableRelease(
             contentId: contentId,
             archive: DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
         )

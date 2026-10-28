@@ -39,9 +39,9 @@ public actor ProductContentLoader {
     private let environment: Environment
     private let timing: Timing
     private let logger: SDKLoggerProtocol
-    private let updatesSubject = AsyncPassthroughSubject<ProductContentUpdate>()
+    private let updatesSubject = AsyncPassthroughSubject<ExecutableRelease>()
 
-    private var refreshTasks: [ProductId: Task<[ProductContentUpdate], Never>] = [:]
+    private var refreshTasks: [ProductId: Task<[ExecutableRelease], Never>] = [:]
 
     public init(
         fetcher: ProductUpdateFetching,
@@ -86,27 +86,27 @@ extension ProductContentLoader: ProductContentLoading {
             return (manifest, ProductContent(resolved: manifest.product, kind: kind, archive: archive))
         }
 
-        await cache.save(manifest, applying: content.contentId)
-        await cache.apply(content.archive, record: nil, to: content.contentId)
+        await cache.adopt(manifest)
+        await cache.apply(manifest.release(of: content.contentId, archive: content.archive))
 
         return content
     }
 
     public func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
         if let cached = try? await cache.manifest(productId) {
-            await stageWorkerIfMissing(of: cached.product)
+            await stageWorkerIfMissing(of: cached)
             scheduleRefresh(productId)
             return cached.product
         }
 
         let manifest = try await fetcher.fetchManifest(productId)
-        await cache.save(manifest, applying: nil)
-        await stageWorkerIfMissing(of: manifest.product)
+        await cache.adopt(manifest)
+        await stageWorkerIfMissing(of: manifest)
 
         return manifest.product
     }
 
-    public func refresh(_ productId: ProductId) async -> [ProductContentUpdate] {
+    public func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let key = productId.lowercased()
 
         if let running = refreshTasks[key] {
@@ -121,16 +121,11 @@ extension ProductContentLoader: ProductContentLoading {
         return updates
     }
 
-    public func apply(_ update: ProductContentUpdate) async {
-        guard let archive = update.archive else {
-            await cache.drop(update.contentId, record: update.record)
-            return
-        }
-
-        await cache.apply(archive, record: update.record, to: update.contentId)
+    public func apply(_ release: ExecutableRelease) async {
+        await cache.apply(release)
     }
 
-    public nonisolated func updates() -> AnyAsyncSequence<ProductContentUpdate> {
+    public nonisolated func updates() -> AnyAsyncSequence<ExecutableRelease> {
         updatesSubject.eraseToAnyAsyncSequence()
     }
 }
@@ -139,6 +134,16 @@ private struct FetchedContent: Sendable {
     let manifest: ProductManifest
     /// Every requested executable that is still published, by content id.
     let archives: [ProductId: DotNsResolvedContent]
+}
+
+private extension ProductManifest {
+    func release(of contentId: ProductId, archive: DotNsResolvedContent?) -> ExecutableRelease {
+        ExecutableRelease(
+            contentId: contentId,
+            archive: archive,
+            record: records[RecordKey(name: contentId, key: ProductManifestRecords.executableKey)]
+        )
+    }
 }
 
 private extension ResolvedProduct {
@@ -169,9 +174,9 @@ private extension ProductContentLoader {
         Task { _ = await self.refresh(productId) }
     }
 
-    func stageWorkerIfMissing(of resolved: ResolvedProduct) async {
+    func stageWorkerIfMissing(of manifest: ProductManifest) async {
         guard
-            let worker = ProductWorkerSource.published(for: resolved, serving: .chat),
+            let worker = ProductWorkerSource.published(for: manifest.product, serving: .chat),
             await cache.appliedArchive(of: worker.contentId) == nil
         else {
             return
@@ -179,7 +184,7 @@ private extension ProductContentLoader {
 
         do {
             let archive = try await fetcher.stage(worker.contentId)
-            await cache.apply(archive, record: nil, to: worker.contentId)
+            await cache.apply(manifest.release(of: worker.contentId, archive: archive))
         } catch {
             logger.error("Failed to stage the worker archive \(worker.contentId): \(error)")
         }
@@ -187,7 +192,7 @@ private extension ProductContentLoader {
 
     /// Only executables with an applied archive are refreshed: those are the ones something on
     /// this device serves, and the rest are downloaded when first opened.
-    func performRefresh(_ productId: ProductId) async -> [ProductContentUpdate] {
+    func performRefresh(_ productId: ProductId) async -> [ExecutableRelease] {
         guard let applied = try? await cache.manifest(productId) else { return [] }
 
         let served = await servedContentIds(of: applied.product)
@@ -244,31 +249,27 @@ private extension ProductContentLoader {
 
     /// An executable something serves changes only through an update that carries its record and
     /// archive from one release; the root record and executables nothing serves take effect now.
-    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ProductContentUpdate] {
-        await cache.save(latest.manifest, applying: nil)
+    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
+        await cache.adopt(latest.manifest)
 
-        var updates: [ProductContentUpdate] = []
+        var updates: [ExecutableRelease] = []
 
         for contentId in served {
-            let record = latest.manifest.records[
-                ProductManifest.RecordKey(name: contentId, key: ProductManifestRecords.executableKey)
-            ]
+            let release = latest.manifest.release(of: contentId, archive: latest.archives[contentId])
 
-            guard let archive = latest.archives[contentId] else {
-                updates.append(ProductContentUpdate(contentId: contentId, archive: nil, record: record))
+            guard
+                let archive = release.archive,
+                await cache.appliedArchive(of: contentId)?.contentHash == archive.contentHash
+            else {
+                updates.append(release)
                 continue
             }
 
-            guard await cache.appliedArchive(of: contentId)?.contentHash != archive.contentHash else {
-                await cache.apply(archive, record: record, to: contentId)
-                continue
-            }
-
-            updates.append(ProductContentUpdate(contentId: contentId, archive: archive, record: record))
+            await cache.apply(release)
         }
 
         for (contentId, archive) in latest.archives where !served.contains(contentId) {
-            await cache.apply(archive, record: nil, to: contentId)
+            await cache.apply(latest.manifest.release(of: contentId, archive: archive))
         }
 
         updates.forEach(updatesSubject.send)
