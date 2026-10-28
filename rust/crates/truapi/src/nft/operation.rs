@@ -213,6 +213,20 @@ pub fn progress_of(transfers: Vec<DurableTxState>) -> Result<Vec<TransferProgres
 	transfers.into_iter().map(transfer_progress).collect()
 }
 
+/// The latest of `transfers` for each key they consume, in registration
+/// order. A later move of a key replaces an earlier one, as when a repeated
+/// revoke retries a reclaim that failed.
+pub fn latest_per_source(transfers: Vec<TransferProgress>) -> Vec<TransferProgress> {
+	let mut seen = BTreeSet::new();
+	let mut latest: Vec<_> = transfers
+		.into_iter()
+		.rev()
+		.filter(|transfer| seen.insert(transfer.consumed))
+		.collect();
+	latest.reverse();
+	latest
+}
+
 fn transfer_progress(state: DurableTxState) -> Result<TransferProgress, DbError> {
 	let unreadable = |what: String| {
 		DbError::Connection(format!("transfer {:?} has no readable {what}", state.id))
@@ -454,6 +468,25 @@ mod tests {
 		let purses = purses_holding(1);
 
 		assert_eq!(transfers_of(&purses, &operation(9)), vec![]);
+	}
+
+	/// A retried move replaces the failure before it, so the operation's
+	/// status follows the retry while other keys keep their only move.
+	#[test]
+	fn only_the_latest_move_of_each_key_is_kept_in_registration_order() {
+		let progress = |consumed: u8, state: TransferState| TransferProgress {
+			consumed: ItemKey([consumed; 32]),
+			minted: ItemKey([0xa0 + consumed; 32]),
+			tx_hash: None,
+			state,
+		};
+		let first_failed = progress(1, TransferState::Failed);
+		let other = progress(2, TransferState::Waiting);
+		let retried = progress(1, TransferState::Landed { finalized: true });
+
+		let latest = latest_per_source(vec![first_failed, other, retried]);
+
+		assert_eq!(latest, vec![other, retried]);
 	}
 
 	#[test]

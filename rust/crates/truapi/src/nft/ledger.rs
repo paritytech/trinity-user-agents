@@ -15,7 +15,7 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
-		nft_domain, plan_transfers, progress_of, record_inputs,
+		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	scarcity::TRANSFER_POLICY,
@@ -213,15 +213,15 @@ impl NftLedger {
 		self.planned_in_write(group, installation, move |tx, keys| plan_imports(tx, &plan, keys))
 	}
 
-	/// Every transfer of `operation`, in registration order, now and after every
-	/// change. Empty while no such operation exists.
+	/// The latest transfer of each key `operation` moves, in registration
+	/// order, now and after every change. Empty while no such operation exists.
 	pub fn observe_operation(
 		&self,
 		operation: &OperationKey,
 	) -> BoxStream<'static, Result<Vec<TransferProgress>, DbError>> {
 		self.durable
 			.observe_group(&nft_domain(), operation.group())
-			.map(|transfers| transfers.and_then(progress_of))
+			.map(|transfers| transfers.and_then(progress_of).map(latest_per_source))
 			.boxed()
 	}
 
