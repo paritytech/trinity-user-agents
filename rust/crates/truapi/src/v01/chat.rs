@@ -59,7 +59,7 @@ pub enum ChatRoomFooter {
 /// Request to set what a room shows below its messages.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomFooterRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 	/// What the room shows below its messages.
 	pub footer: ChatRoomFooter,
@@ -68,7 +68,7 @@ pub struct HostChatSetRoomFooterRequest {
 /// Room footer failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostChatSetRoomFooterError {
-	/// The calling product created no room with this id.
+	/// This product created no room with this id.
 	UnknownRoom,
 	/// Catch-all.
 	Unknown {
@@ -460,12 +460,11 @@ pub struct ChatRoomPreview {
 	/// The number of reactions of the contact of the room that the user did
 	/// not see yet.
 	pub unseen_reactions: u32,
-	/// The newest call message of the room, a `Call` body with its record,
-	/// when it is not already `last_message`. `None`: the room has no call,
-	/// or its newest call is `last_message`. The host follows its own native
-	/// rule: iOS shows the call as the last message once its newest event (the
-	/// close, else the answer) is newer than `last_message`, and Android keeps
-	/// `last_message`.
+	/// The newest call message of the room, a `Call` body with its record, when it
+	/// is not already `last_message`. `None`: the room has no call, or its newest
+	/// call is `last_message`. Each host applies its native rule. iOS shows the
+	/// call as the last message when its newest event (the close, else the answer)
+	/// is newer than `last_message`. Android keeps `last_message`.
 	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
 	pub last_call: Option<ChatMessage>,
 }
@@ -490,7 +489,7 @@ pub struct ChatRoomConfig {
 /// Request to declare the parts of a room the product serves itself.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomConfigRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 	/// The configuration. It replaces the previous one completely.
 	pub config: ChatRoomConfig,
@@ -499,7 +498,7 @@ pub struct HostChatSetRoomConfigRequest {
 /// Request to replace the name and description of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomMetadataRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 	/// The new metadata.
 	pub metadata: ChatRoomMetadata,
@@ -508,7 +507,7 @@ pub struct HostChatSetRoomMetadataRequest {
 /// Request to replace how a room shows in the chat list.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomPreviewRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 	/// The new preview.
 	pub preview: ChatRoomPreview,
@@ -517,14 +516,14 @@ pub struct HostChatSetRoomPreviewRequest {
 /// Request to delete a room and all the host keeps for it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatDeleteRoomRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 }
 
 /// Failure of a request that changes a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostChatRoomError {
-	/// The calling product created no room with this id.
+	/// This product created no room with this id.
 	UnknownRoom,
 	/// The product takes part in the room as a bot, not as its host.
 	NotRoomHost,
@@ -559,7 +558,7 @@ pub enum ChatMessageStatus {
 	Delivered,
 	/// Another participant read the message.
 	Read,
-	/// The product could not send the message.
+	/// The product did not send the message.
 	Failed,
 }
 
@@ -568,13 +567,13 @@ pub enum ChatMessageStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatContactEvent {
-	/// The chat request was accepted.
+	/// The participant accepted the chat request.
 	RequestAccepted,
-	/// The contact was added.
+	/// The participant added the other participant as a contact.
 	ContactAdded,
 	/// The participant left the chat.
 	LeftChat,
-	/// Messages that could not be retrieved.
+	/// Messages that are not available.
 	Unavailable,
 	/// A message this version of the product cannot show.
 	Unsupported,
@@ -598,8 +597,8 @@ pub struct ChatCallClose {
 pub struct ChatCallRecord {
 	/// The call has video.
 	pub video: bool,
-	/// Milliseconds since the Unix epoch when the call was answered. `None`:
-	/// nobody answered.
+	/// Milliseconds since the Unix epoch when a participant answered the call.
+	/// `None`: nobody answered.
 	pub answered_at: Option<u64>,
 	/// How the call ended. `None`: the call has not ended.
 	pub closed: Option<ChatCallClose>,
@@ -633,8 +632,8 @@ pub enum ChatMessageBody {
 		/// Media the host draws below the text.
 		media: Vec<ChatMediaItem>,
 	},
-	/// A line about the conversation, drawn as a row with no bubble and no
-	/// menu.
+	/// A line about the conversation. The host shows it as a row with no bubble
+	/// and no menu.
 	Event(ChatContactEvent),
 	/// A call.
 	Call(ChatCallRecord),
@@ -666,8 +665,8 @@ pub struct ChatReactionSummary {
 	pub unseen: bool,
 }
 
-/// The message a reply quotes, so that the host draws the quote without
-/// loading that message.
+/// The message that a reply quotes. With it, the host draws the quote and does
+/// not load that message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ChatReplyPreview {
@@ -744,16 +743,16 @@ pub enum ChatFeedUpdate {
 		/// The new status.
 		status: ChatMessageStatus,
 	},
-	/// A message changed for a reason that is not an edit, for example its
-	/// call was answered or ended. The host draws it again with this content
-	/// in the same place, and does not mark it edited.
+	/// A message changed, but not by an edit. For example, a participant answered
+	/// or ended its call. The host draws it again with this content in the same
+	/// place, and does not mark it edited.
 	Replaced(ChatMessage),
 }
 
 /// Request to push one change to the messages of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatUpdateFeedRequest {
-	/// A room the calling product created.
+	/// A room that this product created.
 	pub room_id: String,
 	/// The change.
 	pub update: ChatFeedUpdate,
@@ -762,7 +761,7 @@ pub struct HostChatUpdateFeedRequest {
 /// Failure to push a change to the messages of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatUpdateFeedError {
-	/// The calling product created no room with this id.
+	/// This product created no room with this id.
 	UnknownRoom,
 	/// The product takes part in the room as a bot, not as its host.
 	NotRoomHost,
@@ -895,12 +894,12 @@ pub enum ChatUserAction {
 	Unblock,
 	/// The user left the chat.
 	Leave,
-	/// The user paid the contact. The host planned and reserved the coins and
-	/// handed their keys off before it sends the action; the product sends
-	/// them to the contact as one payment message under `message_id`, and
-	/// answers `MessageCreated` with a `Payment` body. The keys appear in no
-	/// body, preview or reply quote. Sending the action again with the same
-	/// `message_id` sends nothing new.
+	/// The user paid the contact. Before the host sends the action, it plans and
+	/// reserves the coins and gives their keys to the product. The product sends
+	/// the coins to the contact as one payment message under `message_id`. It
+	/// answers `MessageCreated` with a `Payment` body. The keys appear in no body,
+	/// preview or reply quote. When the host sends the action again with the same
+	/// `message_id`, the product sends nothing new.
 	SendPayment {
 		/// The id the host chose for the message: the id its own coinage
 		/// records track the payment under.
