@@ -13,7 +13,7 @@ use truapi::{
 	api::Chat,
 	latest,
 	versioned::{
-		FromLatest, IntoLatest, Versioned,
+		IntoLatest,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -32,14 +32,13 @@ use truapi::{
 	},
 };
 
-use super::from_latest_error;
 use crate::{
 	platform::{
 		ChatFieldError, ChatPlatform, ChatRateLimiter, normalize_chat_identifier,
 		validate_chat_feed_update, validate_chat_icon, validate_chat_message_content,
 		validate_chat_name, validate_chat_room_metadata, validate_chat_room_preview,
 	},
-	runtime::ProductRuntimeHost,
+	runtime::{ProductRuntimeHost, versioning::version},
 	unix_time::current_unix_millis,
 };
 
@@ -59,11 +58,24 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
-		let version = request.version();
-		self.create_chat_room(request.into_latest())
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				let field_error = |error: ChatFieldError| {
+					CallError::Domain(latest::HostChatCreateRoomError::Unknown {
+						reason: error.to_string(),
+					})
+				};
+				request.room_id =
+					normalize_chat_identifier("roomId", &request.room_id).map_err(field_error)?;
+				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
+				platform
+					.create_chat_room(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|response| HostChatCreateRoomResponse::from_latest(response, version))
-			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -72,11 +84,24 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatRegisterBotRequest,
 	) -> Result<HostChatRegisterBotResponse, CallError<HostChatRegisterBotError>> {
-		let version = request.version();
-		self.register_chat_bot(request.into_latest())
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				let field_error = |error: ChatFieldError| {
+					CallError::Domain(latest::HostChatRegisterBotError::Unknown {
+						reason: error.to_string(),
+					})
+				};
+				request.bot_id =
+					normalize_chat_identifier("botId", &request.bot_id).map_err(field_error)?;
+				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
+				platform
+					.register_chat_bot(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|response| HostChatRegisterBotResponse::from_latest(response, version))
-			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.list_subscribe"))]
@@ -85,20 +110,22 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatListSubscribeRequest,
 	) -> Subscription<HostChatListSubscribeItem, CallError<HostChatListSubscribeError>> {
-		let version = request.version();
-		let platform = match self.connection.chat_platform::<HostChatListSubscribeError>() {
-			Ok(platform) => platform,
-			Err(error) => return Subscription::interrupted(error),
-		};
-		Subscription::new(platform.subscribe_chat_rooms(&self.connection.product).map(
-			move |item| match item {
-				Ok(item) => Ok(HostChatListSubscribeItem::from_latest(item, version)),
-				Err(error) => {
-					warn!(reason = %error.reason, "chat room list platform stream failed");
-					Err(CallError::HostFailure { reason: error.reason })
-				},
-			},
-		))
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.connection.chat_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_chat_rooms(&self.connection.product).map(
+					|item| {
+						item.map_err(|error| {
+							warn!(reason = %error.reason, "chat room list platform stream failed");
+							CallError::HostFailure { reason: error.reason }
+						})
+					},
+				))
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
@@ -107,23 +134,62 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatPostMessageRequest,
 	) -> Result<HostChatPostMessageResponse, CallError<HostChatPostMessageError>> {
-		let version = request.version();
-		self.post_chat_message(request.into_latest())
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				// The same normalization create_room applied, so a product's own
+				// spelling of a room id still resolves to the stored room.
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(post_field_error)?;
+				// Content is product-authored and host-rendered, so it gets the same
+				// treatment the room fields get rather than reaching a host raw.
+				request.payload =
+					validate_chat_message_content(request.payload).map_err(post_field_error)?;
+				request.alt = request
+					.alt
+					.map(|alt| validate_chat_name("alt", &alt))
+					.transpose()
+					.map_err(post_field_error)?
+					.filter(|alt| !alt.is_empty())
+					.filter(|_| matches!(request.payload, latest::ChatMessageContent::Custom(_)));
+				let config = platform
+					.read_chat_room_config(&self.connection.product, request.room_id.clone())
+					.await
+					.map_err(|error| {
+						CallError::Domain(latest::HostChatPostMessageError::Unknown {
+							reason: error.reason,
+						})
+					})?;
+				if config.product_source {
+					return Err(CallError::Domain(latest::HostChatPostMessageError::Unknown {
+						reason: "the room keeps its messages in the product; use updateFeed"
+							.to_string(),
+					}));
+				}
+				platform
+					.post_chat_message(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|response| HostChatPostMessageResponse::from_latest(response, version))
-			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostChatActionSubscribeRequest,
+		request: HostChatActionSubscribeRequest,
 	) -> Subscription<HostChatActionSubscribeItem, CallError<HostChatActionSubscribeError>> {
-		if let Err(error) = self.connection.chat_platform::<HostChatActionSubscribeError>() {
-			return Subscription::interrupted(error);
-		}
-		self.connection.chat.subscribe()
+		version(request)
+			.exec(|()| async move {
+				if let Err(error) = self.connection.chat_platform::<latest::GenericError>() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					self.connection.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
@@ -132,11 +198,19 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
-		let version = request.version();
-		self.set_chat_room_footer(request.into_latest())
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				platform.set_chat_room_footer(&self.connection.product, request).await.map_err(
+					|error| {
+						CallError::Domain(latest::HostChatSetRoomFooterError::Unknown {
+							reason: error.reason,
+						})
+					},
+				)
+			})
 			.await
-			.map(|()| HostChatSetRoomFooterResponse::from_latest((), version))
-			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_config"))]
@@ -145,18 +219,16 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomConfigRequest,
 	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatSetRoomConfigError>> {
-		let version = request.version();
-		let mut request = request.into_latest();
-		let result = async {
-			let platform = self.connection.chat_platform()?;
-			let room_id = self.hosted_room(&platform, &request.room_id, None).await?;
-			request.room_id = room_id;
-			platform
-				.set_chat_room_config(&self.connection.product, request)
-				.await
-				.map_err(room_host_error)
-		};
-		answer_room_change(result.await, version, HostChatSetRoomConfigResponse::from_latest)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				platform
+					.set_chat_room_config(&self.connection.product, request)
+					.await
+					.map_err(room_host_error)
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_metadata"))]
@@ -165,20 +237,18 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomMetadataRequest,
 	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatSetRoomMetadataError>> {
-		let version = request.version();
-		let mut request = request.into_latest();
-		let result = async {
-			let platform = self.connection.chat_platform()?;
-			request.metadata =
-				validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
-			let room_id = self.hosted_room(&platform, &request.room_id, None).await?;
-			request.room_id = room_id;
-			platform
-				.set_chat_room_metadata(&self.connection.product, request)
-				.await
-				.map_err(room_host_error)
-		};
-		answer_room_change(result.await, version, HostChatSetRoomMetadataResponse::from_latest)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.metadata =
+					validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
+				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				platform
+					.set_chat_room_metadata(&self.connection.product, request)
+					.await
+					.map_err(room_host_error)
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_preview"))]
@@ -187,21 +257,20 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomPreviewRequest,
 	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatSetRoomPreviewError>> {
-		let version = request.version();
-		let mut request = request.into_latest();
-		let result = async {
-			let platform = self.connection.chat_platform()?;
-			request.preview =
-				validate_chat_room_preview(request.preview).map_err(room_field_error)?;
-			let limiter = &self.connection.services.chat_rate_limits.preview;
-			let room_id = self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
-			request.room_id = room_id;
-			platform
-				.set_chat_room_preview(&self.connection.product, request)
-				.await
-				.map_err(room_host_error)
-		};
-		answer_room_change(result.await, version, HostChatSetRoomPreviewResponse::from_latest)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.preview =
+					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
+				let limiter = &self.connection.services.chat_rate_limits.preview;
+				request.room_id =
+					self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+				platform
+					.set_chat_room_preview(&self.connection.product, request)
+					.await
+					.map_err(room_host_error)
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.delete_room"))]
@@ -210,28 +279,29 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatDeleteRoomRequest,
 	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatDeleteRoomError>> {
-		let version = request.version();
-		let mut request = request.into_latest();
-		let result = async {
-			let platform = self.connection.chat_platform()?;
-			match self.hosted_room(&platform, &request.room_id, None).await {
-				// Deleting a room that is gone already succeeds, so a product
-				// can retry a delete whose answer it lost.
-				Err(RoomRefusal::UnknownRoom) => Ok(()),
-				Err(refusal) => Err(CallError::Domain(refusal.into())),
-				Ok(room_id) => {
-					let limits = &self.connection.services.chat_rate_limits;
-					limits.feed.forget(self.connection.product.product_id.as_str(), &room_id);
-					limits.preview.forget(self.connection.product.product_id.as_str(), &room_id);
-					request.room_id = room_id;
-					platform
-						.delete_chat_room(&self.connection.product, request)
-						.await
-						.map_err(room_host_error)
-				},
-			}
-		};
-		answer_room_change(result.await, version, HostChatDeleteRoomResponse::from_latest)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				match self.hosted_room(&platform, &request.room_id, None).await {
+					// Deleting a room that is gone already succeeds, so a product
+					// can retry a delete whose answer it lost.
+					Err(RoomRefusal::UnknownRoom) => Ok(()),
+					Err(refusal) => Err(CallError::Domain(refusal.into())),
+					Ok(room_id) => {
+						let limits = &self.connection.services.chat_rate_limits;
+						limits.feed.forget(self.connection.product.product_id.as_str(), &room_id);
+						limits
+							.preview
+							.forget(self.connection.product.product_id.as_str(), &room_id);
+						request.room_id = room_id;
+						platform
+							.delete_chat_room(&self.connection.product, request)
+							.await
+							.map_err(room_host_error)
+					},
+				}
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.update_feed"))]
@@ -240,11 +310,37 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatUpdateFeedRequest,
 	) -> Result<HostChatUpdateFeedResponse, CallError<HostChatUpdateFeedError>> {
-		let version = request.version();
-		self.update_chat_feed(request.into_latest())
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.update =
+					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
+				let limiter = &self.connection.services.chat_rate_limits.feed;
+				request.room_id =
+					self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+				let config = platform
+					.read_chat_room_config(&self.connection.product, request.room_id.clone())
+					.await
+					.map_err(|error| {
+						CallError::Domain(latest::HostChatUpdateFeedError::Unknown {
+							reason: error.reason,
+						})
+					})?;
+				let persist = !config.product_source;
+				// In a room the host stores, the host's user writes only through the
+				// host, so a product cannot put words in the user's mouth.
+				if persist &&
+					let latest::ChatFeedUpdate::New(message) = &request.update &&
+					message.origin.participant_id == USER_PARTICIPANT_ID
+				{
+					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
+				}
+				platform
+					.update_chat_feed(&self.connection.product, request, persist)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|()| HostChatUpdateFeedResponse::from_latest((), version))
-			.map_err(|error| from_latest_error(error, version))
 	}
 }
 
@@ -336,17 +432,6 @@ impl<E: From<RoomRefusal>> From<RoomRefusal> for CallError<E> {
 	}
 }
 
-/// Answer a room-changing call in the caller's version.
-fn answer_room_change<R, E: FromLatest>(
-	result: Result<(), CallError<E::Latest>>,
-	version: u8,
-	response: fn((), u8) -> R,
-) -> Result<R, CallError<E>> {
-	result
-		.map(|()| response((), version))
-		.map_err(|error| from_latest_error(error, version))
-}
-
 /// Report a rejected field of a room-changing call.
 fn room_field_error<E: From<RoomRefusal>>(error: ChatFieldError) -> CallError<E> {
 	RoomRefusal::Failed(error.to_string()).into()
@@ -417,131 +502,6 @@ impl ProductRuntimeHost {
 			return Err(RoomRefusal::RateLimited);
 		}
 		Ok(room_id)
-	}
-
-	async fn create_chat_room(
-		&self,
-		mut request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, CallError<latest::HostChatCreateRoomError>> {
-		let platform = self.connection.chat_platform()?;
-		let field_error = |error: ChatFieldError| {
-			CallError::Domain(latest::HostChatCreateRoomError::Unknown {
-				reason: error.to_string(),
-			})
-		};
-		request.room_id =
-			normalize_chat_identifier("roomId", &request.room_id).map_err(field_error)?;
-		request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
-		request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
-		platform
-			.create_chat_room(&self.connection.product, request)
-			.await
-			.map_err(CallError::Domain)
-	}
-
-	async fn register_chat_bot(
-		&self,
-		mut request: latest::HostChatRegisterBotRequest,
-	) -> Result<latest::HostChatRegisterBotResponse, CallError<latest::HostChatRegisterBotError>> {
-		let platform = self.connection.chat_platform()?;
-		let field_error = |error: ChatFieldError| {
-			CallError::Domain(latest::HostChatRegisterBotError::Unknown {
-				reason: error.to_string(),
-			})
-		};
-		request.bot_id =
-			normalize_chat_identifier("botId", &request.bot_id).map_err(field_error)?;
-		request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
-		request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
-		platform
-			.register_chat_bot(&self.connection.product, request)
-			.await
-			.map_err(CallError::Domain)
-	}
-
-	async fn post_chat_message(
-		&self,
-		mut request: latest::HostChatPostMessageRequest,
-	) -> Result<latest::HostChatPostMessageResponse, CallError<latest::HostChatPostMessageError>> {
-		let platform = self.connection.chat_platform()?;
-		// The same normalization create_room applied, so a product's own
-		// spelling of a room id still resolves to the stored room.
-		request.room_id =
-			normalize_chat_identifier("roomId", &request.room_id).map_err(post_field_error)?;
-		// Content is product-authored and host-rendered, so it gets the same
-		// treatment the room fields get rather than reaching a host raw.
-		request.payload =
-			validate_chat_message_content(request.payload).map_err(post_field_error)?;
-		request.alt = request
-			.alt
-			.map(|alt| validate_chat_name("alt", &alt))
-			.transpose()
-			.map_err(post_field_error)?
-			.filter(|alt| !alt.is_empty())
-			.filter(|_| matches!(request.payload, latest::ChatMessageContent::Custom(_)));
-		let config = platform
-			.read_chat_room_config(&self.connection.product, request.room_id.clone())
-			.await
-			.map_err(|error| {
-				CallError::Domain(latest::HostChatPostMessageError::Unknown {
-					reason: error.reason,
-				})
-			})?;
-		if config.product_source {
-			return Err(CallError::Domain(latest::HostChatPostMessageError::Unknown {
-				reason: "the room keeps its messages in the product; use updateFeed".to_string(),
-			}));
-		}
-		platform
-			.post_chat_message(&self.connection.product, request)
-			.await
-			.map_err(CallError::Domain)
-	}
-
-	async fn set_chat_room_footer(
-		&self,
-		mut request: latest::HostChatSetRoomFooterRequest,
-	) -> Result<(), CallError<latest::HostChatSetRoomFooterError>> {
-		let failure = |reason: String| {
-			CallError::Domain(latest::HostChatSetRoomFooterError::Unknown { reason })
-		};
-		let platform = self.connection.chat_platform()?;
-		let room_id = self.hosted_room(&platform, &request.room_id, None).await?;
-		request.room_id = room_id;
-		platform
-			.set_chat_room_footer(&self.connection.product, request)
-			.await
-			.map_err(|error| failure(error.reason))
-	}
-
-	async fn update_chat_feed(
-		&self,
-		mut request: latest::HostChatUpdateFeedRequest,
-	) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
-		let platform = self.connection.chat_platform()?;
-		request.update = validate_chat_feed_update(request.update).map_err(feed_field_error)?;
-		let limiter = &self.connection.services.chat_rate_limits.feed;
-		let room_id = self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
-		request.room_id = room_id;
-		let config = platform
-			.read_chat_room_config(&self.connection.product, request.room_id.clone())
-			.await
-			.map_err(|error| {
-				CallError::Domain(latest::HostChatUpdateFeedError::Unknown { reason: error.reason })
-			})?;
-		let persist = !config.product_source;
-		// In a room the host stores, the host's user writes only through the
-		// host, so a product cannot put words in the user's mouth.
-		if persist &&
-			let latest::ChatFeedUpdate::New(message) = &request.update &&
-			message.origin.participant_id == USER_PARTICIPANT_ID
-		{
-			return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
-		}
-		platform
-			.update_chat_feed(&self.connection.product, request, persist)
-			.await
-			.map_err(CallError::Domain)
 	}
 }
 
