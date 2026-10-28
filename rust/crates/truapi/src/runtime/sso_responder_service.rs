@@ -889,6 +889,8 @@ mod tests {
 			"headless",
 			None,
 			0,
+			None,
+			None,
 		)
 		.expect("registration builds");
 

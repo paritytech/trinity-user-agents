@@ -7,7 +7,6 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.app.root.navigation.backup.BackupNavigator
 import io.paritytech.polkadotapp.app.root.navigation.chats.ChatsNavigator
-import io.paritytech.polkadotapp.app.root.navigation.fund.FundNavigator
 import io.paritytech.polkadotapp.app.root.navigation.products.ProductsNavigator
 import io.paritytech.polkadotapp.app.root.navigation.root.RootNavigator
 import io.paritytech.polkadotapp.app.root.navigation.scan.ScanNavigator
@@ -22,7 +21,6 @@ import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.feature_backup_impl.BackupRouter
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
-import io.paritytech.polkadotapp.feature_fund_impl.FundRouter
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_scan_impl.ScanRouter
@@ -64,10 +62,6 @@ interface NavigatorsModule {
     @Binds
     @Singleton
     fun providePocketRouter(impl: PocketNavigator): PocketRouter
-
-    @Binds
-    @Singleton
-    fun provideFundRouter(impl: FundNavigator): FundRouter
 
     @Binds
     @Singleton

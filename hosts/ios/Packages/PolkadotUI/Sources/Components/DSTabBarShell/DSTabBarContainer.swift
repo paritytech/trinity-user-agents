@@ -135,7 +135,7 @@ private extension DSTabBarContainer {
     var selectionPill: some View {
         DSTabBarSelectionPill.fill(Capsule(style: .continuous))
             .padding(.vertical, DSTabBarStyle.selectionInset)
-            .frame(width: DSTabBarStyle.selectionWidth)
+            .frame(maxWidth: DSTabBarStyle.selectionWidth)
             .matchedGeometryEffect(id: DSTabBarSelectionPill.matchedGeometryId, in: selectionNamespace)
     }
 

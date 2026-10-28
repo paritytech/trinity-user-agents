@@ -35,7 +35,6 @@ cat > "$OUTPUT_FILE" <<EOF
 
 enum GeneratedSecrets {
     static let sentryDSN = "$(swift_escape "${SENTRY_DSN:-}")"
-    static let meldBasicAuthToken = "$(swift_escape "${MELD_BASIC_AUTH_TOKEN:-}")"
 }
 EOF
 

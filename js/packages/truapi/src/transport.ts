@@ -164,6 +164,55 @@ export type HostInitiatedSubscriptionHandler<Request, Item, Reason = never> = (
 ) => (() => void) | void;
 
 /**
+ * One answer to a host request, with cooperative cancellation. Return an Err
+ * for a declared failure; throws and rejected promises become HostFailure.
+ * Stop or connection loss aborts pending work and discards late results.
+ * Cancellation cannot undo work already performed.
+ */
+export type HostInitiatedRequestHandler<Request, Response, Failure> = (
+  request: Request,
+  context: { readonly signal: AbortSignal },
+) => Result<Response, Failure> | PromiseLike<Result<Response, Failure>>;
+
+/** Adapt one typed answer to an item; the host stops after receiving it. */
+export function hostRequestHandler<Request, Response, Failure>(
+  handler: HostInitiatedRequestHandler<Request, Response, Failure>,
+): HostInitiatedSubscriptionHandler<
+  Request,
+  Response,
+  Failure | CallErrorValue<never>
+> {
+  return (request, send, interrupt) => {
+    const controller = new AbortController();
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (controller.signal.aborted) return;
+      settled = true;
+      interrupt({
+        tag: "HostFailure",
+        value: {
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      });
+    };
+    void Promise.resolve()
+      .then(async () => {
+        if (controller.signal.aborted) return;
+        const result = await handler(request, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (result.isOk()) send(result.value);
+        if (controller.signal.aborted) return;
+        settled = true;
+        if (result.isErr()) interrupt(result.error);
+      })
+      .catch(fail);
+    return () => {
+      if (!settled) controller.abort();
+    };
+  };
+}
+
+/**
  * Wire discriminant pair addressing a method. One id addresses a method
  * regardless of shape (request/response, or a subscription's four phases):
  * which leg of the exchange a frame carries is the wire's own `messageType`
@@ -311,6 +360,8 @@ export interface RegisterHostInitiatedSubscriptionParams<
   declinePayload: Uint8Array;
   /** Number of starts retained before a handler is installed. **/
   bufferCapacity: number;
+  /** Serve one answer, accepting only this request wrapper version. */
+  singleResponse?: { requestVersion: number };
 }
 
 /**

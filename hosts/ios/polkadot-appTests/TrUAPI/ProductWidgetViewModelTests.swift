@@ -105,6 +105,20 @@ struct ProductWidgetViewModelTests {
         #expect(node != nil)
     }
 
+    /// Every resume that closes the product connection fails each open render
+    /// after it drew. A cell that stopped reopening after a few of them would
+    /// show a body the product no longer renders, and the product ignores taps
+    /// on a body it is not rendering.
+    @Test func aBodyIsReopenedAfterEveryDropThatFollowsADraw() async {
+        let dropped = ServedStream.drawThenFail(ProductRuntimeError.Closed)
+        let runtime = ScriptedRenderRuntime([dropped, dropped, dropped, dropped, .draw])
+        let viewModel = makeViewModel(runtime: runtime)
+
+        await viewModel.renderTask?.value
+
+        #expect(runtime.renderCallCount == 5)
+    }
+
     /// Without a cap a permanently broken body would reopen a core render stream
     /// for as long as the bot lives.
     @Test func retriesAreCapped() async {

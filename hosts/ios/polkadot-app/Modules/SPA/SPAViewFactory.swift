@@ -100,8 +100,7 @@ enum SPAViewFactory {
         let interactor = SPANativeRuntimeInteractor(
             nativeApi: nativeApi,
             scriptsFactory: scriptsFactory,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
             schemeHandlerProxy: schemeHandlerProxy,
             configuration: configuration,
             logger: Logger.shared,
@@ -204,8 +203,7 @@ extension SPAViewFactory {
         let runtimeFactory = SPARustRuntimeFactory(environment: .init(
             rust: rustEnvironment,
             configuration: configuration,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
             schemeHandlerProxy: schemeHandlerProxy,
             routers: routers
         ))
@@ -213,6 +211,7 @@ extension SPAViewFactory {
         let interactor = SPARustRuntimeInteractor(
             runtimeFactory: runtimeFactory,
             productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),

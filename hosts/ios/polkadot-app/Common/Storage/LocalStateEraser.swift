@@ -17,9 +17,7 @@ final class LocalStateEraser: LocalStateErasing {
     /// Progress bound to the old wallet that would misreport for a new one.
     static let walletProgressKeys: [SettingsKey] = [
         .backendSessionId,
-        .nextSyncUpdateId,
-        .fiatOnrampSessionIds,
-        .fiatOnrampTrackedTransactionIds
+        .nextSyncUpdateId
     ]
 
     private let settingsManager: SettingsManagerProtocol

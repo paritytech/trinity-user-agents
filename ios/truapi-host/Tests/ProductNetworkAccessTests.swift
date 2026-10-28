@@ -39,7 +39,12 @@ struct ProductNetworkAccessTests {
                 const results = [];
                 let interrupted = 0;
                 for (let cycle = 0; cycle < 2; cycle++) {
-                  client.theme.subscribe().subscribe({ error() { interrupted++; } });
+                  // A call the host has not seen yet survives a lost connection and is sent
+                  // on the next one, so the subscription has to be live before the cut for
+                  // the cut to interrupt it.
+                  await new Promise(live => {
+                    client.theme.subscribe().subscribe({ next: live, error() { interrupted++; } });
+                  });
                   const disconnected = new Promise(resolve => {
                     const unsubscribe = host.subscribeConnectionStatus(status => {
                       if (status === 'disconnected') { unsubscribe(); resolve(); }

@@ -5,7 +5,7 @@ import Testing
 
 struct ProductResolverTests {
     @Test func fallsBackToALegacyAppWhenNoRootManifestIsPublished() async throws {
-        let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
+        let resolved = try await makeResolver(StubProductMetadataRepository()).resolve(ProductId("hackm3.dot"))
 
         #expect(!resolved.hasManifest)
         #expect(resolved.displayName == "hackm3.dot")
@@ -16,9 +16,9 @@ struct ProductResolverTests {
     }
 
     @Test func propagatesUnavailableNetworkBeforeReadingRecords() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         let resolver = ProductResolver(
-            dotNsResolver: stub,
+            metadataRepository: stub,
             hostProvider: ProductHostFactory(tldProvider: FailingTldProvider()),
             logger: SilentLogger(),
             screening: .passingThrough
@@ -32,7 +32,7 @@ struct ProductResolverTests {
 
     @Test(arguments: ["hackm3.paseo", "worker.hackm3.paseo", "localhost:3000"])
     func rejectsProductsOutsideTheNetworkBeforeReadingRecords(_ input: String) async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         let resolver = makeResolver(stub)
 
         await #expect(throws: ProductResolutionError.self) {
@@ -42,7 +42,7 @@ struct ProductResolverTests {
     }
 
     @Test func readsMetadataAndEveryPublishedExecutable() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set(Fixtures.worker, name: "worker.hackm3.dot", key: "executable")
@@ -61,7 +61,7 @@ struct ProductResolverTests {
     /// product whose widget went unread opens its app instead, which is a
     /// different archive and a different screen.
     @Test func readsTheWidgetAnExpandedCardRuns() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
@@ -73,7 +73,7 @@ struct ProductResolverTests {
     }
 
     @Test func legacyAppDoesNotInventWidgetOrWorkerExecutables() async throws {
-        let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
+        let resolved = try await makeResolver(StubProductMetadataRepository()).resolve(ProductId("hackm3.dot"))
 
         #expect(try resolved.contentId(for: .app).rawValue == "hackm3.dot")
         #expect(throws: ProductResolutionError.self) { try resolved.contentId(for: .widget) }
@@ -81,7 +81,7 @@ struct ProductResolverTests {
     }
 
     @Test func servesEachPublishedKindFromItsOwnSubname() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
@@ -95,7 +95,7 @@ struct ProductResolverTests {
     }
 
     @Test func skipsAMalformedExecutableWithoutLosingItsSiblings() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set("{ not json", name: "worker.hackm3.dot", key: "executable")
@@ -110,7 +110,7 @@ struct ProductResolverTests {
     /// Chat and Pocket ride on one worker record, so a pocket section the
     /// publisher typed wrong must not take the product's chat off the air.
     @Test func keepsAChatWorkerWhoseProductPublishedAMalformedPocketSection() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.workerWithMalformedPocket, name: "worker.hackm3.dot", key: "executable")
 
@@ -122,7 +122,7 @@ struct ProductResolverTests {
     }
 
     @Test func failsWhenTheRootManifestItselfIsMalformed() async {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(#"{"$v":9,"displayName":"x"}"#, name: "hackm3.dot", key: "manifest")
 
         await #expect(throws: ProductResolutionError.self) {
@@ -131,7 +131,7 @@ struct ProductResolverTests {
     }
 
     @Test func acceptsASubnameAndResolvesItsBase() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
         let resolved = try await makeResolver(stub).resolve(ProductId("worker.hackm3.dot"))
@@ -141,7 +141,7 @@ struct ProductResolverTests {
     }
 
     @Test func servesRepeatResolutionsFromCache() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
         let resolver = makeResolver(stub)
@@ -155,7 +155,7 @@ struct ProductResolverTests {
 
     /// Caching a partial read would serve the base name's archive for the rest of the session.
     @Test func propagatesAFailedExecutableReadInsteadOfReportingNoExecutable() async {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.failingNames = ["app.hackm3.dot"]
 
@@ -166,7 +166,7 @@ struct ProductResolverTests {
 
     /// A read failure must stay retryable, so it is never cached.
     @Test func doesNotCacheAFailedResolution() async throws {
-        let stub = StubDotNsResolver()
+        let stub = StubProductMetadataRepository()
         stub.readError = URLError(.notConnectedToInternet)
 
         let resolver = makeResolver(stub)
@@ -181,9 +181,9 @@ struct ProductResolverTests {
     }
 }
 
-private func makeResolver(_ stub: StubDotNsResolver) -> ProductResolver {
+private func makeResolver(_ stub: StubProductMetadataRepository) -> ProductResolver {
     ProductResolver(
-        dotNsResolver: stub,
+        metadataRepository: stub,
         hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
         logger: SilentLogger(),
         screening: .passingThrough

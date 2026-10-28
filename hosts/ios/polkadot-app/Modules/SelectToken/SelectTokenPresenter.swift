@@ -27,9 +27,7 @@ class SelectTokenPresenter: TokensPresenter {
     private func provideViewModel() {
         let viewModels = (chainAssets ?? []).map { viewModelFactory.createViewModel(from: $0) }
 
-        view?.didReceive(
-            viewModels: viewModels // + [.fiat] Fiat onRamp is disabled for the time being
-        )
+        view?.didReceive(viewModels: viewModels)
     }
 
     override func didReceive(chainAssets: [ChainAsset]) {
@@ -50,9 +48,6 @@ extension SelectTokenPresenter: SelectTokenPresenterProtocol {
         case let .chainAsset(asset):
             guard let chainAsset = chainAsset(id: asset.chainAssetId) else { return }
             wireframe.proceed(from: view, chainAsset: chainAsset)
-
-        case .fiat:
-            wireframe.proceedToFiatOnRamp(from: view)
         }
     }
 

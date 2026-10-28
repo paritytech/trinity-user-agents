@@ -1,5 +1,6 @@
 export type {
   CallOptions,
+  HostInitiatedRequestHandler,
   HostInitiatedSubscriptionHandler,
   MethodIds,
   ObservableLike,

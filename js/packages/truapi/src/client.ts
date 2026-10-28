@@ -49,6 +49,12 @@ const KNOWN_WIRE_IDS = new Set<string>(
 );
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const MAX_EARLY_HOST_STOPS = 64;
+const FRAMEWORK_INTERRUPT = S.Result(S._void, S.CallError(S._void));
+
+function frameworkInterrupt(failure: S.CallErrorValue<never>): Uint8Array {
+  return FRAMEWORK_INTERRUPT.enc({ success: false, value: failure });
+}
 
 /** A request received no matching response before its transport deadline. */
 export class RequestTimeoutError extends Error {
@@ -287,12 +293,17 @@ export function createTransport(
     declinePayload: Uint8Array;
     bufferCapacity: number;
     buffered: BufferedHostStart[];
-    handler?: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    singleResponse?: { requestVersion: number };
+    handler?: {
+      call: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    };
     instances: Map<string, { unsubscribe(): void }>;
   };
   // Keyed by the full (trait, method) pair: a bare method id would collide
   // the moment two traits both number a subscription the same.
   const hostRoutes = new Map<string, HostRoute>();
+  const earlyHostStops = new Map<string, HostRoute>();
+  let hostConnectionGeneration = 0;
 
   /**
    * Normalize arbitrary thrown values into `Error` instances.
@@ -337,6 +348,7 @@ export function createTransport(
   }
 
   function interruptOperations(error: Error) {
+    hostConnectionGeneration++;
     const closing = closedError !== null;
     const requests = [...pending]
       .filter(([, request]) => request.sent || closing)
@@ -353,6 +365,7 @@ export function createTransport(
       instances.push(...route.instances.values());
       route.instances.clear();
     }
+    earlyHostStops.clear();
 
     for (const request of requests) request.reject(error);
     // Product callbacks must not stop the provider's remaining close listeners.
@@ -526,6 +539,15 @@ export function createTransport(
         if (instance) {
           hostRoute.instances.delete(requestId);
           instance.unsubscribe();
+        } else if (
+          bufferedIndex < 0 &&
+          hostRoute.singleResponse &&
+          !earlyHostStops.has(requestId)
+        ) {
+          if (earlyHostStops.size === MAX_EARLY_HOST_STOPS) {
+            earlyHostStops.delete(earlyHostStops.keys().next().value!);
+          }
+          earlyHostStops.set(requestId, hostRoute);
         }
       } else {
         reportProtocolViolation(
@@ -704,11 +726,17 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
     const instance = route.instances.get(requestId);
     if (instance) {
       route.instances.delete(requestId);
       instance.unsubscribe();
     }
+    if (
+      generation !== hostConnectionGeneration ||
+      route.instances.has(requestId)
+    )
+      return;
     try {
       send({
         requestId,
@@ -729,15 +757,75 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
+    if (route.singleResponse) {
+      if (
+        [...hostRoutes.values()].some(
+          (candidate) =>
+            candidate.instances.has(requestId) ||
+            candidate.buffered.some((start) => start.requestId === requestId),
+        )
+      )
+        return;
+      if (earlyHostStops.get(requestId) === route) {
+        earlyHostStops.delete(requestId);
+        return;
+      }
+      const { requestVersion } = route.singleResponse;
+      if (payload.length === 0 || payload[0]! < requestVersion - 1) {
+        interruptHostSubscription(
+          route,
+          requestId,
+          frameworkInterrupt(
+            payload.length === 0
+              ? {
+                  tag: "MalformedFrame",
+                  value: { reason: "host request payload did not decode" },
+                }
+              : { tag: "Unsupported" },
+          ),
+        );
+        return;
+      }
+      if (payload[0] !== requestVersion - 1) {
+        try {
+          send({
+            requestId,
+            payload: {
+              traitId: PROTOCOL_ERROR_TRAIT_ID,
+              methodId: PROTOCOL_ERROR_METHOD_ID,
+              messageType: MESSAGE_TYPE_RESPONSE,
+              value: PROTOCOL_ERROR.enc([
+                {
+                  tag: "V1",
+                  value: {
+                    tag: "UnsupportedVersion",
+                    value: {
+                      traitId: route.ids.trait,
+                      methodId: route.ids.method,
+                      newestVersion: requestVersion,
+                    },
+                  },
+                },
+                new Uint8Array(),
+              ]),
+            },
+          });
+        } catch {}
+        return;
+      }
+    }
     const previous = route.instances.get(requestId);
     if (previous) {
       route.instances.delete(requestId);
       previous.unsubscribe();
     }
+    if (generation !== hostConnectionGeneration || closedError) return;
 
     const handler = route.handler;
     if (!handler) {
-      if (route.buffered.length === route.bufferCapacity) {
+      route.buffered.push({ requestId, payload });
+      if (route.buffered.length > route.bufferCapacity) {
         const evicted = route.buffered.shift();
         if (evicted)
           interruptHostSubscription(
@@ -746,15 +834,6 @@ export function createTransport(
             route.declinePayload,
           );
       }
-      route.buffered.push({ requestId, payload });
-      return;
-    }
-
-    let request: unknown;
-    try {
-      request = route.decodeRequest(payload);
-    } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
       return;
     }
 
@@ -768,21 +847,33 @@ export function createTransport(
       },
     };
     route.instances.set(requestId, instance);
+    let request: unknown;
+    try {
+      request = route.decodeRequest(payload);
+    } catch {
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
+      return;
+    }
+    if (!active) return;
 
     const sendItem = (item: unknown) => {
       if (!active) return;
       try {
+        const value = route.encodeItem(item);
+        if (!active) return;
         send({
           requestId,
           payload: {
             traitId: route.ids.trait,
             methodId: route.ids.method,
             messageType: MESSAGE_TYPE_RECEIVE,
-            value: route.encodeItem(item),
+            value,
           },
         });
       } catch {
-        interruptHostSubscription(route, requestId, route.declinePayload);
+        if (active)
+          interruptHostSubscription(route, requestId, route.declinePayload);
       }
     };
 
@@ -794,14 +885,15 @@ export function createTransport(
       } catch {
         encoded = route.declinePayload;
       }
-      interruptHostSubscription(route, requestId, encoded);
+      if (active) interruptHostSubscription(route, requestId, encoded);
     };
 
     try {
-      teardown = handler(request, sendItem, interrupt);
+      teardown = handler.call(request, sendItem, interrupt);
       if (!active) teardown?.();
     } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
     }
   }
 
@@ -985,12 +1077,28 @@ export function createTransport(
       encodeInterrupt,
       declinePayload,
       bufferCapacity,
+      singleResponse,
     }: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>) {
       const key = pairKey(ids.trait, ids.method);
       if (hostRoutes.has(key)) {
         throw new Error(
           `host-initiated subscription (${ids.trait}, ${ids.method}) is already registered`,
         );
+      }
+      if (singleResponse) {
+        const { requestVersion } = singleResponse;
+        if (
+          !Number.isInteger(requestVersion) ||
+          requestVersion < 1 ||
+          requestVersion > 255
+        ) {
+          throw new RangeError(
+            "requestVersion must be an integer from 1 to 255",
+          );
+        }
+        if (!Number.isInteger(bufferCapacity) || bufferCapacity < 1) {
+          throw new RangeError("bufferCapacity must be a positive integer");
+        }
       }
       const route: HostRoute = {
         ids,
@@ -999,6 +1107,7 @@ export function createTransport(
         encodeInterrupt: encodeInterrupt as (reason?: unknown) => Uint8Array,
         declinePayload,
         bufferCapacity,
+        singleResponse,
         buffered: [],
         instances: new Map(),
       };
@@ -1007,13 +1116,18 @@ export function createTransport(
         setHandler(
           handler: HostInitiatedSubscriptionHandler<Request, Item, Reason>,
         ) {
-          const installed = handler as HostInitiatedSubscriptionHandler<
-            unknown,
-            unknown,
-            unknown
-          >;
+          const installed = {
+            call: handler as HostInitiatedSubscriptionHandler<
+              unknown,
+              unknown,
+              unknown
+            >,
+          };
           route.handler = installed;
-          for (const start of route.buffered.splice(0)) {
+          for (const start of [...route.buffered]) {
+            const index = route.buffered.indexOf(start);
+            if (index < 0) continue;
+            route.buffered.splice(index, 1);
             startHostSubscription(route, start.requestId, start.payload);
           }
           return {
