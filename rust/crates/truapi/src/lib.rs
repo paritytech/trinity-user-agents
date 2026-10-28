@@ -822,6 +822,10 @@ mod nft;
 mod nft_purse;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod pocket_cards;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -843,7 +847,7 @@ pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]

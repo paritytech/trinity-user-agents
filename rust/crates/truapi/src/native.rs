@@ -22,6 +22,7 @@ mod errors;
 mod events;
 mod executor;
 mod platform;
+mod pocket;
 mod renderer;
 mod runtime;
 mod subscribers;
@@ -34,17 +35,19 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction},
 		scanner::{ScanFilter, ScanVerdict},
 	},
+	pocket_cards::{PinnedPocketCard, PocketCardRemoval, PocketEntry},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
+	NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
-pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
+pub use pocket::NativePocketObserver;
+pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };

@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
-use crate::platform::{
-	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
-	RuntimeConfigValidationError, SigningHostConfig,
+use crate::{
+	platform::{
+		HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
+		RuntimeConfigValidationError, SigningHostConfig,
+	},
+	pocket_cards::PinnedPocketCard,
 };
 use truapi::latest::HostPlatform;
 
@@ -45,6 +48,11 @@ pub struct HostRuntimeConfig {
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
+	/// Cards the host pins in the Pocket: listed first, removable by nobody.
+	/// A card pinned on an earlier start and missing here stays only if the
+	/// user added it.
+	#[uniffi(default)]
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
@@ -73,6 +81,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 	/// Directory the core database lives in.
 	pub database_directory: PathBuf,
+	/// Cards the host pins in the Pocket.
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -157,6 +167,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
+			pinned_pocket_cards: config.pinned_pocket_cards,
 		})
 	}
 }

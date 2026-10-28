@@ -30,8 +30,8 @@ use crate::{
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -684,58 +684,6 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.chain(changes)
 		.map(Ok)
 		.boxed()
-	}
-}
-
-/// [`crate::platform::PocketPlatform`] served by host-provided
-/// [`NativePocketCallbacks`]; constructed only when the host passed one.
-pub struct PocketCallbackPlatform {
-	/// Host card collection.
-	pub pocket: Arc<dyn NativePocketCallbacks>,
-	/// Events scoped to the execution, carrying card-list changes.
-	pub events: Arc<NativeEventBus>,
-}
-
-#[async_trait]
-impl crate::platform::PocketPlatform for PocketCallbackPlatform {
-	fn subscribe_pocket_cards(
-		&self,
-		_product: &ProductContext,
-	) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-		let pocket = self.pocket.clone();
-		Box::pin(self.events.subscribe_pocket_cards(move || {
-			pocket
-				.list_cards()
-				.map(|cards| v01::HostPocketListSubscribeItem { cards })
-				.map_err(|error| v01::GenericError { reason: error.to_string() })
-		}))
-	}
-
-	async fn remove_pocket_card(
-		&self,
-		_product: &ProductContext,
-		request: v01::HostPocketRemoveCardRequest,
-	) -> Result<(), v01::HostPocketRemoveCardError> {
-		let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
-			reason: error.to_string(),
-		};
-		match self.pocket.remove_card(request.card_id).await.map_err(unknown)? {
-			NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
-			// A card this host does not hold is already removed.
-			NativePocketRemoval::Absent => Ok(()),
-			NativePocketRemoval::Removed => {
-				// The removal stands either way. A host that can no longer
-				// list its cards says so on the stream rather than leaving the
-				// product on a list that still holds the removed card.
-				match self.pocket.list_cards() {
-					Ok(cards) => self.events.notify_pocket_cards_changed(cards),
-					Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
-						reason: error.to_string(),
-					}),
-				}
-				Ok(())
-			},
-		}
 	}
 }
 

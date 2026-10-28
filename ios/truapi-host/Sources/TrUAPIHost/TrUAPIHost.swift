@@ -168,7 +168,7 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Demand is runtime-wide, so the core invokes this only on the bridge
     /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
     /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``.
+    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``.
     /// Can arrive on any thread, including synchronously on the calling
     /// thread during `acquireWorker`/`releaseWorker`, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
@@ -221,7 +221,7 @@ public protocol HostBridge: AnyObject, Sendable {
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -267,28 +267,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func listRooms() async throws -> [ChatRoom]
 }
 
-/// Native Pocket collection surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
-/// when the host has a Pocket surface; hosts without one pass nothing. Called
-/// from the process-wide dispatch pool shared by every product execution:
-/// implementations must be safe to enter concurrently, and one that blocks
-/// stalls the others.
-///
-/// Throw ``HostRejection`` (or an error conforming to `LocalizedError`) to
-/// decline a call.
-public protocol PocketHostBridge: AnyObject, Sendable {
-    /// Return the product's cards as this host holds them, each carrying
-    /// whether the host pinned it.
-    func listCards() throws -> [PocketCard]
-
-    /// Remove one of the product's cards and report what happened. Decide and
-    /// remove together, under whatever lock this host holds, so a card cannot
-    /// be pinned between the two.
-    func removeCard(cardId: String) throws -> NativePocketRemoval
-}
-
 /// Native game-reminder surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:game:)``
 /// when the host can hold reminders; hosts without one pass nothing. Both
 /// calls are async, so an implementation may hop to the main actor to answer;
 /// implementations must be safe to enter concurrently.
@@ -513,24 +493,6 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
 
     func listRooms() async throws -> [ChatRoom] {
         try await withHostRejection { try await bridge.listRooms() }
-    }
-}
-
-/// Adapter that bridges the public `PocketHostBridge` to the generated UniFFI
-/// `NativePocketCallbacks` protocol.
-private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sendable {
-    private let bridge: PocketHostBridge
-
-    init(bridge: PocketHostBridge) {
-        self.bridge = bridge
-    }
-
-    func listCards() throws -> [PocketCard] {
-        try withHostRejection { try bridge.listCards() }
-    }
-
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        try withHostRejection { try bridge.removeCard(cardId: cardId) }
     }
 }
 
@@ -1033,24 +995,20 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
-    /// modality omit it. Pass `pocket` to install the card collection, and
-    /// omit that where the host has no Pocket surface. Pass `game` to hold
-    /// game reminders, and omit it where the host cannot.
+    /// modality omit it. Pass `game` to hold game reminders, and omit it
+    /// where the host cannot.
     public func openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = nil,
-        pocket: PocketHostBridge? = nil,
         game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge)
         let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
-        let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
         let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
         let execution = try inner.openProductExecution(
             callbacks: adapter,
             chatCallbacks: chatAdapter,
-            pocketCallbacks: pocketAdapter,
             gameCallbacks: gameAdapter,
             executionConfig: configuration
         )
@@ -1058,7 +1016,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             inner: execution,
             callbackRetainer: adapter,
             chatRetainer: chatAdapter,
-            pocketRetainer: pocketAdapter,
             gameRetainer: gameAdapter
         )
     }
@@ -1157,6 +1114,32 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// path.
     public func coreDatabaseStatus() async throws -> DbStatus {
         try await inner.coreDatabaseStatus()
+    }
+
+    /// The Pocket collection, pinned cards first, now and after every change.
+    /// A read that fails ends the stream with an error; follow it again to
+    /// retry.
+    public func pocketCards() -> AsyncThrowingStream<[PocketEntry], Error> {
+        observedStream(PocketCardsStreamObserver.init(continuation:)) { observer in
+            inner.observePocketCards(observer: observer)
+        }
+    }
+
+    /// Adds a card the user approved, with the face they approved it by.
+    /// Screen its id and title with `screenPocketCardId` and
+    /// `screenPocketCardTitle` first.
+    public func addPocketCard(productId: String, cardId: String, title: String, face: RendererNode) async throws {
+        try await inner.addPocketCard(productId: productId, cardId: cardId, title: title, face: face)
+    }
+
+    /// Removes a card on the user's behalf, unless it is pinned.
+    public func removePocketCard(productId: String, cardId: String) async throws -> PocketCardRemoval {
+        try await inner.removePocketCard(productId: productId, cardId: cardId)
+    }
+
+    /// The newest face kept for a card, if one is.
+    public func pocketCardFace(productId: String, cardId: String) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId)
     }
 
     /// Decides durable transactions from the chain until none is live, then
@@ -1303,7 +1286,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func notifyChainClosed(connectionId: UInt32)
     func notifyChatRoomsChanged(rooms: [ChatRoom])
     func sessionChatIdentityKey() throws -> Data?
-    func notifyPocketCardsChanged(cards: [PocketCard])
 }
 
 /// One App, Widget, or Worker executable connected to a shared host runtime.
@@ -1311,20 +1293,17 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let inner: NativeProductExecution
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
-    private let pocketRetainer: NativePocketCallbacks?
     private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
         callbackRetainer: HostCallbacks,
         chatRetainer: NativeChatCallbacks?,
-        pocketRetainer: NativePocketCallbacks?,
         gameRetainer: NativeGameCallbacks?
     ) {
         self.inner = inner
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
-        self.pocketRetainer = pocketRetainer
         self.gameRetainer = gameRetainer
     }
 
@@ -1351,17 +1330,13 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func render(
         _ request: ProductRendererRenderRequest
     ) throws -> AsyncThrowingStream<RendererNode, Error> {
-        try rendererStream { observer in
+        try observedStream(RendererStreamObserver.init(continuation:)) { observer in
             try inner.render(request: request, observer: observer)
         }
     }
 
     public func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
         try inner.publishRendererAction(item: item)
-    }
-
-    public func notifyPocketCardsChanged(cards: [PocketCard]) {
-        inner.notifyPocketCardsChanged(cards: cards)
     }
 
     public func permissionAuthorizationStatus(
@@ -1470,14 +1445,13 @@ private func hostRejectionReason(_ error: Error) -> String {
 /// whole failed statement.
 private let hostRejectionReasonMaxCharacters = 256
 
-private func rendererStream(
-    _ subscribe: (RendererStreamObserver) throws -> NativeRendererSubscription
-) throws -> AsyncThrowingStream<RendererNode, Error> {
-    let (stream, continuation) = AsyncThrowingStream.makeStream(
-        of: RendererNode.self
-    )
-    let observer = RendererStreamObserver(continuation: continuation)
-    let subscription = try subscribe(observer)
+/// A core stream that `observer` feeds, cancelled when the stream terminates.
+private func observedStream<Element, Observer>(
+    _ observer: (AsyncThrowingStream<Element, Error>.Continuation) -> Observer,
+    _ subscribe: (Observer) throws -> NativeSubscription
+) rethrows -> AsyncThrowingStream<Element, Error> {
+    let (stream, continuation) = AsyncThrowingStream.makeStream(of: Element.self)
+    let subscription = try subscribe(observer(continuation))
     continuation.onTermination = { @Sendable _ in
         subscription.cancel()
     }
@@ -1503,6 +1477,22 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
     /// partial. Finishing with an error keeps that distinct from a clean end.
     func onError(reason: String) {
         continuation.finish(throwing: RendererStreamError(reason: reason))
+    }
+}
+
+private final class PocketCardsStreamObserver: NativePocketObserver, @unchecked Sendable {
+    private let continuation: AsyncThrowingStream<[PocketEntry], Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<[PocketEntry], Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onCards(cards: [PocketEntry]) {
+        continuation.yield(cards)
+    }
+
+    func onError(reason: String) {
+        continuation.finish(throwing: HostRejection.Rejected(reason: reason))
     }
 }
 

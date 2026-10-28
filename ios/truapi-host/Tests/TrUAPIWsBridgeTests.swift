@@ -299,11 +299,3 @@ final class StubChatHostBridge: ChatHostBridge {
 
     func listRooms() async throws -> [ChatRoom] { [] }
 }
-
-// Conforms to `PocketHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
-final class StubPocketHostBridge: PocketHostBridge {
-    func listCards() throws -> [PocketCard] { [] }
-
-    func removeCard(cardId _: String) throws -> NativePocketRemoval { .absent }
-}

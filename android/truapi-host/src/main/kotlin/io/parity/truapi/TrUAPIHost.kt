@@ -29,6 +29,7 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -40,7 +41,6 @@ import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
-import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
@@ -64,9 +64,11 @@ import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.RecoveryException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
-import uniffi.truapi.NativePocketCallbacks
-import uniffi.truapi.NativePocketRemoval
+import uniffi.truapi.NativePocketObserver
 import uniffi.truapi.NativeRendererObserver
+import uniffi.truapi.NativeSubscription
+import uniffi.truapi.PocketCardRemoval
+import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
@@ -457,32 +459,6 @@ interface ChatHostBridge {
 }
 
 /**
- * Native Pocket collection surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host has a Pocket surface;
- * hosts without one pass nothing.
- *
- * Threading: [listCards] runs inline on the core runtime shared by every
- * product execution, so it must be safe to enter concurrently and return
- * promptly. [removeCard] suspends, so it can wait on the host's storage.
- */
-interface PocketHostBridge {
-    /**
-     * Return the product's cards as this host holds them, each carrying
-     * whether the host pinned it.
-     */
-    @Throws(HostRejection::class)
-    fun listCards(): List<PocketCard>
-
-    /**
-     * Remove one of the product's cards and report what happened. Decide and
-     * remove together, under whatever lock this host holds, so a card cannot
-     * be pinned between the two.
-     */
-    @Throws(HostRejection::class)
-    suspend fun removeCard(cardId: String): NativePocketRemoval
-}
-
-/**
  * Native game-reminder surface. Implement and pass to
  * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
  * hosts without one pass nothing.
@@ -716,10 +692,6 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 }
 
 /**
- * Adapter from the public [PocketHostBridge] surface to the generated UniFFI
- * [NativePocketCallbacks] interface.
- */
-/**
  * Native contacts surface: the user's contact list, and the picker drawn over
  * it. Install with [TrUAPIHostRuntime.setContacts], once, because the list
  * belongs to the host and not to any one product. A runtime without one
@@ -775,13 +747,6 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
         executionKind: ProductExecutionKind,
         request: HostScannerScanRequest,
     ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
-}
-
-private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
-    override fun listCards(): List<PocketCard> = withHostRejection { bridge.listCards() }
-
-    override suspend fun removeCard(cardId: String): NativePocketRemoval =
-        withHostRejection { bridge.removeCard(cardId) }
 }
 
 /**
@@ -1030,31 +995,27 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /**
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
-     * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface. Pass [game] to hold game
-     * reminders, and omit it where the host cannot.
+     * modality omit it. Pass [game] to hold game reminders, and omit it where
+     * the host cannot.
      */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
-        pocket: PocketHostBridge? = null,
         game: GameHostBridge? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
-        val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
         val gameAdapter = game?.let { GameCallbackAdapter(it) }
         val execution =
             inner.openProductExecution(
                 adapter,
                 chatAdapter,
-                pocketAdapter,
                 gameAdapter,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, gameAdapter)
+        return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
     /**
@@ -1159,6 +1120,46 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
     /**
+     * The Pocket collection, pinned cards first, now and after every change. A
+     * read that fails ends the flow with [HostRejection]; collect it again to
+     * retry.
+     */
+    fun pocketCards(): Flow<List<PocketEntry>> =
+        observedFlow {
+            inner.observePocketCards(
+                object : NativePocketObserver {
+                    // Declared infallible by the core, so a throw here would abort the process.
+                    override fun onCards(cards: List<PocketEntry>) {
+                        runCatching { trySend(cards) }
+                    }
+
+                    override fun onError(reason: String) {
+                        runCatching { close(HostRejection.Rejected(reason)) }
+                    }
+                },
+            )
+        }
+
+    /**
+     * Add a card the user approved, with the face they approved it by. Screen
+     * its id and title with `screenPocketCardId` and `screenPocketCardTitle`
+     * first.
+     */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun addPocketCard(productId: String, cardId: String, title: String, face: RendererNode) =
+        inner.addPocketCard(productId, cardId, title, face)
+
+    /** Remove a card on the user's behalf, unless it is pinned. */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun removePocketCard(productId: String, cardId: String): PocketCardRemoval =
+        inner.removePocketCard(productId, cardId)
+
+    /** The newest face kept for a card, if one is. */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun pocketCardFace(productId: String, cardId: String): RendererNode? =
+        inner.pocketCardFace(productId, cardId)
+
+    /**
      * Decide durable transactions from the chain until none is live, then
      * return. Await it from the background task [HostBridge.durableWorkChanged]
      * asks for; a throw means recovery stopped early and the task should be
@@ -1252,6 +1253,20 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 }
 
+/**
+ * A core stream that the observer [subscribe] installs feeds, cancelled when
+ * collection ends. Each emission replaces the last, so only the latest is kept
+ * when the collector falls behind.
+ */
+private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscription): Flow<T> =
+    callbackFlow {
+        val subscription = subscribe()
+        awaitClose {
+            subscription.cancel()
+            subscription.close()
+        }
+    }.conflate()
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1266,7 +1281,6 @@ class TrUAPIProductExecution internal constructor(
     private val inner: NativeProductExecution,
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
-    private val pocketRetainer: NativePocketCallbacks?,
     private val gameRetainer: NativeGameCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
@@ -1311,8 +1325,9 @@ class TrUAPIProductExecution internal constructor(
      * when the collector falls behind.
      */
     fun render(request: ProductRendererRenderRequest): Flow<RendererNode> =
-        callbackFlow {
-            val observer =
+        observedFlow {
+            inner.render(
+                request,
                 object : NativeRendererObserver {
                     // The core declares all three infallible, so uniffi has no
                     // error type to convert a throw into and panics -- which
@@ -1330,13 +1345,9 @@ class TrUAPIProductExecution internal constructor(
                     override fun onError(reason: String) {
                         runCatching { close(RendererStreamException(reason)) }
                     }
-                }
-            val subscription = inner.render(request, observer)
-            awaitClose {
-                subscription.cancel()
-                subscription.close()
-            }
-        }.conflate()
+                },
+            )
+        }
 
     /**
      * Publish one native renderer action, buffering it until the product
@@ -1345,14 +1356,6 @@ class TrUAPIProductExecution internal constructor(
     @Throws(ProductRuntimeException::class)
     fun publishRendererAction(item: HostRendererActionSubscribeItem) {
         inner.publishRendererAction(item)
-    }
-
-    /**
-     * Republish the product-scoped card list. Call it whenever the host's own
-     * collection changes, including after the user removes a card.
-     */
-    fun notifyPocketCardsChanged(cards: List<PocketCard>) {
-        inner.notifyPocketCardsChanged(cards)
     }
 
     /** Read the active session's X25519 chat identity private key, if any. */

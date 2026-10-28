@@ -21,97 +21,20 @@ use crate::{
 };
 
 use super::{
-	callbacks::{
-		HostCallbacks, NativeChatCallbacks, NativeGameCallbacks, NativePocketCallbacks,
-		NativePocketRemoval,
-	},
+	callbacks::{HostCallbacks, NativeChatCallbacks, NativeGameCallbacks},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
 		ProductExecutionConfig, native_host_platform,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
-	platform::{
-		CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform, PocketCallbackPlatform,
-	},
+	platform::{CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform},
 	runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime},
 };
 use crate::platform::CreateTransactionReview;
-use futures::FutureExt;
 use truapi::{Bytes32, v01::LegacyAccountTxPayload};
 
 pub type PreimageFixtureEntries = Vec<(Vec<u8>, Option<Vec<u8>>)>;
-
-pub fn pocket_card(card_id: &str, privileged: bool) -> v01::PocketCard {
-	v01::PocketCard { card_id: card_id.to_string(), privileged }
-}
-
-/// Everything a Pocket stream has already queued, so a missing item reads
-/// as pending here rather than hanging the test.
-pub fn drain_pocket(
-	stream: &mut BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>>,
-) -> Vec<Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-	let mut seen = Vec::new();
-	while let Some(Some(item)) = stream.next().now_or_never() {
-		seen.push(item);
-	}
-	seen
-}
-
-/// The snapshot is read while the subscriber mutex is held, so it is the
-/// first item and every later change follows it in order. Delivering a
-/// queued change first would leave the product on the older list, with the
-/// snapshot overwriting it.
-#[test]
-fn a_pocket_subscriber_sees_its_snapshot_before_later_changes() {
-	let bus = NativeEventBus::default();
-	let mut stream = bus.subscribe_pocket_cards(|| {
-		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
-	});
-	bus.notify_pocket_cards_changed(vec![
-		pocket_card("loyalty", false),
-		pocket_card("humanity", true),
-	]);
-
-	assert_eq!(
-		drain_pocket(&mut stream),
-		vec![
-			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
-			Ok(v01::HostPocketListSubscribeItem {
-				cards: vec![pocket_card("loyalty", false), pocket_card("humanity", true)],
-			}),
-		]
-	);
-}
-
-/// A host that cannot say what it holds reaches the product as a failed
-/// stream. Reporting an empty list instead would read as "you own no
-/// cards" and wipe the product's view of its own collection.
-#[test]
-fn a_pocket_host_failure_reaches_the_product_instead_of_an_empty_list() {
-	let bus = NativeEventBus::default();
-	let mut opening = bus.subscribe_pocket_cards(|| {
-		Err(v01::GenericError { reason: "card store unavailable".to_string() })
-	});
-	assert_eq!(
-		drain_pocket(&mut opening),
-		vec![Err(v01::GenericError { reason: "card store unavailable".to_string() })]
-	);
-
-	let mut live = bus.subscribe_pocket_cards(|| {
-		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
-	});
-	bus.notify_pocket_cards_failed(v01::GenericError {
-		reason: "card store went away".to_string(),
-	});
-	assert_eq!(
-		drain_pocket(&mut live),
-		vec![
-			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
-			Err(v01::GenericError { reason: "card store went away".to_string() }),
-		]
-	);
-}
 
 #[test]
 fn an_unexpected_foreign_error_converts_instead_of_panicking() {
@@ -164,8 +87,6 @@ pub struct EventCallbacks {
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
 	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
-	pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
-	pub pocket_removed: Mutex<Vec<String>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -218,8 +139,6 @@ impl EventCallbacks {
 			chat_post_rejection: Mutex::new(None),
 			chat_room_footers: Mutex::new(Vec::new()),
 			chat_posted: Mutex::new(Vec::new()),
-			pocket_cards: Mutex::new(Vec::new()),
-			pocket_removed: Mutex::new(Vec::new()),
 			theme: Mutex::new(v01::HostThemeSubscribeItem {
 				name: v01::ThemeName::Default,
 				variant: v01::ThemeVariant::Light,
@@ -447,28 +366,6 @@ impl HostCallbacks for EventCallbacks {
 }
 
 #[async_trait::async_trait]
-impl NativePocketCallbacks for EventCallbacks {
-	fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection> {
-		Ok(self.pocket_cards.lock().expect("pocket cards mutex poisoned").clone())
-	}
-
-	async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection> {
-		let mut cards = self.pocket_cards.lock().expect("pocket cards mutex poisoned");
-		let outcome = match cards.iter().find(|card| card.card_id == card_id) {
-			None => NativePocketRemoval::Absent,
-			Some(card) if card.privileged => NativePocketRemoval::Privileged,
-			Some(_) => {
-				cards.retain(|card| card.card_id != card_id);
-				NativePocketRemoval::Removed
-			},
-		};
-		drop(cards);
-		self.pocket_removed.lock().expect("pocket removed mutex poisoned").push(card_id);
-		Ok(outcome)
-	}
-}
-
-#[async_trait::async_trait]
 impl NativeChatCallbacks for EventCallbacks {
 	async fn create_room(
 		&self,
@@ -598,6 +495,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
+		pinned_pocket_cards: Vec::new(),
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
 	}
@@ -621,7 +519,6 @@ pub fn native_product_execution(
 		.expect("host runtime config should be valid");
 	host.open_product_execution(
 		callbacks,
-		None,
 		None,
 		None,
 		native_execution_config(product_id, ProductExecutionKind::App),
@@ -863,96 +760,6 @@ fn process_runtime_counts_worker_references_under_the_normalized_product_id() {
 	);
 }
 
-/// A host removes a card through its own storage, which can take a while,
-/// so the core waits for the answer without holding the thread that asked.
-#[test]
-fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
-	struct DeferredRemoval {
-		outcome: Mutex<Option<futures::channel::oneshot::Receiver<NativePocketRemoval>>>,
-	}
-
-	#[async_trait::async_trait]
-	impl NativePocketCallbacks for DeferredRemoval {
-		fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection> {
-			Ok(Vec::new())
-		}
-
-		async fn remove_card(
-			&self,
-			_card_id: String,
-		) -> Result<NativePocketRemoval, HostRejection> {
-			let outcome = self.outcome.lock().unwrap().take().expect("one removal");
-			Ok(outcome.await.expect("the host answers"))
-		}
-	}
-
-	let (answer, outcome) = futures::channel::oneshot::channel();
-	let platform = PocketCallbackPlatform {
-		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
-		events: Arc::new(NativeEventBus::default()),
-	};
-	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
-	let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
-		&platform,
-		&product,
-		v01::HostPocketRemoveCardRequest { card_id: "humanity".to_string() },
-	);
-
-	let waker = futures::task::noop_waker();
-	let mut context = core::task::Context::from_waker(&waker);
-	assert!(removal.poll_unpin(&mut context).is_pending());
-
-	answer.send(NativePocketRemoval::Privileged).unwrap();
-	assert!(matches!(
-		futures::executor::block_on(removal),
-		Err(v01::HostPocketRemoveCardError::Privileged)
-	));
-}
-
-#[test]
-fn native_pocket_removal_outcomes_are_decided_by_the_host() {
-	let pocket_host = Arc::new(EventCallbacks::new());
-	*pocket_host.pocket_cards.lock().expect("pocket cards mutex poisoned") =
-		vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
-	let events = Arc::new(NativeEventBus::default());
-	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
-	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
-	let remove = |card_id: &str| {
-		futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
-			&platform,
-			&product,
-			v01::HostPocketRemoveCardRequest { card_id: card_id.to_string() },
-		))
-	};
-	let mut cards = crate::platform::PocketPlatform::subscribe_pocket_cards(&platform, &product);
-	let first = futures::executor::block_on(cards.next())
-		.expect("the current list arrives on subscribe")
-		.expect("no stream error");
-	assert_eq!(first.cards, vec![pocket_card("loyalty", false), pocket_card("humanity", true)]);
-
-	assert!(matches!(remove("humanity"), Err(v01::HostPocketRemoveCardError::Privileged)));
-	assert!(remove("absent").is_ok(), "an absent card is already removed");
-	assert!(remove("loyalty").is_ok());
-	assert_eq!(
-		pocket_host
-			.pocket_removed
-			.lock()
-			.expect("pocket removed mutex poisoned")
-			.as_slice(),
-		["humanity", "absent", "loyalty"],
-		"the host decides every removal, so every request reaches it"
-	);
-
-	let republished = futures::executor::block_on(cards.next())
-		.expect("a removal republishes the list")
-		.expect("no stream error");
-	assert_eq!(
-		republished.cards,
-		vec![pocket_card("humanity", true)],
-		"the pinned card stays and the removed one is gone"
-	);
-}
-
 #[derive(Default)]
 struct RecordingGameCallbacks {
 	calls: Mutex<Vec<Option<u64>>>,
@@ -999,7 +806,6 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 	let execution = host
 		.open_product_execution(
 			Arc::new(EventCallbacks::new()),
-			None,
 			None,
 			None,
 			native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
@@ -2592,7 +2398,6 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 			callbacks,
 			None,
 			None,
-			None,
 			native_execution_config("first.dot", ProductExecutionKind::App),
 		)
 		.expect("open execution");
@@ -2626,7 +2431,6 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
 		host.open_product_execution(
 			callbacks[index].clone(),
-			None,
 			None,
 			None,
 			native_execution_config(product_id, ProductExecutionKind::App),
@@ -2702,7 +2506,6 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 			Arc::new(EventCallbacks::new()),
 			None,
 			None,
-			None,
 			native_execution_config("shared.dot", ProductExecutionKind::App),
 		)
 		.expect("App execution should open");
@@ -2711,7 +2514,6 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 		.open_product_execution(
 			chat_host.clone(),
 			Some(chat_host),
-			None,
 			None,
 			native_execution_config("shared.dot", ProductExecutionKind::Worker),
 		)
@@ -2887,7 +2689,6 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
 				callbacks.clone(),
 				None,
 				None,
-				None,
 				native_execution_config("fetch.dot", ProductExecutionKind::Worker),
 			)
 			.unwrap();
@@ -2956,7 +2757,6 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
 				callbacks.clone(),
 				None,
 				None,
-				None,
 				native_execution_config(product_id, ProductExecutionKind::App),
 			)
 			.unwrap()
@@ -3006,7 +2806,6 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 				callbacks.clone(),
 				None,
 				None,
-				None,
 				native_execution_config("fetch.dot", ProductExecutionKind::App),
 			)
 			.unwrap();
@@ -3049,7 +2848,6 @@ fn a_native_status_read_follows_the_os_gate() {
 	let execution = host
 		.open_product_execution(
 			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
-			None,
 			None,
 			None,
 			native_execution_config("gated.dot", ProductExecutionKind::App),
