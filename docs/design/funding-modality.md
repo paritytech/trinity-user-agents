@@ -58,12 +58,14 @@ flowchart LR
 | Trait | Id | Methods | Caller |
 |---|---|---|---|
 | `Funding` | 22 | `request({ direction, amount? })` → `{ intent }` · `statusSubscribe({ intent })` | product |
-| `FundingProvider` | 24 | core → worker: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` | core and provider worker |
+| `FundingProvider` | 24 | core → worker requests: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` | core and provider worker |
 | `Payment` | 9 | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe` | provider worker |
 | `AuthTokens` | 27 (#1553) | `store` · `get` · `remove` | provider worker |
-| `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed` · `funding_quotes_changed` | core → host |
+| `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed(intent, status, progress)` · `funding_quotes_changed` | core → host |
 
 Session id: `fs_` + nanoid(10), for product- and host-opened sessions alike. Another product's session reads as `NotFound`.
+
+The host never reads a session back to draw it: each `funding_session_changed` carries its status and progress. Every session in flight, and every ended one not yet acknowledged, comes again when funding resumes, and a session comes again when it starts taking longer. The core awaits one answer to each provider request (10 s for `quote`, 60 s otherwise); a dropped call is stopped.
 
 Worker payments name their session (`funding`). A session the worker doesn't serve, the wrong direction, or a full session (≤3 top-ups/payments) → `FundingNotServed`. A repeat under the same id must ask the same.
 
@@ -71,7 +73,7 @@ Started funds are recorded Pending before the call and Accepted once the host ho
 
 ```mermaid
 flowchart LR
-  core["core asks · one answer item each"] --> Q["quote → Quoted | Refused"]
+  core["core requests · worker returns ok(answer)"] --> Q["quote → Quoted | Refused"]
   core --> A["assign → ack"]
   core --> C["cancel → Stopped | Offer | Refused"]
   core --> S["settleCancel(Accepted | Declined) → ack"]
@@ -102,6 +104,7 @@ sequenceDiagram
   W->>C: presentFrame
   C->>H: provider frame
   W->>C: AwaitingPayment, PaymentReceived, Converting
+  C->>H: funding_session_changed(intent, status, progress)
   W->>W: keep state, then payment.topUp(id, amount, funding: intent)
   C->>H: claim into CASH
   W->>C: Crediting(id, amount), Delivered
