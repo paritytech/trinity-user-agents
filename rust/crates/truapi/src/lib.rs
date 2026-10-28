@@ -220,18 +220,22 @@ pub mod latest {
 	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
 	/// Failure to set what a native chat room shows below its messages.
 	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
-	/// Failure of a request that changes a native chat room.
-	pub type HostChatRoomError = LatestOf<versioned::chat::HostChatRoomError>;
 	/// Failure of a chat query the host sends to a product.
 	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
 	/// Request to replace the name and description of a native chat room.
 	pub type HostChatSetRoomMetadataRequest =
 		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
+	/// Failure to replace the name and description of a native chat room.
+	pub type HostChatSetRoomMetadataError = LatestOf<versioned::chat::HostChatSetRoomMetadataError>;
 	/// Request to replace how a native chat room shows in the chat list.
 	pub type HostChatSetRoomPreviewRequest =
 		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
+	/// Failure to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewError = LatestOf<versioned::chat::HostChatSetRoomPreviewError>;
 	/// Request to delete a native chat room.
 	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
+	/// Failure to delete a native chat room.
+	pub type HostChatDeleteRoomError = LatestOf<versioned::chat::HostChatDeleteRoomError>;
 	/// Request to push one change to the messages of a native chat room.
 	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
 	/// Failure to push a change to the messages of a native chat room.
@@ -255,6 +259,8 @@ pub mod latest {
 		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
 	/// Request to set the parts of a native chat room the product serves.
 	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
+	/// Failure to declare the configuration of a native chat room.
+	pub type HostChatSetRoomConfigError = LatestOf<versioned::chat::HostChatSetRoomConfigError>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
