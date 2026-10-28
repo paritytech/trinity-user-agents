@@ -15,6 +15,7 @@
 // the core deliver it from the claim. Top-ups and payments go to the host's
 // ledger engines, which complete them in full.
 import { appendFileSync } from "node:fs";
+import { ok } from "neverthrow";
 import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import type {
   FundingAssignment,
@@ -40,6 +41,12 @@ export interface ProviderState {
 }
 
 type HexString = `0x${string}`;
+
+/** Run `work` once the handler's answer has gone out, so the core holds the
+ *  answer before the worker's next call about the same session. */
+function afterAnswer(work: () => unknown) {
+  setTimeout(work, 0);
+}
 
 const IN_AMOUNT = 1_100n;
 const OUT_AMOUNT = 550n;
@@ -101,8 +108,8 @@ export class ScriptedProvider {
   private readonly failures: string[] = [];
 
   constructor(private readonly client: TrUApiClient) {
-    client.fundingProvider.onQuote(({ ask }, send) => {
-      send({
+    client.fundingProvider.onQuote(({ ask }) =>
+      ok({
         tag: "Quoted",
         value: {
           quote: {
@@ -115,33 +122,34 @@ export class ScriptedProvider {
             assetDecimals: 2,
           },
         },
-      });
-    });
-    client.fundingProvider.onAssign(({ session }, send) => {
+      }),
+    );
+    client.fundingProvider.onAssign(({ session }) => {
       this.assigned.push(session);
-      send(undefined);
       const plan = this.plans.get(planKey(session.direction, session.amount));
       if (plan && !this.started.has(session.intent)) {
         this.started.add(session.intent);
-        plan(client, session).catch((error) =>
-          this.failures.push(`${session.intent}: ${String(error)}`),
+        afterAnswer(() =>
+          plan(client, session).catch((error) =>
+            this.failures.push(`${session.intent}: ${String(error)}`),
+          ),
         );
       }
+      return ok(undefined);
     });
-    client.fundingProvider.onCancel(({ intent }, send) => {
+    client.fundingProvider.onCancel(({ intent }) => {
       this.cancels.push(intent);
       // An answer may wait for the provider's own work, as an offer on a
       // withdrawal waits for its release.
-      Promise.resolve(
+      return Promise.resolve(
         this.cancelAnswers.get(intent) ?? {
           tag: "Refused",
           value: { reason: "the battery set no answer" },
         },
-      ).then(send);
+      ).then((answer) => ok(answer));
     });
-    client.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
+    client.fundingProvider.onSettleCancel(({ intent, decision }) => {
       this.settled.push({ intent, decision });
-      send(undefined);
       if (decision.tag === "Accepted") {
         const settle =
           this.onAccepted.get(intent) ??
@@ -150,10 +158,13 @@ export class ScriptedProvider {
               tag: "Failed",
               value: { reason: { tag: "Cancelled" } },
             }));
-        settle().catch((error) =>
-          this.failures.push(`${intent}: ${String(error)}`),
+        afterAnswer(() =>
+          settle().catch((error) =>
+            this.failures.push(`${intent}: ${String(error)}`),
+          ),
         );
       }
+      return ok(undefined);
     });
   }
 

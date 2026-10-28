@@ -3210,3 +3210,83 @@ fn screening_normalizes_and_trims() {
 	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
+
+/// A native funding overlay the user starts at once, recording each change
+/// the core hands it.
+#[derive(Default)]
+struct RecordingNativeFunding {
+	changes: Mutex<
+		Vec<(
+			String,
+			v01::HostFundingStatusSubscribeItem,
+			Option<crate::host_logic::funding::FundingProgress>,
+		)>,
+	>,
+}
+
+#[async_trait::async_trait]
+impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
+	async fn present_funding(
+		&self,
+		_product_id: Option<ProductId>,
+		_intent: String,
+		_direction: v01::FundingDirection,
+		_amount: Option<u128>,
+	) -> Result<crate::platform::FundingPresentOutcome, HostRejection> {
+		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider_id: String,
+		_intent: String,
+		_target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection> {
+		Ok(v01::FundingFrameOutcome::Closed)
+	}
+
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.changes
+			.lock()
+			.expect("changes mutex poisoned")
+			.push((intent, status, progress));
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		None
+	}
+
+	fn funding_quotes_changed(&self, _intent: String, _quotes: crate::platform::FundingQuoteList) {}
+}
+
+// The host draws a session from what the change hands it, so the change
+// carries the session's progress as the core holds it.
+#[test]
+fn a_funding_change_carries_the_sessions_progress() {
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+
+	let intent =
+		futures::executor::block_on(host.open_funding(v01::FundingDirection::In, Some(1_000)))
+			.expect("opened")
+			.expect("started");
+
+	let session = host.funding_session(intent.clone()).expect("session kept");
+	let changes = funding.changes.lock().expect("changes mutex poisoned").clone();
+	assert_eq!(
+		changes
+			.last()
+			.map(|(announced, _, progress)| (announced.clone(), progress.clone())),
+		Some((intent, Some(session.progress(crate::unix_time::current_unix_millis()))))
+	);
+}
