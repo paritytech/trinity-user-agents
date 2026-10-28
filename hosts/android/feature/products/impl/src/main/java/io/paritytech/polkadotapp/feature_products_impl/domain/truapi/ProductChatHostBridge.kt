@@ -83,7 +83,7 @@ class ProductChatHostBridge(
     }
 
     override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) {
-        chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel()).orReject()
+        chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel(productId)).orReject()
     }
 
     override suspend fun deleteRoom(roomId: String) {
@@ -97,7 +97,7 @@ class ProductChatHostBridge(
     override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
         if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
         val room = ProductChatIdParameter(roomId)
-        val model = update.toModel()
+        val model = update.toModel(productId)
 
         if (!persist) {
             if (!chatMessaging.deliverLiveFeedUpdate(room, model)) Timber.d("truapi.chat.updateFeed for %s: no open room", roomId)

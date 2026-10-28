@@ -395,18 +395,23 @@ pub fn validate_chat_message_content(
 		Content::ReactionRemoved(reaction) => {
 			Content::ReactionRemoved(validate_chat_reaction(reaction)?)
 		},
-		Content::Custom(custom) => {
-			if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
-				return Err(ChatFieldError::TooLong {
-					field: "payload",
-					limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
-				});
-			}
-			Content::Custom(ChatCustomMessage {
-				message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
-				payload: custom.payload,
-			})
-		},
+		Content::Custom(custom) => Content::Custom(validate_chat_custom_message(custom)?),
+	})
+}
+
+/// Validate a message that the product draws through `Renderer::render`.
+fn validate_chat_custom_message(
+	custom: ChatCustomMessage,
+) -> Result<ChatCustomMessage, ChatFieldError> {
+	if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
+		return Err(ChatFieldError::TooLong {
+			field: "payload",
+			limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
+		});
+	}
+	Ok(ChatCustomMessage {
+		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
+		payload: custom.payload,
 	})
 }
 
@@ -770,6 +775,13 @@ pub fn validate_chat_message_body(
 				text: text.map(|text| validate_chat_body("text", &text)).transpose()?,
 				media: media.into_iter().map(validate_chat_media_item).collect::<Result<_, _>>()?,
 			}
+		},
+		ChatMessageBody::Custom { message, alt } => ChatMessageBody::Custom {
+			message: validate_chat_custom_message(message)?,
+			alt: alt
+				.map(|alt| validate_chat_name("alt", &alt))
+				.transpose()?
+				.filter(|alt| !alt.is_empty()),
 		},
 		body @ (ChatMessageBody::Event(_) |
 		ChatMessageBody::Call(_) |
@@ -2931,6 +2943,41 @@ mod tests {
 		assert_eq!(
 			validate_chat_message_body(many(CHAT_MEDIA_MAX + 1)),
 			Err(ChatFieldError::TooMany { field: "media", limit: CHAT_MEDIA_MAX })
+		);
+	}
+
+	// A custom body gets the checks of a custom message that a product posts,
+	// and the host shows its `alt` where it shows the `alt` of a post.
+	#[test]
+	fn a_custom_body_is_screened_like_a_posted_custom_message() {
+		let custom =
+			|message_type: &str, payload: Vec<u8>, alt: Option<&str>| ChatMessageBody::Custom {
+				message: ChatCustomMessage { message_type: message_type.to_string(), payload },
+				alt: alt.map(str::to_string),
+			};
+		assert_eq!(
+			validate_chat_message_body(custom(" poll ", vec![1], Some("A poll"))),
+			Ok(custom("poll", vec![1], Some("A poll")))
+		);
+		assert_eq!(
+			validate_chat_message_body(custom("poll", vec![1], Some(""))),
+			Ok(custom("poll", vec![1], None))
+		);
+		assert_eq!(
+			validate_chat_message_body(custom("poll", vec![1], Some("a\u{202e}b"))),
+			Err(ChatFieldError::UnsafeCharacter { field: "alt" })
+		);
+		assert_eq!(
+			validate_chat_message_body(custom("  ", Vec::new(), None)),
+			Err(ChatFieldError::Empty { field: "messageType" })
+		);
+		assert_eq!(
+			validate_chat_message_body(custom(
+				"poll",
+				vec![0; CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
+				None
+			)),
+			Err(ChatFieldError::TooLong { field: "payload", limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES })
 		);
 	}
 
