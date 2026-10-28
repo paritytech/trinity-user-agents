@@ -440,9 +440,9 @@ fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
 		},
 		latest::ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
 		latest::ChatFeedUpdate::ReactionRemoved { participant_id, .. } => participant_id,
-		latest::ChatFeedUpdate::Edited { .. } | latest::ChatFeedUpdate::StatusChanged { .. } => {
-			return false;
-		},
+		latest::ChatFeedUpdate::Edited { .. } |
+		latest::ChatFeedUpdate::StatusChanged { .. } |
+		latest::ChatFeedUpdate::Deleted { .. } => return false,
 	};
 	participant_id == USER_PARTICIPANT_ID
 }
@@ -905,6 +905,25 @@ mod tests {
 
 	// In a room that the product keeps, the product reports all changes, also
 	// the messages and reactions of the user. The host only shows them.
+	// A deletion names no author, so the core sends it to the host. The host
+	// refuses the deletion of a message that the product did not write.
+	#[test]
+	fn a_product_deletes_a_message_in_a_room_the_host_keeps() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+		let runtime = chat_runtime(chat.clone());
+
+		let deleted = |id: &str| latest::ChatFeedUpdate::Deleted { message_id: id.to_string() };
+		update_feed(&runtime, "stored", deleted(" m1 ")).expect("a stored deletion");
+
+		let feed = chat.feed.lock().unwrap().clone();
+		assert_eq!(
+			feed.into_iter()
+				.map(|(request, persist)| (request.update, persist))
+				.collect::<Vec<_>>(),
+			[(deleted("m1"), true)]
+		);
+	}
+
 	#[test]
 	fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
 		let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
