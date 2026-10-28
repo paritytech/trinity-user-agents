@@ -788,7 +788,6 @@ fn validate_chat_media_meta(meta: ChatMediaMeta) -> Result<ChatMediaMeta, ChatFi
 			.map(|placeholder| validate_chat_name("placeholder", &placeholder))
 			.transpose()?,
 		alt: meta.alt.map(|alt| validate_chat_name("alt", &alt)).transpose()?,
-		duration_ms: None,
 		..meta
 	})
 }
@@ -2865,6 +2864,24 @@ mod tests {
 			)
 			.is_err()
 		);
+	}
+
+	// The host shows the length of a video, so the screen must keep it.
+	#[test]
+	fn a_video_keeps_its_length() {
+		let video = ChatMediaItem::Video {
+			resource: hop("wss://hop.example", 1_000),
+			meta: ChatMediaMeta {
+				mime_type: "video/mp4".to_string(),
+				size_bytes: None,
+				width: None,
+				height: None,
+				placeholder: None,
+				alt: None,
+				duration_ms: Some(12_000),
+			},
+		};
+		assert_eq!(validate_chat_media_item(video.clone()), Ok(video));
 	}
 
 	#[test]
