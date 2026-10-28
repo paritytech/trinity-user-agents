@@ -272,6 +272,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             return await perform(hasReaction
                 ? .reactionRemoved(messageId: messageId, emoji: emoji)
                 : .reactionPlaced(messageId: messageId, emoji: emoji))
+        case let .delete(messageId):
+            return await perform(.deleteMessage(messageId: messageId))
         }
     }
 

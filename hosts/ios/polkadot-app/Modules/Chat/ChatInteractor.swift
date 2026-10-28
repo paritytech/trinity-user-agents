@@ -332,6 +332,16 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         }
     }
 
+    func deleteMessage(messageId: String) {
+        Task {
+            do {
+                try await perform(.delete(messageId: messageId))
+            } catch {
+                logger.error("\(error)")
+            }
+        }
+    }
+
     func leaveChat() {
         Task {
             do {

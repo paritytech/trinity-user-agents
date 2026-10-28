@@ -22,6 +22,14 @@ struct ChatInteractorUserActionTests {
         #expect(await nextCall() == .perform(.toggleReaction(messageId: "m1", emoji: "👍")))
     }
 
+    @Test func aDeleteGoesThroughTheSource() async {
+        let interactor = makeInteractor()
+
+        interactor.deleteMessage(messageId: "m1")
+
+        #expect(await nextCall() == .perform(.delete(messageId: "m1")))
+    }
+
     /// The source decides which message is the newest seen, so the interactor gives it every visible id.
     @Test func seenMessagesGoToTheSourceUnfiltered() async {
         let interactor = makeInteractor()

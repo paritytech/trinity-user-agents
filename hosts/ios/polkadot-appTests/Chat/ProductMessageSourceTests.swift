@@ -334,6 +334,33 @@ struct ProductMessageSourceTests {
         #expect(await source.snapshot.messages.first { $0.messageId == "m3" }?.content == .text("message 3"))
     }
 
+    /// The message leaves the window and the cached page only when the product takes the delete.
+    @Test func aDeleteLeavesTheWindowAndTheCachedPageWhenTheProductTakesIt() async throws {
+        let cache = ProductMessageCache()
+        let history = ProductRoomHistory(count: 3, origin: "user")
+        let querying = ScriptedProductChatQuerying(page: history.answer, action: { _ in .acknowledged })
+        let source = makeSource(querying, cache: cache)
+        await open(source)
+
+        #expect(try await source.perform(.delete(messageId: "m1")) == .done)
+
+        #expect(querying.actionRequests.map(\.action) == [.deleteMessage(messageId: "m1")])
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m2"])
+        #expect(await cache.entry(productId: productId, roomId: roomId)?.messages.map(\.messageId) == ["m0", "m2"])
+    }
+
+    @Test func aRefusedDeleteKeepsTheMessage() async throws {
+        let history = ProductRoomHistory(count: 3, origin: "user")
+        let querying = ScriptedProductChatQuerying(page: history.answer, action: { _ in
+            throw ChatQueryError.actionRefused(.rejected(reason: "Too late"))
+        })
+        let source = makeSource(querying)
+        await open(source)
+
+        #expect(try await source.perform(.delete(messageId: "m1")) == .refused(reason: "Too late"))
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m1", "m2"])
+    }
+
     @Test func aReactionTogglesTheReactionOfTheUser() async throws {
         let history = ProductRoomHistory(count: 2)
         let querying = ScriptedProductChatQuerying(page: history.answer)
