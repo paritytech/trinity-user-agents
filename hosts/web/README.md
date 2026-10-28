@@ -779,11 +779,12 @@ authenticate both directions, and the products see only payloads and opaque hand
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
   `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
   transcripts their evidence covers, `sealing.ts` the sealing, `invitation-service.ts` one user's host side, and
-  `outbox.ts` and `received.ts` what it keeps. `src/dev-tools/` holds what only tests and the dev server use: fixture
-  contacts and identities, the local delivery, the Developer section (`dev-tools.ts`), the test users, the sample
-  notifications and Example Chat. `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end.
-  Only a dev server on this machine loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads
-  the test user's contacts in place of the chat contacts.
+  `outbox.ts` and `received.ts` what it keeps. What only tests and the dev server use lives outside it:
+  `fixtures/invitations/` holds the fixture contacts and identities, the local delivery and the test users,
+  `fixtures/notifications/` the sample notifications, `fixtures/products/example-chat/` Example Chat, and
+  `tools/demos/dev-tools.ts` the Developer section. `tests/unit/invitations/invitation-flow.test.ts` runs two and three
+  users end to end. Only a dev server on this machine loads the Developer section, so a build has none of it; the host's
+  contact picker reads the test user's contacts in place of the chat contacts.
 
 ### Contacts
 
@@ -1271,55 +1272,70 @@ a project path, the inspector's rendering, and layout on narrow screens.
 
 ## Layout
 
-- `src/main.ts`: the page and its wiring. `src/products/product.ts`: embedding a product and relaying its frames to the
-  core. `src/app/callbacks.ts`, `src/app/prompt.ts`, `src/app/reviews.ts`: the host callbacks and prompts.
-- `src/platform/wallets.ts`, `src/platform/storage.ts`: wallet and per-wallet, per-network storage.
-  `src/platform/network.ts`, `src/platform/network-config.ts`, `src/platform/network-choice.ts`: the light client, the
-  networks it serves and the per-tab choice. `src/platform/follow-spread.ts`: spreading the core's follows over
-  light-client connections. `src/products/preimage.ts`: preimage lookups from the Bulletin gateway.
-- `src/products/dotns.ts`, `src/app/address.ts`: name lookup and the address bar's grammar.
-- `src/app/shell.ts`: the dock's destinations and saved addresses, and what a product's `navigateTo` turns into.
-  `src/pocket/pocket.ts`, `src/pocket/screen.ts`: the Pocket cards, the Pocket the core's calls see, and how the screen
-  draws them. `src/pocket/faces.ts`, `src/pocket/card-view.ts`: a card's kept and live faces, and drawing them on the
-  card. `src/pocket/widget.ts`: finding the Widget an opened card runs.
-- `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
-  `identity.ts` gives the engine their operations and never the keys, `protocol.ts` and `statement.ts` are the wire,
-  `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain reads, `store.ts` the saved conversations and
-  `engine.ts` ties them together, and `diagnostics.ts` holds its events. `hop.ts` moves files through HOP
-  (`hop-memory.ts` is the node tests use), `call-wire.ts` is the call signaling, `call.ts` runs a call and `turn.ts`
-  gets its relay credentials (`src/chat/account-proofs.ts` asks the core for the proof). `src/chat/call-view.ts` draws a
-  call over every screen. `capture.ts` keeps payloads when the user asks, `inspect.ts` decodes them, and `memory-rpc.ts`
-  is the in-memory store tests use. `src/chat/screen.ts` draws the Chat screen,
-  `tools/inspector/chat-diagnostics-view.ts` the inspector's Chat tab and `tools/inspector/chat-transport-view.ts` an
-  event's payload layers.
-- `src/contacts/contacts.ts`: the contact picker and handle lookup.
-- `src/contacts/username-directory.ts`: finding people by username for the contact picker.
-- `src/contacts/username-search.ts`, `username-search-plugin.ts`: the dev server's username search route.
-- `src/app/chrome.ts`, `src/app/layout.ts`: the developer tools' zone, its tabs, side and Focus.
-  `src/app/search-card.ts`: the Pill's address card. `tools/viewport.ts`: the app's preview size and frame.
-- `src/notifications/notifications.ts`, `src/notifications/screen.ts`: the Inbox prototype. `src/chat/tabs.ts`: Chat's
-  Chats | Inbox tabs. `src/app/apps-shelf.ts`: the dock's Apps entry and its shelf.
-- `src/products/workers-menu.ts`: Product → Workers. `tools/demos/chat-demo.ts`: More → Chat demo.
-- `src/invitations/`: invitations between users' hosts. `src/dev-tools/`: More's dev server controls, test users and
-  Example Chat, loaded only by a dev server.
-- `src/chat/provider.ts`: the interface between the Chat screen and its chats. `src/chat/inbox.ts`: the session's
-  providers. `src/chat/conversation-view.ts`: one conversation, for any provider. `src/chat/nova-provider.ts`,
-  `src/chat/product-room-provider.ts`: the Nova and product room providers.
-- `src/chat-v2/`: chat products over the Chat Extension v2 draft bridge, and `local-demo.ts`, the page side of the local
-  demo, whose dev-server side is `chat-product-demo-plugin.ts`. `contract.ts` holds the contract's types and the bridge
-  messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it, `product.ts` a product's
-  end, and `synthetic-media.ts` the call engine with no devices.
-- `src/chat-worker/`: the Nova chat worker. `worker.ts` is its entry, `identity-bridge.ts` the host's lent chat identity
-  (over `src/chat/nova/identity.ts`), `truapi-ports.ts` its Statement Store, chain and storage over TrUAPI,
-  `conversations.ts` the engine-independent seam and its v2 adapter, `nova-conversations.ts` the Nova engine behind it,
-  and `worker-mode.ts` and `engine-switch.ts` the host's switch between the two engines. `src/contacts/host-names.ts`:
-  the host's names for the people of a chat product's contact rooms.
-- `src/products/worker-manifest.ts`, `src/products/product-workers.ts`: finding a product's worker and running it.
-  `src/chat/product-chat.ts`: the host side of TrUAPI Chat. `src/products/render.ts`: the cards a worker draws.
-- `src/archive/`: CAR, UnixFS and CID verification and unpacking.
-- `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
-  bundles them as static files, which the build emits and the dev server also answers.
-- `browser/`: the browser smoke test, the inspector dock, Chat view and Chat screen tests, and their fixtures.
+Code lives with the feature that owns its behavior. Developer tools, fixtures and tests sit outside the features, and no
+feature imports them; only the page's composition (`src/main.ts` and `src/app/`) mounts the tools. Features use two of
+the app's shared pieces, the host's prompts (`src/app/prompt.ts`) and avatar colours (`src/app/avatar-color.ts`), and
+nothing else of it.
+
+- `src/main.ts`: the page's composition root. It builds the features, connects their callbacks and boots the core.
+- `src/app/`: the shell around the features.
+  - `navigation.ts`: the product in front, the ones held behind it, the dock destinations, and opening a name, a URL, a
+    Pocket card or a product's `navigateTo`. `session.ts`: the signed-in wallet, how a change closes and reopens
+    products, and the order a session reaches everything that belongs to it.
+  - `shell.ts`, `address.ts`, `address-recents.ts`, `recents.ts`, `search-card.ts`, `apps-shelf.ts`, `chrome.ts`,
+    `layout.ts`, `device-mode.ts`: the dock, the address bar and its grammar, the Pill's card, the Apps shelf, the
+    developer tools' zone and the phone browser mode.
+  - `callbacks.ts`, `prompt.ts`, `reviews.ts`: the host callbacks the core calls, and the prompts it asks through.
+  - `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`, `product-chain.ts`,
+    `versions.ts`: the Account and Product tabs' wallet controls and status rows, and the build's versions.
+- `src/platform/`: the browser and chain facilities. `network.ts`, `network-config.ts`, `network-scope.ts`,
+  `network-choice.ts` and `follow-spread.ts`: the light client, the networks, the per-tab choice and spreading the
+  core's follows. `storage.ts`, `wallets.ts`, `allowance-ledger.ts`: per-wallet, per-network storage, saved wallets and
+  the core's renewal ledger. `people-chain.ts`, `scale-reader.ts`, `subscription.ts`; `core-worker.ts`, the Web Worker
+  the core runs in.
+- `src/chat/`: Chat. `provider.ts` is the interface between the Chat screen and its chats, `inbox.ts` the session's
+  providers, `screen.ts`, `tabs.ts`, `conversation-view.ts` and `call-view.ts` draw it.
+  - `nova/`: the Nova protocol, the one engine both the page and the Nova chat worker run. `gate.ts` refuses the public
+    development phrase, `keys.ts` derives the keys, `identity.ts` gives the engine their operations and never the keys,
+    `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
+    reads, `store.ts` the saved conversations, `hop.ts` file transfer, `call-wire.ts` and `call.ts` calls, `turn.ts`
+    relay credentials, and `engine.ts` ties them together. `events.ts` is what the engine reports to an observer.
+  - `nova-session.ts` builds the page's engine for a session, `nova-provider.ts` translates it for the Chat screen, and
+    `account-proofs.ts` asks the core for the proof that buys relay credentials.
+  - `worker/`: the Nova chat worker, a product that runs the same engine in a product worker. `worker.ts` is its entry,
+    `truapi-ports.ts` gives the engine its Statement Store, chain and storage over TrUAPI, and `nova-conversations.ts`
+    puts the engine behind the draft bridge's conversation seam. Only the dev server builds and offers it.
+  - `product-chat.ts`, `product-room-provider.ts`: the host side of TrUAPI Chat, the official product rooms.
+  - `draft/`: the Chat Extension v2 draft bridge and the Nova identity bridge, which are not TrUAPI. `contract.ts` holds
+    the bridge's types and messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it,
+    `product.ts` a product's end, `conversations.ts` the engine-independent seam, and `identity-bridge.ts` the host's
+    lent chat identity.
+- `src/contacts/`: the contact picker and handle lookup (`contacts.ts`), the host's names for people (`host-names.ts`),
+  finding people by username (`username-directory.ts`, `username-search.ts`) and the Docklet's people
+  (`search-people.ts`).
+- `src/products/`: embedding a product and relaying its frames (`product.ts`, `tap.ts`), product workers
+  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), name lookup (`dotns.ts`), preimage lookups
+  (`preimage.ts`), the stage's loading and status lines (`loading.ts`, `status.ts`) and the cards a worker draws
+  (`render.ts`).
+  - `archive/`: CAR, UnixFS and CID verification and unpacking.
+  - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The
+    plugin bundles them as static files, which the build emits and the dev server also answers.
+- `src/pocket/`: the Pocket cards and the Pocket the core's calls see (`pocket.ts`), the screen (`screen.ts`), a card's
+  faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
+- `src/notifications/`: the Inbox prototype's store and screen.
+- `src/invitations/`: invitations between users' hosts.
+- `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
+  `inspector/` collects and shows: `frame-tap.ts` feeds TrUAPI frames to the debugger, and `diagnostics.ts`,
+  `capture.ts`, `inspect.ts`, `chat-diagnostics-view.ts` and `chat-transport-view.ts` keep, decode and draw what the
+  Nova engine reports. The developer tools ship in every build. `demos/` holds the dev server's controls, which a build
+  leaves out: the Developer section, the local chat demo and its routes, and the switch between the host's engine and
+  the Nova chat worker.
+- `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
+  synthetic chat product, its call media and Example Chat. `invitations/`, `notifications/`: test users, local delivery
+  and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.
+- `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers.
+- `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
+- `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat workers and username route.
 
 ## Not supported
 
