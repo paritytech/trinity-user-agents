@@ -514,6 +514,31 @@ fn document_cases() -> Vec<DocumentCase> {
 		plain("web-gateway-http-on-loopback", web_gateway("http://127.0.0.1:5173/"), "invalid-url"),
 		plain("valid-web-gateway-on-localhost", web_gateway("http://localhost:5173/"), "ok"),
 		plain(
+			"web-gateway-http-on-localhost-prefix",
+			web_gateway("http://localhost.evil.example/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-under-localhost",
+			web_gateway("http://gw.localhost:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-on-localhost-with-user",
+			web_gateway("http://user@localhost:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-on-localhost-without-slash",
+			web_gateway("http://localhost:5173"),
+			"service-url-not-base",
+		),
+		plain(
+			"http-on-localhost-outside-web-gateway",
+			with(|value| value["services"][0]["urls"] = json!(["http://localhost:4000/"])),
+			"invalid-url",
+		),
+		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
 				value["services"][2].as_object_mut().unwrap().remove("chainId");
