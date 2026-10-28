@@ -4194,7 +4194,7 @@ body[data-search="open"] .product-slot::after {
   /* The app fills a narrow window, so the Preview tab only says so. */
   .devtools-side,
   .devtools-resize,
-  #dev-preview > .dev-group:not(.preview-narrow) {
+  #dev-preview > .dev-group:not(.preview-narrow, .preview-device) {
     display: none !important;
   }
 
@@ -4887,4 +4887,37 @@ body[data-loading="on"] .product-slot iframe {
 .app-problem-actions button:focus-visible {
   outline: 2px solid #f4f4f5;
   outline-offset: 2px;
+}
+
+/*
+ * On a touch screen the page is an app: dragging past its top does not
+ * reload it, and a double tap does not zoom. Pinch zoom stays, unless the
+ * Preview tab's zoom lock is on. Each list keeps its own scrolling.
+ */
+html,
+body {
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* A field under 16 px makes iOS zoom the page when it takes focus. */
+@media (pointer: coarse) {
+  .devtools input:not([type="checkbox"]),
+  .devtools select,
+  .devtools textarea,
+  .chat-screen input,
+  .chat-screen textarea,
+  .search-card input,
+  dialog.prompt input,
+  dialog.prompt textarea {
+    font-size: 16px;
+  }
+}
+
+.preview-device #fullscreen {
+  width: fit-content;
+}
+
+.preview-device #fullscreen[hidden] {
+  display: none;
 }

@@ -130,6 +130,7 @@ import { SerialQueue } from "./serial-queue.js";
 import { versionSections, type VersionRow } from "./versions.js";
 import { bindViewport } from "./viewport.js";
 import { SearchCard } from "./search-card.js";
+import { bindDeviceMode } from "./device-mode.js";
 import { SearchPeople } from "./search-people.js";
 import {
   WalletPublicInfoStore,
@@ -594,6 +595,12 @@ const chrome = bindChrome({
   panel: element("devtools"),
   focus: element<HTMLButtonElement>("dev-toggle"),
   close: element<HTMLButtonElement>("devtools-close"),
+});
+bindDeviceMode({
+  viewport: element<HTMLMetaElement>("viewport-meta"),
+  fullscreen: element<HTMLButtonElement>("fullscreen"),
+  zoomLock: element<HTMLInputElement>("zoom-lock"),
+  status: element("device-status"),
 });
 /** The Pill's card, which holds the address field. */
 const searchCard = new SearchCard(
