@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
@@ -50,6 +51,7 @@ import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
+import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
@@ -82,6 +84,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
     private val extensionVersions: TrUAPIExtensionVersions,
+    private val pinnedPocketCards: PinnedPocketCards,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -154,12 +157,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             .getOrNull()
         // The core derives the wallet's reserved identities under this TLD, so it has
         // to be the one the app's own built-in accounts derive from. A wrong suffix
-        // mints key material that belongs to no network, so this resolves the value
-        // rather than guessing it, and fails the boot when the network cannot answer.
-        // Failing releases the memoised boot so the next product load tries again.
-        val networkSuffix = withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) {
-            dotNsTldProvider.getTldRetrying()
-        }?.value ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
+        // mints key material that belongs to no network, so this takes the one an
+        // earlier run read from the chain, else reads it, and fails the boot when
+        // neither answers. A saved suffix is not a guess: a build has one network.
+        // Failing releases the memoised boot so the next caller tries again.
+        val tld = dotNsTldProvider.currentTldOrNull()
+            ?: withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) { dotNsTldProvider.getTldRetrying() }
+            ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
 
         return HostRuntimeConfig(
             hostName = HOST_NAME,
@@ -167,10 +171,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             peopleChainGenesisHash = peopleGenesis,
             bulletinChainGenesisHash = bulletinGenesis,
             assetHubChainGenesisHash = assetHubGenesis,
-            networkSuffix = networkSuffix,
+            networkSuffix = tld.value,
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
+            pinnedPocketCards = pinnedPocketCards.cards(tld).map {
+                PinnedPocketCard(it.key.productId.value, it.key.cardId.value, it.title)
+            },
         )
     }
 

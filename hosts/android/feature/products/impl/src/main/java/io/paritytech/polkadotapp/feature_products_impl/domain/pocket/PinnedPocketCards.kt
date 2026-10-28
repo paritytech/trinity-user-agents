@@ -4,15 +4,11 @@ import android.content.Context
 import androidx.annotation.StringRes
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import uniffi.truapi.RendererNode
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -21,13 +17,10 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 /** The cards the host itself places: present on first run, removable by nobody. */
 interface PinnedPocketCards {
-    suspend fun cards(): List<CachedPocketCard>
+    /** The cards placed on the network [tld] names, which the runtime is started with. */
+    fun cards(tld: DotNsTld): List<PocketCard>
 
-    /**
-     * The host-placed card [key] names, if it names one. Answers without waiting on anything: a
-     * removal arrives from the core on a thread it cannot spare, and a card's own key already says
-     * which network it belongs to.
-     */
+    /** The host-placed card [key] names, if it names one. A card's own key already says which network it belongs to. */
     fun pinned(key: PocketCardKey): CachedPocketCard?
 
     /** Whether the app ships the image at [path] for the product behind a pinned card, so it needs no archive. */
@@ -41,7 +34,6 @@ interface PinnedPocketCards {
 @Singleton
 class AssetPinnedPocketCards @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val dotNsTldProvider: DotNsTldProvider,
 ) : PinnedPocketCards {
     private class Definition(
         val cardId: String,
@@ -53,16 +45,10 @@ class AssetPinnedPocketCards @Inject constructor(
         Definition("humanity", RCommon.string.pocket_pinned_card_humanity, ReservedProductIds::personhood),
     )
 
-    private val loading = Mutex()
-    private var loaded: List<CachedPocketCard>? = null
     private val bundledFaces = ConcurrentHashMap<String, RendererNode>()
     private val bundledImages by lazy { context.assets.list("pocket").orEmpty().map { "pocket/$it" }.toSet() }
 
-    // The card's product is reserved on the network the app is on, which can take a chain read to
-    // learn. Only listing the cards needs it; naming one does not.
-    override suspend fun cards(): List<CachedPocketCard> = loading.withLock {
-        loaded ?: load().also { loaded = it }
-    }
+    override fun cards(tld: DotNsTld): List<PocketCard> = definitions.map { it.toCard(it.backingProduct(tld)).card }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? {
         val definition = definitions.firstOrNull { it.cardId == key.cardId.value } ?: return null
@@ -78,12 +64,6 @@ class AssetPinnedPocketCards @Inject constructor(
         val tld = DotNsTld.parse(productId.value.substringAfter('.', missingDelimiterValue = "")) ?: return false
 
         return backingProduct(tld) == productId
-    }
-
-    private suspend fun load(): List<CachedPocketCard> {
-        val tld = dotNsTldProvider.getTldRetrying()
-
-        return definitions.map { it.toCard(it.backingProduct(tld)) }
     }
 
     private fun Definition.toCard(backing: ProductId) = CachedPocketCard(
