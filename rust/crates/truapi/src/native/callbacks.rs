@@ -498,8 +498,17 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
-	/// A session's status changed, for host UI such as the in-flight pill.
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+	/// A session changed: its status and the progress the host draws, so
+	/// the host keeps the latest of each and never reads them back. Every
+	/// session in flight, and every ended one the host has not recorded,
+	/// comes through here once more when funding resumes. `progress` is
+	/// `None` once the core keeps only the session's summary.
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	);
 
 	/// One provider's row of a quote list the host requested with
 	/// `get_funding_quote`: `Pending` first, then its quote or why it is

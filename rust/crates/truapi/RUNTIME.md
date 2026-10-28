@@ -465,7 +465,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_progress`, `funding_sessions`, `funding_history`,
+  `funding_session`, `funding_sessions`, `funding_history`,
   `set_funding_providers`,
   `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
   `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
@@ -525,8 +525,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   amount takes the quote's. The provider receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  `funding_progress(intent)` gives the steps the host draws for a session's
-  direction and rail, each with when it was reached: in, `Started`,
+  A native host's `funding_session_changed` carries the session's
+  progress, so the host never reads it back: the steps it draws for the
+  session's direction and rail, each with when it was reached: in, `Started`,
   `Payment`, `Approved` (bank and crypto, once the payment can no longer be
   reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
   the provider skipped takes the time of the first later one. It also carries

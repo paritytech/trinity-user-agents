@@ -647,6 +647,11 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+	/// The services this runtime serves products from.
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
+		&self.services
+	}
+
 	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
 	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
 	/// this core cannot use; `Err` when dotNS could not be read.
@@ -801,16 +806,6 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_platform"))]
 	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
 		self.services.install_funding_platform(platform)
-	}
-
-	/// Session `intent`'s progress as the host draws it: the steps for its
-	/// direction and rail with when each was reached, and the provider's
-	/// references.
-	pub fn funding_progress(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.services.funding().get(intent).map(|session| session.progress())
 	}
 
 	/// Every funding session the core keeps, in flight first, then ended,
