@@ -51,22 +51,6 @@ pub fn personhood_product_id(network_suffix: &str) -> String {
 	format!("{PERSONHOOD_LABEL}.{network_suffix}")
 }
 
-/// The RFC-0022 product context of `product_id` with a 32-byte `suffix`:
-/// `blake2b_256("product/" ++ product_id ++ "/" ++ suffix)`.
-pub fn product_context(product_id: &str, suffix: [u8; 32]) -> [u8; 32] {
-	let mut input = Vec::with_capacity(b"product/".len() + product_id.len() + 1 + suffix.len());
-	input.extend_from_slice(b"product/");
-	input.extend_from_slice(product_id.as_bytes());
-	input.push(b'/');
-	input.extend_from_slice(&suffix);
-	blake2b_simd::Params::new()
-		.hash_length(32)
-		.hash(&input)
-		.as_bytes()
-		.try_into()
-		.expect("hash_length(32) configures BLAKE2b output to exactly 32 bytes; qed")
-}
-
 /// Substrate sr25519 signing-context string. Shared by every sr25519 signature
 /// the core produces: statement store, product raw signing, dotNS gateway.
 pub const SR25519_SIGNING_CONTEXT: &[u8] = b"substrate";

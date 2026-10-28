@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::{
 	chain_runtime::ChainRuntime,
 	host_internal::sso_messages::RingVrfError,
-	host_logic::product_account::{derivation_index_bytes, product_context},
+	host_logic::product_account::derivation_index_bytes,
 	runtime::vrf::{self, Vrf},
 };
 use async_trait::async_trait;
@@ -212,7 +212,13 @@ impl RingResolver for ChainRingResolver {
 }
 
 pub fn context_bytes(context: &ProductProofContext) -> [u8; 32] {
-	product_context(&context.product_id, derivation_index_bytes(&context.suffix))
+	let suffix = derivation_index_bytes(&context.suffix);
+	let mut input = Vec::with_capacity(9 + context.product_id.len() + suffix.len());
+	input.extend_from_slice(b"product/");
+	input.extend_from_slice(context.product_id.as_bytes());
+	input.push(b'/');
+	input.extend_from_slice(&suffix);
+	blake2b_256(&input, None)
 }
 
 pub fn create_proof(
@@ -251,6 +257,18 @@ fn pallet_instance(location: &RingLocation) -> Option<u8> {
 		RingLocationJunction::PalletInstance(index) => Some(*index),
 		RingLocationJunction::CollectionId(_) => None,
 	})
+}
+
+fn blake2b_256(input: &[u8], key: Option<&[u8]>) -> [u8; 32] {
+	let mut params = blake2b_simd::Params::new();
+	params.hash_length(32);
+	if let Some(key) = key {
+		params.key(key);
+	}
+	let hash = params.hash(input);
+	let mut output = [0u8; 32];
+	output.copy_from_slice(hash.as_bytes());
+	output
 }
 
 fn unknown(error: impl std::fmt::Debug) -> RingVrfError {
@@ -308,12 +326,6 @@ mod tests {
 	use super::*;
 	use crate::host_logic::product_account::index_bytes;
 
-	fn blake2b_256(input: &[u8]) -> [u8; 32] {
-		let mut output = [0u8; 32];
-		output.copy_from_slice(blake2b_simd::Params::new().hash_length(32).hash(input).as_bytes());
-		output
-	}
-
 	fn decode_as<A, B>(source: A) -> B
 	where
 		A: Encode + TypeInfo + 'static,
@@ -338,7 +350,7 @@ mod tests {
 		let mut expected = b"product/voting.dot/".to_vec();
 		expected.extend_from_slice(&index_bytes(0));
 
-		assert_eq!(context_bytes(&context), blake2b_256(&expected));
+		assert_eq!(context_bytes(&context), blake2b_256(&expected, None));
 	}
 
 	/// A raw 32-byte selector is used verbatim, and never collides with a
