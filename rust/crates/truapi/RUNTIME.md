@@ -237,6 +237,33 @@ purse item keys are derived under with `set_installation_provider`, then calls
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
+
+`CoreSecrets` (`secrets` module) does that for every feature. Its
+`core_secret` table records each secret's kind, id, product and optional
+account; the secret goes to `EncryptedStorage` under `<kind>/<id>`. A secret is
+written after its row and deleted before it, so a crash leaves at most a row
+whose secret reads as absent, never an unindexed secret. It counts and clears
+by kind and product, so no host lists its storage.
+
+SecretsStorage keeps a product's small secrets, such as the tokens it obtained
+from its own services, as `product-secret` secrets. The product names a key;
+the core hashes the signed-in account, the product and that key into the id,
+so no product or account can name another's. Values are opaque bytes the core
+does not interpret. It requires a session, checks the key (1 to 64 of
+`[a-z0-9._-]`), the 8192-byte value limit and the 16-key cap per product and
+account, and caches nothing. It clears every secret on logout, disconnect,
+session reset and an account switch, and a product's secrets when that
+product's state is cleared. Storage the host cannot read is an error, not an
+absent value. Without a core database and encrypted storage, as on the browser
+host, every `secretsStorage` call answers `Unsupported`.
+
 ### Durable transactions
 
 The `durable` module runs over the core database. A domain registers presigned

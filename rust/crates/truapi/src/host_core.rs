@@ -385,29 +385,39 @@ impl PairingHostRuntime {
 		)
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the secrets
+	/// products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.pairing_host.session().disconnect().await;
 	}
 
-	/// Log out and discard the old pairing keypair.
+	/// Log out, drop the secrets products kept, and discard the old
+	/// pairing keypair.
 	///
 	/// The next product login request generates a fresh pairing identity and
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host.logout_and_reset_pairing().await.map_err(Into::into)
+		let reset = self.pairing_host.logout_and_reset_pairing().await;
+		let cleared = self.services.clear_secrets_storage(None).await;
+		reset?;
+		cleared.map_err(|error| v01::GenericError {
+			reason: format!("logged out, but product secrets were not dropped: {}", error.reason),
+		})
 	}
 
-	/// Clear one product's capability state while preserving the active
-	/// session and unrelated products.
+	/// Clear one product's capability state, including the secrets it
+	/// kept, while preserving the active session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
 	pub async fn clear_product_state(
 		&self,
 		product_id: &ProductId,
 	) -> Result<(), v01::GenericError> {
-		self.pairing_host.clear_product_state(product_id).await.map_err(Into::into)
+		let cleared = self.pairing_host.clear_product_state(product_id).await;
+		let secrets = clear_product_secrets_storage(&self.services, product_id).await;
+		cleared?;
+		secrets
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -479,8 +489,8 @@ impl PairingHostRuntime {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
 	}
 
-	/// Clear the canonical paired session and all capability caches/storage
-	/// without sending a peer-disconnect notice.
+	/// Clear the canonical paired session, all capability caches/storage and
+	/// the secrets products kept, without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
 		self.pairing_host.session().reset_session_state().await;
@@ -923,6 +933,17 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_encrypted_storage(
+		&self,
+		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
+	) -> bool {
+		self.services.install_encrypted_storage(storage)
+	}
+
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
@@ -1062,17 +1083,22 @@ impl SigningHostRuntime {
 		self.signing_host.session_state().current().is_some()
 	}
 
-	/// Disconnect the active account-authority session.
+	/// Disconnect the active account-authority session and drop the secrets
+	/// products kept for it.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
 		self.signing_host.disconnect().await;
 	}
 
-	/// Revoke one product's grants from the current local activation while
-	/// preserving unrelated products.
+	/// Revoke one product's grants from the current local activation, and drop
+	/// the secrets it kept, while preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &ProductId) {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.signing_host.clear_product_state(product_id);
+		clear_product_secrets_storage(&self.services, product_id).await
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -1268,6 +1294,20 @@ impl SigningHostRuntime {
 			},
 		}
 	}
+}
+
+/// Drop the secrets `product_id` kept, for a product whose state is being
+/// cleared.
+async fn clear_product_secrets_storage(
+	services: &RuntimeServices,
+	product_id: &ProductId,
+) -> Result<(), v01::GenericError> {
+	services
+		.clear_secrets_storage(Some(product_id.as_str()))
+		.await
+		.map_err(|error| v01::GenericError {
+			reason: format!("product secrets were not dropped: {}", error.reason),
+		})
 }
 
 /// Installs the durable transaction engine over `db`, reports its pending
@@ -2540,6 +2580,72 @@ mod tests {
 					vec![],
 				)
 			);
+		});
+	}
+
+	// Product secrets belong to the signed-in user, so every way a session
+	// ends drops all of them, and clearing one product's state drops that
+	// product's alone. The host does not have to remember to wipe them.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_core_drops_product_secrets_when_a_session_or_product_is_cleared() {
+		use crate::secrets::{SecretKind, SecretOwner};
+
+		let platform = Arc::new(StubPlatform::default());
+		let (host_config, _) = runtime_config("myapp.dot");
+		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+		let storage = runtime.services.install_memory_secrets();
+		let secrets = runtime.services.core_secrets().expect("secrets installed");
+		let keep_secrets = || {
+			for product_id in ["myapp.dot", "other.dot"] {
+				let owner = SecretOwner { product_id, account: Some(&[1; 32]) };
+				futures::executor::block_on(secrets.put(
+					SecretKind::ProductSecret,
+					product_id.as_bytes(),
+					owner,
+					b"secret",
+				))
+				.expect("secret kept");
+			}
+		};
+		let kept = || {
+			let mut kept: Vec<_> = storage.stored().into_keys().collect();
+			kept.sort();
+			kept
+		};
+
+		keep_secrets();
+		futures::executor::block_on(runtime.clear_product_state(&ProductId::for_test("myapp.dot")))
+			.expect("product state cleared");
+		assert_eq!(kept(), vec![b"product-secret/other.dot".to_vec()], "clear_product_state");
+
+		let ended_without_secrets = |name: &str, end_session: &dyn Fn()| {
+			keep_secrets();
+			end_session();
+			assert_eq!(kept(), Vec::<Vec<u8>>::new(), "{name}");
+		};
+		ended_without_secrets("disconnect_session", &|| {
+			futures::executor::block_on(runtime.disconnect_session())
+		});
+		ended_without_secrets("reset_session_state", &|| {
+			futures::executor::block_on(runtime.reset_session_state())
+		});
+		ended_without_secrets("HostAdmin::disconnect_session", &|| {
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("myapp.dot")));
+			futures::executor::block_on(admin.disconnect_session());
+		});
+		ended_without_secrets("the wallet ending the session", &|| {
+			install_session_after_boot(
+				&runtime,
+				&platform,
+				crate::test_support::sso_session_info(),
+			);
+			futures::executor::block_on(
+				runtime.pairing_host.session().peer_disconnected_for_test(),
+			);
+		});
+		ended_without_secrets("logout", &|| {
+			futures::executor::block_on(runtime.logout()).expect("logged out")
 		});
 	}
 

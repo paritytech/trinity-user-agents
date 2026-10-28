@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "72bf858138ead26e";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c3d713367102a31f";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -662,6 +662,24 @@ pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
     method_id: 11,
 };
 
+/// Wire discriminants for `secrets_storage_read`.
+pub const SECRETS_STORAGE_READ: MethodIds = MethodIds {
+    trait_id: 27,
+    method_id: 0,
+};
+
+/// Wire discriminants for `secrets_storage_write`.
+pub const SECRETS_STORAGE_WRITE: MethodIds = MethodIds {
+    trait_id: 27,
+    method_id: 1,
+};
+
+/// Wire discriminants for `secrets_storage_clear`.
+pub const SECRETS_STORAGE_CLEAR: MethodIds = MethodIds {
+    trait_id: 27,
+    method_id: 2,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -1077,5 +1095,17 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_transfer_item",
         kind: WireKind::Subscription(NFT_PURSE_TRANSFER_ITEM),
+    },
+    WireEntry {
+        method: "secrets_storage_read",
+        kind: WireKind::Request(SECRETS_STORAGE_READ),
+    },
+    WireEntry {
+        method: "secrets_storage_write",
+        kind: WireKind::Request(SECRETS_STORAGE_WRITE),
+    },
+    WireEntry {
+        method: "secrets_storage_clear",
+        kind: WireKind::Request(SECRETS_STORAGE_CLEAR),
     },
 ];

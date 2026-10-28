@@ -841,6 +841,7 @@ impl HostSession for SigningHost {
 
 	async fn disconnect(&self) {
 		self.clear_local_session();
+		self.services.drop_secrets_storage_after_session().await;
 		self.auth_state.store_disconnected();
 	}
 
@@ -1447,6 +1448,7 @@ mod tests {
 	mod local_preimages;
 	mod raw_signing;
 	mod remote_consent;
+	mod secrets_storage;
 	#[cfg(feature = "test-host")]
 	mod withheld_resources;
 
