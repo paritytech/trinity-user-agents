@@ -439,7 +439,7 @@ describe("chat extension v2 frames", () => {
 
     it("sends the v2 calls and reads the host's answers as the Rust snapshot pins them", async () => {
         const metadata = { name: "Room", description: "About" };
-        const notRoomHost: CallErrorValue<T.VersionedHostChatRoomError> = {
+        const notRoomHost: CallErrorValue<T.VersionedHostChatSetRoomMetadataError> = {
             tag: "Domain",
             value: { tag: "V1", value: { tag: "NotRoomHost" } },
         };
