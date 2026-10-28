@@ -5,6 +5,7 @@ import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRendererId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
@@ -14,6 +15,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.AlwaysFailCustomContentDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
 import kotlinx.serialization.encodeToByteArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -25,6 +28,8 @@ import org.junit.Test
  * DO NOT modify the encoded hex values below: they are the frozen format that must always decode.
  */
 class ChatRoomDeclarationsScaleConformanceTest {
+    private val noCustomContent = AlwaysFailCustomContentDecoder()
+
     @Test
     fun `decode a declared config from encoded bytes`() {
         assertEquals(
@@ -44,9 +49,9 @@ class ChatRoomDeclarationsScaleConformanceTest {
                 lastReaction = ChatPreviewReactionModel(emoji = "👍", byUser = false, message = null, removed = false),
                 unseenReactions = 2,
             ),
-            decode<ChatRoomPreviewLocal>(PREVIEW).toDomain(),
+            decode<ChatRoomPreviewLocal>(PREVIEW).toDomain(noCustomContent),
         )
-        assertEquals(ChatRoomBadgeModel.Hidden, decode<ChatRoomPreviewLocal>(PREVIEW_HIDDEN).toDomain().badge)
+        assertEquals(ChatRoomBadgeModel.Hidden, decode<ChatRoomPreviewLocal>(PREVIEW_HIDDEN).toDomain(noCustomContent).badge)
     }
 
     @Test
@@ -59,7 +64,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
             unseenReactions = 0,
         )
 
-        assertEquals(PREVIEW_HIDDEN, preview.encode().toHexString())
+        assertEquals(PREVIEW_HIDDEN, preview.encode(noCustomContent).toHexString())
     }
 
     @Test
@@ -94,12 +99,12 @@ class ChatRoomDeclarationsScaleConformanceTest {
             config = declarations.config!!.encode(),
             configGeneration = 4,
             description = "About",
-            preview = declarations.preview!!.encode(),
+            preview = declarations.preview!!.encode(noCustomContent),
             features = null,
             contact = null,
         )
 
-        assertEquals(declarations, row.toDomain())
+        assertEquals(declarations, row.toDomain(noCustomContent))
     }
 
     @Test
@@ -107,16 +112,29 @@ class ChatRoomDeclarationsScaleConformanceTest {
         val message = ProductRoomMessage("m1", "product", 5, ChatMessage.Content.Text("hi"), ProductMessageStatusModel.SENT, null, null, emptyList(), false)
         val preview = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = message, lastReaction = null, unseenReactions = 0)
 
-        val decoded = decode<ChatRoomPreviewLocal>(preview.encode().toHexString()).toDomain()
+        val decoded = decode<ChatRoomPreviewLocal>(preview.encode(noCustomContent).toHexString()).toDomain(noCustomContent)
 
         assertEquals("hi", (decoded.lastMessage!!.content as ChatMessage.Content.Text).text)
+    }
+
+    // The renderer of the product encodes and decodes a custom message, so the chat list keeps the content that the
+    // room screen draws.
+    @Test
+    fun `a custom preview message keeps the content of its renderer`() {
+        val content = ChatMessage.Content.Custom(rendererId = "game.dot", content = Result.success("poll"))
+        val message = ProductRoomMessage("m1", "product", 5, content, ProductMessageStatusModel.SENT, null, null, emptyList(), false)
+        val preview = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = message, lastReaction = null, unseenReactions = 0)
+
+        val decoded = decode<ChatRoomPreviewLocal>(preview.encode(TextContent).toHexString()).toDomain(TextContent)
+
+        assertEquals(content, decoded.lastMessage!!.content)
     }
 
     @Test
     fun `a part that does not decode reads as not declared`() {
         val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, byteArrayOf(1, 9), null, null)
 
-        val declarations = row.toDomain()
+        val declarations = row.toDomain(noCustomContent)
 
         assertNull(declarations.config)
         assertNull(declarations.preview)
@@ -128,6 +146,14 @@ class ChatRoomDeclarationsScaleConformanceTest {
     }
 
     private inline fun <reified T> decode(hex: String): T = BinaryScale.decodeFromByteArray<T>(hex.fromHex())
+
+    private object TextContent : CustomContentDecoder {
+        override fun decode(rendererId: CustomChatMessageRendererId, content: ByteArray): Result<Any?> =
+            Result.success(content.decodeToString())
+
+        override fun encode(rendererId: CustomChatMessageRendererId, value: Any?): Result<ByteArray> =
+            Result.success((value as String).encodeToByteArray())
+    }
 
     private companion object {
         const val CONFIG = "01000100010810f09f918d10f09f94a5011841736b206d6501"
