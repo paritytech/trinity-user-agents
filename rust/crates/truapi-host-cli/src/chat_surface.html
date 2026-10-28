@@ -489,6 +489,9 @@ function bodyNode(roomId, msg) {
     box.appendChild(el("div", "text", `${b.video ? "\u{1F3A5}" : "\u{1F4DE}"} ${b.text}`));
   } else if (b.type === "Payment") {
     box.appendChild(el("div", "text", `\u{1F4B8} ${b.legacy ? "Transfer" : "Payment"} of ${b.amount}`));
+  } else if (b.type === "Custom") {
+    box.dataset.custom = b.messageType;
+    box.appendChild(el("div", "text", b.alt || "Sent a message"));
   } else {
     box.appendChild(el("div", "text unsupported", `unsupported body: ${JSON.stringify(b)}`));
   }

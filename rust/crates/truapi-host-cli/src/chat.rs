@@ -664,7 +664,8 @@ fn with_kind(kind: &str, mut body: Value) -> Value {
 }
 
 /// The chat-list text of one message: its text, the `alt` of its first
-/// media item, the line of an event, a call or a payment, or a generic line.
+/// media item, the line of an event, a call or a payment, the `alt` of a
+/// custom message, or a generic line.
 pub fn preview_text(message: &ChatMessage) -> String {
 	let text = match &message.body {
 		ChatMessageBody::Text { text } => Some(text.clone()),
@@ -674,6 +675,7 @@ pub fn preview_text(message: &ChatMessage) -> String {
 		ChatMessageBody::Event(event) => Some(event_line(*event).to_string()),
 		ChatMessageBody::Call(call) => Some(call_line(call)),
 		ChatMessageBody::Payment(payment) => Some(format!("Payment of {}", payment.amount)),
+		ChatMessageBody::Custom { alt, .. } => alt.clone(),
 	};
 	text.filter(|text| !text.trim().is_empty())
 		.unwrap_or_else(|| SENT_A_MESSAGE.to_string())
@@ -863,6 +865,13 @@ pub fn body_json(body: &ChatMessageBody) -> Value {
 			"amount": payment.amount.to_string(),
 			"legacy": payment.legacy,
 		}),
+		// This page has no renderer, so it shows the `alt` of a custom message.
+		ChatMessageBody::Custom { message, alt } => json!({
+			"type": "Custom",
+			"messageType": message.message_type,
+			"payload": hex::encode(&message.payload),
+			"alt": alt,
+		}),
 	}
 }
 
@@ -919,6 +928,7 @@ fn body_variant(body: &ChatMessageBody) -> &'static str {
 		ChatMessageBody::Event(_) => "Event",
 		ChatMessageBody::Call(_) => "Call",
 		ChatMessageBody::Payment(_) => "Payment",
+		ChatMessageBody::Custom { .. } => "Custom",
 	}
 }
 
@@ -1093,7 +1103,8 @@ mod tests {
 	use std::fs::read_to_string;
 	use truapi::{
 		latest::{
-			ChatCallClose, ChatPaymentRecord, ChatPreviewReaction, HostChatSetRoomFooterRequest,
+			ChatCallClose, ChatCustomMessage, ChatPaymentRecord, ChatPreviewReaction,
+			HostChatSetRoomFooterRequest,
 		},
 		platform::ProductId,
 	};
@@ -1793,6 +1804,12 @@ mod tests {
 			}))),
 			"Payment of 1500"
 		);
+		let custom = |alt: Option<&str>| ChatMessageBody::Custom {
+			message: ChatCustomMessage { message_type: "poll".to_string(), payload: vec![1] },
+			alt: alt.map(str::to_string),
+		};
+		assert_eq!(preview_text(&with(custom(Some("A poll")))), "A poll");
+		assert_eq!(preview_text(&with(custom(None))), SENT_A_MESSAGE);
 	}
 
 	fn hop() -> ChatResource {
