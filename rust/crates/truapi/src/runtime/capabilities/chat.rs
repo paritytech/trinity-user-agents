@@ -288,16 +288,18 @@ impl Chat for ProductRuntimeHost {
 					Err(RoomRefusal::UnknownRoom) => Ok(()),
 					Err(refusal) => Err(CallError::Domain(refusal.into())),
 					Ok(room_id) => {
-						let limits = &self.connection.services.chat_rate_limits;
-						limits.feed.forget(self.connection.product.product_id.as_str(), &room_id);
-						limits
-							.preview
-							.forget(self.connection.product.product_id.as_str(), &room_id);
-						request.room_id = room_id;
+						request.room_id = room_id.clone();
 						platform
 							.delete_chat_room(&self.connection.product, request)
 							.await
-							.map_err(room_host_error)
+							.map_err(room_host_error)?;
+						// Only a room the host deleted gives up its budgets: a room
+						// that stays keeps what it spent.
+						let limits = &self.connection.services.chat_rate_limits;
+						let product_id = self.connection.product.product_id.as_str();
+						limits.feed.forget(product_id, &room_id);
+						limits.preview.forget(product_id, &room_id);
+						Ok(())
 					},
 				}
 			})
@@ -543,6 +545,8 @@ mod tests {
 		calls: Mutex<Vec<String>>,
 		/// The reason `list_chat_rooms` fails with, if any.
 		room_list_failure: Mutex<Option<String>>,
+		/// The reason `delete_chat_room` fails with, if any.
+		delete_failure: Mutex<Option<String>>,
 	}
 
 	impl RecordingHost {
@@ -670,6 +674,9 @@ mod tests {
 			_product: &ProductContext,
 			request: latest::HostChatDeleteRoomRequest,
 		) -> Result<(), latest::GenericError> {
+			if let Some(reason) = self.delete_failure.lock().unwrap().clone() {
+				return Err(latest::GenericError { reason });
+			}
 			self.rooms.lock().unwrap().remove(&request.room_id);
 			self.record("delete", &request.room_id)
 		}
@@ -975,6 +982,40 @@ mod tests {
 		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
 		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
 		assert_eq!(chat.calls(), ["delete support"]);
+	}
+
+	// A delete the host refuses leaves the room in place, so the room keeps
+	// the budget it spent. Otherwise a product that alternates a failing
+	// delete and a burst of updates could send without limit.
+	#[test]
+	fn a_room_the_host_does_not_delete_keeps_its_spent_budget() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
+		*chat.delete_failure.lock().unwrap() = Some("not served".to_string());
+		let runtime = chat_runtime(chat.clone());
+
+		for _ in 0..CHAT_FEED_UPDATES_PER_SECOND {
+			update_feed(&runtime, "stored", text_message("product")).expect("within budget");
+		}
+		let deleted = block_on(Chat::delete_room(
+			&runtime,
+			&CallContext::default(),
+			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+				room_id: "stored".to_string(),
+			}),
+		));
+
+		assert_eq!(
+			deleted,
+			Err(CallError::Domain(HostChatDeleteRoomError::V1(
+				latest::HostChatDeleteRoomError::Unknown { reason: "not served".to_string() }
+			)))
+		);
+		assert_eq!(
+			update_feed(&runtime, "stored", text_message("product")),
+			Err(CallError::Domain(HostChatUpdateFeedError::V1(
+				latest::HostChatUpdateFeedError::RateLimited
+			)))
+		);
 	}
 
 	// A room list the host cannot read is a host failure. If the core read it
