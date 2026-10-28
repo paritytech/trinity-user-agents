@@ -32,11 +32,11 @@ public final class ProductsRouter: ProductsRouting {
 
     @discardableResult
     public func present(view: ControllerBackedProtocol) -> Bool {
-        guard let presentationView else {
+        guard let anchor = presentationView?.controller, anchor.viewIfLoaded?.window != nil else {
             return false
         }
 
-        presentationView.controller.topmostPresented.present(view.controller, animated: true)
+        anchor.topmostPresented.present(view.controller, animated: true)
         return true
     }
 }
