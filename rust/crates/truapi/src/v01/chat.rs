@@ -871,7 +871,7 @@ pub enum ProductChatQueryError {
 }
 
 /// Something the user did in a room the product keeps.
-#[derive(Clone, PartialEq, Eq, Encode, Decode, derive_more::Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatUserAction {
 	/// The user sent a message.
@@ -926,24 +926,10 @@ pub enum ChatUserAction {
 	Unblock,
 	/// The user left the chat.
 	Leave,
-	/// The user paid the contact. Before the host sends the action, it plans and
-	/// reserves the coins and gives their keys to the product. The product sends
-	/// the coins to the contact as one payment message under `message_id`. It
-	/// answers `MessageCreated` with a `Payment` body. The keys appear in no body,
-	/// preview or reply quote. When the host sends the action again with the same
-	/// `message_id`, the product sends nothing new.
-	SendPayment {
-		/// The id the host chose for the message: the id its own coinage
-		/// records track the payment under.
-		message_id: String,
-		/// Milliseconds since the Unix epoch when the user paid.
-		timestamp: u64,
-		/// The sum of the coins, in the smallest unit.
-		total_value: u128,
-		/// Sr25519 secret keys, one per coin.
-		#[debug("{} keys", sr25519_secret_keys.len())]
-		sr25519_secret_keys: Vec<[u8; 64]>,
-	},
+	/// The user paid the contact. This version carries no payment: the core
+	/// answers this action with `Unsupported` and does not send it to the
+	/// product. A later change gives it the payment as a `CoinPaymentCheque`.
+	SendPayment,
 }
 
 /// Host request that tells the product what the user did.
@@ -962,8 +948,7 @@ pub struct ProductChatUserActionRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ProductChatUserActionItem {
-	/// For `NewMessage` and `SendPayment`: the message as the product stored
-	/// it.
+	/// For `NewMessage`: the message as the product stored it.
 	MessageCreated(ChatMessage),
 	/// The product applied the action.
 	Acknowledged,
