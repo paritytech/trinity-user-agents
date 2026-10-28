@@ -327,10 +327,6 @@ public extension ChatHostBridge {
     }
 }
 
-/// The resource type of Chat Extension v2, under a name that a host app with a
-/// `ChatResource` type of its own can still write.
-public typealias TrUAPIChatResource = ChatResource
-
 public extension ChatRoomConfig {
     /// The configuration of a room that declares nothing: the host stores the
     /// messages and serves every part of the room itself.
