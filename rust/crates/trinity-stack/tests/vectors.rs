@@ -529,6 +529,16 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-url",
 		),
 		plain(
+			"web-gateway-http-on-localhost-uppercase",
+			web_gateway("http://LOCALHOST:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-on-localhost-backslash",
+			web_gateway("http://localhost\\@evil.example/"),
+			"invalid-url",
+		),
+		plain(
 			"web-gateway-on-localhost-without-slash",
 			web_gateway("http://localhost:5173"),
 			"service-url-not-base",

@@ -65,7 +65,11 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
 		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
-		(Schemes::Gateway, "http") => web && parsed.host_str() == Some("localhost"),
+		// Also as written: this parser reads `\` as `/`, so `http://localhost\@evil.example/` is
+		// localhost here and evil.example to an RFC 3986 parser.
+		(Schemes::Gateway, "http") => {
+			web && parsed.host_str() == Some("localhost") && written_host(value) == "localhost"
+		},
 		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }

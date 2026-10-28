@@ -559,6 +559,24 @@
       }
     },
     {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-uppercase.json",
+      "name": "web-gateway-http-on-localhost-uppercase",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-backslash.json",
+      "name": "web-gateway-http-on-localhost-backslash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "service-url-not-base",
       "file": "documents/web-gateway-on-localhost-without-slash.json",
       "name": "web-gateway-on-localhost-without-slash",
