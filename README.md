@@ -337,9 +337,21 @@ product can publish it; for now it is the user's chat key, and any product may
 deposit such a cheque into any purse. The item secrets go to encrypted storage
 before the moves are registered, so each move is signed from its stored secret
 after a restart too. A move waits up to an hour for its cheque key to hold an
-NFT, so a product need not wait for the sender's mint itself. Refund, revoke
-and listening for payments answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the served calls.
+NFT, so a product need not wait for the sender's mint itself.
+
+`revokeCheque` moves the items at the keys of a cheque the product created
+back into fresh keys of the purse they left; another product's cheque answers
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed.
+`refund` moves the items a product deposited from a cheque back to the
+cheque's keys, once every move of the deposit finalized or failed
+(`DepositInProgress` before that), and the sender can then revoke them.
+Whether an item can still go back comes from the core database alone: one
+spent since stays and is listed as unavailable. Each is followed by
+`observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
+`blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
+another product's purse asks the user through `NftPurseDrain`. Listening for
+payments answers unavailable for now. A host without a core database, such as
+the browser core, answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
