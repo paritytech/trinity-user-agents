@@ -1540,7 +1540,7 @@ impl ChainConnection {
 			let occupants = holding.join(", ");
 			warn!(
 				target: "truapi.chain.follow_budget_reached",
-				"chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; the next follow on it will be refused: {occupants}",
+				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
 			);
 		}
 		true
