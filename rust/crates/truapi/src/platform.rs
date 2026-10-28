@@ -649,7 +649,10 @@ fn validate_chat_media_resource(
 	if node.chars().count() > CHAT_HOP_NODE_MAX_CHARS {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_NODE_MAX_CHARS });
 	}
-	if *size == 0 || *size > CHAT_HOP_FILE_MAX_BYTES {
+	if *size == 0 {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if *size > CHAT_HOP_FILE_MAX_BYTES {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_HOP_FILE_MAX_BYTES as usize });
 	}
 	Ok(resource)
@@ -2811,12 +2814,20 @@ mod tests {
 			validate_chat_media_resource("media", hop("https://hop.example", 1_000)),
 			Err(ChatFieldError::RejectedScheme { field: "media" })
 		);
-		assert!(
+		assert_eq!(
 			validate_chat_media_resource(
 				"media",
 				hop("wss://hop.example", CHAT_HOP_FILE_MAX_BYTES + 1)
-			)
-			.is_err()
+			),
+			Err(ChatFieldError::TooLong {
+				field: "media",
+				limit: CHAT_HOP_FILE_MAX_BYTES as usize
+			})
+		);
+		// A file of no bytes is empty, not too long.
+		assert_eq!(
+			validate_chat_media_resource("media", hop("wss://hop.example", 0)),
+			Err(ChatFieldError::Empty { field: "media" })
 		);
 	}
 
