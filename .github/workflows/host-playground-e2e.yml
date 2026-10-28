@@ -24,6 +24,13 @@ on:
         required: false
         type: string
         default: ""
+      core_artifact:
+        description: >-
+          An artifact an earlier job in the calling run packed the in-tree iOS
+          core into, for the iOS leg. Empty builds the core here.
+        required: false
+        type: string
+        default: ""
     # Each caller passes only its own platform's.
     secrets:
       GOOGLE_SERVICES_JSON_BASE64:
@@ -47,8 +54,6 @@ on:
       E2E_ANDROID_MNEMONIC:
         required: false
       GOOGLE_SERVICE_INFO_RELEASE_BASE64:
-        required: false
-      MELD_BASIC_AUTH_TOKEN:
         required: false
       SENTRY_DSN_IOS:
         required: false
@@ -208,7 +213,14 @@ jobs:
         uses: ./hosts/ios/.github/actions/install
 
       - name: Bootstrap the in-tree core
+        if: inputs.core_artifact == ''
         uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Restore the in-tree core
+        if: inputs.core_artifact != ''
+        uses: ./.github/actions/restore-ios-core
+        with:
+          name: ${{ inputs.core_artifact }}
 
       - name: Configure Google services
         uses: ./hosts/ios/.github/actions/configure-google-services
@@ -220,7 +232,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build the E2E simulator app
         run: e2e/host-playground/ios/build.sh

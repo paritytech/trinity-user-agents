@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -80,6 +81,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
@@ -308,6 +310,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val endpoint = opened.startWsBridge()
             observeAppTheme()
             observeAppLifecycle()
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
