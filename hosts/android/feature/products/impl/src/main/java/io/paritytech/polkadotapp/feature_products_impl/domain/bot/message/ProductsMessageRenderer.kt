@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.MessageDrawingContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -77,8 +78,9 @@ class ProductsMessageRenderer(
             ) {
                 message.content.fold(
                     onSuccess = { content ->
+                        // The product renders a message that it pushed under its own id, not under the id of the store.
                         ProductsMessageContent(
-                            messageId = message.id,
+                            messageId = ProductMessageIds.product(message.id, message.chatId),
                             content = content,
                             roomId = message.chatId.productRoomId(id)?.value,
                         )
