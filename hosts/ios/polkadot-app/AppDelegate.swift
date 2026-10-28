@@ -2,6 +2,7 @@ import UIKit
 import TipKit
 import IssueMonitoring
 import Keystore_iOS
+import TrUAPIHost
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -9,6 +10,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     let issueMonitoringService: IssueMonitoringServiceProtocol = IssueMonitoringFactory.createService(
         dsn: GeneratedSecrets.sentryDSN
     )
+    let hostEventRecorder = IssueMonitoringFactory.createHostEventRecorder()
 
     var apnsTokenProvider: APNSTokenProviding {
         APNSTokenProviderFacade.sharedManager
@@ -28,6 +30,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureTips()
 
         issueMonitoringService.setup()
+        hostEventRecorder.record(.processStarted(
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // The OS requires every background task handler to be registered before launch finishes.
         StatementRenewalBackgroundTask.shared?.register()
@@ -36,6 +43,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         UserNotificationService.shared.startGatheringNotifications()
 
         LegacyGameAlarmCleanup.run()
+        LegacyOnrampStateCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()

@@ -22,7 +22,7 @@ struct WidgetDesignTokenResolver: WidgetDesignTokenResolving {
         case .backgroundTertiary:
             Color(.bgSurfaceNested)
         case .success:
-            Color(.brandGreen)
+            Color(.fgSuccess)
         case .error:
             Color(.fgError)
         case .warning:
