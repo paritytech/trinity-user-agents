@@ -177,7 +177,8 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
         contracts.failAllReads(with: Unreachable())
 
-        await #expect(throws: (any Error).self) { try await self.makeLoader().openWorker(self.baseName) }
+        await #expect(throws: (any Error).self) { try await self.makeLoader().openWorker(self.baseName)
+        }
     }
 
     @Test func openedWorkerOpensAgainWithoutTheNetwork() async throws {
@@ -210,6 +211,15 @@ final class ProductExecutableCacheTests {
             ),
             record: latestRecord
         ))
+    }
+
+    @Test func workerOpenStagesAWorkerThatDoesNotServeChat() async throws {
+        publishManifestProduct()
+        publishWorker(entrypoint: "worker.js", servesChat: false)
+
+        _ = try await makeLoader().openWorker(baseName)
+
+        #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
     }
 
     @Test func servedExecutableRecordChangesOnlyWithItsArchive() async throws {
@@ -273,11 +283,11 @@ private extension ProductExecutableCacheTests {
         contracts.set(contentHash: Self.workerHash, name: workerName)
     }
 
-    func publishWorker(entrypoint: String) {
+    func publishWorker(entrypoint: String, servesChat: Bool = true) {
         contracts.set(
             text: #"""
             {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"\#(entrypoint)",
-             "includes":{"chat":true,"pocket":false}}
+             "includes":{"chat":\#(servesChat),"pocket":\#(!servesChat)}}
             """#,
             name: workerName,
             key: ProductManifestRecords.executableKey

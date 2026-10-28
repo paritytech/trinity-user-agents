@@ -174,7 +174,7 @@ private extension ProductContentLoader {
 
     func stageWorkerIfMissing(of manifest: ProductManifest) async {
         guard
-            let worker = ProductWorkerSource.published(for: manifest.product, serving: .chat),
+            let worker = ProductWorkerSource.published(for: manifest.product),
             await cache.appliedArchive(of: worker.contentId) == nil
         else {
             return
