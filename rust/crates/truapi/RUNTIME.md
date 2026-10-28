@@ -465,7 +465,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_progress`, `funding_sessions`, `funding_history`,
+  `funding_session`, `funding_sessions`, `funding_history`,
   `set_funding_providers`,
   `funding_candidates`, `funding_countries`, `funding_amount_limits`,
   `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
@@ -567,8 +567,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   amount takes the quote's. The provider receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  `funding_progress(intent)` gives the milestones the host draws for a
-  session, each with when it was reached: in, `Started`, `Received` (the
+  A native host's `funding_session_changed` carries the session's
+  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
   provider saw the payment) and `Added`; out, `Started`, `Received` (released
   to the provider) and `Sent` (paid out). A milestone the provider skipped
   takes the time of the first later one. `band` is the line under them, what

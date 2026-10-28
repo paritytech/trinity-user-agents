@@ -1,9 +1,9 @@
 //! Live quotes for a funding session, asked of each candidate's worker.
 //!
 //! The host asks once per amount, rail and asset; the core sends the ask to
-//! every funding provider, on `serveSubscribe`, whatever its manifest says it
-//! serves, since a provider can serve more or less than it last published.
-//! The worker prices it from its own API and answers with `answerQuote`. Each
+//! every funding provider's worker as a `quote` request, whatever its manifest
+//! says it serves, since a provider can serve more or less than it last
+//! published. The worker prices it from its own API and answers. Each
 //! provider's row resolves on its own: a provider that does not answer in time
 //! is unavailable, so a slow one never holds the list. What an answer shows
 //! about what the provider serves is kept for twelve hours and folded into the

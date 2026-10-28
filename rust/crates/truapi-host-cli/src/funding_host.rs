@@ -322,8 +322,8 @@ impl FundingPlatform for CliFundingHost {
 		let progress = self
 			.runtime
 			.upgrade()
-			.and_then(|runtime| runtime.funding_progress(&intent))
-			.map(|progress| format!("{:?}", progress.status));
+			.and_then(|runtime| runtime.funding_session(&intent))
+			.map(|session| format!("{:?}", session.status(truapi::current_unix_millis())));
 		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
