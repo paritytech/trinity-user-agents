@@ -84,27 +84,6 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
-		// Events the core addresses to a host, and its warnings, reach this log
-		// regardless of the trace level, which defaults to ERROR and so drops
-		// everything the core would otherwise say about itself. The registration
-		// is held on this runtime, so the sink goes with it; the callbacks are
-		// held weakly so a line in flight cannot resurrect a host being torn
-		// down.
-		let log_callbacks = Arc::downgrade(&callbacks);
-		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
-			if let Some(callbacks) = log_callbacks.upgrade() {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
-			}
-		}));
-		// Raised through tracing rather than called directly, so every host log
-		// opens with proof that the layer forwarding to this sink is alive. A
-		// host that reaches a later condition and sees nothing can tell a quiet
-		// core from a channel that was never wired.
-		tracing::info!(
-			target: "truapi.core.started",
-			"truapi {} is logging to this host",
-			env!("CARGO_PKG_VERSION"),
-		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
@@ -158,6 +137,30 @@ impl NativeTrUApiHostRuntime {
 				reason: err.reason,
 			})?;
 		}
+		// Installed only once this runtime is certain to exist. The sink is
+		// process-wide and its registration clears the slot when it drops, so
+		// installing before the fallible work above would leave a host that
+		// failed to start having silenced whichever runtime was already running.
+		//
+		// Events the core addresses to a host, and its warnings, reach this log
+		// regardless of the trace level, which defaults to ERROR and so drops
+		// everything the core would otherwise say about itself. The callbacks are
+		// held weakly so a line in flight cannot resurrect a host being torn down.
+		let log_callbacks = Arc::downgrade(&callbacks);
+		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
+			if let Some(callbacks) = log_callbacks.upgrade() {
+				callbacks.on_core_log(marker.to_string(), detail.to_string());
+			}
+		}));
+		// Raised through tracing rather than called directly, so every host log
+		// opens with proof that the layer forwarding to this sink is alive. A
+		// host that reaches a later condition and sees nothing can tell a quiet
+		// core from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		Ok(Arc::new(Self {
 			runtime,
 			events,

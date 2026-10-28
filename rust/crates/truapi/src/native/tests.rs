@@ -2661,6 +2661,31 @@ fn the_core_log_sink_does_not_retain_a_dropped_host() {
 	);
 }
 
+/// A host that fails to start must not take the running host's log with it.
+/// The sink is process-wide and its registration clears the slot as it drops,
+/// so it is installed only once this runtime is certain to exist.
+#[test]
+fn a_failed_host_start_leaves_the_running_host_logging() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	let mut doomed = native_host_runtime_config();
+	doomed.database_directory = "/truapi-probe-that-cannot-be-opened".to_string();
+	let failed =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), doomed);
+	assert!(failed.is_err(), "the probe config was supposed to fail");
+
+	assert!(
+		crate::logging::host_sink_installed(),
+		"a host that failed to start cleared the running host's sink",
+	);
+	drop(host);
+}
+
 #[test]
 fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	use futures::SinkExt;

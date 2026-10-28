@@ -61,6 +61,12 @@ type HostSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 /// cannot collide with one, and the rest of the target names the condition.
 pub const HOST_MARKER_PREFIX: &str = "truapi.";
 
+/// Targets this crate family owns, whether a module path (`truapi::chain_runtime`)
+/// or a marker addressed to the host (`truapi.chain.follow_budget_reached`). A
+/// dependency's own `tracing` traffic is not a host's business and must not be
+/// able to drive the host sink.
+const CRATE_TARGET_PREFIX: &str = "truapi";
+
 /// Loudest level a marked event may use.
 ///
 /// A filter with no level opinion pins the process-wide max level at `TRACE`,
@@ -122,8 +128,14 @@ fn subscriber(
 	Registry::default().with(ConsoleLayer.with_filter(filter)).with(
 		HostSinkLayer { sink: slot }.with_filter(
 			filter_fn(|meta: &tracing::Metadata<'_>| {
-				meta.target().starts_with(HOST_MARKER_PREFIX) ||
-					*meta.level() <= HOST_SINK_EVENT_LEVEL
+				// Only this crate's own events. The reentrancy guard is
+				// thread-local, so it does not catch a host that hands a line to
+				// another thread which logs; admitting every crate's warnings
+				// would make that loop reachable through any dependency, and
+				// would ship their lines off the device besides.
+				meta.target().starts_with(CRATE_TARGET_PREFIX) &&
+					(meta.target().starts_with(HOST_MARKER_PREFIX) ||
+						*meta.level() <= HOST_SINK_EVENT_LEVEL)
 			})
 			.with_max_level_hint(HOST_MARKER_MAX_LEVEL),
 		),
@@ -139,6 +151,12 @@ fn subscriber(
 /// set, so build one runtime per process.
 pub fn set_host_sink(sink: HostSink) -> HostSinkRegistration {
 	HostSinkRegistration::install(&HOST_SINK, sink)
+}
+
+/// Whether any host still has a sink installed.
+#[cfg(test)]
+pub(crate) fn host_sink_installed() -> bool {
+	HOST_SINK.read().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some()
 }
 
 /// Keeps a host sink installed until dropped.
@@ -510,6 +528,26 @@ mod tests {
 		init();
 		set_level(DEFAULT_LEVEL);
 		assert_eq!(LevelFilter::current(), HOST_MARKER_MAX_LEVEL);
+	}
+
+	/// A dependency's warnings are not a host's business, and the reentrancy
+	/// guard is thread-local, so admitting every crate's would let any of them
+	/// drive the sink back into itself from a thread the guard cannot see.
+	#[test]
+	fn a_warning_from_another_crate_does_not_reach_the_host_sink() {
+		let lines = testing::host_sink_lines(|| {
+			tracing::warn!(target: "subxt::backend", "a dependency warning");
+			tracing::warn!(target: "truapi::probe", "a warning of our own");
+		});
+
+		assert!(
+			!lines.iter().any(|line| line.contains("a dependency warning")),
+			"a dependency's warning reached the host sink: {lines:?}",
+		);
+		assert!(
+			lines.iter().any(|line| line.contains("a warning of our own")),
+			"our own warning did not reach the host sink: {lines:?}",
+		);
 	}
 
 	#[test]
