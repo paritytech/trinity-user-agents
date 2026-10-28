@@ -3100,6 +3100,106 @@ mod tests {
 		previews.forget("chat.dot", "room");
 		assert!(previews.try_acquire("chat.dot", "room", start));
 	}
+
+	/// A chat host with only the callbacks that have no default.
+	struct ChatHostWithoutDeclarations;
+
+	#[async_trait]
+	impl ChatPlatform for ChatHostWithoutDeclarations {
+		async fn create_chat_room(
+			&self,
+			_product: &ProductContext,
+			_request: HostChatCreateRoomRequest,
+		) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
+			unimplemented!("not used by this test")
+		}
+
+		async fn register_chat_bot(
+			&self,
+			_product: &ProductContext,
+			_request: HostChatRegisterBotRequest,
+		) -> Result<HostChatRegisterBotResponse, HostChatRegisterBotError> {
+			unimplemented!("not used by this test")
+		}
+
+		async fn post_chat_message(
+			&self,
+			_product: &ProductContext,
+			_request: HostChatPostMessageRequest,
+		) -> Result<HostChatPostMessageResponse, HostChatPostMessageError> {
+			unimplemented!("not used by this test")
+		}
+
+		async fn set_chat_room_footer(
+			&self,
+			_product: &ProductContext,
+			_request: HostChatSetRoomFooterRequest,
+		) -> Result<(), GenericError> {
+			unimplemented!("not used by this test")
+		}
+
+		fn subscribe_chat_rooms(
+			&self,
+			_product: &ProductContext,
+		) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>> {
+			unimplemented!("not used by this test")
+		}
+	}
+
+	// The Rust defaults state the contract of the Swift and Kotlin bridges: a
+	// host that does not serve the declarations yet accepts the declarations
+	// that change nothing it shows, and refuses every other one.
+	#[test]
+	fn a_chat_host_without_declarations_accepts_only_what_it_serves_anyway() {
+		let host = ChatHostWithoutDeclarations;
+		let product = ProductContext::new(ProductId::for_test("chat.dot"));
+		let config = |config: ChatRoomConfig| {
+			futures::executor::block_on(host.set_chat_room_config(
+				&product,
+				HostChatSetRoomConfigRequest { room_id: "support".to_string(), config },
+			))
+		};
+		let refused = |method: &str| Err(chat_method_not_served(method));
+
+		assert_eq!(config(ChatRoomConfig::default()), Ok(()));
+		assert_eq!(
+			config(ChatRoomConfig { product_source: true, ..Default::default() }),
+			refused("setChatRoomConfig")
+		);
+		assert_eq!(
+			futures::executor::block_on(host.set_chat_room_metadata(
+				&product,
+				HostChatSetRoomMetadataRequest {
+					room_id: "support".to_string(),
+					metadata: ChatRoomMetadata { name: "Support".to_string(), description: None },
+				},
+			)),
+			Ok(())
+		);
+		assert_eq!(
+			futures::executor::block_on(host.set_chat_room_preview(
+				&product,
+				HostChatSetRoomPreviewRequest {
+					room_id: "support".to_string(),
+					preview: ChatRoomPreview {
+						timestamp: None,
+						badge: None,
+						last_message: None,
+						last_reaction: None,
+						unseen_reactions: 0,
+					},
+				},
+			)),
+			refused("setChatRoomPreview")
+		);
+		assert_eq!(
+			futures::executor::block_on(host.delete_chat_room(
+				&product,
+				HostChatDeleteRoomRequest { room_id: "support".to_string() },
+			)),
+			refused("deleteChatRoom")
+		);
+	}
 }
 
 /// Host-private persistence for core-owned state.
@@ -3556,22 +3656,29 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// Replace the configuration of a room whole and keep it across restarts.
-	/// The core has already checked the product hosts the room.
+	/// The core has already checked the product hosts the room. A Rust host
+	/// that does not implement it accepts only the default configuration,
+	/// which keeps the behaviour the host serves anyway.
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
-		_request: HostChatSetRoomConfigRequest,
+		request: HostChatSetRoomConfigRequest,
 	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("setChatRoomConfig"))
+		if request.config != ChatRoomConfig::default() {
+			return Err(chat_method_not_served("setChatRoomConfig"));
+		}
+		Ok(())
 	}
 
-	/// Replace the name and description of a room.
+	/// Replace the name and description of a room. A Rust host that does not
+	/// implement it ignores the metadata and keeps the name and icon the room
+	/// was created with.
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatSetRoomMetadataRequest,
 	) -> Result<(), GenericError> {
-		Err(chat_method_not_served("setChatRoomMetadata"))
+		Ok(())
 	}
 
 	/// Replace how a room shows in the chat list.
