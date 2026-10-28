@@ -73,7 +73,7 @@ mod tests {
 
 	use futures::{
 		executor::block_on,
-		future::{BoxFuture, Ready, ready},
+		future::{BoxFuture, ready},
 	};
 	use parking_lot::Mutex;
 
@@ -92,20 +92,6 @@ mod tests {
 		}
 	}
 
-	/// Attempts that fail with their number until attempt `done_at`, which
-	/// succeeds with it.
-	fn breaking_at(done_at: u64) -> impl FnMut() -> Ready<ControlFlow<u64, u64>> {
-		let mut attempts = 0;
-		move || {
-			attempts += 1;
-			ready(if attempts == done_at {
-				ControlFlow::Break(attempts)
-			} else {
-				ControlFlow::Continue(attempts)
-			})
-		}
-	}
-
 	fn pauses(backoff: &mut Backoff, count: usize) -> Vec<Duration> {
 		iter::repeat_with(|| backoff.next_pause()).take(count).collect()
 	}
@@ -113,12 +99,24 @@ mod tests {
 	#[test]
 	fn retry_attempts_at_once_then_waits_the_pause_each_failure_asks_for() {
 		let timer = RecordingTimer::default();
+		let mut attempts = 0;
 		let mut failures = Vec::new();
 
-		let done = block_on(retry(&timer, breaking_at(3), |failure| {
-			failures.push(failure);
-			Duration::from_secs(failure * 10)
-		}));
+		let done = block_on(retry(
+			&timer,
+			|| {
+				attempts += 1;
+				ready(if attempts == 3 {
+					ControlFlow::Break(attempts)
+				} else {
+					ControlFlow::Continue(attempts)
+				})
+			},
+			|failure| {
+				failures.push(failure);
+				Duration::from_secs(failure * 10)
+			},
+		));
 
 		assert_eq!(
 			(done, failures, timer.waits.into_inner()),
