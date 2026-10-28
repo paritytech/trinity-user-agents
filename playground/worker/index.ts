@@ -267,7 +267,29 @@ async function runRoomDeclarationProbe(): Promise<void> {
     if (feed.isErr()) {
       throw new Error(`updateFeed failed: ${JSON.stringify(feed.error)}`);
     }
-    done("stored a new message of the product");
+    const custom = await chat.updateFeed({
+      roomId,
+      update: {
+        tag: "New",
+        value: {
+          ...message,
+          messageId: "diagnosis-custom",
+          body: {
+            tag: "Custom",
+            value: {
+              message: { messageType: "truapi-diagnosis-v2", payload: "0x01" },
+              alt: "Chat Extension v2 custom message",
+            },
+          },
+        },
+      },
+    });
+    if (custom.isErr()) {
+      throw new Error(
+        `updateFeed of a custom body failed: ${JSON.stringify(custom.error)}`,
+      );
+    }
+    done("stored a text and a custom message of the product");
 
     const deleted = await chat.deleteRoom({ roomId });
     if (deleted.isErr()) {
