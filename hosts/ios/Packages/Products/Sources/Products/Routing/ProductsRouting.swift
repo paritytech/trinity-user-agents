@@ -20,23 +20,33 @@ public protocol ProductsRouting: AnyObject {
 public final class ProductsRouter: ProductsRouting {
     public private(set) weak var presentationView: ControllerBackedProtocol?
 
-    public nonisolated init() {}
+    /// Where to present while nothing is anchored, for a flow with no screen
+    /// of its own, such as a worker running headless.
+    private let fallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
+
+    public nonisolated init(fallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil) {
+        self.fallback = fallback
+    }
 
     public func setPresentationView(_ view: ControllerBackedProtocol) {
         presentationView = view
     }
 
     public var isReady: Bool {
-        presentationView != nil
+        anchor != nil
     }
 
     @discardableResult
     public func present(view: ControllerBackedProtocol) -> Bool {
-        guard let presentationView else {
+        guard let presentationView = anchor else {
             return false
         }
 
         presentationView.controller.topmostPresented.present(view.controller, animated: true)
         return true
+    }
+
+    private var anchor: ControllerBackedProtocol? {
+        presentationView ?? fallback?()
     }
 }

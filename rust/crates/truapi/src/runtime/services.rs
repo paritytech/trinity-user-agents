@@ -15,12 +15,12 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	chain::ExtrinsicService,
+	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, TopUpPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
@@ -34,7 +34,6 @@ use crate::{
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::NftPurses,
 };
-use async_trait::async_trait;
 use truapi::latest;
 
 /// Upper bound on the in-core preimage cache. The cache is a bridge until
@@ -121,6 +120,8 @@ pub struct RuntimeServices {
 	pub worker_ledger: WorkerLedger,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
+	/// Builds the core's own extrinsics over `chain`.
+	pub extrinsics: Arc<ExtrinsicService>,
 	/// People-chain statement store RPC client.
 	pub statement_store: StatementStoreRpc,
 	/// In-core Bulletin submission over the configured Bulletin chain.
@@ -186,7 +187,7 @@ impl RuntimeServices {
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
 	) -> Arc<Self> {
-		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
+		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
@@ -194,7 +195,9 @@ impl RuntimeServices {
 			people_chain_genesis_hash,
 			spawner.clone(),
 		);
-		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
+		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
+		let bulletin =
+			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
 		// The funding registry follows sessions through the services it
 		// belongs to, so it is built holding them.
 		Arc::new_cyclic(|services| Self {
@@ -230,6 +233,7 @@ impl RuntimeServices {
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chain,
+			extrinsics,
 			statement_store,
 			bulletin,
 			chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
@@ -299,7 +303,10 @@ impl RuntimeServices {
 	/// Install the host's top-up engine. Set-once; returns whether this call
 	/// installed it.
 	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.top_up_platform.set(platform).is_ok()
+		let installed = self.top_up_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's top-up engine, when one is installed.
@@ -310,7 +317,10 @@ impl RuntimeServices {
 	/// Install the host's payment engine. Set-once; returns whether this
 	/// call installed it.
 	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.payment_platform.set(platform).is_ok()
+		let installed = self.payment_platform.set(platform).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// The host's payment engine, when one is installed.
@@ -621,30 +631,6 @@ impl StatementCache {
 	fn remove_all(&mut self, statements: &[latest::SignedStatement]) {
 		self.entries
 			.retain(|cached| !statements.iter().any(|visible| visible == cached));
-	}
-}
-
-/// Adapter from `crate::platform::ChainProvider` into the
-/// [`RuntimeChainProvider`] surface the chain runtime expects.
-struct HostChainProvider {
-	platform: Arc<dyn Platform>,
-}
-
-#[async_trait]
-impl RuntimeChainProvider for HostChainProvider {
-	async fn connect(
-		&self,
-		genesis_hash: Vec<u8>,
-	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-		let genesis_hash: [u8; 32] = genesis_hash.try_into().map_err(|genesis_hash: Vec<u8>| {
-			RuntimeFailure::host_failure(
-				"remote_chain_connect",
-				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
-			)
-		})?;
-		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
 	}
 }
 

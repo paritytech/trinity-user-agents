@@ -48,6 +48,7 @@ class ManifestParserTest {
         ).getOrNull()
 
         assertEquals("Coinflip", root?.displayName)
+        assertEquals("A game", root?.description)
         assertEquals(CID, root?.icon?.cid?.toString())
         assertEquals(ProductIcon.Format.PNG, root?.icon?.format)
     }
@@ -63,6 +64,16 @@ class ManifestParserTest {
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d"}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"format":"png"}}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"cid":"not-a-cid","format":"png"}}""")
+    }
+
+    @Test
+    fun `a blank description counts as none, so a chat preview falls back past it`() {
+        val root = parser.parseRoot(
+            """{"${'$'}v":1,"displayName":"Coinflip","description":"  ","icon":{"cid":"$CID","format":"png"}}"""
+        ).getOrNull()
+
+        assertEquals("Coinflip", root?.displayName)
+        assertNull(root?.description)
     }
 
     @Test
@@ -138,6 +149,24 @@ class ManifestParserTest {
 
         assertEquals(false, worker?.includesChat)
         assertEquals(false, worker?.includesPocket)
+    }
+
+    @Test
+    fun `a modality the worker does not list is one it does not serve`() {
+        fun parsedWorker(rawText: String) =
+            parser.parseExecutable(rawText, ExecutableKind.WORKER, host("worker.coinflip.dot")).getOrNull() as? ProductExecutable.Worker
+
+        val chatOnly = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""")
+        assertEquals(true, chatOnly?.includesChat)
+        assertEquals(false, chatOnly?.includesPocket)
+
+        val fundingOnly = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}""")
+        assertEquals(false, fundingOnly?.includesChat)
+        assertEquals(false, fundingOnly?.includesPocket)
+
+        val noIncludes = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}""")
+        assertEquals(false, noIncludes?.includesChat)
+        assertEquals(false, noIncludes?.includesPocket)
     }
 
     @Test
@@ -266,8 +295,7 @@ class ManifestParserTest {
 
     @Test
     fun `executables that do not conform are rejected`() {
-        // Incomplete includes: RFC-0001 types it as Record<'chat' | 'pocket', boolean>.
-        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""", ExecutableKind.WORKER)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}""", ExecutableKind.WORKER)
         // A record read from worker.<base> that declares kind=app must not load as a worker.
         rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.WORKER)
         rejectsExecutable("""{"${'$'}v":2,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.APP)

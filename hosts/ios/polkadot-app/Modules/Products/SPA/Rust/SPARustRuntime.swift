@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
@@ -21,6 +22,8 @@ actor SPARustRuntime {
     private let productResolver: ProductResolving
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
@@ -33,7 +36,8 @@ actor SPARustRuntime {
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -41,6 +45,7 @@ actor SPARustRuntime {
         self.productResolver = productResolver
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -66,6 +71,11 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            case let .bundled(directory):
+                try await serveContent(
+                    at: directory,
+                    domain: configuration.page.host.toDotDomain()
+                )
             #if DEBUG
                 case let .devServer(url, _):
                     url
@@ -74,7 +84,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
             executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
@@ -83,6 +99,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -131,6 +154,14 @@ private extension SPARustRuntime {
         let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
         let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
 
+        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
+
+        return try await serveContent(at: contentURL, domain: domain)
+    }
+
+    /// Serves the App's files at `contentURL` under `domain`'s origin, which
+    /// is what permission grants and web storage are keyed by.
+    func serveContent(at contentURL: URL, domain: String) async throws -> URL {
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
@@ -140,8 +171,6 @@ private extension SPARustRuntime {
         guard let productURL = schemeHandler.getProductUrl() else {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
-
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
 
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()

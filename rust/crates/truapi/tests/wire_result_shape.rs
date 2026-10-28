@@ -332,8 +332,13 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 #[test]
 fn payment_request_reports_unsupported_without_a_host_engine() {
 	let core = make_core();
-	let request =
-		v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32], id: [7; 32] };
+	let request = v01::HostPaymentRequest {
+		from: None,
+		amount: 1,
+		destination: [0u8; 32],
+		id: [7; 32],
+		funding: None,
+	};
 	let ids = request_ids("payment_request").expect("known request method");
 	let frame = ProtocolMessage {
 		request_id: "p:payment".into(),
@@ -450,7 +455,9 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
 				trait_id: ids.trait_id,
 				method_id: ids.method_id,
 				message_type: MESSAGE_TYPE_START,
-				value: vec![0xff],
+				// V1, then an invalid `purse` option tag. A first byte naming a
+				// later version would be refused as unsupported, not malformed.
+				value: vec![0x00, 0xff],
 			},
 		},
 		transport.clone(),
@@ -693,6 +700,7 @@ fn top_up_reports_unsupported_without_a_host_engine() {
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		id: [7; 32],
+		funding: None,
 	};
 	let ids = request_ids("payment_top_up").expect("known request method");
 	let frame = ProtocolMessage {

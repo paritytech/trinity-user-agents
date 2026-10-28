@@ -130,6 +130,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }
 
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: chainRegistry)
+    }
+
     func authStateChanged(state: AuthState) {
         let detail =
             switch state {

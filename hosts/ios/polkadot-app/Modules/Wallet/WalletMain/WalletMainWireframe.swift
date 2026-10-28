@@ -24,6 +24,10 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
         PocketCardOpening.open(card, origin: view, flowState: flowState, navigator: moduleNavigator, pocket: pocket)
     }
 
+    func showFundingHistory() {
+        FundingActivityCenter.shared.showHistory()
+    }
+
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm: @escaping () -> Void) {
         present(
             viewModel: AlertPresentableViewModel(

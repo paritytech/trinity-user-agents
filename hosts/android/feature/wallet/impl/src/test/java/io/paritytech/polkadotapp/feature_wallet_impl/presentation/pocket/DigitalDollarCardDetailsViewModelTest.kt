@@ -1,67 +1,88 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.OFFRAMP_URL
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.ONRAMP_URL
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.ParkedFundingDomainProvider
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetNeverOpened
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedOnce
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedTwice
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
-import io.paritytech.polkadotapp.test_shared.whenever
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
+import kotlin.time.Instant
+
+private const val EVENT_TIMEOUT_MS = 1_000L
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DigitalDollarCardDetailsViewModelTest {
-    private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
-    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mock(CoinageTestnetFundUseCase::class.java)
-    private val coinageBackupService: CoinageBackupService = mock(CoinageBackupService::class.java)
-    private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mock(ShareCoinageLogsUseCase::class.java)
-    private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mock(CoinageHoldingsUseCase::class.java)
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase =
-        mock(CoinageBalanceConverterUseCase::class.java)
-    private val router: PocketRouter = mock(PocketRouter::class.java)
-    private val tokenAmountMapper: TokenAmountMapper = mock(TokenAmountMapper::class.java)
+    private val coinageHoldingsUseCase = mockk<CoinageHoldingsUseCase> {
+        every { subscribeHoldings() } returns emptyFlow()
+    }
+    private val coinageBackupService = mockk<CoinageBackupService> {
+        every { subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
+    }
 
-    private val fundingDomainProvider = ParkedFundingDomainProvider()
+    // Each open parks until the test answers it, as the overlay holds the call while it is up.
+    private val pendingOpens = ArrayDeque<CompletableDeferred<Result<String?>>>()
+    private val hostFunding = mockk<HostFunding> {
+        coEvery { openFunding(any(), null) } coAnswers {
+            CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
+        }
+        every { observeActivity() } returns emptyFlow()
+    }
+
+    private var fundingVisible = true
+    private val fundingEntryPoints = mockk<FundingEntryPoints> { every { visible } answers { fundingVisible } }
+
+    private val chainAssetProvider = mockk<ChainAssetProvider> {
+        coEvery { asset() } returns mockk { every { precision } returns 6 }
+    }
 
     private val interactor = DigitalDollarCardDetailsInteractor(
         chainAssetProvider = chainAssetProvider,
         environment = TestnetEnvironment.PRODUCTION,
-        coinageTestnetFundUseCase = coinageTestnetFundUseCase,
+        coinageTestnetFundUseCase = mockk(),
         coinageBackupService = coinageBackupService,
-        shareCoinageLogsUseCase = shareCoinageLogsUseCase,
-        fundingDomainProvider = fundingDomainProvider,
+        shareCoinageLogsUseCase = mockk(),
+        hostFunding = hostFunding,
         coinageHoldingsUseCase = coinageHoldingsUseCase,
-        coinageBalanceConverterUseCase = coinageBalanceConverterUseCase
+        coinageBalanceConverterUseCase = mockk()
     )
 
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        whenever(coinageHoldingsUseCase.subscribeHoldings()).thenReturn(emptyFlow())
-        whenever(coinageBackupService.subscribeProgress()).thenReturn(flowOf(BackupProgress.NotStarted))
     }
 
     @After
@@ -70,55 +91,110 @@ class DigitalDollarCardDetailsViewModelTest {
     }
 
     @Test
-    fun `a Get tap opens the top-up sheet`() = runBlocking<Unit> {
+    fun `+ opens inbound funding with no amount`() = runBlocking<Unit> {
+        createViewModel().onGetCashClick()
+        answerOpens(Result.success("intent"))
+
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
+    }
+
+    // The overlay is up for as long as the call is, so a second tap would stack a second session behind it.
+    @Test
+    fun `a tap while the overlay is up opens nothing more`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onGetCashClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        viewModel.onGetCashClick()
+        answerOpens(Result.success(null))
 
-        router.verifySheetOpenedOnce(ONRAMP_URL)
-        router.verifySheetNeverOpened(OFFRAMP_URL)
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
     @Test
-    fun `a second Get tap while the funding config loads opens one sheet`() = runBlocking<Unit> {
+    fun `a dismissed overlay unlocks the button`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onGetCashClick()
+        answerOpens(Result.success(null))
         viewModel.onGetCashClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.success(null))
 
-        router.verifySheetOpenedOnce(ONRAMP_URL)
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
     @Test
-    fun `after Get opened its sheet the next Get tap opens it again`() = runBlocking<Unit> {
+    fun `a failed open shows an error and unlocks the button`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onGetCashClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.failure(IllegalStateException("runtime unavailable")))
         viewModel.onGetCashClick()
-        fundingDomainProvider.completeReadsWithConfig()
-
-        router.verifySheetOpenedTwice(ONRAMP_URL)
-    }
-
-    @Test
-    fun `a failed funding config read shows the top-up error and unlocks Get`() = runBlocking<Unit> {
-        val viewModel = createViewModel()
-
-        viewModel.onGetCashClick()
-        fundingDomainProvider.failReads()
-        viewModel.onGetCashClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.success("intent"))
 
         assertPresentationErrorShown<GetCashUnavailablePresentationError>(viewModel)
-        router.verifySheetOpenedOnce(ONRAMP_URL)
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.IN, null) }
+    }
+
+    // A second top-up while one is unpaid is how a user pays twice, so Get lists the running ones first.
+    @Test
+    fun `get with a top-up in progress shows it first, and New top-up opens funding`() = runBlocking<Unit> {
+        every { hostFunding.observeActivity() } returns flowOf(FundingActivity(inFlight = listOf(topUpInProgress()), history = emptyList()))
+        val viewModel = createViewModel()
+        withTimeout(EVENT_TIMEOUT_MS) { viewModel.fundingActivity.first { it.toppingUp.isNotEmpty() } }
+
+        viewModel.onGetCashClick()
+        assertEquals(FundingSheet.TOPPING_UP, viewModel.fundingSheet.value)
+        coVerify(exactly = 0) { hostFunding.openFunding(any(), any()) }
+
+        viewModel.onHistoryClick()
+        assertEquals(FundingSheet.HISTORY, viewModel.fundingSheet.value)
+        viewModel.onSheetBack()
+        assertEquals(FundingSheet.TOPPING_UP, viewModel.fundingSheet.value)
+
+        viewModel.onNewTopUpClick()
+        answerOpens(Result.success("intent"))
+
+        assertNull(viewModel.fundingSheet.value)
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
+    }
+
+    /** A build that cannot run a funding provider, such as release, offers Send but not Get. */
+    @Test
+    fun `get is offered only where funding is`() = runBlocking<Unit> {
+        every { coinageBackupService.subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
+
+        fundingVisible = true
+        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = true), balanceRestore(createViewModel()))
+
+        fundingVisible = false
+        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
+    }
+
+    private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =
+        withTimeout(EVENT_TIMEOUT_MS) {
+            viewModel.state.first { it.balanceRestore != BalanceRestoreUiState.NotDetermined }.balanceRestore
+        }
+
+    private fun topUpInProgress() = FundingActivityItem(
+        id = "in",
+        direction = FundingDirection.IN,
+        rail = FundingRailType.BANK,
+        amount = 50_000_000.intoBalance(),
+        date = Instant.fromEpochMilliseconds(0),
+        status = FundingActivityStatus.InProgress(FundingActivityStep.WaitingForPayment),
+    )
+
+    private fun answerOpens(result: Result<String?>) {
+        while (pendingOpens.isNotEmpty()) {
+            pendingOpens.removeFirst().complete(result)
+        }
     }
 
     private fun createViewModel() = DigitalDollarCardDetailsViewModel(
         interactor = interactor,
-        router = router,
-        tokenAmountMapper = tokenAmountMapper
+        router = mockk(),
+        tokenAmountMapper = mockk(),
+        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) },
+        fundingEntryPoints = fundingEntryPoints,
     )
 }

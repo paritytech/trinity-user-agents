@@ -53,7 +53,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
         // reachable here as through any other dotNS link.
-        return gate.opens(ProductId.fromString(card.productHost, tld).getOrNull())
+        return gate.opens()
     }
 
     /**

@@ -848,7 +848,10 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{preimage_cid, preimage_key};
+pub use host_internal::{
+	bulletin::{preimage_cid, preimage_key},
+	extrinsic::Sr25519Signer,
+};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,

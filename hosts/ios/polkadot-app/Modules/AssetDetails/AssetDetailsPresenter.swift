@@ -5,6 +5,7 @@ import PolkadotUI
 import Coinage
 import ChainRegistry
 import Products
+import TrUAPIHost
 
 @MainActor
 final class AssetDetailsPresenter {
@@ -115,9 +116,7 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        view?.didReceive(topUpLoading: true)
-
-        interactor?.openTopUpProduct()
+        openFunding(.in)
     }
 
     #if TESTNET_FEATURE
@@ -130,16 +129,12 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
-        view?.didReceive(topUpLoading: false)
+    func didCompleteFunding(_ direction: FundingDirection, result: Result<Void, Error>) {
+        view?.didReceive(fundingLoading: direction, isLoading: false)
 
-        switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
-        }
+        guard case let .failure(error) = result, !(error is CancellationError) else { return }
+
+        wireframe.present(error: error, from: view)
     }
 
     func didReceive(
@@ -221,9 +216,18 @@ private extension AssetDetailsPresenter {
             availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
             gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
+            amounts: amounts,
             strip: strip,
             traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
+    }
+}
+
+private extension AssetDetailsPresenter {
+    func openFunding(_ direction: FundingDirection) {
+        view?.didReceive(fundingLoading: direction, isLoading: true)
+
+        interactor?.openFunding(direction)
     }
 }

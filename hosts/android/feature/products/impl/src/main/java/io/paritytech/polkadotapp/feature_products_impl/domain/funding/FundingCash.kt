@@ -1,0 +1,42 @@
+package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingMoney
+import uniffi.truapi.FundingDirection
+import uniffi.truapi.U128
+import java.math.BigDecimal
+import java.math.BigInteger
+import java.math.RoundingMode
+
+/**
+ * The payment balance as the funding screens show it. Amounts cross the FFI as decimal strings of the
+ * asset's smallest unit, and are drawn as dollars followed by the asset's symbol.
+ */
+data class FundingCash(
+    val symbol: String,
+    val precision: Int,
+) {
+    fun decimal(units: U128): BigDecimal =
+        units.toBigIntegerOrNull()?.toBigDecimal()?.movePointLeft(precision)?.canonical() ?: BigDecimal.ZERO
+
+    /** Rounds down, so the host never asks for more than the user typed. */
+    fun units(value: BigDecimal): U128 =
+        value.movePointRight(precision).setScale(0, RoundingMode.DOWN).toBigInteger().max(BigInteger.ZERO).toString()
+
+    /** "$50.20", with cents only when there are any. */
+    fun figure(value: BigDecimal): String = FundingMoney.figure(value)
+
+    /** "$50.20 CASH". */
+    fun label(value: BigDecimal): String = FundingMoney.label(value, symbol)
+
+    /** A fee, rounded up to the cent so it never reads as less than it is. */
+    fun cost(value: BigDecimal): String = FundingMoney.cost(value, symbol)
+
+    /** "+$50 CASH" for value moving in, "-$50 CASH" for value moving out. */
+    fun signed(value: BigDecimal, direction: FundingDirection): String {
+        val sign = if (direction == FundingDirection.IN) "+" else "-"
+        return sign + label(value)
+    }
+}
+
+/** One scale per value, so equal amounts compare equal as data. */
+fun BigDecimal.canonical(): BigDecimal = stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }

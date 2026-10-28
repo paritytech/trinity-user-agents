@@ -1,6 +1,6 @@
 [package]
 name = "truapi-host-cli"
-version = "0.26.0"
+version = "0.27.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
 license = "MIT"
@@ -52,6 +52,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 shlex = { workspace = true }
+subxt = { workspace = true, features = ["native"] }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }

@@ -24,11 +24,10 @@ internal class ManifestParser @Inject constructor(
 
         require(remote.version == SCHEMA_VERSION) { "unsupported \$v=${remote.version}" }
         val displayName = requireNotNull(remote.displayName) { "missing displayName" }
-        // Unused here, but required by RFC-0001: a stricter Host must not see a different manifest.
-        requireNotNull(remote.description) { "missing description" }
+        val description = requireNotNull(remote.description) { "missing description" }
         val icon = requireNotNull(remote.icon) { "missing icon" }
 
-        RootManifest(displayName = displayName, icon = icon.toDomain())
+        RootManifest(displayName = displayName, description = description.ifBlank { null }, icon = icon.toDomain())
     }
 
     /** [host] is the subname read from, and the executable's serving host. */
@@ -59,12 +58,12 @@ internal class ManifestParser @Inject constructor(
 
                 ExecutableKind.WORKER -> {
                     val entrypoint = requireNotNull(remote.entrypoint) { "worker missing entrypoint" }
-                    val includes = requireNotNull(remote.includes) { "worker missing includes" }
-                    val includesPocket = requireNotNull(includes.pocket) { "worker includes missing 'pocket'" }
+                    // A modality the worker does not list is one it does not serve, such as a worker that only funds.
+                    val includesPocket = remote.includes?.pocket ?: false
                     ProductExecutable.Worker(
                         scriptUrl = "https://${host.value}/$entrypoint",
                         appVersion = appVersion,
-                        includesChat = requireNotNull(includes.chat) { "worker includes missing 'chat'" },
+                        includesChat = remote.includes?.chat ?: false,
                         includesPocket = includesPocket,
                         pocketCards = remote.pocket.toCardDefinitions(includesPocket),
                     )
