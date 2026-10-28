@@ -158,7 +158,7 @@ function expiresIn(ms: number): string {
 function confirmSend(prompt: SendPrompt): Promise<boolean> {
   return ask<boolean>({
     title: "Send invitation",
-    from: prompt.product.name,
+    from: prompt.product.id,
     fields: [
       { label: "To", value: prompt.to.name },
       { label: "Message", value: prompt.purpose },

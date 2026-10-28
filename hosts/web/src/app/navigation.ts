@@ -6,6 +6,7 @@ import {
   type Address,
 } from "./address.js";
 import type { ShelfApp } from "./apps-shelf.js";
+import type { RunningProduct } from "./requester.js";
 import {
   DESTINATIONS,
   DESTINATION_LABELS,
@@ -239,6 +240,29 @@ export class ProductNavigation {
     ]
       .sort((left, right) => order(left.instance) - order(right.instance))
       .map(({ instance: _instance, ...shown }) => shown);
+  }
+
+  /** The products open in this tab under `productId`, as this host opened them. */
+  runningAs(productId: string): RunningProduct[] {
+    const network = this.deps.network;
+    const open = (product: OpenProduct, how: Opened | null) => ({
+      kind: product.executionKind,
+      address:
+        how === null
+          ? null
+          : how.via === "name"
+            ? displayAddress(how.address, network)
+            : how.address,
+    });
+    return [
+      ...(this.front === null ? [] : [{ product: this.front, how: this.how }]),
+      ...[...this.held.values()].map((entry) => ({
+        product: entry.product,
+        how: entry.opened,
+      })),
+    ]
+      .filter(({ product }) => product.productId === productId)
+      .map(({ product, how }) => open(product, how));
   }
 
   /** Close a product from the Apps shelf: the one in front, or one running behind. */

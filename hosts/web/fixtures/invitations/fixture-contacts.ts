@@ -53,7 +53,7 @@ export class FixtureContacts implements ContactService {
   async pick(product: Product): Promise<ContactPickOutcome> {
     const chosen = await this.choose({
       title: "Choose a contact",
-      from: product.name,
+      from: product.id,
     });
     if (chosen === null) return { tag: "Dismissed" };
     const user = TEST_USERS.find(

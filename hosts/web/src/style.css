@@ -2259,11 +2259,18 @@ body[data-loading="on"] .stage-empty {
 }
 
 .prompt-from,
+.prompt-from-known,
 .prompt-subtitle {
   margin: 6px 0 0;
   text-align: center;
   color: var(--sheet-muted);
   overflow-wrap: anywhere;
+}
+
+.prompt-from-known {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .prompt-subtitle {
