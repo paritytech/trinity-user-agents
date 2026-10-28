@@ -41,7 +41,9 @@ struct GameReminderDeliveryDiagnosticsTests {
         let recorder = RecordingHostEventRecorder()
         let startsAt = Date().addingTimeInterval(3_600)
 
-        makeAlarm(manager, recorder).scheduleReminder(gameDate: startsAt, productId: productId)
+        // The reminder holds itself only weakly while its work is queued.
+        let reminder = makeAlarm(manager, recorder)
+        reminder.scheduleReminder(gameDate: startsAt, productId: productId)
         try await waitUntil { !recorder.events.isEmpty }
 
         #expect(recorder.events.map(\.name) == ["host.reminder.scheduled"])
