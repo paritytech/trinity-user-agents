@@ -1,39 +1,16 @@
 import Foundation
 import SDKLogger
 
-public struct FetchedProductVersion: Equatable, Sendable {
-    public let version: ProductVersion
-    public let resolved: ResolvedProduct
-    public let appContent: DotNsResolvedContent
-    public let contents: [ProductId: DotNsResolvedContent]
-
-    public init(
-        version: ProductVersion,
-        resolved: ResolvedProduct,
-        appContent: DotNsResolvedContent,
-        contents: [ProductId: DotNsResolvedContent]
-    ) {
-        self.version = version
-        self.resolved = resolved
-        self.appContent = appContent
-        self.contents = contents
-    }
-
-    public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
-        contents[resolved.contentId(for: kind)]
-    }
-}
-
 public enum ProductUpdateFetchError: Error, Equatable {
     case tldUnavailable
 }
 
 public protocol ProductUpdateFetching: Sendable {
-    func fetch(_ productId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> FetchedProductVersion
+    func fetch(_ productId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> ProductContent
 }
 
 public extension ProductUpdateFetching {
-    func fetch(_ productId: ProductId) async throws -> FetchedProductVersion {
+    func fetch(_ productId: ProductId) async throws -> ProductContent {
         try await fetch(productId, onPhase: { _ in })
     }
 }
@@ -64,7 +41,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
     public func fetch(
         _ productId: ProductId,
         onPhase: @escaping ProductLoadPhaseHandler
-    ) async throws -> FetchedProductVersion {
+    ) async throws -> ProductContent {
         do {
             _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
         } catch {
@@ -90,16 +67,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
             }
         }
 
-        return FetchedProductVersion(
-            version: ProductVersion(
-                productId: resolved.id,
-                records: manifest.records,
-                contentHashes: contents.mapValues(\.contentHash)
-            ),
-            resolved: resolved,
-            appContent: appContent,
-            contents: contents
-        )
+        return ProductContent(resolved: resolved, records: manifest.records, contents: contents)
     }
 }
 

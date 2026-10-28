@@ -80,13 +80,7 @@ extension ProductContentLoader: ProductContentLoading {
         await cache.apply(fetched.version)
         appliedVersions[fetched.version.productId] = fetched.version
 
-        return ProductContent(
-            resolved: fetched.resolved,
-            contents: fetched.contents,
-            appContent: fetched.appContent,
-            version: fetched.version,
-            source: .network
-        )
+        return fetched
     }
 
     public func refresh(_ productId: ProductId) async -> ProductUpdate? {
@@ -136,7 +130,7 @@ private extension ProductContentLoader {
         }
     }
 
-    func publishIfChanged(_ fetched: FetchedProductVersion) async -> ProductUpdate? {
+    func publishIfChanged(_ fetched: ProductContent) async -> ProductUpdate? {
         let productId = fetched.version.productId
 
         guard let applied = await appliedVersion(of: productId) else {

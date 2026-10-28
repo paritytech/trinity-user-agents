@@ -45,17 +45,7 @@ extension ProductVersionCache: ProductVersionCaching {
             contents[contentId] = try? content(of: contentId)
         }
 
-        return ProductContent(
-            resolved: resolved,
-            contents: contents,
-            appContent: appContent,
-            version: ProductVersion(
-                productId: resolved.id,
-                records: manifest.records,
-                contentHashes: contents.mapValues(\.contentHash)
-            ),
-            source: .cache
-        )
+        return ProductContent(resolved: resolved, records: manifest.records, contents: contents)
     }
 
     public func apply(_ version: ProductVersion) {

@@ -41,7 +41,7 @@ final class ProductContentLoaderTests {
             await clock.resumeSleep(for: .seconds(delay))
         }
 
-        #expect(try await open.value.appContent.localURL == storage.directory(for: contentHash.toHex()))
+        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
@@ -52,7 +52,7 @@ final class ProductContentLoaderTests {
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.source == .network)
+        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 2)
     }
 
@@ -91,7 +91,7 @@ final class ProductContentLoaderTests {
         await environment.path.waitForStreamRequests(2)
         environment.path.simulate(isSatisfied: true)
 
-        #expect(try await open.value.source == .network)
+        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 2)
     }
 
@@ -113,7 +113,7 @@ final class ProductContentLoaderTests {
 
         await clock.resumeSleep(for: .seconds(1))
 
-        #expect(try await open.value.source == .network)
+        #expect(try await open.value.content(for: .app)?.localURL == storage.directory(for: contentHash.toHex()))
         #expect(environment.fetcher.fetchCount == 1)
     }
 
@@ -170,7 +170,7 @@ final class ProductContentLoaderTests {
 
         let cached = try await environment.loader.open(productId, policy: .untilCancelled, onPhase: phases.record)
 
-        #expect(cached.source == .cache)
+        #expect(environment.fetcher.fetchCount == 1)
         #expect(phases.recorded.isEmpty)
     }
 
@@ -183,9 +183,8 @@ final class ProductContentLoaderTests {
 
         let second = try await environment.loader.open(productId, policy: .untilCancelled)
 
-        #expect(first.source == .network)
-        #expect(second.source == .cache)
-        #expect(second.appContent == first.appContent)
+        #expect(environment.fetcher.fetchCount == 1)
+        #expect(second.contents == first.contents)
         #expect(second.version == first.version)
     }
 
@@ -198,7 +197,7 @@ final class ProductContentLoaderTests {
         let update = try #require(await environment.loader.refresh(productId))
 
         #expect(update.previous == opened.version)
-        #expect(update.latest.appContent.contentHash == updatedContentHash.toHex())
+        #expect(update.latest.content(for: .app)?.contentHash == updatedContentHash.toHex())
         #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
         #expect(try await updates.next() == update)
     }

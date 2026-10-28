@@ -72,16 +72,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
             )
         })
 
-        return ProductContent(
-            resolved: resolved,
-            contents: contents,
-            appContent: contents[resolved.appContentId] ?? DotNsResolvedContent(
-                contentHash: contentHash,
-                localURL: contentURL
-            ),
-            version: ProductVersion(productId: productId, records: [:], contentHashes: [:]),
-            source: .cache
-        )
+        return ProductContent(resolved: resolved, records: [:], contents: contents)
     }
 
     func refresh(_ productId: ProductId) async -> ProductUpdate? {

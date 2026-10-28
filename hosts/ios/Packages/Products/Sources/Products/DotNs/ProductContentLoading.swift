@@ -17,29 +17,22 @@ public enum ProductLoadPhase: Equatable, Sendable {
 public typealias ProductLoadPhaseHandler = @Sendable (ProductLoadPhase) -> Void
 
 public struct ProductContent: Equatable, Sendable {
-    public enum Source: Equatable, Sendable {
-        case cache
-        case network
-    }
-
     public let resolved: ResolvedProduct
-    public let appContent: DotNsResolvedContent
-    public let contents: [ProductId: DotNsResolvedContent]
     public let version: ProductVersion
-    public let source: Source
+    public let contents: [ProductId: DotNsResolvedContent]
 
     public init(
         resolved: ResolvedProduct,
-        contents: [ProductId: DotNsResolvedContent],
-        appContent: DotNsResolvedContent,
-        version: ProductVersion,
-        source: Source
+        records: [ProductVersion.RecordKey: DotNsSnapshotRecord],
+        contents: [ProductId: DotNsResolvedContent]
     ) {
         self.resolved = resolved
         self.contents = contents
-        self.appContent = appContent
-        self.version = version
-        self.source = source
+        version = ProductVersion(
+            productId: resolved.id,
+            records: records,
+            contentHashes: contents.mapValues(\.contentHash)
+        )
     }
 
     public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
@@ -49,9 +42,9 @@ public struct ProductContent: Equatable, Sendable {
 
 public struct ProductUpdate: Equatable, Sendable {
     public let previous: ProductVersion
-    public let latest: FetchedProductVersion
+    public let latest: ProductContent
 
-    public init(previous: ProductVersion, latest: FetchedProductVersion) {
+    public init(previous: ProductVersion, latest: ProductContent) {
         self.previous = previous
         self.latest = latest
     }

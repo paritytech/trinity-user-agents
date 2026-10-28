@@ -32,7 +32,7 @@ final class ProductVersionTests {
         let cached = try await makeCache().open(baseName)
 
         #expect(cached.resolved == staged.resolved)
-        #expect(cached.appContent == staged.appContent)
+        #expect(cached.contents == staged.contents)
         #expect(cached.version == staged.version)
         #expect(contracts.callCount == calls)
         #expect(fetcher.fetchCount == 2)
@@ -57,11 +57,11 @@ final class ProductVersionTests {
         contracts.set(contentHash: Self.updatedAppHash, name: appName)
         let update = try await makeFetcher().fetch(baseName)
 
-        #expect(try await makeCache().open(baseName).appContent == applied.appContent)
+        #expect(try await makeCache().open(baseName).contents == applied.contents)
 
         try await makeCache().apply(update.version)
 
-        #expect(try await makeCache().open(baseName).appContent == update.appContent)
+        #expect(try await makeCache().open(baseName).contents == update.contents)
     }
 
     @Test func runningWorkerKeepsReadingTheAppliedVersionUntilTheStagedOneIsApplied() async throws {
@@ -107,7 +107,7 @@ final class ProductVersionTests {
             try await self.makeFetcher().fetch(self.baseName)
         }
 
-        #expect(try await makeCache().open(baseName).appContent == applied.appContent)
+        #expect(try await makeCache().open(baseName).contents == applied.contents)
     }
 
     @Test func productNeverAppliedIsNotServedFromCache() async throws {
