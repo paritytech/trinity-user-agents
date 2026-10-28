@@ -143,10 +143,8 @@ impl LinkState {
 		self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
 	}
 
-	/// Account for one lost frame: `carried` drops had been drained onto the
-	/// envelope that never made it, so they go back on the pending count
-	/// alongside this one and ride the next envelope instead. Returns the new
-	/// lifetime total, for logging.
+	/// Count one lost frame and put back the `carried` drops its envelope was
+	/// reporting, so the next envelope reports them. Returns the lifetime total.
 	fn count_drop(&self, carried: u64) -> u64 {
 		self.pending_dropped.fetch_add(carried + 1, Ordering::Relaxed);
 		self.dropped.fetch_add(1, Ordering::Relaxed) + 1
@@ -268,9 +266,7 @@ impl WsDebugSink {
 		self.link.dropped.load(Ordering::Relaxed)
 	}
 
-	/// The count waiting to ride the next envelope. Test-only: the re-add in
-	/// [`LinkState::count_drop`] is load-bearing and is otherwise only observable
-	/// through a live socket, which makes it easy to leave untested.
+	/// The count waiting to ride the next envelope, which tests can't see on the wire.
 	#[cfg(test)]
 	fn pending_dropped(&self) -> u64 {
 		self.link.pending_dropped.load(Ordering::Relaxed)
@@ -286,11 +282,7 @@ impl WsDebugSink {
 impl DebugSink for WsDebugSink {
 	fn emit(&self, event: DebugEvent) {
 		let DebugEvent::Frame { channel_id, dir, bytes } = event;
-		// Drain the drops accumulated since the previous envelope and stamp them
-		// on this one, as the web link does: a shed frame must reach the debugger
-		// as a counted gap in the link, not as a host that never answered. If
-		// this envelope is itself lost, `LinkState::count_drop` puts the count back
-		// so it rides the next one.
+		// Stamp the drops since the previous envelope on this one.
 		let shed = self.link.pending_dropped.swap(0, Ordering::Relaxed);
 		let message = WireMessage {
 			v: WIRE_ENVELOPE_VERSION,
@@ -375,9 +367,7 @@ async fn forward(
 	link: &LinkState,
 ) -> ControlFlow<()> {
 	let (mut write, mut read) = stream.split();
-	// Drain queued frames to the wire, and also poll the read half so
-	// tokio-tungstenite answers server pings and observes a Close; being
-	// forward-only, any inbound message is ignored.
+	// Poll the read half too, so tokio-tungstenite answers pings and notices a Close.
 	loop {
 		tokio::select! {
 			queued = inbox.recv() => {
@@ -539,28 +529,10 @@ mod tests {
 		);
 	}
 
-	/// A drop that happens while an earlier drop is still pending must ADD to the
-	/// pending count, not replace it. `LinkState::count_drop(carried)` re-adds the `carried`
-	/// drops that had already been drained onto the envelope now being discarded -
-	/// without that, the first drop is silently swallowed and the wire reports one
-	/// loss where two happened.
-	///
-	/// Asserted on the pending counter rather than the wire because the wire only
-	/// shows the total, and a total of "1 then 1" is indistinguishable from
-	/// "1 then 2" unless you catch both envelopes.
-	///
-	/// Covers the BUDGET path only. Two sibling invariants remain uncovered, stated
-	/// here rather than left to be rediscovered:
-	///   - `forward`'s reconnect re-add (`link.count_drop(shed)`) is the same invariant on the
-	///     socket-death path. Reaching it needs a live socket killed while an envelope carrying a
-	///     shed count is in flight; passing `0` instead of `shed` passes today.
-	///   - the byte budget's `>` boundary. Hitting exactly `MAX_QUEUE_BYTES` needs a frame sized
-	///     against base64 plus JSON overhead; `>` vs `>=` passes today.
-	///   - the ATOMICITY of the re-add. `emit` always swaps pending to 0 before calling
-	///     `LinkState::count_drop`, so this test never observes a non-zero pending and `fetch_add`
-	///     -> `store` passes. `store` would clobber a concurrent re-add from `forward`, which is
-	///     the whole reason it is `fetch_add`.
-
+	/// A drop while an earlier one is pending must add to the pending count, not
+	/// replace it, or the wire reports one loss where two happened. Asserted on
+	/// the pending counter because the wire can't tell "1 then 1" from "1 then 2"
+	/// without catching both envelopes.
 	#[tokio::test]
 	async fn a_drop_while_one_is_pending_accumulates_rather_than_replaces() {
 		let port = unused_port().await;

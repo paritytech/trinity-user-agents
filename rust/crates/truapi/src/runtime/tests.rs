@@ -3015,9 +3015,7 @@ fn funding_resume_is_retried_until_storage_recovers() {
 	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
 }
 
-// Retrying cannot read sessions a newer app stored, so resume stops
-// immediately, schedules no expiry sweep, and leaves the stored sessions
-// untouched.
+// Retrying cannot read sessions a newer app stored, so resume gives up at once.
 #[test]
 fn funding_resume_stops_at_sessions_of_a_newer_format() {
 	let tasks = HeldTasks::default();
