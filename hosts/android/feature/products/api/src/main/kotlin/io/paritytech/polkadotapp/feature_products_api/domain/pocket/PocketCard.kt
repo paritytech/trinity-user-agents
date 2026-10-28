@@ -12,8 +12,12 @@ data class PocketCardKey(
     val productId: ProductId,
     val cardId: PocketCardId,
 ) {
-    /** The product's launch URL with the card named in its query, so the product opens on this card. */
-    fun launchUrl(): String = "${productId.toUrl()}?card=${Uri.encode(cardId.value)}"
+    /** The product's launch URL with the card named in its query, then the [pageQuery] a link may carry. */
+    fun launchUrl(pageQuery: String = ""): String =
+        "${productId.toUrl()}?card=${Uri.encode(cardId.value)}" + if (pageQuery.isEmpty()) "" else "&$pageQuery"
+
+    /** Whether [url] is this card's page, with or without a link's page query. */
+    fun launches(url: String): Boolean = url == launchUrl() || url.startsWith("${launchUrl()}&")
 }
 
 /** One card in the host's Pocket collection. A [privileged] card is host-placed and removable by nobody. */

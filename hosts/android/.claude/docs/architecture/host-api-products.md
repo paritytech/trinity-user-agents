@@ -323,7 +323,8 @@ Worker Lifecycle (#632). The host owns the collection and is its only writer; a 
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
 when the user follows a `polkadotapp://pocket/add?product=<product>.<tld>&card=<id>` deeplink and approves the sheet.
 `polkadotapp://pocket/open?product=<product>.<tld>&card=<id>` lands on the Pocket tab with that card expanded when the
-user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigateTo` uses the same links, which
+user holds it, and `polkadotapp://pocket` alone on the tab. The open link's other query parameters are appended to
+the card's page URL for that open only. A product's `navigateTo` uses the same links, which
 `PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:

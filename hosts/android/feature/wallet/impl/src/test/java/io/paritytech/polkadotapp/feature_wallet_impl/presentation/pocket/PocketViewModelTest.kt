@@ -374,6 +374,29 @@ class PocketViewModelTest {
         assertNull("the removal dialog came back", list.removalCandidate)
     }
 
+    // A link can pick the screen a card's page opens on, while a tap opens the card as it always has.
+    @Test
+    fun `a link's page params reach only the page that link opened`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        val collection = MutableStateFlow(listOf(card))
+        whenever(interactor.observeProductCards()).thenReturn(collection)
+        cardOpenRequests.request(card.key, "open=scratch")
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.hostExpandedProduct(uiCard)
+        assertEquals("${card.key.launchUrl()}&open=scratch", viewModel.shownProduct.value?.url)
+
+        collection.value = listOf(card, productCard("stamps"))
+        advanceUntilIdle()
+        assertNotNull("the linked page was taken for another card's", viewModel.shownProduct.value)
+
+        viewModel.dismissCard()
+        viewModel.selectCard(uiCard)
+        viewModel.hostExpandedProduct(uiCard)
+        assertEquals(card.key.launchUrl(), viewModel.shownProduct.value?.url)
+    }
+
     // The card is on screen while its lookup runs, so what the screen shows first has to be
     // "not known yet" rather than a guess: a guessed face would flash shown before folding away.
     @Test
