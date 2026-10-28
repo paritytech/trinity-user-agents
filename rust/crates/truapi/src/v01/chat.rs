@@ -343,10 +343,10 @@ pub enum ChatResource {
 	/// bytes, so a product sends the resource only through an encrypted
 	/// channel.
 	Hop {
-		/// The 32-byte identifier of the file's root entry.
-		identifier: Vec<u8>,
-		/// The 32-byte ticket that claims and opens the file.
-		ticket: Vec<u8>,
+		/// The identifier of the file's root entry.
+		identifier: [u8; 32],
+		/// The ticket that claims and opens the file.
+		ticket: [u8; 32],
 		/// The `wss://` URL of the node that holds it.
 		node: String,
 		/// The size of the file the sender states, in bytes.
@@ -900,9 +900,9 @@ pub enum ChatUserAction {
 		timestamp: u64,
 		/// The sum of the coins, in the smallest unit.
 		total_value: u128,
-		/// The 64-byte sr25519 secret key of each coin.
-		#[debug("{} keys", coin_keys.len())]
-		coin_keys: Vec<Vec<u8>>,
+		/// Sr25519 secret keys, one per coin.
+		#[debug("{} keys", sr25519_secret_keys.len())]
+		sr25519_secret_keys: Vec<[u8; 64]>,
 	},
 }
 
