@@ -16,6 +16,7 @@ export const CALLBACK_NAMES = [
   "registerChatBot",
   "postChatMessage",
   "setChatRoomFooter",
+  "listChatRooms",
   "readChatRoomConfig",
   "setChatRoomConfig",
   "setChatRoomMetadata",
@@ -210,6 +211,7 @@ function chatRawCallbacks(
     | "postChatMessage"
     | "setChatRoomFooter"
     | "subscribeChatRooms"
+    | "listChatRooms"
     | "readChatRoomConfig"
     | "setChatRoomConfig"
     | "setChatRoomMetadata"
@@ -246,6 +248,10 @@ function chatRawCallbacks(
         sendItem,
         sendError,
       ),
+    listChatRooms: (product) =>
+      bridge.callbackRequest("listChatRooms", [product]) as ReturnType<
+        Required<RawCallbacks>["listChatRooms"]
+      >,
     readChatRoomConfig: (product, roomId) =>
       bridge.callbackRequest("readChatRoomConfig", [
         product,
