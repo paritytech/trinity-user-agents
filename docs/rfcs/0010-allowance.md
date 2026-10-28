@@ -119,7 +119,7 @@ fn host_request_resource_allocation(
 
 **Renewal is not a product concern.** Bulletin slots expire after 2 weeks (+ 2-week grace). Keeping an existing allowance alive across expiry is handled automatically by the Account Holder — it reassigns the same allowance account to a fresh slot before the old one expires, without product or Host involvement. Products do not need to call `host_request_resource_allocation` periodically to stay funded.
 
-**Slot-table saturation.** Each user has a fixed number of Bulletin and SSS slots. When a new allocation is requested but all of the user's slots are already occupied, the Account Holder's authorization UI surfaces the conflict and asks the user to select which existing slot(s) to evict in favor of the new one. The user-facing resolution — including which products and which systems have existing claims — is part of the Account Holder's resource-allocation confirmation UX and not a TrUAPI concern. `NotAvailable` is therefore reserved for cases where the resource simply cannot be granted (e.g. the user declined to evict anything), not for a raw "table full" signal to the product.
+**Slot-table saturation.** Each user has a fixed number of Bulletin and SSS slots. Renewal never evicts an occupied slot. When a new allocation finds all of the user's slots occupied, the resource cannot be granted for that period and the product receives `NotAvailable`. Evicting the lowest-priority, oldest slot past the replacement cooldown for an on-demand allocation is proposed in [trinity-user-agents#1159](https://github.com/paritytech/trinity-user-agents/issues/1159) and is not part of this RFC.
 
 ### Accounts Protocol companion
 
