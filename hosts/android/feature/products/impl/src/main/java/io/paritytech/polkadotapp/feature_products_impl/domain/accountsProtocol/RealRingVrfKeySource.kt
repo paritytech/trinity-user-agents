@@ -26,7 +26,7 @@ class RealRingVrfKeySource @Inject constructor(
             return deriveEntropy(handle).map(MemberSource::Entropy)
         }
 
-        if (!reservedRingVrfKeys.isReserved(handle)) {
+        if (!reservedRingVrfKeys.isReserved(handle).getOrElse { return Result.failure(it) }) {
             return Result.failure(RingVrfKeyError.KeyNotRegistered)
         }
 
@@ -36,7 +36,8 @@ class RealRingVrfKeySource @Inject constructor(
     }
 
     override suspend fun resolveEntropy(handle: ProductAccountId): Result<BandersnatchEntropy> {
-        val known = registry.declaredRings(handle).isNotEmpty() || reservedRingVrfKeys.isReserved(handle)
+        val known = registry.declaredRings(handle).isNotEmpty() ||
+            reservedRingVrfKeys.isReserved(handle).getOrElse { return Result.failure(it) }
 
         return if (known) {
             deriveEntropy(handle)

@@ -40,7 +40,7 @@ class VideoGameDeepLinkHandler @Inject constructor(
             val productId = ProductId.parse(productIdValue).getOrElse { return@withContext Result.failure(it) }
             val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull()
                 ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
-            if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            if (productId != ReservedProductIds.game(tld).getOrThrow()) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
             val startsAtMillis = productGameReminder.scheduledStartFor(productId)
 
             telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))

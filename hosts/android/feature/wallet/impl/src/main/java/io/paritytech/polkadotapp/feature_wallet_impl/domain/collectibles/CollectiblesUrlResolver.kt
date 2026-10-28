@@ -4,6 +4,7 @@ import android.net.Uri
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isDisabled
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
@@ -15,10 +16,10 @@ class CollectiblesUrlResolver @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val remoteConfigService: RemoteConfigService,
 ) {
-    suspend fun resolveUrl(): Uri? {
-        if (!isEnabled()) return null
+    suspend fun resolveUrl(): Result<Uri?> = runCancellableCatching {
+        if (!isEnabled()) return@runCancellableCatching null
         val tld = dotNsTldProvider.getTldRetrying()
-        return productIdFromName(PRODUCT_LABEL, tld.value).toUri()
+        productIdFromName(PRODUCT_LABEL, tld.value).toUri()
     }
 
     private suspend fun isEnabled(): Boolean {

@@ -72,7 +72,7 @@ class PocketViewModelTest {
 
     private var collectiblesPage: Uri? = null
     private val collectiblesUrlResolver = mockk<CollectiblesUrlResolver> {
-        coEvery { resolveUrl() } answers { collectiblesPage }
+        coEvery { resolveUrl() } answers { Result.success(collectiblesPage) }
     }
 
     // SpaHost.createSession carries context parameters, which cannot be named from a call site that
@@ -157,6 +157,19 @@ class PocketViewModelTest {
         val cards = settledCards(createViewModel())
 
         assertEquals(listOf("digital_dollar_card"), cards.map { it.id })
+    }
+
+    @Test
+    fun `a failed collectibles identity leaves the Pocket usable without offering the page`() = runTest(testDispatcher) {
+        coEvery { collectiblesUrlResolver.resolveUrl() } returns Result.failure(IllegalStateException("unsupported network"))
+        val viewModel = createViewModel()
+
+        assertEquals(listOf("digital_dollar_card"), settledCards(viewModel).map { it.id })
+        assertEquals(false, (viewModel.state.value as PocketScreenState.List).collectiblesAvailable)
+
+        viewModel.openCollectibles()
+
+        verify(router, never()).openSpaSheet(any())
     }
 
     // The collectibles page reads the collection over the host's chain connection, which it gets only

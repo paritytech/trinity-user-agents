@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.external
 import android.content.Context
 import androidx.annotation.StringRes
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -30,7 +31,7 @@ class HostPlacedProducts @Inject constructor(
 ) {
     private class Definition(
         @StringRes val nameRes: Int,
-        val backingProduct: (DotNsTld) -> ProductId,
+        val backingProduct: (DotNsTld) -> Result<ProductId>,
     )
 
     private val definitions = listOf(
@@ -49,7 +50,9 @@ class HostPlacedProducts @Inject constructor(
         emit(products(tld))
     }
 
-    private fun products(tld: DotNsTld) = definitions.map {
-        Product(it.backingProduct(tld), context.getString(it.nameRes), icon = null)
+    private fun products(tld: DotNsTld) = definitions.mapNotNull {
+        val productId = it.backingProduct(tld).logFailure("Host-placed product is unavailable").getOrNull()
+            ?: return@mapNotNull null
+        Product(productId, context.getString(it.nameRes), icon = null)
     }
 }

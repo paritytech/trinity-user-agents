@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.GenesisHash
 import io.paritytech.polkadotapp.chains.multiNetwork.getRuntime
 import io.paritytech.polkadotapp.chains.util.Modules
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -34,39 +35,29 @@ class ReservedRingVrfKeys @Inject constructor(
     private val chainRegistry: ChainRegistry,
     private val dotNsTldProvider: DotNsTldProvider,
 ) {
-    suspend fun isReserved(handle: ProductAccountId): Boolean {
-        if (handle.productId != personhoodId()) return false
-
-        return handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX
+    suspend fun isReserved(handle: ProductAccountId): Result<Boolean> = runCancellableCatching {
+        handle.productId == personhoodId().getOrThrow() &&
+            (handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX)
     }
 
-    private suspend fun ownedBy(owner: ProductId): Boolean = owner == personhoodId()
-
-    private suspend fun personhoodId(): ProductId {
+    private suspend fun personhoodId(): Result<ProductId> {
         return ReservedProductIds.personhood(dotNsTldProvider.getTldRetrying())
     }
 
-    /**
-     * Fails rather than returning an empty list when the chain cannot be read, so a caller can tell
-     * "this user has no personhood key" apart from "the ring could not be resolved".
-     */
-    suspend fun entriesOf(owner: ProductId): Result<List<ReservedRingVrfKeyEntry>> {
-        if (!ownedBy(owner)) return Result.success(emptyList())
+    /** Fails when the network's reserved identity or ring cannot be resolved. */
+    suspend fun entriesOf(owner: ProductId): Result<List<ReservedRingVrfKeyEntry>> = runCancellableCatching {
+        if (owner != personhoodId().getOrThrow()) return@runCancellableCatching emptyList()
 
-        return runCatching {
-            val peopleChain = chainRegistry.peopleChain()
+        val peopleChain = chainRegistry.peopleChain()
+        val chainId = chainRegistry.knownChains.people
+        val membersPalletIndex = chainRegistry.getRuntime(chainId).metadata
+            .moduleOrNull(Modules.MEMBERS)?.index?.toInt()?.toUByte()
+            ?: error("MEMBERS pallet is absent from ${peopleChain.name} metadata")
 
-            val chainId = chainRegistry.knownChains.people
-
-            val membersPalletIndex = chainRegistry.getRuntime(chainId).metadata
-                .moduleOrNull(Modules.MEMBERS)?.index?.toInt()?.toUByte()
-                ?: error("MEMBERS pallet is absent from ${peopleChain.name} metadata")
-
-            listOf(
-                reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, FULL_PERSONHOOD_INDEX, RingCollectionId.PEOPLE),
-                reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, LIGHT_PERSONHOOD_INDEX, RingCollectionId.PEOPLE_LITE),
-            )
-        }
+        listOf(
+            reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, FULL_PERSONHOOD_INDEX, RingCollectionId.PEOPLE),
+            reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, LIGHT_PERSONHOOD_INDEX, RingCollectionId.PEOPLE_LITE),
+        )
     }
 
     private fun reservedEntry(

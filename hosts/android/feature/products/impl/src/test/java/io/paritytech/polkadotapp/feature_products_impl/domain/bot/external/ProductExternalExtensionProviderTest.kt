@@ -4,6 +4,7 @@ import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
@@ -20,7 +21,7 @@ import uniffi.truapi.ProductId
 
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
-    private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
+    private val jollity = Product(ReservedProductIds.game(tld).getOrThrow(), "Jollity", icon = null)
     private val playground = Product(ProductId.parse("truapi-playground.paseo").getOrThrow(), "TrUAPI Playground", icon = null)
 
     private val integrationRepository: ProductIntegrationRepository = mockk()
@@ -41,6 +42,24 @@ class ProductExternalExtensionProviderTest {
     @Test
     fun `an installed chat product is listed as its extension`() = runTest {
         val extensions = extensions(stored = listOf(playground), placed = emptyList())
+
+        assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
+    }
+
+    @Test
+    fun `an unsupported reserved identity does not remove installed chat extensions`() = runTest {
+        val context: Context = mockk(relaxed = true)
+        val tldProvider: DotNsTldProvider = mockk {
+            every { currentTldOrNull() } returns DotNsTld.parse("test")!!
+        }
+        val provider = ProductExternalExtensionProvider(
+            integrationRepository,
+            ProductBotFactory(context, mockk(), mockk(), mockk()),
+            HostPlacedProducts(context, tldProvider),
+        )
+        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
+
+        val extensions = provider.observeExtensions().first().map { it as ProductChatExtension }
 
         assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
     }

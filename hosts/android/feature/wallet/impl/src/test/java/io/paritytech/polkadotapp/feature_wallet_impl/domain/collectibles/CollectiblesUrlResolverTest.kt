@@ -41,7 +41,7 @@ class CollectiblesUrlResolverTest {
         for (network in listOf("paseo", "dot")) {
             val stashPage = pageAt("https://stash.$network")
 
-            assertSame(network, stashPage, resolverOn(tldReads(network)).resolveUrl())
+            assertSame(network, stashPage, resolverOn(tldReads(network)).resolveUrl().getOrThrow())
         }
     }
 
@@ -51,7 +51,7 @@ class CollectiblesUrlResolverTest {
     fun `waits out a failed suffix read instead of hiding the card`() = runTest {
         val stashPage = pageAt("https://stash.paseo")
 
-        assertSame(stashPage, resolverOn(tldReads("paseo", failuresFirst = 1)).resolveUrl())
+        assertSame(stashPage, resolverOn(tldReads("paseo", failuresFirst = 1)).resolveUrl().getOrThrow())
     }
 
     // The remote switch is how the card is pulled from every installed app without a release. A switched-off
@@ -60,7 +60,7 @@ class CollectiblesUrlResolverTest {
     fun `no page and no chain read when the remote switch is off`() = runTest {
         coEvery { remoteConfigService.getSyncedBoolean("collectibles_enabled") } returns Result.success(false)
 
-        assertNull(resolverOn(mockk()).resolveUrl())
+        assertNull(resolverOn(mockk()).resolveUrl().getOrThrow())
     }
 
     // Release and safetynet builds ship without collectibles whatever the remote switch says.
@@ -68,7 +68,7 @@ class CollectiblesUrlResolverTest {
     fun `no page and no chain read in builds without collectibles`() = runTest {
         every { FeatureFlags.isEnabled(FeatureOption.COLLECTIBLES) } returns false
 
-        assertNull(resolverOn(mockk()).resolveUrl())
+        assertNull(resolverOn(mockk()).resolveUrl().getOrThrow())
     }
 
     private fun pageAt(url: String): Uri = mockk<Uri>().also { every { Uri.parse(url) } returns it }

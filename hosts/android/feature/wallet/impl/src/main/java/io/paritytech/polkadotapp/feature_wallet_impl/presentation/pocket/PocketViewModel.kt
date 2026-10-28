@@ -115,7 +115,9 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
-    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
+    private val collectiblesUrl = flowOf {
+        collectiblesUrlResolver.resolveUrl().logFailure("Collectibles URL is unavailable").getOrNull()
+    }
         .flowOn(dispatchers.computation)
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 

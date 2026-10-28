@@ -15,10 +15,10 @@ import uniffi.truapi.ProductId
  */
 class ReservedProductAccountDerivationProvider(
     private val dotNsTldProvider: DotNsTldProvider,
-    private val reservedProductId: (DotNsTld) -> ProductId,
+    private val reservedProductId: (DotNsTld) -> Result<ProductId>,
 ) : AccountDerivationProvider {
     override suspend fun provideDerivationPath(): String {
         val tld = dotNsTldProvider.getTldRetrying()
-        return productAccountPath(reservedProductId(tld), DerivationIndex32.default())
+        return productAccountPath(reservedProductId(tld).getOrThrow(), DerivationIndex32.default())
     }
 }
