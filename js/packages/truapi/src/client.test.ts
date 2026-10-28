@@ -1668,7 +1668,62 @@ describe("connection preparation", () => {
         transport.dispose();
     });
 
-    it("does not send work interrupted while opening and allows a later operation", async () => {
+    it("sends work interrupted before readiness once readiness arrives", async () => {
+        const fixture = providerFixture();
+        const ready = readiness();
+        const transport = createTransport(fixture.provider, { prepare: () => ready.promise });
+        const response = transport.request(request);
+        const errors: unknown[] = [];
+        createClient(transport)
+            .theme.subscribe()
+            .subscribe({ error: (error) => errors.push(error.cause) });
+        fixture.reset(new Error("opening connection interrupted"));
+        ready.resolve();
+        await ready.promise;
+        fixture.receive(wireFrame("p:1", requestIds, MESSAGE_TYPE_RESPONSE));
+        expect({
+            outcome: (await response)._unsafeUnwrap(),
+            errors,
+            sent: fixture.sent.map(toHex),
+        }).toEqual({
+            outcome: undefined,
+            errors: [],
+            sent: [
+                wireFrame("p:1", requestIds, MESSAGE_TYPE_REQUEST),
+                wireFrame("p:2", W.THEME_SUBSCRIBE, MESSAGE_TYPE_START, new Uint8Array([0])),
+            ].map(toHex),
+        });
+        transport.dispose();
+    });
+
+    it("rejects a sent request on a reset and keeps an unsent subscription for readiness", async () => {
+        const fixture = providerFixture();
+        const ready = readiness();
+        const transport = createTransport(fixture.provider, {
+            prepare: (ids) => (ids.kind === "request" ? Promise.resolve() : ready.promise),
+        });
+        const response = Promise.resolve(transport.request(request)).catch((error) => error);
+        const errors: unknown[] = [];
+        createClient(transport)
+            .theme.subscribe()
+            .subscribe({ error: (error) => errors.push(error.cause) });
+        await Promise.resolve();
+        const reset = new Error("connection interrupted");
+        fixture.reset(reset);
+        ready.resolve();
+        await ready.promise;
+        expect({ outcome: await response, errors, sent: fixture.sent.map(toHex) }).toEqual({
+            outcome: reset,
+            errors: [],
+            sent: [
+                wireFrame("p:1", requestIds, MESSAGE_TYPE_REQUEST),
+                wireFrame("p:2", W.THEME_SUBSCRIBE, MESSAGE_TYPE_START, new Uint8Array([0])),
+            ].map(toHex),
+        });
+        transport.dispose();
+    });
+
+    it("ends work waiting for readiness when the provider closes", async () => {
         const fixture = providerFixture();
         const ready = readiness();
         const transport = createTransport(fixture.provider, { prepare: () => ready.promise });
@@ -1677,23 +1732,12 @@ describe("connection preparation", () => {
         createClient(transport)
             .theme.subscribe()
             .subscribe({ error: (error) => errors.push(error.cause) });
-        const interrupted = new Error("opening connection interrupted");
-        fixture.reset(interrupted);
-        ready.resolve();
-        await ready.promise;
-        const fresh = transport.request(request);
-        await Promise.resolve();
-        fixture.receive(wireFrame("p:3", requestIds, MESSAGE_TYPE_RESPONSE));
-        expect({
-            outcome: await response,
-            errors,
-            sent: fixture.sent.map(toHex),
-            fresh: (await fresh)._unsafeUnwrap(),
-        }).toEqual({
-            outcome: interrupted,
-            errors: [interrupted],
-            sent: [toHex(wireFrame("p:3", requestIds, MESSAGE_TYPE_REQUEST))],
-            fresh: undefined,
+        const closed = new Error("provider closed");
+        fixture.close(closed);
+        expect({ outcome: await response, errors, sent: fixture.sent }).toEqual({
+            outcome: closed,
+            errors: [closed],
+            sent: [],
         });
         transport.dispose();
     });
