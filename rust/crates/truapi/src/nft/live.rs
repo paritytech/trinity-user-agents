@@ -5,8 +5,9 @@
 //! receiving product on one host: it creates a collection, mints into keys
 //! the sender allocated, rebalances them into another purse, hands one off
 //! in an `Ephemeral` and one in a `Static` cheque that the receiver deposits,
-//! and transfers one out of the purses, following each operation until it
-//! clears. It burns everything and deletes the collection whatever happened.
+//! revokes an undelivered cheque, refunds a deposited one and revokes it
+//! after, and transfers one out of the purses, following each operation
+//! until it clears. It burns everything and deletes the collection whatever happened.
 //! The collection's owner is `//Alice` unless `LIVE_NFT_OWNER_MNEMONIC` names
 //! another funded account, which then signs with its root key.
 //! `LIVE_ASSET_HUB_WS` and `LIVE_ASSET_HUB_GENESIS` point it at another
@@ -16,6 +17,7 @@ use core::time::Duration;
 use std::{collections::HashSet, sync::Arc};
 
 use futures::StreamExt;
+use sp_crypto_hashing::blake2_256;
 use subxt::{
 	dynamic::{At, Value, tx},
 	utils::{AccountId32, H256},
@@ -51,7 +53,7 @@ use crate::{
 
 const DEV_PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
 const ALICE_HEX: &str = "d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d";
-const ITEM_COUNT: u32 = 2;
+const ITEM_COUNT: u32 = 4;
 const WAIT: Duration = Duration::from_secs(240);
 const POLL: Duration = Duration::from_secs(3);
 
@@ -324,6 +326,12 @@ async fn every_item_key(ledger: &NftLedger) -> Vec<ItemKey> {
 	keys.next().await.expect("item keys are read").expect("item keys read")
 }
 
+/// The idempotency key a revoke or refund of `id` is observed under, as a
+/// product derives it from `domain` and the cheque id.
+fn derived_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+	NftPurseIdempotencyKey(blake2_256(&[domain, &id.0].concat()))
+}
+
 /// The product that mints and sends.
 fn sender() -> ProductId {
 	ProductId::for_test("sender.dot")
@@ -356,7 +364,51 @@ impl LiveRun<'_> {
 		let into = self.purses.create_purse(&receiver(), "received".into()).await.unwrap();
 		self.deposit_ephemeral_cheque(rebalanced.purse, rebalanced.keys[0], into).await;
 		self.deposit_static_cheque(rebalanced.purse, rebalanced.keys[1], into).await;
+		self.revoke_undelivered_cheque(rebalanced.purse, rebalanced.keys[2]).await;
+		self.refund_then_revoke(rebalanced.purse, rebalanced.keys[3], into).await;
 		self.transfer_out_of_the_purses(into, foreign).await;
+	}
+
+	/// The sender hands `item` of `from` off in a cheque nobody deposits,
+	/// revokes it, and waits until `from` lists the reclaimed key.
+	async fn revoke_undelivered_cheque(&self, from: PurseId, item: NftPurseItemKey) {
+		let cheque = self.send_cheque(from, item, &self.static_destination()).await;
+		self.revoke_until_listed(&cheque, from).await;
+	}
+
+	/// The receiver deposits a cheque of `item` into `into` and refunds it,
+	/// then the sender revokes it and waits until `from` lists the reclaimed
+	/// key.
+	async fn refund_then_revoke(&self, from: PurseId, item: NftPurseItemKey, into: PurseId) {
+		let cheque = self.send_cheque(from, item, &self.static_destination()).await;
+		self.deposit_until_cleared(&cheque, into).await;
+		let refunded =
+			self.purses.refund(&receiver(), &cheque.id).await.expect("the refund starts");
+		assert_eq!(refunded.unavailable, vec![]);
+		let refund_key = derived_key(b"nft-purse/refund", &cheque.id);
+		self.follow_until_cleared(&receiver(), refund_key).await;
+		self.revoke_until_listed(&cheque, from).await;
+	}
+
+	/// Revokes `cheque` as the sender, follows it until it clears, and waits
+	/// until `from` lists the reclaimed key too.
+	async fn revoke_until_listed(&self, cheque: &NftPurseCheque, from: PurseId) {
+		let mut expected = self.listed_items(from).await;
+		self.purses
+			.revoke_cheque(&sender(), &cheque.id)
+			.await
+			.expect("the revoke starts");
+		let revoke_key = derived_key(b"nft-purse/revoke", &cheque.id);
+		let cleared = self.follow_until_cleared(&sender(), revoke_key).await;
+		expected.extend(cleared.iter().map(|item| item.minted));
+		self.wait_until_listed(from, expected).await;
+	}
+
+	/// A `Static` destination under a fresh cheque id.
+	fn static_destination(&self) -> NftPurseChequeDestination {
+		let encryption_key = self.purses.static_receive_key().expect("a static receive key");
+		let cheque_id = NftPurseChequeId(rand::random());
+		NftPurseChequeDestination::Static { encryption_key, cheque_id }
 	}
 
 	/// Creates a sender purse with new keys, mints into them, and waits until
@@ -399,10 +451,7 @@ impl LiveRun<'_> {
 	/// The sender hands `item` of `from` to the host's static receive key, and
 	/// the receiver deposits the cheque into `into`.
 	async fn deposit_static_cheque(&self, from: PurseId, item: NftPurseItemKey, into: PurseId) {
-		let encryption_key = self.purses.static_receive_key().expect("a static receive key");
-		let cheque_id = NftPurseChequeId(rand::random());
-		let to = NftPurseChequeDestination::Static { encryption_key, cheque_id };
-		let cheque = self.send_cheque(from, item, &to).await;
+		let cheque = self.send_cheque(from, item, &self.static_destination()).await;
 		self.deposit_until_cleared(&cheque, into).await;
 	}
 
