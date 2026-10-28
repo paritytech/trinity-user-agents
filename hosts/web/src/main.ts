@@ -123,6 +123,7 @@ import {
 import { SessionMembership, WalletSession } from "./app/session.js";
 import { mountTools } from "../tools/mount.js";
 import { ActivityLog } from "../tools/activity/log.js";
+import { WorkerConsoleLog } from "../tools/workers/console-log.js";
 import type { ActivityCategory } from "./platform/activity.js";
 
 /** The host's activity, which every part of the host reports to and the inspector shows. */
@@ -207,6 +208,8 @@ const chatBadge = document.querySelector<HTMLElement>(
   '#dock [data-destination="chat"] [data-badge]',
 );
 const chatDiagnostics = new ChatDiagnostics();
+/** What the product workers write to their consoles, for the inspector's Workers view. */
+const workerConsole = new WorkerConsoleLog();
 /** Rooms that product workers keep, and the workers that keep them. */
 const productChat = new ProductChat(localStorage);
 /**
@@ -296,6 +299,7 @@ const productWorkers = new ProductWorkers({
       ? undefined
       : tools.tap(channel, runtime.coreWireSchemaHash),
   activity: activity.record,
+  observer: workerConsole,
   chatV2: {
     connect: (productId, port) =>
       chatV2.connect(productId, messagePortBridge(port)),
@@ -405,6 +409,10 @@ bindWorkersMenu({
   list: element<HTMLUListElement>("worker-list"),
   status: element("worker-status"),
   workers: productWorkers,
+  inspect: (name) => {
+    chrome.show("inspector");
+    tools.inspectWorker(name);
+  },
   signedIn: () => chatInbox.signedIn(),
   onSessionChange: (listener) =>
     chatInbox.onChange((change) => {
@@ -618,6 +626,8 @@ const tools = mountTools({
   productFrame,
   activity,
   diagnostics: chatDiagnostics,
+  workers: productWorkers,
+  workerConsole,
 });
 
 const versionsList = element("versions");

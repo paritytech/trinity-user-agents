@@ -171,7 +171,14 @@ describe("workers in the menu", () => {
           )
           .waitFor();
         expect(await row.innerText()).toContain("added by this host");
-        expect(await row.locator("button").count()).toBe(0);
+        // The host's own worker can be inspected, but not removed.
+        expect(
+          await row
+            .locator("button")
+            .evaluateAll((buttons) =>
+              buttons.map((button) => button.textContent),
+            ),
+        ).toEqual(["Inspect"]);
         await setMenu(page, true, "more");
         await page.locator('#chat-demo[data-demo="running"]').waitFor();
         expect(

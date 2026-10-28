@@ -72,7 +72,7 @@ async function serve(
     return notFound("This product's archive is not loaded. Open it again.");
   let path = archiveRequestPath(url.pathname, scope.pathname);
   if (path === WORKER_SHELL) {
-    const html = workerShellHtml(url.searchParams.get("entry") ?? "");
+    const html = workerShellHtml(url.searchParams.get("entry") ?? "", base);
     if (html === null) return notFound("Not a worker entry module.");
     return responseFor({
       path: WORKER_SHELL,

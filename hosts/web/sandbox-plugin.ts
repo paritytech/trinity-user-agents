@@ -12,6 +12,7 @@ const hostRoot = fileURLToPath(new URL(".", import.meta.url));
  */
 const SCRIPTS: Record<string, string> = {
   "truapi-sandbox/page.js": `${hostRoot}src/products/loader/page.ts`,
+  "truapi-sandbox/console.js": `${hostRoot}src/products/loader/console.ts`,
   "sw.js": `${hostRoot}src/products/loader/sw.ts`,
 };
 const LOADER_PAGE = "truapi-sandbox/index.html";

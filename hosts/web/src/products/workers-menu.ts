@@ -22,6 +22,8 @@ export interface WorkersMenuDeps {
   list: HTMLUListElement;
   status: HTMLElement;
   workers: WorkerList;
+  /** Show `name`'s worker in the developer tools' inspector. */
+  inspect(name: string): void;
   signedIn(): boolean;
   /** Calls back when the wallet session changes. */
   onSessionChange(listener: () => void): void;
@@ -58,6 +60,13 @@ export function bindWorkersMenu(deps: WorkersMenuDeps): void {
         ? `${stateLine(state)} · added by this host`
         : stateLine(state);
       item.append(title, line);
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.className = "quiet";
+      inspect.textContent = "Inspect";
+      inspect.setAttribute("aria-label", `Inspect ${name}`);
+      inspect.addEventListener("click", () => deps.inspect(name));
+      item.append(inspect);
       if (!workers.isDefault(name)) {
         const remove = document.createElement("button");
         remove.type = "button";

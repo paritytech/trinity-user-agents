@@ -82,17 +82,24 @@ describe("archiveRequestPath", () => {
 });
 
 describe("workerShellHtml", () => {
-  test("loads the entry module relative to the mount, and only that", () => {
-    const html = workerShellHtml("dist/main.mjs");
+  // The capture is a classic script before the module, so it is installed
+  // before the worker's first statement runs.
+  test("loads the host's console capture, then the entry module relative to the mount, and only those", () => {
+    const html = workerShellHtml("dist/main.mjs", "/repo/");
     expect(html).toContain(
-      '<script type="module" src="./dist/main.mjs"></script>',
+      '<script src="/repo/truapi-sandbox/console.js"></script>\n<script type="module" src="./dist/main.mjs"></script>',
     );
-    expect(html?.match(/<script/g)?.length).toBe(1);
+    expect(html?.match(/<script/g)?.length).toBe(2);
   });
 
   test("encodes each segment, so a name cannot leave the attribute", () => {
-    expect(workerShellHtml('a"b.js')).toContain('src="./a%22b.js"');
-    expect(workerShellHtml("a b/c<d.js")).toContain('src="./a%20b/c%3Cd.js"');
+    expect(workerShellHtml('a"b.js', "/")).toContain('src="./a%22b.js"');
+    expect(workerShellHtml("a b/c<d.js", "/")).toContain(
+      'src="./a%20b/c%3Cd.js"',
+    );
+    expect(workerShellHtml("a.js", '/x"y/')).toContain(
+      'src="/x%22y/truapi-sandbox/console.js"',
+    );
   });
 
   test("refuses what is not a module path inside the archive", () => {
@@ -105,6 +112,6 @@ describe("workerShellHtml", () => {
       "x.js?y",
       "a\\b.js",
     ])
-      expect(workerShellHtml(entry)).toBeNull();
+      expect(workerShellHtml(entry, "/")).toBeNull();
   });
 });
