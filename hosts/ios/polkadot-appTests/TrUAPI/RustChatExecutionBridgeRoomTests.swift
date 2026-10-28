@@ -25,17 +25,29 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(api.roomConfigs.map(\.config) == [config])
     }
 
-    /// The native chat draws a name only, so the host keeps the name and drops the description.
-    @Test func metadataKeepsTheName() async throws {
+    /// The native chat draws no description, so the host keeps the name and the icon and drops the description.
+    /// No icon keeps the current icon, and an empty icon removes it, as in `createRoom`.
+    @Test func metadataKeepsTheNameAndTheIcon() async throws {
         let bridge = await makeBridge()
 
         try await bridge.setRoomMetadata(
             roomId: "r",
-            metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game")
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil)
         )
-        try await bridge.setRoomMetadata(roomId: "r", metadata: ChatRoomMetadata(name: "Plain", description: nil))
+        try await bridge.setRoomMetadata(
+            roomId: "r",
+            metadata: ChatRoomMetadata(name: "Plain", description: nil, icon: "data:image/png;base64,iVBO")
+        )
+        try await bridge.setRoomMetadata(
+            roomId: "r",
+            metadata: ChatRoomMetadata(name: "Bare", description: nil, icon: "")
+        )
 
-        #expect(api.roomMetadata == [.init(roomId: "r", name: "Lobby"), .init(roomId: "r", name: "Plain")])
+        #expect(api.roomMetadata == [
+            .init(roomId: "r", name: "Lobby", icon: .keep),
+            .init(roomId: "r", name: "Plain", icon: .replace("data:image/png;base64,iVBO")),
+            .init(roomId: "r", name: "Bare", icon: .replace(nil))
+        ])
     }
 
     @Test(arguments: PreviewCase.all)
@@ -58,7 +70,7 @@ struct RustChatExecutionBridgeRoomTests {
         await #expect(throws: ChatRoomError.self) {
             try await bridge.setRoomMetadata(
                 roomId: "gone",
-                metadata: ChatRoomMetadata(name: "x", description: nil)
+                metadata: ChatRoomMetadata(name: "x", description: nil, icon: nil)
             )
         }
         await #expect(throws: ChatRoomError.self) {

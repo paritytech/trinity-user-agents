@@ -19,6 +19,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     struct RoomMetadataCall: Equatable {
         let roomId: String
         let name: String
+        let icon: Chat.RoomIconChange
     }
 
     private(set) var roomMetadata: [RoomMetadataCall] = []
@@ -49,9 +50,9 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         roomPreviews.append((roomId, preview))
     }
 
-    func setRoomMetadata(roomId: String, name: String) async throws {
+    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange) async throws {
         try requireRoom(roomId)
-        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name))
+        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, icon: icon))
     }
 
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
