@@ -27,6 +27,7 @@ import type { ProductId } from "@parity/truapi";
 import { DerivationIndex } from "@parity/truapi";
 
 import { createIframeHost } from "../web/create-iframe-host.js";
+import { SERVER_FILES } from "./host-page-url.js";
 import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
 import {
   createMockHost,
@@ -72,8 +73,9 @@ export interface TestHostPageOptions {
    * Whether the host activates a session at boot.
    *
    * `"auto"` (the default) starts signed in, which is what most suites want.
-   * `"manual"` boots with no session so a test can drive the signed-out path;
-   * call `switchAccount` to sign in.
+   * `"manual"` boots with no session so a test can drive the signed-out path.
+   * The product's login request then waits for `approveLogin` or
+   * `declineLogin`.
    */
   loginBehavior?: LoginBehavior;
   /**
@@ -148,6 +150,26 @@ export interface AccountControl {
   injectChatAction(action: unknown): Promise<void>;
   /** Re-activate the session as `name`. */
   switchAccount(name: string): Promise<void>;
+  /**
+   * Sign in as `name` and answer the product's held login request `Success`.
+   *
+   * Under `loginBehavior: "manual"`, a signed-out product's login request
+   * waits for this or `declineLogin`, as it would on a host's login prompt.
+   * Called before the request arrives, it answers the next one. Throws unless
+   * `loginBehavior` is `"manual"`.
+   */
+  approveLogin(name: string): Promise<void>;
+  /**
+   * Answer the product's held login request `Rejected`, or its next one when
+   * none is waiting. Throws unless `loginBehavior` is `"manual"`.
+   */
+  declineLogin(): Promise<void>;
+  /**
+   * Return the host to its constructed state between cases. A login request
+   * held in one case is declined, so the next case's answer is its own, and
+   * under `loginBehavior: "manual"` the host is signed out again.
+   */
+  reset(): Promise<void>;
   /** Replace the roster, activating the first entry. */
   setAccounts(names: (DevAccountName | DevAccount)[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
@@ -261,6 +283,8 @@ export async function startTestHost(
       liteUsername?: string,
     ): Promise<void>;
     disconnectSession(): Promise<void>;
+    setHoldLogins(hold: boolean): Promise<void> | void;
+    answerHeldLogins(approved: boolean): Promise<void> | void;
   };
   // The derivation and storage-key helpers are pure: they need `default()` and
   // no session. So the worker topology, which keeps the core off this thread,
@@ -281,7 +305,7 @@ export async function startTestHost(
   if ((options.topology ?? "worker") === "worker") {
     // Production topology: the core runs in a Web Worker, reached over the
     // same protocol a real web host uses.
-    worker = new Worker(options.workerUrl ?? "/test-host-worker.js", {
+    worker = new Worker(options.workerUrl ?? SERVER_FILES.worker, {
       type: "module",
     });
     workerRuntime = (await createWebWorkerPairingHostRuntime(
@@ -341,6 +365,8 @@ export async function startTestHost(
         return direct.activateLocalSession(secret);
       },
       disconnectSession: () => direct.disconnectSession(),
+      setHoldLogins: (hold) => direct.setHoldLogins(hold),
+      answerHeldLogins: (approved) => direct.answerHeldLogins(approved),
     };
   }
 
@@ -359,7 +385,18 @@ export async function startTestHost(
     active = account;
   };
 
-  if ((options.loginBehavior ?? "auto") === "auto") {
+  const holdLogins = options.loginBehavior === "manual";
+  const requireHeldLogins = (control: string) => {
+    if (!holdLogins) {
+      throw new Error(
+        `testHost \`${control}\` answers a held login, and logins are held only ` +
+          `with loginBehavior: "manual".`,
+      );
+    }
+  };
+  if (holdLogins) {
+    await runtime.setHoldLogins(true);
+  } else {
     const first = roster[0];
     if (!first) throw new Error("test host needs at least one account");
     await activate(first);
@@ -468,9 +505,16 @@ export async function startTestHost(
   const control: TestHostControl = Object.assign(host, {
     // The boot-time product storage is part of the state this host was
     // constructed with, so a reset writes it back after clearing the store.
-    reset() {
+    async reset() {
       resetMock();
       writeBootStorage();
+      if (!holdLogins) return;
+      // A held host starts signed out, so the next case's login is held.
+      await runtime.setHoldLogins(true);
+      if (active) {
+        await runtime.disconnectSession();
+        active = undefined;
+      }
     },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
@@ -523,6 +567,15 @@ export async function startTestHost(
       }
       await activate(account);
     },
+    async approveLogin(name: string) {
+      requireHeldLogins("approveLogin");
+      await this.switchAccount(name);
+      await runtime.answerHeldLogins(true);
+    },
+    async declineLogin() {
+      requireHeldLogins("declineLogin");
+      await runtime.answerHeldLogins(false);
+    },
     async setAccounts(names: (DevAccountName | DevAccount)[]) {
       roster = names.map(resolveAccount);
       const first = roster[0];
@@ -572,6 +625,8 @@ interface DirectSigningRuntime {
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   setWithheldResources?(tags: string[]): void;
+  setHoldLogins(hold: boolean): void;
+  answerHeldLogins(approved: boolean): void;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
@@ -598,6 +653,8 @@ interface WorkerSigningRuntime {
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   setWithheldResources?(tags: string[]): Promise<void>;
+  setHoldLogins(hold: boolean): Promise<void>;
+  answerHeldLogins(approved: boolean): Promise<void>;
   createProvider(product: { productId: ProductId }): Promise<{
     postMessage(frame: Uint8Array): void;
     subscribe(listener: (frame: Uint8Array) => void): () => void;

@@ -1250,6 +1250,24 @@ impl WasmSigningHostRuntime {
 		self.runtime.set_withheld_resources(tags);
 	}
 
+	/// Hold later signed-out login requests while `hold` is set, declining
+	/// those held so far.
+	#[cfg(feature = "test-host")]
+	#[wasm_bindgen(js_name = setHoldLogins)]
+	pub fn set_hold_logins(&self, hold: bool) {
+		self.runtime.set_hold_logins(hold);
+	}
+
+	/// Answer the held login requests, or the next one when none is held.
+	///
+	/// A suite testing a product's cold login activates a session before
+	/// approving; an approved request with no session is still `Rejected`.
+	#[cfg(feature = "test-host")]
+	#[wasm_bindgen(js_name = answerHeldLogins)]
+	pub fn answer_held_logins(&self, approved: bool) {
+		self.runtime.answer_held_logins(approved);
+	}
+
 	/// Keep preimage submissions in the core instead of the Bulletin chain.
 	///
 	/// For a test host whose wallet answers allowances in-page: the Bulletin

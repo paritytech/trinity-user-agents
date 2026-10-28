@@ -684,6 +684,11 @@ jobs:
       - name: Build wasm
         run: npm run build:wasm --prefix js/packages/truapi-host
 
+      # The browser suite drives the test host page in Chromium, and fails
+      # rather than skips without it under REQUIRE_WASM.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Test
         run: npm test --prefix js/packages/truapi-host
 

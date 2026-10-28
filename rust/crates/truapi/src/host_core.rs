@@ -670,6 +670,24 @@ impl SigningHostRuntime {
 		Ok(self.services.settle_funding_for_test(intent, stage).await?)
 	}
 
+	/// Hold later signed-out login requests while `hold` is set, declining
+	/// those held so far.
+	///
+	/// For test hosts only, with the `test-host` feature enabled.
+	#[cfg(feature = "test-host")]
+	pub fn set_hold_logins(&self, hold: bool) {
+		self.signing_host.set_hold_logins(hold);
+	}
+
+	/// Answer the held login requests, or the next one when none is held. An
+	/// approved request is answered `Success` when a session is then active.
+	///
+	/// For test hosts only, with the `test-host` feature enabled.
+	#[cfg(feature = "test-host")]
+	pub fn answer_held_logins(&self, approved: bool) {
+		self.signing_host.answer_held_logins(approved);
+	}
+
 	/// Answer these resource tags as refused, replacing any earlier set.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.

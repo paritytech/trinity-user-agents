@@ -6,14 +6,15 @@
 
 import { asProductId } from "@parity/truapi";
 import { startTestHost } from "./host-page.js";
+import { deepLinkedProductUrl } from "./host-page-url.js";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 import type { DevAccount, DevAccountName } from "./dev-accounts.js";
 
 const params = new URLSearchParams(window.location.search);
-const productUrl = params.get("product");
+const product = params.get("product");
 const rawMock = params.get("mock");
 
-if (!productUrl) {
+if (!product) {
   throw new Error(
     "test host page needs a ?product= URL; the Playwright fixture sets it",
   );
@@ -51,8 +52,10 @@ const logLevel = params.get("logLevel") ?? undefined;
 const rawStorage = params.get("storage");
 
 void startTestHost({
-  productUrl,
+  productUrl: deepLinkedProductUrl(product, new URL(window.location.href)),
   container,
+  // Absolute, so a deep path does not move it.
+  wasmUrl: "/wasm/testing/truapi_server.js",
   mock: rawMock ? (JSON.parse(rawMock) as MockHostConfig) : undefined,
   runtimeConfig: {
     ...(rawRuntimeConfig

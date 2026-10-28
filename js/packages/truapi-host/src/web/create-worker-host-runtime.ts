@@ -119,6 +119,21 @@ export interface WorkerPairingHostRuntime {
    */
   setWithheldResources(tags: string[]): Promise<void>;
   /**
+   * Release the login requests held so far, then hold later signed-out ones
+   * while `hold` is set. A released request is answered `Success` when a
+   * session is then active, `Rejected` otherwise.
+   *
+   * Test hosts only, on a core built with `test-host`.
+   */
+  setHoldLogins(hold: boolean): Promise<void>;
+  /**
+   * Answer the held login requests, or the next one when none is held. An
+   * approved request is answered `Success` when a session is then active.
+   *
+   * Test hosts only, on a core built with `test-host`.
+   */
+  answerHeldLogins(approved: boolean): Promise<void>;
+  /**
    * Drop the active paired session without notifying the peer. Rejects on a
    * disposed runtime, as
    * {@link WorkerPairingHostRuntime.activateStoredSession} does.
@@ -1559,6 +1574,20 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         kind: "setWithheldResources",
         requestId,
         tags,
+      }));
+    },
+    setHoldLogins(hold: boolean): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setHoldLogins",
+        requestId,
+        hold,
+      }));
+    },
+    answerHeldLogins(approved: boolean): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "answerHeldLogins",
+        requestId,
+        approved,
       }));
     },
     resetSessionState(): Promise<void> {

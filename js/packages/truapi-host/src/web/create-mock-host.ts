@@ -301,6 +301,12 @@ export interface StatementEntry {
   data: string | undefined;
   /** The signature proof, when the statement carries a signing one. */
   proof: { signature: string; signer: string } | undefined;
+  /** The statement's channel, `0x`-hex. */
+  channel: string | undefined;
+  /** The statement's expiry, as the store's `u64`. */
+  expiry: bigint | undefined;
+  /** The statement's decryption key, `0x`-hex. */
+  decryptionKey: string | undefined;
   /** True when the product submitted it, false when a test injected it. */
   fromProduct: boolean;
   /** When the store took it, as epoch milliseconds. */
@@ -533,6 +539,13 @@ export interface MockHost {
    * report that instead.
    */
   getConnectionStatus(): ChainStatus;
+  /**
+   * Switch whether `confirmUserAction` confirms, until the next `reset`.
+   *
+   * A product holding an auto-signing allowance is not asked, so declining
+   * does not reach its signatures.
+   */
+  setConfirmUserActions(confirm: boolean): void;
   /** Switch the answer both permission prompts fall back to. */
   setPermissionBehavior(
     behavior: PermissionPolicy | PermissionPolicyAlias,
@@ -875,7 +888,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     featureSupported = true,
     onlyServedChains = false,
     theme = "Dark",
-    confirmUserActions = true,
+    confirmUserActions: confirmUserActionsInitial = true,
     chainResponses = [],
     chainClosed = false,
     chainProxies = [],
@@ -928,6 +941,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   let nextChatMessageId = 0;
   let devicePermissions = devicePermissionsInitial;
   let remotePermissions = remotePermissionsInitial;
+  let confirmUserActions = confirmUserActionsInitial;
   let enforcePermissions = false;
   let currentTheme = theme;
   // Live theme subscriptions, so `setTheme` reaches a subscribed product the way
@@ -1022,16 +1036,19 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     // its contents: a suite chasing one it injected by hand has something to
     // see, where dropping it looks like the injection never happened.
     const fields = decodeStatement(statement.encoded) ?? [];
-    const proof = fields.find((field) => field.tag === "Proof")?.value as
+    const valueOf = (tag: string) =>
+      fields.find((field) => field.tag === tag)?.value;
+    const proof = valueOf("Proof") as
       | { tag: string; value: { signature: string; signer: string } }
       | undefined;
     return {
       topics: fields
         .filter((field) => TOPIC_FIELD_TAGS.includes(field.tag))
         .map((field) => String(field.value).toLowerCase()),
-      data: fields.find((field) => field.tag === "Data")?.value as
-        | string
-        | undefined,
+      data: valueOf("Data") as string | undefined,
+      channel: valueOf("Channel") as string | undefined,
+      expiry: valueOf("Expiry") as bigint | undefined,
+      decryptionKey: valueOf("DecryptionKey") as string | undefined,
       proof:
         proof && proof.tag !== "OnChain"
           ? { signature: proof.value.signature, signer: proof.value.signer }
@@ -1519,6 +1536,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getHostCallCount: () => hostCallCount,
     getIsAuthenticated: () => authStates.at(-1)?.tag === "Connected",
     getConnectionStatus: () => chainStatus,
+    setConfirmUserActions: (confirm) => {
+      confirmUserActions = confirm;
+    },
     setPermissionBehavior: (behavior) => {
       const policy = normalizePermissionPolicy(behavior);
       devicePermissions = policy;
@@ -1679,6 +1699,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       // place lets one case govern the next, which is what reset is for.
       devicePermissions = devicePermissionsInitial;
       remotePermissions = remotePermissionsInitial;
+      confirmUserActions = confirmUserActionsInitial;
       chainStatus = "Idle";
       enforcePermissions = false;
       nextNotificationId = 1;

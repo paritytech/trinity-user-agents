@@ -11,7 +11,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { accountNames, hostPageUrl } from "./host-page-url.js";
+import { accountNames, hostPageUrl, SERVER_FILES } from "./host-page-url.js";
 import type { HostPageConfig } from "./host-page-url.js";
 import { withNetworks, type NetworkConfig } from "./networks.js";
 
@@ -78,7 +78,7 @@ const PAGE = `<!doctype html>
   </head>
   <body>
     <div id="product-container"></div>
-    <script type="module" src="/test-host.js"></script>
+    <script type="module" src="${SERVER_FILES.page}"></script>
   </body>
 </html>
 `;
@@ -215,13 +215,13 @@ export async function createTestHostServer(
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
 
-    if (path === "/test-host.js") {
+    if (path === SERVER_FILES.page) {
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[".js"] });
       res.end(pageBundle);
       return;
     }
 
-    if (path === "/test-host-worker.js") {
+    if (path === SERVER_FILES.worker) {
       res.writeHead(200, { "Content-Type": CONTENT_TYPES[".js"] });
       res.end(workerBundle);
       return;
@@ -229,7 +229,7 @@ export async function createTestHostServer(
 
     // The WASM bundle and its glue are served from disk so the browser fetches
     // the same artifact the build produced.
-    if (path.startsWith("/wasm/")) {
+    if (path.startsWith(SERVER_FILES.wasm)) {
       void serveFromDist(path.slice(1), res);
       return;
     }

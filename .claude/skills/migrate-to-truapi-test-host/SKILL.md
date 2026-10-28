@@ -65,13 +65,12 @@ grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavi
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-`setLoginBehavior` is the sharpest: suites pass `"success"`/`"reject"` to drive
-an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
-because this is a signing host and that flow belongs to a pairing host.
+`setLoginBehavior("success" | "reject")` becomes `loginBehavior: "manual"` on
+the fixture plus `approveLogin(name)` or `declineLogin()` in the test.
 
 The statement-store controls and `injectChatAction` are served, so they are not
-in this grep. `injectStatement` takes `{topics, data}` the way the old package
-spells it, or the SCALE wire bytes, and answers the `StatementEntry` it
+in this grep. `injectStatement` takes `{topics, data, channel, expiry,
+decryptionKey}` the way the old package spells them, or the SCALE wire bytes, and answers the `StatementEntry` it
 retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
 suite reading `0x` hex off them reads `entry.data` instead.
 `injectChatAction` takes the core's `HostChatActionSubscribeItem` rather than
@@ -413,6 +412,30 @@ createTestHostFixture({
 Unlisted resources stay granted. This is a boot option because a product asks
 for its resources on connect, so a later call would land after that.
 
+### Paths the old host scripted
+
+- **Rejected signature:** `await testHost.setConfirmUserActions(false)` in the
+  test that needs it. `reset` restores the boot value, so one fixture covers
+  both outcomes. A product holding an auto-signing allowance signs without
+  asking, as on any host, so a suite testing its declined path also refuses it
+  one with `behaviors: { resourceAllocation: { AutoSigning: false } }`.
+- **Cold login:** boot with `loginBehavior: "manual"`. The product's login
+  request then waits, as on a host's login prompt, until the test calls
+  `approveLogin("alice")` (answered `Success`) or `declineLogin()`
+  (`Rejected`). Either may come before the product asks, and then answers
+  its next request, so a test can click and answer without waiting.
+  `switchAccount` and `signOut` answer nothing, and `reset` signs the host
+  out again.
+- **Deep links:** `await testHost.goto("/item/7?tab=history#top")` reopens the
+  host page with the product at that path, query and hash. The path goes under
+  `productUrl`'s own, the query after its query, and the hash replaces its
+  hash. A query key the host page reads itself (`product`, `accounts`,
+  `mock`, `login` and the other fixture options) never reaches the product.
+- **Full-document navigation:** a product that sets `location.href` reconnects
+  on its own, with a core of its own per document. The product needs an
+  `@parity/truapi` newer than 0.29.0, because the product side of the handshake changed
+  too.
+
 ## 4. What refuses, and why
 
 Six of `TestHostAPI`'s members throw with an explanation rather than returning
@@ -426,7 +449,8 @@ something plausible. The rest, including the statement-store controls and
   so there is no payment engine to drive. A suite with payment specs cannot
   migrate them; it can only drop or rewrite them.
 - `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
-  to the fixture instead, which is where this host takes it.
+  to the fixture instead, and answer a held login with `approveLogin` or
+  `declineLogin`.
 
 A test reaching one of these gets a reason, not `is not a function`.
 

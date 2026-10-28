@@ -110,6 +110,12 @@ export interface StatementInput {
   topics: string[];
   /** `0x`-hex payload. */
   data?: string;
+  /** `0x`-hex 32-byte channel. */
+  channel?: string;
+  /** Expiry, as the store's `u64`. */
+  expiry?: bigint | number;
+  /** `0x`-hex 32-byte decryption key. */
+  decryptionKey?: string;
 }
 
 /**
@@ -140,9 +146,38 @@ export function encodeStatement(input: StatementInput): string {
         `${TOPIC_TAGS.length} topics, and this one has ${input.topics.length}.`,
     );
   }
+  // The codec would truncate or wrap these rather than refuse them.
+  for (const [field, value] of [
+    ["channel", input.channel],
+    ["decryptionKey", input.decryptionKey],
+  ] as const) {
+    if (value !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+      throw new Error(
+        `testHost injectStatement: \`${field}\` is 32 bytes of 0x-prefixed ` +
+          `hex, not "${value}".`,
+      );
+    }
+  }
+  if (
+    input.expiry !== undefined &&
+    !(BigInt(input.expiry) >= 0n && BigInt(input.expiry) < 2n ** 64n)
+  ) {
+    throw new Error(
+      `testHost injectStatement: \`expiry\` is a u64, not ${input.expiry}.`,
+    );
+  }
   return hex(
     StatementFields.enc([
       { tag: "Proof", value: UNVERIFIED_PROOF },
+      ...(input.decryptionKey === undefined
+        ? []
+        : [{ tag: "DecryptionKey" as const, value: input.decryptionKey }]),
+      ...(input.expiry === undefined
+        ? []
+        : [{ tag: "Expiry" as const, value: BigInt(input.expiry) }]),
+      ...(input.channel === undefined
+        ? []
+        : [{ tag: "Channel" as const, value: input.channel }]),
       ...input.topics.map((topic, index) => ({
         tag: TOPIC_TAGS[index]!,
         value: topic as `0x${string}`,
