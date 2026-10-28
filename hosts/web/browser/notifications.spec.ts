@@ -18,6 +18,7 @@ import {
   openTools,
   previewFill,
   type DevTab,
+  openCatalog,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -55,9 +56,9 @@ async function open(
   if (preview === "fill") await previewFill(context);
   if (browse !== undefined)
     await context.addInitScript((address) => {
-      if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+      if (!localStorage.getItem("truapi-web-signing-host:dock:v2"))
         localStorage.setItem(
-          "truapi-web-signing-host:dock:v1",
+          "truapi-web-signing-host:dock:v2",
           JSON.stringify({ browse: address }),
         );
     }, browse);
@@ -401,7 +402,7 @@ describe("the Inbox", () => {
           .waitFor();
 
         // Browse runs it, then keeps it running behind Chat.
-        await page.click('#dock [data-destination="browse"]');
+        await openCatalog(page);
         await page.locator("body[data-product='open']").waitFor();
         await page.click('#dock [data-destination="chat"]');
         expect(await badgeCount(page)).toBe(4);
@@ -512,9 +513,9 @@ describe("the Inbox", () => {
         expect(await page.evaluate(() => document.activeElement?.id)).toBe(
           "app-more",
         );
-        // Minimize goes back to the last host screen; the product keeps running.
+        // Minimize leaves Browse's landing; the product keeps running.
         await page.click("#app-minimize");
-        await page.locator("body[data-surface='inbox']").waitFor();
+        await page.locator("body[data-surface='browse']").waitFor();
         expect(await appsOpen()).toBe(1);
         expect(await page.locator("#app-chrome").isHidden()).toBe(true);
         await apps.click();

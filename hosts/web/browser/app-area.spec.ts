@@ -266,7 +266,10 @@ describe("a product in front", () => {
         expect(
           await page.getAttribute("#product-frame", "data-app-chrome"),
         ).toBe("false");
-        await page.click('#dock [data-destination="browse"]');
+        // Browse shows its landing; the Apps shelf brings the product back.
+        expect(await page.getAttribute("body", "data-surface")).toBe("browse");
+        await page.click("#apps-toggle");
+        await page.locator('#apps-shelf [data-action="shelf-open"]').click();
         await page.locator("#app-chrome").waitFor();
         expect(
           await frame.evaluate(

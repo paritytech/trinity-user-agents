@@ -48,6 +48,7 @@ import {
   choosePreview,
   previewFill,
   type DevTab,
+  openCatalog,
 } from "./support/fixtures.js";
 import { PASEO_DOTNS } from "../src/products/dotns.js";
 import type {
@@ -755,9 +756,9 @@ describe("the dock", () => {
       try {
         await context.addInitScript(
           (addresses) => {
-            if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+            if (!localStorage.getItem("truapi-web-signing-host:dock:v2"))
               localStorage.setItem(
-                "truapi-web-signing-host:dock:v1",
+                "truapi-web-signing-host:dock:v2",
                 JSON.stringify(addresses),
               );
           },
@@ -765,13 +766,14 @@ describe("the dock", () => {
         );
         const page = await openHost(context);
         await signIn(page);
+        // A tab starts in Chat; Browse opens nothing until its catalog is chosen.
         expect(await destinations(page)).toEqual({
-          chat: "behind/idle",
+          chat: "front/idle",
           browse: "behind/idle",
           pocket: "behind/idle",
         });
 
-        await page.click('#dock [data-destination="browse"]');
+        await openCatalog(page);
         const browse = await productFrame(page, new URL(urlProduct.url).origin);
         await browse.evaluate(() => {
           (window as unknown as ProductWindow).__mark = 42;
@@ -823,9 +825,9 @@ describe("the dock", () => {
       try {
         await context.addInitScript(
           (addresses) => {
-            if (!localStorage.getItem("truapi-web-signing-host:dock:v1"))
+            if (!localStorage.getItem("truapi-web-signing-host:dock:v2"))
               localStorage.setItem(
-                "truapi-web-signing-host:dock:v1",
+                "truapi-web-signing-host:dock:v2",
                 JSON.stringify(addresses),
               );
           },
@@ -833,7 +835,7 @@ describe("the dock", () => {
         );
         const page = await openHost(context);
         await signIn(page);
-        await page.click('#dock [data-destination="browse"]');
+        await openCatalog(page);
         await productFrame(page, new URL(urlProduct.url).origin);
         await page.click('#dock [data-destination="chat"]');
         expect(await page.locator("#product-slot iframe").count()).toBe(1);
@@ -908,6 +910,7 @@ describe("the dock", () => {
         const page = await openHost(context);
         await signInWith(page, SYNTHETIC_MNEMONIC);
         // Chat runs for the session while Browse or Pocket is in front.
+        await page.click('#dock [data-destination="pocket"]');
         await page.waitForFunction(
           () =>
             document.querySelector<HTMLElement>("#chat-screen")?.dataset

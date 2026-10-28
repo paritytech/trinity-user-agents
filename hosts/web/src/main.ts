@@ -51,7 +51,8 @@ import {
   type NetworkChoice,
 } from "./platform/network-choice.js";
 import { ask, setPromptArea } from "./app/prompt.js";
-import { RecentProducts } from "./app/recents.js";
+import { RecentProducts, type RecentEntry } from "./app/recents.js";
+import { BrowseLanding } from "./app/browse-landing.js";
 import {
   readPeopleChain,
   type AccountReading,
@@ -202,6 +203,8 @@ const appClose = element<HTMLButtonElement>("app-close");
 const appMore = element<HTMLButtonElement>("app-more");
 const appMoreMenu = element("app-more-menu");
 const pocketScreen = element("pocket-screen");
+/** What Browse shows with no product in front, drawn by {@link browseLanding}. */
+const browseScreen = element("browse-screen");
 /** What Pocket says about a card it could not open. */
 const pocketStatus = document.createElement("p");
 pocketStatus.className = "pocket-status";
@@ -607,7 +610,8 @@ const appsShelf = new AppsShelf(
     },
     open(key) {
       const back = DESTINATIONS.find((known) => known === key) ?? null;
-      if (isProductDestination(back)) void navigation.selectDestination(back);
+      if (isProductDestination(back))
+        void navigation.selectDestination(back, true);
       else if (navigation.isHeld(key))
         void serial(async () => {
           navigation.bringApp(key);
@@ -617,7 +621,6 @@ const appsShelf = new AppsShelf(
   },
 );
 notifications?.store.onChange(renderShelf);
-const stageEmptyTitle = element("stage-empty-title");
 const stageEmptyNote = element("stage-empty-note");
 const stageLoadingPill = element("stage-loading-pill");
 const stageLoadingText = element("stage-loading-text");
@@ -997,17 +1000,13 @@ function renderProductRecents(): void {
       chip.type = "button";
       chip.textContent = displayAddress(entry.address, activeNetwork);
       chip.title = entry.entered ? `as ${entry.productId}` : entry.productId;
-      chip.addEventListener("click", () => {
-        addressInput.value = displayAddress(entry.address, activeNetwork);
-        productIdInput.value = entry.entered ? entry.productId : "";
-        renderAddress();
-        openAddress();
-      });
+      chip.addEventListener("click", () => openRecent(entry));
       item.append(chip);
       return item;
     }),
   );
   productRecents.hidden = entries.length === 0;
+  browseLanding.render();
 }
 
 /** A message for an error thrown here, without the `Error:` prefix. */
@@ -1069,25 +1068,13 @@ function renderDock(): void {
     );
     button.title =
       dockAddresses[id] === ""
-        ? `${DESTINATION_LABELS[id]}: no product yet. Open one with the search button.`
-        : `${DESTINATION_LABELS[id]}: ${dockAddresses[id]}`;
+        ? `${DESTINATION_LABELS[id]}: the products opened before`
+        : `${DESTINATION_LABELS[id]}: the Browse app (${dockAddresses[id]}) and the products opened before`;
   }
-  const bare =
-    isProductDestination(destination) &&
-    product === null &&
-    dockAddresses[destination] === ""
-      ? destination
-      : null;
-  stageEmptyTitle.textContent =
-    bare === null
-      ? "No product open"
-      : `${DESTINATION_LABELS[bare]} has no product yet`;
   stageEmptyNote.textContent =
     testUser !== null
       ? `Search for a product to try it as ${testUser.name}. Example Chat is in More.`
-      : bare === null
-        ? "Pick Chat, Pocket or Browse, or open a product with the search button."
-        : "Open a name or URL with the search button. The host remembers it for this tab.";
+      : "Pick Chat, Pocket or Browse, or open a product with the search button.";
   renderShelf();
 }
 
@@ -1165,7 +1152,9 @@ function renderHostScreens(): void {
             navigation.product === null &&
             devSession?.exampleChatOpen() === true
           ? "test-product"
-          : "product";
+          : destination === "browse" && navigation.product === null
+            ? "browse"
+            : "product";
   document.body.dataset.surface = surface;
   pocketScreen.hidden = surface !== "pocket";
   if (surface === "pocket" && pocketScreen.childElementCount === 0)
@@ -1195,6 +1184,7 @@ function renderHostScreens(): void {
   chatScreen.show(surface === "chat");
   notifications?.screen.show(surface === "inbox");
   devSession?.showProduct(surface === "test-product");
+  browseLanding.show(surface === "browse");
   if (destination === "chat" || destination === "pocket")
     lastHost = destination;
   renderAppChrome(
@@ -1250,10 +1240,13 @@ const closeFront = (): void => {
   else navigation.closeFront();
 };
 
-appMinimize.addEventListener(
-  "click",
-  () => void navigation.selectDestination(lastHost),
-);
+// A product in Browse goes to the Apps shelf and Browse shows its landing;
+// any other goes back to the last host screen.
+appMinimize.addEventListener("click", () => {
+  if (isProductDestination(navigation.destination))
+    void navigation.minimizeToLanding();
+  else void navigation.selectDestination(lastHost);
+});
 element("app-problem-close").addEventListener("click", closeFront);
 element("app-problem-details").addEventListener("click", () =>
   chrome.show("product"),
@@ -1821,6 +1814,32 @@ function openAddress(): void {
 }
 
 const recents = new RecentProducts(localStorage);
+
+/** Open a recent product as it was opened: its address, and its id when it was entered. */
+function openRecent(entry: RecentEntry): void {
+  addressInput.value = displayAddress(entry.address, activeNetwork);
+  productIdInput.value = entry.entered ? entry.productId : "";
+  renderAddress();
+  openAddress();
+}
+
+const browseLanding = new BrowseLanding({
+  root: browseScreen,
+  catalog: () => {
+    const address = navigation.dockAddresses.browse;
+    return address === "" ? null : displayAddress(address, activeNetwork);
+  },
+  openCatalog: () => void navigation.openCatalog(),
+  recents: () =>
+    recents
+      .list(recentScope(), activeNetwork.id)
+      .slice(0, 5)
+      .map((entry) => ({
+        label: displayAddress(entry.address, activeNetwork),
+        at: entry.at,
+        open: () => openRecent(entry),
+      })),
+});
 
 /** History is kept per wallet, like the rest of its data; signed out has its own. */
 function recentScope(): string {

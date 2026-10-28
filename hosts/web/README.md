@@ -220,8 +220,11 @@ lacks them: open the host in the system browser.
 ### The dock
 
 A dock inside the product rectangle holds **Chat**, **Pocket**, **Browse** and **Apps**, as a phone host's tab bar does.
-Browse is an ordinary product opened the way the address bar opens it. Chat and Pocket are screens the host draws
-itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prototype.
+A tab starts in Chat, unless it reopens the product it had in front before a reload. Chat and Pocket are screens the
+host draws itself. Browse with nothing in front shows its landing, also drawn by the host: **Browse apps**, and
+**Recent**, the last five products this wallet opened on this network, from the same history as the search card's
+suggestions. Browse opens nothing until one of them is chosen; choosing Browse again changes nothing. The Docklet's
+search opens anything else. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prototype.
 
 - **The Docklet.** As the Polkadot app's R1 Docklet: a glass dock at most 440 px wide with a round cutout, the app's 28
   px tab icons only, Chat and Pocket left of the Pill, Browse and Apps right of it, and a lens under the current one.
@@ -244,15 +247,20 @@ itself. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prot
   circles or a device's island, and the product is told of no inset, so it adds none of its own. The band does not fold
   away on scroll as the iOS one does: the host cannot see a product's scrolling. At the bottom the frame ends above the
   Docklet. Whether the iOS web view also ends above its tab bar was not settled from the vendored iOS source. On the
-  left, **Minimize** for a product that can run behind, which every App can: it goes back to the last host screen and
-  keeps running, and the shelf (or Browse, for Browse's own product) brings it back. A Pocket card's Widget cannot run
-  behind and gets **Close** there instead. On the right, **More** opens a menu with **Product details** (the developer
-  tools' Product tab) and **Close**.
+  left, **Minimize** for a product that can run behind, which every App can: it keeps running in the Apps shelf. A
+  product in Browse leaves Browse's landing in front; any other goes back to the last host screen. The shelf, or the
+  landing's own row for it, brings the same frame back. A Pocket card's Widget cannot run behind and gets **Close**
+  there instead. On the right, **More** opens a menu with **Product details** (the developer tools' Product tab) and
+  **Close**.
 
-- **What each opens.** On Paseo Next v2, Browse opens `browse.paseo`. An address opened while Browse is selected becomes
-  its product, kept per network in this browser (`truapi-web-signing-host:dock:v1`, addresses only, none that carry a
-  secret). An address typed over Chat or Pocket opens as a product of its own and leaves the screen. The Chat SPA is
-  still a product: open `chat-spa-verbosity.paseo` in the address bar.
+- **What each opens.** **Browse apps** opens Browse's address, the published Browse app, which lists the apps on the
+  network: `browse.paseo` on Paseo Next v2, and none on a network that publishes none, where the row is not shown and
+  the landing lists only Recent. On a dev server, a developer or a test can point it elsewhere for one browser under
+  `truapi-web-signing-host:dock:v2` (per network); a build does not read it, and the host never writes it. The `v1` key,
+  which earlier builds wrote with the last product opened in Browse, is not read and is left in place. A product opened
+  while Browse is selected, from the landing or the search card, opens in Browse, and **Close** brings the landing back.
+  An address typed over Chat or Pocket opens as a product of its own and leaves the screen. The Chat SPA is still a
+  product: open `chat-spa-verbosity.paseo` in the address bar.
 - **Products keep running behind.** Choosing another destination hides the product in front and keeps its frame, its
   channel to the core and its page state. The dock marks a destination with a green dot while its product runs. A hidden
   product can still raise a permission prompt, which names the product that asks. A reload, and any change of session
@@ -1243,7 +1251,7 @@ the product refused: in the Phone preview with each frame, drawn at full size an
 the field starts below both circles and, in the device frame, below the island, and the button fixed to its bottom ends
 above the Docklet and its Pill; the product reads no safe-area inset of its own; the Preview tab states the product's
 frame and what the host keeps; More opens its menu from the keyboard, clear of the island and inside the app, Escape
-gives focus back; and Minimize keeps the same product running until Browse brings it back.
+gives focus back; and Minimize keeps the same product running until the Apps shelf brings it back.
 
 `browser/docklet-search.spec.ts` checks the Docklet's search with a synthetic wallet whose saved chat holds one contact,
 every socket closed, a synthetic answer on the dev server's username route and every other request outside this host and
@@ -1256,10 +1264,14 @@ listed and choosing one says why; and signed out no people are offered. `browser
 person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
 
 `browser/open-apps.spec.ts` checks the products open in a tab, with three names served from one synthetic archive on a
-fake Asset Hub and every socket closed: Browse's product opens another with `navigateTo`, and the shelf lists both with
-the new one in front; going back to Browse keeps both and Browse's document; a third app keeps the other two; the shelf
-brings an app back without a reload; opening an app that is already open brings it in front with no second frame;
-Minimize keeps it in the shelf; Close in More ends only it; and signing out ends every app.
+fake Asset Hub and every socket closed: a tab starts in Chat; Browse shows its landing with no field of its own and
+loads nothing, the second time too; Browse apps opens Browse's product once; Minimize leaves the landing, with the
+product running in the shelf and under Recent; the shelf, Browse apps and the Recent row each bring the same frame back;
+Close ends it and brings the landing back; a product found by the Docklet's search opens in Browse and joins Recent; the
+landing fits a phone; and PreviewNet offers no Browse app. Browse's product opens another with `navigateTo`, and the
+shelf lists both with the new one in front; going back to Browse keeps both and Browse's document; a third app keeps the
+other two; the shelf brings an app back without a reload; opening an app that is already open brings it in front with no
+second frame; Minimize keeps it in the shelf; Close in More ends only it; and signing out ends every app.
 
 `browser/preimage-image.spec.ts` checks preimage lookups, with a synthetic archive on a fake Asset Hub, a stood-in
 gateway and every socket closed: an image a product looks up by its preimage key, as Browse looks up an app's icon, is

@@ -160,6 +160,8 @@ describe("the Docklet's search", () => {
     async () => {
       const { context, page, searched } = await open();
       try {
+        // From Pocket, so Chat coming to the front is seen.
+        await page.click('#dock [data-destination="pocket"]');
         await showAddress(page);
         expect(await page.getAttribute("#address", "placeholder")).toBe(
           "Find a person or app",
@@ -256,6 +258,8 @@ describe("the Docklet's search", () => {
         TEST_MNEMONIC,
       );
       try {
+        // From Pocket, so Chat coming to the front is seen.
+        await page.click('#dock [data-destination="pocket"]');
         await type(page, "zed");
         await page
           .locator("#address-recents li", { hasText: "zed.01" })

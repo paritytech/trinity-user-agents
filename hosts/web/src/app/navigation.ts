@@ -11,9 +11,9 @@ import {
   DESTINATION_LABELS,
   destinationOf,
   isProductDestination,
+  defaultAddresses,
   loadAddresses,
   resolveNavigation,
-  saveAddress,
   type Destination,
   type DockAddresses,
 } from "./shell.js";
@@ -139,7 +139,7 @@ export class ProductNavigation {
    * behind it instead of ending it, so Chat keeps running while Browse is open.
    */
   private where: Destination | null;
-  private addresses: DockAddresses;
+  private readonly addresses: DockAddresses;
   /**
    * The products running behind the one in front: a dock destination's under
    * the destination, and an app opened by a link or an address under
@@ -151,8 +151,14 @@ export class ProductNavigation {
   private openings = 0;
 
   constructor(private readonly deps: NavigationDeps) {
-    this.where = deps.testUser ? "browse" : null;
-    this.addresses = loadAddresses(localStorage, deps.network.id);
+    // A tab starts in Chat. A product the tab reopens after a reload moves it
+    // with {@link restore}.
+    this.where = "chat";
+    // Only a dev server reads an address set in this browser, so tests can
+    // point Browse at a fixture product; a build uses the network's own.
+    this.addresses = import.meta.env.DEV
+      ? loadAddresses(localStorage, deps.network.id)
+      : defaultAddresses(deps.network.id);
   }
 
   get product(): OpenProduct | null {
@@ -405,17 +411,22 @@ export class ProductNavigation {
   }
 
   /**
-   * Put a dock destination in front: resume it if it is running behind, else
-   * open its address. The product that was in front keeps running behind its own
+   * Put a dock destination in front: resume it if it is running behind. With
+   * `open`, a destination with nothing behind it also opens its address;
+   * without it, the destination shows its own screen, such as Browse's
+   * landing. The product that was in front keeps running behind its own
    * destination.
    */
-  selectDestination(next: Destination): Promise<void> {
+  selectDestination(next: Destination, open = false): Promise<void> {
     return this.deps.serial(async (runtime) => {
       if (
         this.where === next &&
-        (this.front !== null || !isProductDestination(next))
-      )
+        (this.front !== null || !isProductDestination(next) || !open)
+      ) {
+        // Nothing changes here, but a caller may have changed what Browse shows.
+        this.deps.render();
         return;
+      }
       if (this.where !== next) this.leaveFront();
       this.where = next;
       if (!isProductDestination(next) || this.deps.testUser) {
@@ -432,7 +443,21 @@ export class ProductNavigation {
       }
       this.deps.render();
       const address = this.addresses[next];
-      if (address === "") return;
+      if (!open || address === "") return;
+      await this.openSaved(runtime, address);
+    });
+  }
+
+  /**
+   * Open Browse's own address, the Browse app, in front of Browse, when
+   * Browse shows with nothing in front. The user chose it, so a test user's
+   * tab opens it too.
+   */
+  openCatalog(): Promise<void> {
+    return this.deps.serial(async (runtime) => {
+      const address = this.addresses.browse;
+      if (this.where !== "browse" || this.front !== null || address === "")
+        return;
       await this.openSaved(runtime, address);
     });
   }
@@ -447,7 +472,43 @@ export class ProductNavigation {
       return;
     }
     const { id } = effectiveProductIdFor(parsed, "");
+    if (this.resumeOnLanding(id)) return;
     await this.openResolved(runtime, parsed, id, false);
+  }
+
+  /**
+   * Send the product in front of a product destination to the Apps shelf,
+   * still running, and leave the destination showing nothing in front: Browse
+   * shows its landing. Elsewhere Minimize goes back to a host screen.
+   */
+  minimizeToLanding(): Promise<void> {
+    return this.deps.serial(async () => {
+      if (!isProductDestination(this.where) || this.front === null) return;
+      if (this.front.executionKind !== "App") return;
+      const key = appKey(this.front.productId);
+      if (this.held.has(key)) return;
+      const where = this.where;
+      this.where = null;
+      this.leaveFront();
+      this.where = where;
+      this.deps.clearAddress();
+      sessionStorage.removeItem(tabProductKey(this.deps.network.id));
+      this.deps.render();
+    });
+  }
+
+  /**
+   * On a product destination with nothing in front, bring `productId` back in
+   * front when it runs in the Apps shelf, instead of opening it twice.
+   */
+  private resumeOnLanding(productId: string): boolean {
+    if (!isProductDestination(this.where) || this.front !== null) return false;
+    const key = appKey(productId);
+    const back = this.held.get(key);
+    if (back === undefined) return false;
+    this.held.delete(key);
+    this.resumeFront(back);
+    return true;
   }
 
   /**
@@ -510,7 +571,7 @@ export class ProductNavigation {
     // The host has taken the request once it is queued. What it opens is
     // reported in the menu and the log, not back to the product.
     const known = destinationOf(where.address, this.addresses, network);
-    if (known !== null) void this.selectDestination(known);
+    if (known !== null) void this.selectDestination(known, true);
     else
       void this.deps.serial(async (runtime) => {
         let parsed: Address;
@@ -540,9 +601,12 @@ export class ProductNavigation {
   bringApp(key: string): boolean {
     const back = this.held.get(key);
     if (back === undefined) return false;
-    this.leaveFront();
     this.held.delete(key);
-    this.where = null;
+    // Over Browse's landing the app comes back in Browse, where it was minimized.
+    if (!isProductDestination(this.where) || this.front !== null) {
+      this.leaveFront();
+      this.where = null;
+    }
     this.resumeFront(back);
     return true;
   }
@@ -565,7 +629,7 @@ export class ProductNavigation {
         this.leaveFront();
       }
       this.where = null;
-    }
+    } else if (this.resumeOnLanding(productId)) return true;
     await this.openResolved(runtime, address, productId, entered);
     return false;
   }
@@ -700,13 +764,6 @@ export class ProductNavigation {
       if (executionKind === "App") {
         this.deps.recorded({ address: target.address, productId, entered });
         this.rememberFront();
-        if (isProductDestination(this.where))
-          this.addresses = saveAddress(
-            localStorage,
-            network.id,
-            this.where,
-            target.address,
-          );
       }
       this.deps.render();
       this.deps.activity({

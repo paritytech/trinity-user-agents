@@ -5,7 +5,6 @@ import {
   destinationOf,
   loadAddresses,
   resolveNavigation,
-  saveAddress,
 } from "../../../src/app/shell.js";
 
 const PASEO = NETWORKS.paseo;
@@ -31,49 +30,51 @@ describe("dock addresses", () => {
     expect(defaultAddresses("previewnet")).toEqual({ browse: "" });
   });
 
-  test("keep what a destination was last pointed at, per network", () => {
+  // The default network keeps the shorter key, as the host's other storage
+  // does; another network has its own, so an address stays on its network.
+  test("read a saved address per network, under the host's key prefix", () => {
     const storage = memory();
-    saveAddress(storage, "paseo", "browse", "http://localhost:5192/");
+    storage.setItem(
+      "truapi-web-signing-host:dock:v2",
+      '{"browse":"http://localhost:5192/"}',
+    );
     expect(loadAddresses(storage, "paseo").browse).toBe(
       "http://localhost:5192/",
     );
     expect(loadAddresses(storage, "previewnet").browse).toBe("");
+    storage.setItem(
+      "truapi-web-signing-host:network:previewnet:dock:v2",
+      '{"browse":"other.testnet"}',
+    );
+    expect(loadAddresses(storage, "previewnet").browse).toBe("other.testnet");
   });
 
-  // The default network keeps the original key, so a tab from before the dock
-  // existed shares nothing with it by accident and nothing is renamed later.
-  test("use the shared key prefix of the host's other storage", () => {
-    const storage = memory();
-    saveAddress(storage, "paseo", "browse", "other.paseo");
-    saveAddress(storage, "previewnet", "browse", "other.testnet");
-    expect([...storage.values.keys()].sort()).toEqual([
-      "truapi-web-signing-host:dock:v1",
-      "truapi-web-signing-host:network:previewnet:dock:v1",
-    ]);
-  });
-
-  test("do not keep an address that carries a secret", () => {
-    const storage = memory();
-    saveAddress(storage, "paseo", "browse", "http://localhost:1/?token=abc");
-    expect(storage.values.size).toBe(0);
-    expect(loadAddresses(storage, "paseo").browse).toBe("browse.paseo");
-  });
-
-  // A dock saved before Chat and Pocket became host screens still carries their entries.
+  // Chat and Pocket are screens the host draws, so only Browse can point elsewhere.
   test("ignore a saved address for a destination the host draws itself", () => {
     const storage = memory();
     storage.setItem(
-      "truapi-web-signing-host:dock:v1",
+      "truapi-web-signing-host:dock:v2",
       '{"chat":"a.paseo","pocket":"http://localhost:5192/"}',
+    );
+    expect(loadAddresses(storage, "paseo")).toEqual({ browse: "browse.paseo" });
+  });
+
+  // Earlier builds wrote the last product opened in Browse under v1, so
+  // reading it would show that product as Browse's own.
+  test("ignore the address earlier builds saved for Browse", () => {
+    const storage = memory();
+    storage.setItem(
+      "truapi-web-signing-host:dock:v1",
+      '{"browse":"doom.paseo"}',
     );
     expect(loadAddresses(storage, "paseo")).toEqual({ browse: "browse.paseo" });
   });
 
   test("fall back to the defaults when the saved value is unreadable", () => {
     const storage = memory();
-    storage.setItem("truapi-web-signing-host:dock:v1", "{oops");
+    storage.setItem("truapi-web-signing-host:dock:v2", "{oops");
     expect(loadAddresses(storage, "paseo")).toEqual(defaultAddresses("paseo"));
-    storage.setItem("truapi-web-signing-host:dock:v1", '{"browse":7}');
+    storage.setItem("truapi-web-signing-host:dock:v2", '{"browse":7}');
     expect(loadAddresses(storage, "paseo")).toEqual(defaultAddresses("paseo"));
   });
 });
