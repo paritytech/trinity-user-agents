@@ -1418,6 +1418,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.chatError) throw new Error(faults.chatError);
         chatRooms.delete(request.roomId);
         chatDeclarations.delete(request.roomId);
+        const kept = chatMessages.filter(
+          (message) => message.roomId !== request.roomId,
+        );
+        chatMessages.splice(0, chatMessages.length, ...kept);
         publishChatRooms();
       },
       async updateChatFeed(_product, request, persist) {
