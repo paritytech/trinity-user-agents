@@ -252,14 +252,19 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Return the items of a deposited cheque to their original keys.
-	/// Returns once the refund is registered under the cheque id.
+	/// Return the items of a cheque the calling product deposited to the
+	/// cheque's keys, once every move of the deposit finalized or failed.
+	/// Items spent since stay and are listed as unavailable. Asks the user to
+	/// confirm when the product does not own the purse. Returns once the moves
+	/// are registered. Their status is observed under the idempotency key
+	/// `blake2_256("nft-purse/refund" ‖ chequeId)`.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.refund({
 	///   chequeId: "0x0000000000000000000000000000000000000000000000000000000000000000",
 	/// });
 	/// assert(result.isOk(), "refund failed:", result);
+	/// console.log("returning:", result.value.started);
 	/// ```
 	#[wire(id = 10)]
 	async fn refund(
@@ -291,9 +296,9 @@ pub trait NftPurse: Send + Sync {
 	}
 
 	/// Follow an operation the calling product registered: a rebalance or
-	/// transfer by its idempotency key, a deposit or refund by its cheque
-	/// id, and a revoke by the key `revokeCheque` gives. Ends after a
-	/// terminal status.
+	/// transfer by its idempotency key, a deposit by its cheque id, and a
+	/// revoke or refund by the key `revokeCheque` or `refund` gives. Ends
+	/// after a terminal status.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";

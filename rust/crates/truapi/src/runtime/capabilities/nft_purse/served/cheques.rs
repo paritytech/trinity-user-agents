@@ -10,8 +10,8 @@ use crate::{
 	durable::RegistrationError,
 	host_logic::x25519_seal::SealError,
 	nft::{HandoffError, ItemKey, ItemRefusal, PurseId, StartImportError, StartOperationError},
-	nft_purse::{CreateReceiveKeyError, DepositRefusal},
-	platform::NftPurseDrainDestination,
+	nft_purse::{CreateReceiveKeyError, DepositRefusal, NftPurses},
+	platform::{NftPurseDrainDestination, ProductId},
 	runtime::ProductRuntimeHost,
 };
 
@@ -108,6 +108,63 @@ impl ProductRuntimeHost {
 		let creator = self.connection.product_id();
 		purses.revoke_cheque(creator, &request.cheque_id).await.map_err(revoke_failure)
 	}
+
+	/// Starts returning the items of a cheque the product deposited to the
+	/// cheque's keys, after confirming a drain of a purse the caller does
+	/// not own. Answers which items move and which stay.
+	pub async fn refund_nft_cheque(
+		&self,
+		cx: &CallContext,
+		request: latest::HostNftPurseRefundRequest,
+	) -> Result<latest::HostNftPurseRefundResponse, CallError<latest::HostNftPurseRefundError>> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let depositor = self.connection.product_id();
+		let id = request.cheque_id;
+		let drain = refund_drain(&purses, depositor, &id).await?;
+		self.confirm_drain(cx, drain, latest::HostNftPurseRefundError::Denied).await?;
+		purses.refund(depositor, &id).await.map_err(refund_failure)
+	}
+}
+
+/// The drain a refund of `depositor`'s cheque `id` makes now, refusing early
+/// what the refund would refuse, so the user is not asked for nothing.
+async fn refund_drain(
+	purses: &NftPurses,
+	depositor: &ProductId,
+	id: &latest::NftPurseChequeId,
+) -> Result<Drain, CallError<latest::HostNftPurseRefundError>> {
+	let refund = purses.refund_drain(depositor, id).await.map_err(refund_refusal)?;
+	let missing = || host_failure(format!("purse {} of a deposit does not exist", refund.from.0));
+	let owner = purses.owner_of(refund.from).await.map_err(host_failure)?.ok_or_else(missing)?;
+	let item_count = u32::try_from(refund.item_count).map_err(host_failure)?;
+	let destination = NftPurseDrainDestination::Refund;
+	Ok(Drain { from: refund.from, owner, item_count, destination })
+}
+
+/// A refund refused by Layer 1 as the product's error. A host without NFT
+/// transfers does not support refunds. Everything else is the host's failure.
+fn refund_failure(
+	error: RegistrationError<StartOperationError>,
+) -> CallError<latest::HostNftPurseRefundError> {
+	match error {
+		RegistrationError::Hook(refusal) => refund_refusal(refusal),
+		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
+		other => host_failure(other),
+	}
+}
+
+/// A deposit this product never made is not found, and a refund that would
+/// move nothing is unavailable. Anything else is the host's failure.
+fn refund_refusal(refusal: StartOperationError) -> CallError<latest::HostNftPurseRefundError> {
+	let domain = match refusal {
+		StartOperationError::ImportNotFound => latest::HostNftPurseRefundError::ChequeNotFound,
+		StartOperationError::ImportUnsettled => latest::HostNftPurseRefundError::DepositInProgress,
+		StartOperationError::OperationExists => latest::HostNftPurseRefundError::OperationExists,
+		StartOperationError::NothingIdle => latest::HostNftPurseRefundError::ItemUnavailable,
+		other => return host_failure(other),
+	};
+	CallError::Domain(domain)
 }
 
 /// A cheque the product did not create is not found. A host without NFT

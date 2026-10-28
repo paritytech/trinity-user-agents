@@ -19,7 +19,7 @@ use super::{
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims},
-	returns::{ReturnRequest, StartedReturn, plan_returns, record_return},
+	returns::{ReturnRequest, StartedReturn, plan_returns, record_return, returnable_items},
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
@@ -240,6 +240,18 @@ impl NftLedger {
 		let record =
 			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_return(tx, &recorded, ids);
 		self.durable.execute_with(planned, record).await.map(|(_, started)| started)
+	}
+
+	/// The slots of the items [`Self::start_returns`] would move for
+	/// `request` now, read outside any registration, or the refusal it would
+	/// answer. The registration checks again.
+	pub async fn returnable_items(
+		&self,
+		request: ReturnRequest,
+	) -> Result<Vec<ItemSlot>, StartOperationError> {
+		let read = move |conn: &rusqlite::Connection| Ok(returnable_items(conn, &request));
+		let items = self.db.read(read).await??;
+		Ok(items.into_iter().map(|item| item.slot).collect())
 	}
 
 	/// `plan` as a durable request whose moves are planned in its write.

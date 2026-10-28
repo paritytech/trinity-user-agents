@@ -1,18 +1,21 @@
 //! Depositing received cheques through the product-facing trait.
 
 use futures::{StreamExt, executor::block_on};
+use sp_crypto_hashing::blake2_256;
 use truapi::versioned::nft_purse::{
 	HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 	HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+	HostNftPurseRefundError, HostNftPurseRefundRequest, HostNftPurseRefundResponse,
 	HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
 	HostNftPurseStaticReceiveKeyResponse,
 };
 
 use super::{
-	cheques::{create_cheque, create_receive_key, public_key_of},
-	operations::{Purses, product_purses},
+	cheques::{create_cheque, create_receive_key, first_status_under, public_key_of},
+	operations::{Purses, product_purses, product_purses_over},
 	*,
 };
+use crate::platform::{NftPurseDrainDestination, NftPurseDrainReview};
 
 /// The purse the sending product, the other product, hands its items out of.
 const SENDER_PURSE: u32 = 2;
@@ -220,4 +223,118 @@ fn the_static_receive_key_is_denied_without_a_session() {
 	let refused = static_receive_key(&host);
 
 	assert_eq!(refused, Err(CallError::Denied));
+}
+
+fn refund(
+	host: &ProductRuntimeHost,
+	cheque: &v01::NftPurseCheque,
+) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+	let request = v01::HostNftPurseRefundRequest { cheque_id: cheque.id };
+	block_on(host.refund(&CallContext::default(), HostNftPurseRefundRequest::V1(request)))
+}
+
+fn refund_refusal(error: v01::NftPurseRefundError) -> CallError<HostNftPurseRefundError> {
+	CallError::Domain(HostNftPurseRefundError::V1(error))
+}
+
+/// Marks every move still waiting as finalized, as if each landed at a
+/// finalized block.
+fn finalize_waiting_moves(purses: &Purses) {
+	let db = purses.services.core_db().unwrap();
+	let finalize = |tx: &rusqlite::Transaction<'_>| {
+		tx.execute(
+			"UPDATE durable_tx SET status = 'FINALIZED_SUCCESS' WHERE status = 'PENDING_SUBMISSION'",
+			[],
+		)?;
+		Ok(())
+	};
+	block_on(db.write(finalize)).unwrap();
+}
+
+/// A cheque of `count` items deposited into [`TICKETS`], with the deposit
+/// finalized.
+fn deposited_cheque(count: u32) -> (Purses, v01::NftPurseCheque) {
+	let (purses, cheque) = ephemeral_cheque(count);
+	deposit(&purses.host, cheque.clone(), TICKETS).unwrap();
+	finalize_waiting_moves(&purses);
+	(purses, cheque)
+}
+
+/// The receiver sends back what it deposited from its own purse without
+/// being asked, and follows the moves under the key the RFC derives from
+/// the cheque id.
+#[test]
+fn a_refund_of_a_settled_deposit_moves_every_item_back_and_is_observed_under_its_refund_key() {
+	let (purses, cheque) = deposited_cheque(2);
+
+	let refunded = refund(&purses.host, &cheque).unwrap();
+
+	let HostNftPurseRefundResponse::V1(response) = refunded;
+	assert_eq!(response.started.len(), 2);
+	assert_eq!(response.unavailable, vec![]);
+	let refund_key = blake2_256(&[b"nft-purse/refund".as_slice(), &cheque.id.0].concat());
+	let status = first_status_under(&purses.host, refund_key);
+	assert_eq!(
+		status,
+		Ok(HostNftPurseObserveOperationStatusItem::V1(v01::NftPurseStatus::InProgress))
+	);
+}
+
+/// A refund must not race the deposit's own moves, which could still land.
+#[test]
+fn a_refund_while_the_deposit_runs_answers_deposit_in_progress() {
+	let (purses, cheque) = ephemeral_cheque(1);
+	deposit(&purses.host, cheque.clone(), TICKETS).unwrap();
+
+	let refused = refund(&purses.host, &cheque);
+
+	assert_eq!(refused, Err(refund_refusal(v01::NftPurseRefundError::DepositInProgress)));
+}
+
+/// Only the product that deposited a cheque can refund it.
+#[test]
+fn a_refund_of_a_cheque_this_product_never_deposited_answers_cheque_not_found() {
+	let (purses, cheque) = deposited_cheque(1);
+
+	let refused = refund(&purses.other_product(), &cheque);
+
+	assert_eq!(refused, Err(refund_refusal(v01::NftPurseRefundError::ChequeNotFound)));
+}
+
+/// A refund is one operation under its key.
+#[test]
+fn a_second_refund_answers_operation_exists() {
+	let (purses, cheque) = deposited_cheque(1);
+	refund(&purses.host, &cheque).unwrap();
+
+	let refused = refund(&purses.host, &cheque);
+
+	assert_eq!(refused, Err(refund_refusal(v01::NftPurseRefundError::OperationExists)));
+}
+
+/// Items deposited into Root's purse belong to the user, so they leave only
+/// if the user says so, and the user sees that they go back to the sender.
+#[test]
+fn a_refund_out_of_roots_purse_asks_the_user_and_a_refusal_is_denied() {
+	let platform = Arc::new(StubPlatform::default());
+	let purses = product_purses_over(platform.clone(), Arc::new(MemoryEncryptedStorage::default()));
+	let sender = purses.other_product();
+	create(&sender, "Sender").unwrap();
+	let items = purses.held_items(PurseId(SENDER_PURSE), 2);
+	let cheque = sent_cheque(&sender, to_static_key([9; 32]), items);
+	let root = purses.root_purse();
+	deposit(&purses.host, cheque.clone(), root.0).unwrap();
+	finalize_waiting_moves(&purses);
+
+	let refused = refund(&purses.host, &cheque);
+
+	assert_eq!(refused, Err(refund_refusal(v01::NftPurseRefundError::Denied)));
+	let review = NftPurseDrainReview {
+		calling_product_id: PRODUCT.parse().unwrap(),
+		from_purse: root.0,
+		owner: v01::NftPurseOwner::Root,
+		item_count: 2,
+		destination: NftPurseDrainDestination::Refund,
+	};
+	assert_eq!(platform.nft_purse_drain_reviews.lock().unwrap().clone(), vec![review]);
 }

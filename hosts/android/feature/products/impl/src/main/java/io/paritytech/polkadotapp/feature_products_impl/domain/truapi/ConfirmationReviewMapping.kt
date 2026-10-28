@@ -99,6 +99,7 @@ private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrai
     is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
     is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
     NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)

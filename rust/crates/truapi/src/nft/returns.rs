@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::Transaction;
+use rusqlite::{Connection, Transaction};
 
 use super::{
 	dao,
@@ -38,41 +38,64 @@ pub struct StartedReturn {
 	pub unavailable: Vec<ItemKey>,
 }
 
-/// Works out, inside the registration write, one move for each item the
-/// import landed that nothing consumed, back to the key it came from.
-/// Refuses while a move of the import can still change, when the return
-/// exists, and when no landed item is unconsumed.
+/// An item an import landed that nothing consumed since.
+pub struct ReturnableItem {
+	/// Its key in our purse.
+	pub key: ItemKey,
+	/// Where that key sits.
+	pub slot: ItemSlot,
+	/// The key it came from, which it goes back to.
+	pub origin: ItemKey,
+}
+
+/// Works out, inside the registration write, one move for each of the
+/// [`returnable_items`] of `request`, back to the key it came from.
 pub fn plan_returns(
 	tx: &Transaction<'_>,
 	request: &ReturnRequest,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
-	let landed = finalized_import_moves(tx, &request.import)?;
-	if group_exists(tx, &nft_domain(), request.operation.group())? {
+	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
+	Ok(returnable_items(tx, request)?
+		.iter()
+		.map(|item| return_params(item, give_up_after))
+		.collect())
+}
+
+/// The items the import of `request` landed that nothing consumed, in the
+/// import's order. Refuses, in this order, when no such import exists, while
+/// any of its moves can still land or fail, when the return exists, and when
+/// no landed item is unconsumed.
+pub fn returnable_items(
+	conn: &Connection,
+	request: &ReturnRequest,
+) -> Result<Vec<ReturnableItem>, StartOperationError> {
+	let landed = finalized_import_moves(conn, &request.import)?;
+	if group_exists(conn, &nft_domain(), request.operation.group())? {
 		return Err(StartOperationError::OperationExists);
 	}
 	let minted: Vec<ItemKey> = landed.iter().map(|transfer| transfer.minted).collect();
 	let unconsumed: BTreeMap<ItemKey, ItemSlot> =
-		dao::unconsumed_keys(tx, &minted)?.into_iter().collect();
-	if unconsumed.is_empty() {
-		return Err(StartOperationError::NothingIdle);
-	}
-	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	Ok(landed
+		dao::unconsumed_keys(conn, &minted)?.into_iter().collect();
+	let items: Vec<_> = landed
 		.iter()
 		.filter_map(|transfer| {
-			let slot = unconsumed.get(&transfer.minted)?;
-			Some(return_params(transfer, *slot, give_up_after))
+			let slot = *unconsumed.get(&transfer.minted)?;
+			Some(ReturnableItem { key: transfer.minted, slot, origin: transfer.consumed })
 		})
-		.collect())
+		.collect();
+	if items.is_empty() {
+		return Err(StartOperationError::NothingIdle);
+	}
+	Ok(items)
 }
 
 /// The moves of `import` that finalized. Refuses when no such import exists
 /// or while any of its moves can still land or fail.
 fn finalized_import_moves(
-	tx: &Transaction<'_>,
+	conn: &Connection,
 	import: &OperationKey,
 ) -> Result<Vec<TransferProgress>, StartOperationError> {
-	let group = durable::group(tx, &nft_domain(), import.group())?;
+	let group = durable::group(conn, &nft_domain(), import.group())?;
 	let moves = progress_of(group)?;
 	if moves.is_empty() {
 		return Err(StartOperationError::ImportNotFound);
@@ -87,13 +110,13 @@ fn finalized_import_moves(
 	Ok(moves.into_iter().filter(|transfer| transfer.state == finalized).collect())
 }
 
-/// The params of moving whatever the key `landed` minted, at `slot`, holds
-/// back to the key it came from, given up at `give_up_after`.
-fn return_params(landed: &TransferProgress, slot: ItemSlot, give_up_after: u64) -> PolicyParams {
+/// The params of moving whatever the key of `item` holds back to the key it
+/// came from, given up at `give_up_after`.
+fn return_params(item: &ReturnableItem, give_up_after: u64) -> PolicyParams {
 	TransferParams {
-		source: landed.minted,
-		signer: TransferSigner::Derived(slot),
-		destination: landed.consumed,
+		source: item.key,
+		signer: TransferSigner::Derived(item.slot),
+		destination: item.origin,
 		submitted_attempt: None,
 		give_up_after,
 	}

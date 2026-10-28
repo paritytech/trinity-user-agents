@@ -21,11 +21,12 @@ use truapi::{
 		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
 		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
-		HostNftPurseRebalancePurseResponse, HostNftPurseRevokeChequeError,
-		HostNftPurseRevokeChequeRequest, HostNftPurseRevokeChequeResponse,
-		HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
-		HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
-		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+		HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+		HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemResponse,
 	},
 };
 
@@ -106,6 +107,15 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseRevokeChequeRequest,
 	) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
 		version(request).exec(|request| self.revoke_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.refund"))]
+	async fn refund(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseRefundRequest,
+	) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+		version(request).exec(|request| self.refund_nft_cheque(cx, request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.deposit"))]

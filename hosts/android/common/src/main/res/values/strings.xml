@@ -1017,6 +1017,7 @@
     <string name="truapi_confirm_label_nft_to_key">To key</string>
     <string name="truapi_confirm_label_nft_to">To</string>
     <string name="truapi_confirm_value_nft_cheque">A cheque for another user</string>
+    <string name="truapi_confirm_value_nft_refund">Back to the sender of a deposited cheque</string>
     <string name="truapi_confirm_value_nft_owner_you">Your account</string>
     <string name="truapi_confirm_requested_by">Requested by %1$s</string>
     <string name="truapi_confirm_approve">Approve</string>

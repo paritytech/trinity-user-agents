@@ -34,7 +34,7 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseDepositResponse { V1 }
 	pub enum HostNftPurseDepositError { V1 => v01::NftPurseDepositError }
 	pub enum HostNftPurseRefundRequest { V1 => v01::HostNftPurseRefundRequest }
-	pub enum HostNftPurseRefundResponse { V1 }
+	pub enum HostNftPurseRefundResponse { V1 => v01::HostNftPurseRefundResponse }
 	pub enum HostNftPurseRefundError { V1 => v01::NftPurseRefundError }
 	pub enum HostNftPurseTransferItemRequest { V1 => v01::HostNftPurseTransferItemRequest }
 	pub enum HostNftPurseTransferItemResponse { V1 }
