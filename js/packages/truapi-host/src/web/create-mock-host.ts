@@ -1443,6 +1443,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           },
         );
       },
+      async listChatRooms() {
+        if (faults.chatError) throw new Error(faults.chatError);
+        return { rooms: byKey(chatRooms) };
+      },
     },
 
     locale: {
