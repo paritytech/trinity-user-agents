@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import Products
 import Testing
 @testable import polkadot_app
@@ -115,11 +114,6 @@ private final class RecordingArchives: DotNsResolverProtocol, @unchecked Sendabl
         warmed.append(dotNsName)
         if failing { throw DotNsResolverError.resolutionFailed(dotNsName) }
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

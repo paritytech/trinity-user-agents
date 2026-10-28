@@ -357,6 +357,10 @@ enum HostInitiatedFrame {
 	/// A correlated protocol error this build cannot read. Terminal, because
 	/// the peer has answered and will not answer again.
 	UnknownProtocolError,
+	/// The product connection closed while the stream was open. A failure
+	/// rather than a finish: the product never ended the stream, so the host
+	/// may open it again on the next connection.
+	ConnectionClosed,
 }
 
 struct HostInitiatedSlot {
@@ -529,14 +533,19 @@ impl HostInitiatedSubscriptionManager {
 		None
 	}
 
-	/// Close every active host-initiated stream without sending new frames.
+	/// Fail every active host-initiated stream because its product connection
+	/// closed, without sending new frames. A stream that ended cleanly would
+	/// read to the host as a body the product finished, so it would never be
+	/// opened again on the next connection.
 	pub fn close(&self) {
 		let active = {
 			let mut state = self.state.lock().expect("host subscription state mutex poisoned");
 			state.closed = true;
 			core::mem::take(&mut state.active)
 		};
-		drop(active);
+		for (_, slot) in active {
+			let _ = slot.sender.unbounded_send(HostInitiatedFrame::ConnectionClosed);
+		}
 	}
 }
 
@@ -638,8 +647,14 @@ where
 					reason: "product reported a protocol error this build cannot read".to_string(),
 				})))
 			},
-			// The sender is gone: the host closed the manager or disposed the
-			// core. That is cancellation, not a product failure.
+			Poll::Ready(Some(HostInitiatedFrame::ConnectionClosed)) => {
+				self.terminated = true;
+				Poll::Ready(Some(Err(CallError::HostFailure {
+					reason: "the product connection closed while the stream was open".to_string(),
+				})))
+			},
+			// The sender is gone without a terminal frame: the manager was
+			// dropped with the core. That is cancellation, not a product failure.
 			Poll::Ready(None) => {
 				self.terminated = true;
 				Poll::Ready(None)
@@ -782,7 +797,10 @@ mod tests {
 
 	#[test]
 	fn host_request_requires_an_answer_before_the_subscription_ends() {
-		for close_connection in [false, true] {
+		for (close_connection, reason) in [
+			(false, "product closed without a response"),
+			(true, "the product connection closed while the stream was open"),
+		] {
 			let manager = HostInitiatedSubscriptionManager::new();
 			let transport = Arc::new(RecordingTransport::new());
 			let mut request =
@@ -802,9 +820,7 @@ mod tests {
 			assert_eq!(
 				(result, manager.state.lock().unwrap().active.len(), transport.sent()),
 				(
-					Some(Err(CallError::HostFailure {
-						reason: "product closed without a response".into(),
-					})),
+					Some(Err(CallError::HostFailure { reason: reason.into() })),
 					0,
 					vec![host_frame("h:1", MESSAGE_TYPE_START, vec![9])],
 				),
@@ -1234,8 +1250,11 @@ mod tests {
 		assert_eq!(futures::executor::block_on(render.next()), Some(Ok(7)));
 	}
 
+	/// A closed connection must read as a failure, not a finish: hosts treat a
+	/// clean end as a body the product completed and never draw it again, so
+	/// after a resume the card would stay on screen without a render behind it.
 	#[test]
-	fn host_cancellation_ends_the_stream_without_reporting_an_error() {
+	fn a_closed_connection_fails_open_streams_instead_of_finishing_them() {
 		let transport_typed = Arc::new(RecordingTransport::new());
 		let transport: Arc<dyn Transport> = transport_typed.clone();
 		let manager = HostInitiatedSubscriptionManager::new();
@@ -1243,6 +1262,10 @@ mod tests {
 
 		manager.close();
 
+		assert!(matches!(
+			futures::executor::block_on(render.next()),
+			Some(Err(CallError::HostFailure { .. }))
+		));
 		assert_eq!(futures::executor::block_on(render.next()), None);
 	}
 
@@ -1256,7 +1279,10 @@ mod tests {
 
 		manager.close();
 
-		assert_eq!(futures::executor::block_on(render.next()), None);
+		assert!(matches!(
+			futures::executor::block_on(render.next()),
+			Some(Err(CallError::HostFailure { .. }))
+		));
 		assert_eq!(transport_typed.sent().len(), 1);
 
 		// A start against a closed manager can never be served, so it
