@@ -513,15 +513,55 @@ pub struct HostChatDeleteRoomRequest {
 	pub room_id: String,
 }
 
-/// Failure of a request that changes a room.
+/// Failure to declare the configuration of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostChatRoomError {
+pub enum HostChatSetRoomConfigError {
 	/// This product created no room with this id.
 	UnknownRoom,
 	/// The product takes part in the room as a bot, not as its host.
 	NotRoomHost,
-	/// The product sent this request for this room too often.
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Failure to replace the name and description of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatSetRoomMetadataError {
+	/// This product created no room with this id.
+	UnknownRoom,
+	/// The product takes part in the room as a bot, not as its host.
+	NotRoomHost,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Failure to replace how a room shows in the chat list.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatSetRoomPreviewError {
+	/// This product created no room with this id.
+	UnknownRoom,
+	/// The product takes part in the room as a bot, not as its host.
+	NotRoomHost,
+	/// The product replaced the preview of this room too often.
 	RateLimited,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Failure to delete a room. A delete of a room that does not exist succeeds.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatDeleteRoomError {
+	/// The product takes part in the room as a bot, not as its host.
+	NotRoomHost,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable reason.
@@ -752,7 +792,7 @@ pub struct HostChatUpdateFeedRequest {
 }
 
 /// Failure to push a change to the messages of a room.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostChatUpdateFeedError {
 	/// This product created no room with this id.
 	UnknownRoom,
@@ -770,7 +810,6 @@ pub enum HostChatUpdateFeedError {
 	/// The product pushed updates to this room too often.
 	RateLimited,
 	/// Catch-all.
-	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
