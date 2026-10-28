@@ -9454,6 +9454,9 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 /// with its kind, and only once.
 #[test]
 fn a_failed_chain_call_warns_the_host_once() {
+	// Repeats of one failing call are counted rather than reported, so this
+	// starts from a connection that has not failed yet.
+	super::forget_chain_failures();
 	let lines = crate::logging::testing::host_sink_lines(|| {
 		let _: CallError<()> = super::runtime_failure_to_call_error(
 			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
@@ -9469,4 +9472,50 @@ fn a_failed_chain_call_warns_the_host_once() {
 			 {kind=Unavailable, reason=get_head_header: json-rpc connection closed}"
 		]
 	);
+}
+
+/// A connection that drops fails every call made over it afterwards. The first
+/// failure speaks and the rest are counted, so the line that says when the
+/// trouble started is not buried under the ones behind it.
+#[test]
+fn a_repeated_chain_failure_is_counted_rather_than_reported() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe");
+	let started = Instant::now();
+
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), Some(0));
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), None);
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, key, started, quiet), None);
+	assert_eq!(
+		crate::runtime::take_report_slot(&mut reported, key, started + quiet, quiet),
+		Some(2),
+		"the line that broke the quiet did not say how many it spoke for",
+	);
+}
+
+/// Each kind and method is its own condition, so one failing call does not
+/// silence a different one that starts failing beside it.
+#[test]
+fn a_chain_failure_does_not_silence_another_call() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+
+	let one = (RuntimeFailureKind::Unavailable, "chain_probe_one");
+	let two = (RuntimeFailureKind::Unavailable, "chain_probe_two");
+	let refused = (RuntimeFailureKind::HostFailure, "chain_probe_one");
+
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, one, now, quiet), Some(0));
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, two, now, quiet), Some(0));
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, refused, now, quiet), Some(0));
+	assert_eq!(crate::runtime::take_report_slot(&mut reported, one, now, quiet), None);
 }

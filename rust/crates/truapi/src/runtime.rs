@@ -53,7 +53,7 @@ use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
-	collections::HashSet,
+	collections::{BTreeMap, HashSet},
 	sync::{Arc, Mutex},
 };
 
@@ -135,7 +135,7 @@ use web_time::Instant;
 #[cfg(test)]
 use crate::subscription::Spawner;
 use crate::{
-	chain_runtime::RuntimeFailure,
+	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
 		bulletin::preimage_key,
 		permissions::{PermissionsService, TemporaryPermissions},
@@ -1059,8 +1059,92 @@ fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 }
 
 fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
-	tracing::warn!(kind = ?failure.kind(), reason = %failure, "chain call failed");
+	report_chain_call_failure(&failure);
 	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// How long one reported chain call failure speaks for the ones behind it.
+const CHAIN_FAILURE_QUIET: Duration = Duration::from_secs(30);
+
+/// What tells one chain call failure from another: its classification and the
+/// method it came from.
+type ChainFailureKey = (RuntimeFailureKind, &'static str);
+
+/// When each key last reported, and how many it has counted since.
+type ChainFailureReports = BTreeMap<ChainFailureKey, (Instant, u64)>;
+
+/// When each kind of chain call last reported a failure, and how many it has
+/// counted since.
+static CHAIN_FAILURES: Mutex<ChainFailureReports> = Mutex::new(BTreeMap::new());
+
+/// Report a failed chain call, at most once per kind and method per
+/// [`CHAIN_FAILURE_QUIET`].
+///
+/// A connection that drops fails every call made over it afterwards, and each
+/// line reaches a host's log and from there whatever the host ships logs to.
+/// Reporting all of them buries the first one, which is the only one that says
+/// when the trouble started, so repeats are counted into the next line instead.
+fn report_chain_call_failure(failure: &RuntimeFailure) {
+	// The lock is released before the line is raised: a host's sink runs host
+	// code, which must not be able to re-enter this.
+	let counted = {
+		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		take_report_slot(
+			&mut reported,
+			(failure.kind(), failure.method()),
+			Instant::now(),
+			CHAIN_FAILURE_QUIET,
+		)
+	};
+	let Some(counted) = counted else {
+		return;
+	};
+	// The count is carried only when it says something, so the ordinary line
+	// keeps its shape and a quiet period that swallowed repeats is visible.
+	if counted == 0 {
+		tracing::warn!(kind = ?failure.kind(), reason = %failure, "chain call failed");
+	} else {
+		tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			counted_since_last = counted,
+			"chain call failed"
+		);
+	}
+}
+
+/// Forget which chain calls have reported, so a test asserting on the line is
+/// not answered by a quiet period another test opened.
+#[cfg(test)]
+pub(crate) fn forget_chain_failures() {
+	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+}
+
+/// Decide whether `key` may be reported at `now`, and how many it would speak
+/// for. `None` counts this one against the last report and stays quiet.
+///
+/// Split out from the reporting so the rule can be exercised against chosen
+/// instants rather than against the clock and the global subscriber.
+fn take_report_slot(
+	reported: &mut ChainFailureReports,
+	key: ChainFailureKey,
+	now: Instant,
+	quiet: Duration,
+) -> Option<u64> {
+	match reported.get_mut(&key) {
+		Some((last, counted)) if now.duration_since(*last) < quiet => {
+			*counted += 1;
+			None
+		},
+		Some((last, counted)) => {
+			*last = now;
+			Some(core::mem::take(counted))
+		},
+		None => {
+			reported.insert(key, (now, 0));
+			Some(0)
+		},
+	}
 }
 
 /// Host-UI projection of an active session for `AuthState::Connected`.

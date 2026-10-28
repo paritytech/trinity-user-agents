@@ -171,7 +171,7 @@ pub struct LegacyConnection {
 /// Classification of framework-level chain failures separate from JSON-RPC
 /// domain errors. Maps cleanly to [`truapi::CallError`] variants at the
 /// `ProductRuntimeHost` boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeFailureKind {
 	/// Backend is not wired or refused the request for plumbing reasons.
 	Unavailable,
@@ -217,8 +217,7 @@ impl RuntimeFailure {
 	}
 
 	/// Method tag the failure originated from.
-	#[cfg(test)]
-	fn method(&self) -> &'static str {
+	pub fn method(&self) -> &'static str {
 		self.method
 	}
 
