@@ -47,6 +47,17 @@ public enum IssueMonitoringFactory {
         #endif
     }
 
+    /// Writes a line of device readings to the given log once a minute in the foreground, and sends them
+    /// as gauges when this build links reporting support.
+    public static func createDeviceReadingsMonitor(log: @escaping (String) -> Void) -> DeviceReadingsMonitoring {
+        DeviceReadingsMonitor { readings in
+            log("Device readings: \(readings.logLine)")
+            #if SENTRY_ENABLED
+                readings.sendSentryGauges()
+            #endif
+        }
+    }
+
     /// Reports through the SDK `IssueMonitoringServiceProtocol.setup()` started; a no-op until then and in Release.
     public static func createReporter() -> IssueReporting {
         #if SENTRY_ENABLED

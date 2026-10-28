@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.app.logging
 
+import io.paritytech.polkadotapp.app.monitoring.DEVICE_READINGS_LOG_TAG
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logging.LogFileAppender
@@ -23,7 +24,7 @@ class CoinageFileTree @Inject constructor(
     private companion object {
         // Durability lines carry the engine's tag: the verdicts and the reads behind them live there, and a
         // coinage log without them shows a status changing for no reason.
-        val ROUTED_TAGS = setOf(COINAGE_LOG_TAG, DURABILITY_LOG_TAG)
+        val ROUTED_TAGS = setOf(COINAGE_LOG_TAG, DURABILITY_LOG_TAG, DEVICE_READINGS_LOG_TAG)
     }
 
     private val appender = LogFileAppender(

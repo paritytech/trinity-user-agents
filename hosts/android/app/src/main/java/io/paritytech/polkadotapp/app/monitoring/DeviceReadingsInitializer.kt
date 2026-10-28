@@ -23,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import timber.log.Timber
+import java.util.Locale
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.minutes
 
@@ -36,15 +38,15 @@ class DeviceReadingsInitializer @Inject constructor(
 
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
-        if (!Sentry.isEnabled()) return@runCatching
-
         scope.launch(Dispatchers.Default) {
             ProcessLifecycleOwner.get().repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var previousCpu: CpuSample? = null
                 while (isActive) {
                     runCancellableCatching {
                         val cpu = CpuSample.now()
-                        report(previousCpu?.let { cpu.usagePercentSince(it, coreCount) })
+                        val readings = read(previousCpu?.let { cpu.usagePercentSince(it, coreCount) })
+                        Timber.tag(DEVICE_READINGS_LOG_TAG).i("Device readings: %s", readings.toLogLine())
+                        if (Sentry.isEnabled()) report(readings)
                         previousCpu = cpu
                     }.logFailure("Device readings tick failed")
                     delay(REPORT_INTERVAL)
@@ -53,24 +55,41 @@ class DeviceReadingsInitializer @Inject constructor(
         }
     }
 
-    private fun report(processCpuUsage: Double?) {
-        val metrics = Sentry.metrics()
+    private fun read(processCpuUsagePercent: Double?): DeviceReadings {
         val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
         val storage = StatFs(context.filesDir.path)
 
-        processCpuUsage?.let { metrics.gauge("device.cpu.process_usage", it, MetricsUnit.Fraction.PERCENT) }
+        return DeviceReadings(
+            processCpuUsagePercent = processCpuUsagePercent,
+            coreCount = coreCount,
+            memoryTotalBytes = memory.totalMem,
+            memoryAvailableBytes = memory.availMem,
+            processMemoryBytes = Debug.getPss() * 1024,
+            storageFreeBytes = storage.availableBytes,
+            storageTotalBytes = storage.totalBytes,
+            thermalStatus = powerManager.currentThermalStatus,
+            thermalHeadroom = thermalHeadroom(),
+            batteryLevelPercent = batteryService.currentBatteryLevel()?.inPercents?.toInt(),
+            charging = batteryService.isCharging(),
+        )
+    }
+
+    private fun report(readings: DeviceReadings) = with(readings) {
+        val metrics = Sentry.metrics()
+
+        processCpuUsagePercent?.let { metrics.gauge("device.cpu.process_usage", it, MetricsUnit.Fraction.PERCENT) }
         metrics.gauge("device.cpu.cores", coreCount.toDouble())
-        metrics.gauge("device.memory.total", memory.totalMem.toDouble(), MetricsUnit.Information.BYTE)
-        metrics.gauge("device.memory.available", memory.availMem.toDouble(), MetricsUnit.Information.BYTE)
-        metrics.gauge("device.memory.process", Debug.getPss() * 1024.0, MetricsUnit.Information.BYTE)
-        metrics.gauge("device.storage.free", storage.availableBytes.toDouble(), MetricsUnit.Information.BYTE)
-        metrics.gauge("device.storage.total", storage.totalBytes.toDouble(), MetricsUnit.Information.BYTE)
-        metrics.gauge("device.thermal.state", powerManager.currentThermalStatus.toDouble())
-        thermalHeadroom()?.let { metrics.gauge("device.thermal.headroom", it.toDouble()) }
-        batteryService.currentBatteryLevel()?.let {
-            metrics.gauge("device.battery.level", it.inPercents.toDouble(), MetricsUnit.Fraction.PERCENT)
+        metrics.gauge("device.memory.total", memoryTotalBytes.toDouble(), MetricsUnit.Information.BYTE)
+        metrics.gauge("device.memory.available", memoryAvailableBytes.toDouble(), MetricsUnit.Information.BYTE)
+        metrics.gauge("device.memory.process", processMemoryBytes.toDouble(), MetricsUnit.Information.BYTE)
+        metrics.gauge("device.storage.free", storageFreeBytes.toDouble(), MetricsUnit.Information.BYTE)
+        metrics.gauge("device.storage.total", storageTotalBytes.toDouble(), MetricsUnit.Information.BYTE)
+        metrics.gauge("device.thermal.state.android", thermalStatus.toDouble())
+        thermalHeadroom?.let { metrics.gauge("device.thermal.headroom", it.toDouble()) }
+        batteryLevelPercent?.let {
+            metrics.gauge("device.battery.level", it.toDouble(), MetricsUnit.Fraction.PERCENT)
         }
-        metrics.gauge("device.battery.charging", if (batteryService.isCharging()) 1.0 else 0.0)
+        metrics.gauge("device.battery.charging", if (charging) 1.0 else 0.0)
     }
 
     private fun thermalHeadroom(): Float? {
@@ -82,6 +101,34 @@ class DeviceReadingsInitializer @Inject constructor(
     private companion object {
         val REPORT_INTERVAL = 1.minutes
     }
+}
+
+internal data class DeviceReadings(
+    val processCpuUsagePercent: Double?,
+    val coreCount: Int,
+    val memoryTotalBytes: Long,
+    val memoryAvailableBytes: Long,
+    val processMemoryBytes: Long,
+    val storageFreeBytes: Long,
+    val storageTotalBytes: Long,
+    val thermalStatus: Int,
+    val thermalHeadroom: Float?,
+    val batteryLevelPercent: Int?,
+    val charging: Boolean,
+) {
+    fun toLogLine(): String = listOfNotNull(
+        processCpuUsagePercent?.let { "cpu=${"%.1f".format(Locale.ROOT, it)}%" },
+        "cores=$coreCount",
+        "memory=${memoryAvailableBytes.megabytes}/${memoryTotalBytes.megabytes}MB",
+        "process=${processMemoryBytes.megabytes}MB",
+        "storage=${storageFreeBytes.megabytes}/${storageTotalBytes.megabytes}MB",
+        "thermal=$thermalStatus",
+        thermalHeadroom?.let { "headroom=${"%.2f".format(Locale.ROOT, it)}" },
+        batteryLevelPercent?.let { "battery=$it%" },
+        "charging=$charging",
+    ).joinToString(" ")
+
+    private val Long.megabytes get() = this / 1_000_000
 }
 
 internal class CpuSample(

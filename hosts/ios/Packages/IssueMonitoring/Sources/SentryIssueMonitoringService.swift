@@ -4,7 +4,6 @@
 
     final class SentryIssueMonitoringService: IssueMonitoringServiceProtocol {
         private let dsn: String
-        private let deviceReadings = SentryDeviceReadingsReporter()
 
         init(dsn: String) {
             self.dsn = dsn
@@ -25,8 +24,6 @@
                 // We recommend adjusting this value in production.
                 options.tracesSampleRate = 0
             }
-
-            deviceReadings.start()
         }
     }
 #endif
