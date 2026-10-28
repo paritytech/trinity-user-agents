@@ -9215,10 +9215,14 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	};
 	let unknown = select("q-never");
 	let chosen = select("q1");
-	let offered_after_assign =
+	// The reconciler drops an assigned session's quotes on its next pass.
+	let offered = || {
 		services
 			.funding_quotes()
-			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis());
+			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis())
+	};
+	eventually(5, || offered().is_none());
+	let offered_after_assign = offered();
 
 	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
 	let final_state = |provider: &str| {
