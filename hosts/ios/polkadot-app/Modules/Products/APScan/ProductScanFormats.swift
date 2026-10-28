@@ -7,8 +7,8 @@ enum ProductScanFormats {
         formats.flatMap(metadataTypes(for:))
     }
 
+    // swiftlint:disable cyclomatic_complexity
     /// Nil for a type no product can ask for.
-    // swiftlint:disable:next cyclomatic_complexity
     static func format(of type: AVMetadataObject.ObjectType) -> CodeFormat? {
         switch type {
         case .qr: .qr
@@ -32,7 +32,6 @@ enum ProductScanFormats {
     /// Exhaustive, so a format added to the protocol does not build until it is read.
     /// UPC-A has no type of its own: AVFoundation reads it as EAN-13 with a
     /// leading zero, which is how products expect it.
-    // swiftlint:disable:next cyclomatic_complexity
     private static func metadataTypes(for format: CodeFormat) -> [AVMetadataObject.ObjectType] {
         switch format {
         case .qr: [.qr]
@@ -49,4 +48,5 @@ enum ProductScanFormats {
         case .codabar: [.codabar]
         }
     }
+    // swiftlint:enable cyclomatic_complexity
 }

@@ -43,6 +43,9 @@ final class ProductScanPresenter: QRScannerPresenter {
     override func setup() {}
 
     override func handle(codes: [CapturedCode]) {
+        guard !isCovered else {
+            return
+        }
         for code in codes {
             guard let text = code.text, let format = ProductScanFormats.format(of: code.type) else {
                 continue
@@ -77,11 +80,14 @@ final class ProductScanPresenter: QRScannerPresenter {
         }
     }
 
-    /// Waits while another screen is over the scanner: dismissing would close
-    /// that screen instead, unanswered. The camera reads the code again later.
+    /// Another screen over the scanner would close with it, unanswered. Codes
+    /// read meanwhile stay unread, since the filter accepts only one.
+    private var isCovered: Bool {
+        (view?.controller.navigationController ?? view?.controller)?.presentedViewController != nil
+    }
+
     private func close(answering scan: HostScan) {
-        let screen = view?.controller.navigationController ?? view?.controller
-        guard choice == nil, screen?.presentedViewController == nil else {
+        guard choice == nil, !isCovered else {
             return
         }
         choice = scan
