@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,6 +67,9 @@ internal fun SpaBrowserScreenInternal(
     onMinimize: () -> Unit,
     onRefresh: () -> Unit,
 ) {
+    var minimizePanelHeight by remember { mutableIntStateOf(0) }
+    val chromeCollapse = rememberBrowserChromeCollapse(webView, minimizePanelHeight)
+
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
             modifier = Modifier
@@ -70,12 +77,18 @@ internal fun SpaBrowserScreenInternal(
                 .safeDrawingPadding()
         ) {
             DotNsLoadProgressBar(progress = state.loadProgress)
-            MinimizeButton(onClick = onMinimize)
+            Box(
+                modifier = Modifier
+                    .collapsedBy { chromeCollapse.fraction }
+                    .onSizeChanged { minimizePanelHeight = it.height }
+            ) {
+                MinimizeButton(onClick = onMinimize)
+            }
             PolkadotSurface(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().then(chromeCollapse.touchTracking)) {
                     SpaBrowserPageContent(
                         pageState = state.pageState,
                         webView = webView,
