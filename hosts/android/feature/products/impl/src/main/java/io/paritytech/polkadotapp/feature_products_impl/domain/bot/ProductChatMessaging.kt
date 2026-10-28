@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -33,7 +34,13 @@ interface ProductChatMessaging {
 
     suspend fun setRoomConfig(chatIdParameter: ProductChatIdParameter, config: ChatRoomConfigModel): Result<Unit>
 
-    suspend fun setRoomMetadata(chatIdParameter: ProductChatIdParameter, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
+    /** A null [iconChange] keeps the icon of the room. */
+    suspend fun setRoomMetadata(
+        chatIdParameter: ProductChatIdParameter,
+        name: String,
+        iconChange: RoomIconChange?,
+        metadata: ChatRoomMetadataModel,
+    ): Result<Unit>
 
     suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit>
 
