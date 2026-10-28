@@ -6,12 +6,15 @@ import StructuredConcurrencyTestSupport
 import Testing
 @testable import polkadot_app
 
+private let gameProductId = try! ProductId("game.paseo")
+private let workerContentId = try! ProductId("worker.game.paseo")
+
 struct PublishedPocketCardsTests {
     @Test
     func findsACardTheWorkerPublishes() async throws {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
-        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition == loyalty)
         #expect(found.productName == "Game")
@@ -23,7 +26,7 @@ struct PublishedPocketCardsTests {
     func namesTheWorkerArchiveTheFaceIsReadFrom() async throws {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
-        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.workerContentId.rawValue == "worker.game.paseo")
     }
@@ -33,7 +36,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: nil))
 
         await #expect(throws: PocketPublishError.noPocket) {
-            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -42,7 +45,7 @@ struct PublishedPocketCardsTests {
     @Test
     func refusesAWorkerThatDeclaresNoPocket() async {
         let worker = ProductExecutable.Worker(
-            identifier: try! ProductId("worker.game.paseo"),
+            identifier: workerContentId,
             appVersion: .zero,
             entrypoint: "worker.js",
             modalities: [.chat]
@@ -50,7 +53,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: worker))
 
         await #expect(throws: PocketPublishError.noPocket) {
-            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -66,7 +69,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .archive(path: "faces/loyalty.json"))
     }
@@ -80,7 +83,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .url("http://127.0.0.1:5173/pocket/devicehood.json"))
     }
@@ -97,7 +100,7 @@ struct PublishedPocketCardsTests {
         ))
 
         await #expect(throws: PocketPublishError.unreadableProduct) {
-            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -108,7 +111,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: StubProductResolver(alwaysFailing: URLError(.timedOut)))
 
         await #expect(throws: URLError.self) {
-            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -121,7 +124,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .url("http://127.0.0.1:5173/pocket/devicehood.json"))
     }
@@ -131,7 +134,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
         await #expect(throws: PocketPublishError.unknownCard) {
-            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))
+            try await cards.find(productId: gameProductId, cardId: PocketCardId(value: "trophy"))
         }
     }
 
@@ -183,7 +186,7 @@ private let faceAwayLoyalty = PocketCardDefinition(
     faceShown: false
 )
 
-private let loyaltyKey = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+private let loyaltyKey = PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
 private let debugLoyalty = PocketCardDefinition(
     id: PocketCardId(value: "loyalty"),
@@ -193,7 +196,7 @@ private let debugLoyalty = PocketCardDefinition(
 
 private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecutable.Worker {
     ProductExecutable.Worker(
-        identifier: try! ProductId("worker.game.paseo"),
+        identifier: workerContentId,
         appVersion: .zero,
         entrypoint: "worker.js",
         modalities: [.pocket(cards)]
@@ -202,7 +205,7 @@ private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecuta
 
 private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResolver {
     StubProductResolver(alwaysResolvingTo: ResolvedProduct(
-        id: try! ProductId("game.paseo"),
+        id: gameProductId,
         displayName: "Game",
         description: nil,
         icon: nil,

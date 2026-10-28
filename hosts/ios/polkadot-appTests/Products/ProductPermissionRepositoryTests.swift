@@ -5,6 +5,10 @@ import Testing
 
 @testable import polkadot_app
 
+private let productId = try! ProductId("test-product.dot")
+private let productA = try! ProductId("product-a.dot")
+private let productB = try! ProductId("product-b.dot")
+
 @Suite("ProductPermissionRepository Tests")
 struct ProductPermissionRepositoryTests {
     private func makeSUT() -> ProductPermissionRepository {
@@ -16,7 +20,6 @@ struct ProductPermissionRepositoryTests {
     @Test("grant persists and getPermissionState returns allowedAlways")
     func grantAndGetState() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.camera)
 
         let initial = try await sut.getPermissionState(
@@ -39,10 +42,10 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
         let permission = ProductPermission.deviceCapability(.camera)
 
-        try await sut.grant(productId: try! ProductId("product-a.dot"), permission: permission)
+        try await sut.grant(productId: productA, permission: permission)
 
         let state = try await sut.getPermissionState(
-            productId: try! ProductId("product-b.dot"),
+            productId: productB,
             permission: permission
         )
         #expect(state == .notDetermined)
@@ -51,7 +54,6 @@ struct ProductPermissionRepositoryTests {
     @Test("getPermissionState returns notDetermined for different permission")
     func getStateIsolatedByPermission() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
 
         try await sut.grant(productId: productId, permission: .deviceCapability(.camera))
 
@@ -67,7 +69,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny persists and getPermissionState returns denied")
     func denyAndGetState() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.networkAccess(domain: "evil.com")
 
         try await sut.deny(productId: productId, permission: permission)
@@ -82,7 +83,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny overrides previously granted permission")
     func denyOverridesGrant() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.camera)
 
         try await sut.grant(productId: productId, permission: permission)
@@ -105,7 +105,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny clears one-time grant")
     func denyClearsOneTime() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.camera)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -120,7 +119,6 @@ struct ProductPermissionRepositoryTests {
     @Test("getPermissionState returns allowedOnce for one-time grant")
     func getStateOneTimeGrant() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.camera)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -137,7 +135,6 @@ struct ProductPermissionRepositoryTests {
     @Test("revoke removes a granted permission")
     func revokeSingle() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.networkAccess(domain: "example.com")
 
         try await sut.grant(productId: productId, permission: permission)
@@ -160,7 +157,6 @@ struct ProductPermissionRepositoryTests {
     @Test("revoke clears one-time grant")
     func revokeClearsOneTime() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.networkAccess(domain: "example.com")
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -178,22 +174,22 @@ struct ProductPermissionRepositoryTests {
         let camera = ProductPermission.deviceCapability(.camera)
         let network = ProductPermission.networkAccess(domain: "api.example.com")
 
-        try await sut.grant(productId: try! ProductId("product-a.dot"), permission: camera)
-        try await sut.grant(productId: try! ProductId("product-a.dot"), permission: network)
-        try await sut.grant(productId: try! ProductId("product-b.dot"), permission: camera)
+        try await sut.grant(productId: productA, permission: camera)
+        try await sut.grant(productId: productA, permission: network)
+        try await sut.grant(productId: productB, permission: camera)
 
-        try await sut.revokeAllByProduct(productId: try! ProductId("product-a.dot"))
+        try await sut.revokeAllByProduct(productId: productA)
 
         let stateA1 = try await sut.getPermissionState(
-            productId: try! ProductId("product-a.dot"),
+            productId: productA,
             permission: camera
         )
         let stateA2 = try await sut.getPermissionState(
-            productId: try! ProductId("product-a.dot"),
+            productId: productA,
             permission: network
         )
         let stateB = try await sut.getPermissionState(
-            productId: try! ProductId("product-b.dot"),
+            productId: productB,
             permission: camera
         )
 
@@ -210,11 +206,11 @@ struct ProductPermissionRepositoryTests {
         let camera = ProductPermission.deviceCapability(.camera)
         let mic = ProductPermission.deviceCapability(.microphone)
 
-        try await sut.grant(productId: try! ProductId("product-a.dot"), permission: camera)
-        try await sut.grant(productId: try! ProductId("product-a.dot"), permission: mic)
-        try await sut.grant(productId: try! ProductId("product-b.dot"), permission: camera)
+        try await sut.grant(productId: productA, permission: camera)
+        try await sut.grant(productId: productA, permission: mic)
+        try await sut.grant(productId: productB, permission: camera)
 
-        let grants = try await sut.getAllByProduct(productId: try! ProductId("product-a.dot"))
+        let grants = try await sut.getAllByProduct(productId: productA)
         #expect(grants.count == 2)
         #expect(grants.allSatisfy { $0.productId.rawValue == "product-a.dot" })
     }
@@ -232,7 +228,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted returns true when one of the keys matches")
     func isAnyAlwaysGrantedMatch() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
 
         try await sut.grant(
             productId: productId,
@@ -251,7 +246,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted returns false when no keys match")
     func isAnyAlwaysGrantedNoMatch() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
 
         try await sut.grant(
             productId: productId,
@@ -272,7 +266,7 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
 
         let result = try await sut.isAnyAlwaysGranted(
-            productId: try! ProductId("test-product.dot"),
+            productId: productId,
             typeName: ProductPermission.networkAccessTypeName,
             keys: []
         )
@@ -283,7 +277,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted ignores denied permissions")
     func isAnyAlwaysGrantedIgnoresDenied() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
 
         try await sut.deny(
             productId: productId,
@@ -304,7 +297,6 @@ struct ProductPermissionRepositoryTests {
     @Test("grantOneTime and consumeOneTimeGrant work as expected")
     func oneTimeGrantConsumed() {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.camera)
 
         #expect(!sut.consumeOneTimeGrant(productId: productId, permission: permission))
@@ -317,7 +309,6 @@ struct ProductPermissionRepositoryTests {
     @Test("one-time grant does not affect persistent storage")
     func oneTimeGrantNotPersisted() async throws {
         let sut = makeSUT()
-        let productId = try! ProductId("test-product.dot")
         let permission = ProductPermission.deviceCapability(.microphone)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -331,9 +322,9 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
         let permission = ProductPermission.deviceCapability(.camera)
 
-        sut.grantOneTime(productId: try! ProductId("product-a.dot"), permission: permission)
+        sut.grantOneTime(productId: productA, permission: permission)
 
-        #expect(!sut.consumeOneTimeGrant(productId: try! ProductId("product-b.dot"), permission: permission))
-        #expect(sut.consumeOneTimeGrant(productId: try! ProductId("product-a.dot"), permission: permission))
+        #expect(!sut.consumeOneTimeGrant(productId: productB, permission: permission))
+        #expect(sut.consumeOneTimeGrant(productId: productA, permission: permission))
     }
 }

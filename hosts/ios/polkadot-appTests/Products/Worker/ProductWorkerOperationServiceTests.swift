@@ -6,6 +6,8 @@ import AsyncExtensions
 import Products
 @testable import polkadot_app
 
+private let productId = try! ProductId("getcash.dot")
+
 private final class FakeOperationStore: ProductOperationStoring, @unchecked Sendable {
     private let records = OSAllocatedUnfairLock(initialState: [ProductOperationRecord]())
 
@@ -34,8 +36,8 @@ struct ProductWorkerOperationServiceTests {
         let store = FakeOperationStore()
         let service = ProductWorkerOperationService(store: store)
 
-        let first = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: "sync")
-        let second = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: nil)
+        let first = try await service.beginOperation(productId: productId, label: "sync")
+        let second = try await service.beginOperation(productId: productId, label: nil)
 
         #expect(first != 0)
         #expect(second != 0)
@@ -48,13 +50,13 @@ struct ProductWorkerOperationServiceTests {
         let store = FakeOperationStore()
         let service = ProductWorkerOperationService(store: store)
 
-        let id = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: nil)
-        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: id)
+        let id = try await service.beginOperation(productId: productId, label: nil)
+        try await service.endOperation(productId: productId, id: id)
         #expect(store.isEmpty)
 
         // Ending again, or an unknown id, is a no-op success.
-        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: id)
-        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: 999)
+        try await service.endOperation(productId: productId, id: id)
+        try await service.endOperation(productId: productId, id: 999)
         #expect(store.isEmpty)
     }
 }

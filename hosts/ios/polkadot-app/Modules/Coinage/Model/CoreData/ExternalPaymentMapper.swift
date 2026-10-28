@@ -30,7 +30,7 @@ final class ExternalPaymentMapper: CoreDataMapperProtocol {
         let plannedVoucherIndices = try Self.decodeVoucherIndices(entity.plannedVoucherIndices)
 
         return ExternalPayment(
-            productId: productId == "native-payment" ? nil : try ProductId(productId),
+            productId: productId == ExternalPayment.nativePaymentMarker ? nil : try ProductId(productId),
             paymentId: paymentId,
             amountInPlanks: amount,
             destination: destination,
@@ -50,7 +50,7 @@ final class ExternalPaymentMapper: CoreDataMapperProtocol {
         using _: NSManagedObjectContext
     ) throws {
         entity.identifier = model.identifier
-        entity.productId = model.productId?.rawValue ?? "native-payment"
+        entity.productId = model.productId?.rawValue ?? ExternalPayment.nativePaymentMarker
         entity.paymentId = model.paymentId
         entity.amountInPlanks = String(model.amountInPlanks)
         entity.destination = model.destination

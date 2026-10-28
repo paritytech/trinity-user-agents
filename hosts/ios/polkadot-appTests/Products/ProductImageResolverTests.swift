@@ -5,6 +5,10 @@ import Products
 import Testing
 @testable import polkadot_app
 
+private let gameProductId = try! ProductId("game.paseo")
+private let workerContentId = try! ProductId("worker.game.paseo")
+private let otherWorkerContentId = try! ProductId("worker.elsewhere.paseo")
+
 /// Turns an image source inside a face or a chat card into something the
 /// image loader can fetch. A source that cannot be resolved answers nil: the
 /// rest of the tree still draws, with a hole where the image would be.
@@ -17,7 +21,7 @@ struct ProductImageResolverTests {
     func resolvesAnArchiveImageToAFileInTheWorkersArchive() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
         let resolver = ProductImageResolver(
-            contentId: { try! ProductId("worker.game.paseo") },
+            contentId: { workerContentId },
             archive: ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
         )
@@ -36,7 +40,7 @@ struct ProductImageResolverTests {
     func readsAnArchiveAlreadyOnDiskWithoutAskingTheChain() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
         let resolver = ProductImageResolver(
-            contentId: { try! ProductId("worker.game.paseo") },
+            contentId: { workerContentId },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: { _ in root }),
             ipfsUrl: { _ in nil }
         )
@@ -52,7 +56,7 @@ struct ProductImageResolverTests {
     func fetchesTheArchiveWhenNothingIsOnDiskYet() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
         let resolver = ProductImageResolver(
-            contentId: { try! ProductId("worker.game.paseo") },
+            contentId: { workerContentId },
             archive: ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
         )
@@ -63,7 +67,7 @@ struct ProductImageResolverTests {
     @Test
     func resolvesABulletinImageToItsGatewayAddress() async throws {
         let resolver = ProductImageResolver(
-            contentId: { try! ProductId("worker.game.paseo") },
+            contentId: { workerContentId },
             archive: ProductWorkerArchive(
                 dotNsResolver: StubResolver(root: URL(fileURLWithPath: "/tmp/none")),
                 cachedRoot: { _ in nil }
@@ -84,7 +88,7 @@ struct ProductImageResolverTests {
             dotNsResolver: FailingResolver(),
             ipfsGatewayBaseUrl: URL(string: "https://gateway.invalid/ipfs/")!
         )
-        let resolver = sources.resolver(contentId: { try! ProductId("worker.game.paseo") })
+        let resolver = sources.resolver(contentId: { workerContentId })
 
         let url = try #require(await resolver.resolve(.bulletin(cid: "bafyimage")))
 
@@ -99,8 +103,8 @@ struct ProductImageResolverTests {
     @Test
     func drawsFromTheArchiveOnDiskWhenTheManifestCannotBeRead() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
-        let onDisk: @Sendable (ProductId) -> URL? = { $0 == (try! ProductId("worker.game.paseo")) ? root : nil }
-        let name = PocketWorkerArchiveName(productId: try! ProductId("game.paseo"), published: { nil }, onDisk: onDisk)
+        let onDisk: @Sendable (ProductId) -> URL? = { $0 == workerContentId ? root : nil }
+        let name = PocketWorkerArchiveName(productId: gameProductId, published: { nil }, onDisk: onDisk)
         let resolver = ProductImageResolver(
             contentId: { await name.resolve() },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: onDisk),
@@ -117,19 +121,19 @@ struct ProductImageResolverTests {
     @Test
     func asksTheManifestForAWorkerArchiveThatIsNotOnDisk() async {
         let name = PocketWorkerArchiveName(
-            productId: try! ProductId("game.paseo"),
-            published: { try! ProductId("worker.elsewhere.paseo") },
+            productId: gameProductId,
+            published: { otherWorkerContentId },
             onDisk: { _ in nil }
         )
 
-        #expect(await name.resolve() == (try! ProductId("worker.elsewhere.paseo")))
+        #expect(await name.resolve() == otherWorkerContentId)
     }
 
     /// An archive that cannot be fetched leaves the rest of the face drawable.
     @Test
     func answersNoUrlWhenTheArchiveCannotBeRead() async {
         let resolver = ProductImageResolver(
-            contentId: { try! ProductId("worker.game.paseo") },
+            contentId: { workerContentId },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
         )

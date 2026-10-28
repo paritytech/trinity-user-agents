@@ -7,6 +7,8 @@ import TrUAPIHost
 import UIKitExt
 @testable import polkadot_app
 
+private let productId = try! ProductId("dim2.paseo")
+
 /// A product's chat row is drawn from its manifest, the way its name already is.
 @Suite("Product bot in the chat list")
 struct ProductBotChatListTests {
@@ -30,7 +32,7 @@ struct ProductBotChatListTests {
     func theRowIconIsTheProductManifestIcon() {
         let bot = makeBot(description: nil)
 
-        #expect(bot.peerMetadata.icon == .product(domain: try! ProductId("dim2.paseo")))
+        #expect(bot.peerMetadata.icon == .product(domain: productId))
     }
 
     /// The sender describes each card, so the row says what this one shows rather than what the product is.
@@ -48,16 +50,16 @@ struct ProductBotChatListTests {
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
 
-        #expect(Chat.PeerMetadata.Icon.product(domain: try! ProductId("dim2.paseo")).imageViewModel(using: iconFactory) != nil)
+        #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(using: iconFactory) != nil)
         #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(using: iconFactory) == nil)
-        #expect(iconFactory.requestedDomains == [try! ProductId("dim2.paseo")])
+        #expect(iconFactory.requestedDomains == [productId])
     }
 }
 
 private extension ProductBotChatListTests {
     func makeBot(description: String?) -> ProductBot {
         ProductBot(
-            product: Product(id: try! ProductId("dim2.paseo"), name: "Jollity"),
+            product: Product(id: productId, name: "Jollity"),
             description: description,
             runtime: IdleChatRuntime(),
             resolveImage: WidgetImageResolver { _ in nil }

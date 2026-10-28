@@ -5,6 +5,8 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
+private let gameProductId = try! ProductId("game.paseo")
+
 /// The render stream is what makes a card live. Both ways it goes wrong are
 /// invisible on screen: a stream nothing reopens, and a stream torn down for a
 /// worker that never moved.
@@ -31,10 +33,10 @@ struct TrUAPIPocketHandlerTests {
         // Subscribed before anything is published, so the count of deliveries
         // below starts from the empty map the handler opens with.
         try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
-        workers.publish([try! ProductId("game.paseo"): execution])
+        workers.publish([gameProductId: execution])
         try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
-        workers.publish([try! ProductId("game.paseo"): execution, try! ProductId("shop.paseo"): MockProductExecution()])
-        workers.publish([try! ProductId("game.paseo"): execution])
+        workers.publish([gameProductId: execution, try! ProductId("shop.paseo"): MockProductExecution()])
+        workers.publish([gameProductId: execution])
         // The last republish arriving means the one before it has been handled.
         for _ in 0 ..< 3 {
             try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
@@ -60,12 +62,12 @@ struct TrUAPIPocketHandlerTests {
         let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
         defer { drawing.cancel() }
 
-        workers.publish([try! ProductId("game.paseo"): first])
+        workers.publish([gameProductId: first])
         try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
 
         let replacement = MockProductExecution()
         replacement.keepsRenderStreamOpen = true
-        workers.publish([try! ProductId("game.paseo"): replacement])
+        workers.publish([gameProductId: replacement])
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
@@ -74,8 +76,8 @@ struct TrUAPIPocketHandlerTests {
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+private let loyalty = PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty"))
 
 private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
-    TrUAPIPocketHandler(productId: try! ProductId("game.paseo"), workers: workers)
+    TrUAPIPocketHandler(productId: gameProductId, workers: workers)
 }

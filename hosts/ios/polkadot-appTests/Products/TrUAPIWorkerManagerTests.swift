@@ -6,6 +6,10 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
+private let gameProductId = try! ProductId("game.paseo")
+private let barrierProductId = try! ProductId("barrier.paseo")
+private let stalledProductId = try! ProductId("stalled.paseo")
+
 /// The core counts worker references and reports only the transitions across
 /// zero, so the manager must be exact: a worker left running burns a web
 /// view, and one left half-booted swallows every later start.
@@ -15,10 +19,10 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(builder.built == [try! ProductId("game.paseo")])
+        #expect(builder.built == [gameProductId])
     }
 
     /// The core reports only transitions across zero, but a stop and a start can
@@ -29,12 +33,12 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         try await barrier(manager)
 
-        #expect(builder.built == [try! ProductId("game.paseo"), try! ProductId("barrier.paseo")])
+        #expect(builder.built == [gameProductId, barrierProductId])
     }
 
     @Test
@@ -42,11 +46,11 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
 
-        try await noExecution(of: try! ProductId("game.paseo"), in: manager)
+        try await noExecution(of: gameProductId, in: manager)
     }
 
     /// A worker that is only forgotten keeps its headless web view and chain
@@ -56,10 +60,10 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        let running = try #require(builder.executions[try! ProductId("game.paseo")])
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let running = try #require(builder.executions[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
         try await withTimeout(.hangGuard) { await running.awaitClose() }
 
         #expect(running.closeCallCount == 1)
@@ -76,15 +80,15 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        let dead = try #require(builder.executions[try! ProductId("game.paseo")])
-        try #require(builder.engines[try! ProductId("game.paseo")]).terminate()
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let dead = try #require(builder.executions[gameProductId])
+        try #require(builder.engines[gameProductId]).terminate()
         try await withTimeout(.hangGuard) { await dead.awaitClose() }
-        let rebooted = try await execution(of: try! ProductId("game.paseo"), in: manager)
+        let rebooted = try await execution(of: gameProductId, in: manager)
 
         #expect(rebooted !== dead)
-        #expect(builder.built == [try! ProductId("game.paseo"), try! ProductId("game.paseo")])
+        #expect(builder.built == [gameProductId, gameProductId])
     }
 
     /// An engine of a worker that was already stopped can still die afterwards.
@@ -95,16 +99,16 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        let engine = try #require(builder.engines[try! ProductId("game.paseo")])
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
-        try await noExecution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let engine = try #require(builder.engines[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        try await noExecution(of: gameProductId, in: manager)
         engine.terminate()
         try await barrier(manager)
 
-        #expect(builder.built == [try! ProductId("game.paseo"), try! ProductId("barrier.paseo")])
-        #expect(manager.currentExecution(of: try! ProductId("game.paseo")) == nil)
+        #expect(builder.built == [gameProductId, barrierProductId])
+        #expect(manager.currentExecution(of: gameProductId) == nil)
     }
 
     /// A worker whose engine fails once it is already in the running map must
@@ -117,14 +121,14 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(engineFails: true)
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
 
-        #expect(manager.currentExecution(of: try! ProductId("game.paseo")) == nil)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
 
         builder.engineFails = false
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A product with no worker cannot be built at all, which must be as clean
@@ -135,14 +139,14 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(cannotBuild: true)
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
 
-        #expect(manager.currentExecution(of: try! ProductId("game.paseo")) == nil)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
 
         builder.cannotBuild = false
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A stop for a product that never started is what the core sends when a
@@ -152,12 +156,12 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
         manager.demandChanged(productId: try! ProductId("other.paseo"), transition: .stop)
         try await barrier(manager)
 
-        #expect(manager.currentExecution(of: try! ProductId("game.paseo")) != nil)
+        #expect(manager.currentExecution(of: gameProductId) != nil)
     }
 
     /// The worker's card list is served from the bridge's snapshot, and the
@@ -169,8 +173,8 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
 
         #expect(builder.cardsWhenTheEngineBooted.map(\.cardId) == ["loyalty"])
     }
@@ -183,11 +187,11 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
         try await barrier(manager)
 
-        #expect(builder.executions[try! ProductId("game.paseo")]?.pocketCardNotifications.last?.map(\.cardId) == ["loyalty"])
+        #expect(builder.executions[gameProductId]?.pocketCardNotifications.last?.map(\.cardId) == ["loyalty"])
     }
 
     /// Building a worker fetches its archive, which is exactly when two cards
@@ -200,14 +204,14 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(buildDelay: .milliseconds(30))
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         await builder.clock.waitForSleep(for: .milliseconds(30))
         try await barrier(manager)
         await builder.clock.resumeSleep(for: .milliseconds(30))
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(builder.built.filter { $0 == try! ProductId("game.paseo") }.count == 1)
+        #expect(builder.built.filter { $0 == gameProductId }.count == 1)
     }
 
     /// A stop that lands while the worker is still being built finds nothing to
@@ -218,15 +222,15 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(buildDelay: .milliseconds(80))
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         await builder.clock.waitForSleep(for: .milliseconds(80))
-        let booting = try #require(builder.executions[try! ProductId("game.paseo")])
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
+        let booting = try #require(builder.executions[gameProductId])
+        manager.demandChanged(productId: gameProductId, transition: .stop)
         try await barrier(manager)
         await builder.clock.resumeSleep(for: .milliseconds(80))
         try await withTimeout(.hangGuard) { await booting.awaitClose() }
 
-        #expect(manager.currentExecution(of: try! ProductId("game.paseo")) == nil)
+        #expect(manager.currentExecution(of: gameProductId) == nil)
         #expect(booting.closeCallCount == 1)
     }
 
@@ -239,14 +243,14 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(buildDelay: .milliseconds(40))
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
 
         await builder.clock.waitForSleeps(for: .milliseconds(40), count: 2)
         await builder.clock.resumeSleeps(for: .milliseconds(40), count: 2)
 
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        try await execution(of: gameProductId, in: manager)
     }
 
     /// A boot that fails after a stop has already cleared it must not take the
@@ -258,20 +262,20 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder(firstStartFailsAfter: .milliseconds(300))
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
         await builder.clock.waitForSleep(for: .milliseconds(300))
-        let first = try #require(builder.executions[try! ProductId("game.paseo")])
+        let first = try #require(builder.executions[gameProductId])
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .stop)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        let booted = try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: gameProductId, transition: .stop)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        let booted = try await execution(of: gameProductId, in: manager)
         let published = try #require(booted as? MockProductExecution)
         #expect(published !== first)
 
         await builder.clock.resumeSleep(for: .milliseconds(300))
         try await barrier(manager)
 
-        let current = manager.currentExecution(of: try! ProductId("game.paseo")) as? MockProductExecution
+        let current = manager.currentExecution(of: gameProductId) as? MockProductExecution
         #expect(current === published)
         #expect(published.closeCallCount == 0)
     }
@@ -282,15 +286,15 @@ struct TrUAPIWorkerManagerTests {
     /// for as long as the fetch hangs.
     @Test
     func aStalledBootDoesNotHoldUpAnotherProduct() async throws {
-        let builder = StubWorkerBuilder(stalledProduct: try! ProductId("stalled.paseo"))
+        let builder = StubWorkerBuilder(stalledProduct: stalledProductId)
         defer { builder.releaseTheStalledBoot() }
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: try! ProductId("stalled.paseo"), transition: .start)
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
+        manager.demandChanged(productId: stalledProductId, transition: .start)
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
 
-        #expect(manager.currentExecution(of: try! ProductId("stalled.paseo")) == nil)
+        #expect(manager.currentExecution(of: stalledProductId) == nil)
     }
 
     /// A worker already running is told about a card added later because its
@@ -302,9 +306,9 @@ struct TrUAPIWorkerManagerTests {
         let collection = InMemoryPocketCardStore([loyalty])
         let manager = makeManager(builder: builder, collection: collection)
 
-        manager.demandChanged(productId: try! ProductId("game.paseo"), transition: .start)
-        try await execution(of: try! ProductId("game.paseo"), in: manager)
-        let running = try #require(builder.executions[try! ProductId("game.paseo")])
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await execution(of: gameProductId, in: manager)
+        let running = try #require(builder.executions[gameProductId])
         #expect(try builder.bridge?.listCards().map(\.cardId) == ["loyalty"])
 
         try await collection.add(streak, face: .nil)
@@ -326,13 +330,13 @@ struct TrUAPIWorkerManagerTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
 
 private let streak = PocketCardEntry(
-    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "streak")),
+    key: PocketCardKey(productId: gameProductId, cardId: PocketCardId(value: "streak")),
     title: "Streak",
     privileged: false
 )
@@ -365,8 +369,8 @@ private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManage
 /// Transitions apply in order, so once the barrier's worker is up every
 /// transition sent before it has been applied.
 private func barrier(_ manager: TrUAPIWorkerManager) async throws {
-    manager.demandChanged(productId: try! ProductId("barrier.paseo"), transition: .start)
-    try await execution(of: try! ProductId("barrier.paseo"), in: manager)
+    manager.demandChanged(productId: barrierProductId, transition: .start)
+    try await execution(of: barrierProductId, in: manager)
 }
 
 private func collectionHolding(_ cards: [PocketCardEntry]) -> any PocketCardStore {

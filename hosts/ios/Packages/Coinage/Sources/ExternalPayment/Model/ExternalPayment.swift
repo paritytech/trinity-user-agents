@@ -5,6 +5,8 @@ import Operation_iOS
 import SubstrateSdk
 
 public struct ExternalPayment: Equatable {
+    public static let nativePaymentMarker = "native-payment"
+
     public enum Stage: Int {
         case plan = 0
         case onboardCoins = 1
@@ -76,7 +78,7 @@ public extension ExternalPayment {
     /// Identity is `(productId, paymentId)`: the same product-supplied id under two products is two
     /// payments. The prefix keeps the id unique among durability group ids as well.
     static func identifier(productId: ProductId?, paymentId: String) -> String {
-        "external-payment:\(productId?.rawValue ?? "native-payment"):\(paymentId)"
+        "external-payment:\(productId?.rawValue ?? nativePaymentMarker):\(paymentId)"
     }
 }
 
