@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_api.presentation
 
 import android.net.Uri
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -29,8 +30,8 @@ class DotNsContentLoader(
             if (domain == null) flowOf(DotNsLoadProgress.Idle) else delegate.getProgressByDomain(domain)
         }
 
-    override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> {
+    override suspend fun resolveToLocalUri(dotNsName: String, retryPolicy: NetworkRetryPolicy): Result<Uri> {
         lastRequestedDomain.value = dotNsName
-        return delegate.resolveToLocalUri(dotNsName)
+        return delegate.resolveToLocalUri(dotNsName, retryPolicy)
     }
 }

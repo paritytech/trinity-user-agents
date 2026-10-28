@@ -126,11 +126,11 @@ class RealFundingProductsWarmUpTest {
     }
 
     private suspend fun withArchivesResolving() {
-        whenever(dotNsResolver.resolveToLocalUri(any())).thenReturn(Result.success(mock<Uri>()))
+        whenever(dotNsResolver.resolveToLocalUri(any(), any())).thenReturn(Result.success(mock<Uri>()))
     }
 
     private suspend fun withArchivesFailing() {
-        whenever(dotNsResolver.resolveToLocalUri(any())).thenReturn(Result.failure(IllegalStateException("ipfs down")))
+        whenever(dotNsResolver.resolveToLocalUri(any(), any())).thenReturn(Result.failure(IllegalStateException("ipfs down")))
     }
 
     private suspend fun verifyArchiveResolvedFor(host: String) {

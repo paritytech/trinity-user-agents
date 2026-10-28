@@ -17,9 +17,11 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
@@ -154,7 +156,20 @@ class BrowserWebViewProvider @AssistedInject constructor(
     override suspend fun loadInitialContent() {
         // Held before the first request, or an update could be applied under the document being served.
         pageUrl.value = initialUrl
+        downloadPageContent()
         accessWebView { it.loadUrl(initialUrl) }
+    }
+
+    // Downloaded here, retrying until the tab closes, so the WebView's request interception finds the page on disk
+    // instead of blocking on the network. A failure is left for that interception to report.
+    private suspend fun downloadPageContent() {
+        val uri = initialUrl.toUri()
+        val host = uri.host ?: return
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return
+        if (!DotNsUtils.isDotDomain(uri, tld)) return
+
+        val servingHost = servingHostResolver.servingHostFor(host, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+        contentLoader.resolveToLocalUri(servingHost, NetworkRetryPolicy.UntilCancelled)
     }
 
     private suspend fun productIdOf(url: String): ProductId? {

@@ -84,9 +84,9 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
-    // The page offers the new build of the name it is served from; a worker's or widget's is applied once the
+    // Offered when the page itself changes; a version that changes only the worker or the widget is applied once the
     // product is off screen. A built-in product updates like the app itself, without asking.
-    private val pagePendingUpdate: StateFlow<PagePendingUpdate?> = combine(
+    private val pagePendingUpdate: StateFlow<ProductId?> = combine(
         pageLoad,
         productUpdater.observePendingNames(),
         dismissedUpdates,
@@ -95,8 +95,7 @@ class SpaBrowserViewModel @Inject constructor(
         val servedName = serving.resolved.executables.app?.host?.value ?: return@combine null
         val productId = serving.resolved.product.id
 
-        PagePendingUpdate(productId, servedName)
-            .takeIf { servedName in pending && productId !in dismissed && !isBuiltIn(productId) }
+        productId.takeIf { servedName in pending && productId !in dismissed && !isBuiltIn(productId) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     override val state: StateFlow<SpaBrowserUiState> = combine(
@@ -110,7 +109,7 @@ class SpaBrowserViewModel @Inject constructor(
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
-            updateReadyFor = pendingUpdate?.productId,
+            updateReadyFor = pendingUpdate,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -134,8 +133,12 @@ class SpaBrowserViewModel @Inject constructor(
         productSessionController.resetVisitHistory()
     }
 
+    // A version already downloaded is what a refresh asks for, so it is applied before the page reloads.
     override fun onRefresh() {
-        productSessionController.reload()
+        launch {
+            activeProductId.first()?.let { productUpdater.apply(it) }
+            productSessionController.reload()
+        }
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and
@@ -161,18 +164,18 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onUpdateReloadClick() {
-        val pendingUpdate = pagePendingUpdate.value ?: return
+        val productId = pagePendingUpdate.value ?: return
 
         launch {
-            productUpdater.applyName(pendingUpdate.servedName)
+            productUpdater.apply(productId)
             productSessionController.reload()
         }
     }
 
     override fun onUpdateDismissClick() {
-        val pendingUpdate = pagePendingUpdate.value ?: return
+        val productId = pagePendingUpdate.value ?: return
 
-        dismissedUpdates.update { it + pendingUpdate.productId }
+        dismissedUpdates.update { it + productId }
     }
 
     private suspend fun isBuiltIn(productId: ProductId): Boolean {
@@ -190,8 +193,6 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 }
-
-private data class PagePendingUpdate(val productId: ProductId, val servedName: String)
 
 private sealed interface PageLoad {
     /** The tab is on an ordinary web page: nothing to resolve, and no archive to fetch. */

@@ -20,6 +20,7 @@ dependencies {
     implementation(project(":feature:revive:api"))
 
     implementation(libs.squareup.okhttp3.core)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.web3j.abi)
     implementation(libs.bouncycastle.jdk18)
 

@@ -25,7 +25,6 @@ data class SpaBrowserUiState(
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
     val isDevServer: Boolean = false,
-    /** The product on screen whose new build is downloaded and waits for the user to reload. */
     val updateReadyFor: ProductId? = null,
 )
 

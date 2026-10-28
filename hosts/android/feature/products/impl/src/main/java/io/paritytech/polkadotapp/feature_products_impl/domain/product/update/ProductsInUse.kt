@@ -14,20 +14,17 @@ import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The products with a page or a worker running, as the WebViews running them report. */
 @Singleton
 class ProductsInUse @Inject constructor() {
     private val holds = MutableStateFlow<Map<ProductId, Int>>(emptyMap())
 
     fun observe(): Flow<Set<ProductId>> = holds.map { it.keys }.distinctUntilChanged()
 
-    /** Holds [productId] in use until [scope] ends. */
     fun hold(productId: ProductId, scope: CoroutineScope) {
         acquire(productId)
         scope.invokeOnCompletion { release(productId) }
     }
 
-    /** Holds the latest of [productIds] in use, until the next one replaces it or [scope] ends. */
     fun track(productIds: Flow<ProductId?>, scope: CoroutineScope) {
         var held: ProductId? = null
 

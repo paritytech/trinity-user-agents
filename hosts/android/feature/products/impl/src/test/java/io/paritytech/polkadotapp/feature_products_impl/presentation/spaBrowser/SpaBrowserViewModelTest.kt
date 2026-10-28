@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.SavedStateHandle
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -125,9 +126,9 @@ class SpaBrowserViewModelTest {
         assertNull(model.state.value.updateReadyFor)
     }
 
-    // Only the page's own name: the product's worker may be running on its build, and that one waits for the idle moment.
+    // The whole version, so the page does not come back against the manifest and worker of the one it replaces.
     @Test
-    fun `agreeing to the new build applies the page's build and reloads the page`() = runTest(testDispatcher) {
+    fun `agreeing to the new build applies the product's version and reloads the page`() = runTest(testDispatcher) {
         val model = viewModel()
         pendingNames.value = setOf(PRODUCT_APP, PRODUCT_WORKER)
         advanceUntilIdle()
@@ -135,9 +136,26 @@ class SpaBrowserViewModelTest {
         model.onUpdateReloadClick()
         advanceUntilIdle()
 
-        coVerify { productUpdater.applyName(PRODUCT_APP) }
-        coVerify(exactly = 0) { productUpdater.applyName(PRODUCT_WORKER) }
-        verify { productSessionController.reload() }
+        coVerifyOrder {
+            productUpdater.apply(PRODUCT)
+            productSessionController.reload()
+        }
+    }
+
+    // Refresh is the user asking for the latest; reloading the old build while a new one sits on the disk would not be.
+    @Test
+    fun `refreshing applies a downloaded version before the page reloads`() = runTest(testDispatcher) {
+        val model = viewModel()
+        pendingNames.value = setOf(PRODUCT_WORKER)
+        advanceUntilIdle()
+
+        model.onRefresh()
+        advanceUntilIdle()
+
+        coVerifyOrder {
+            productUpdater.apply(PRODUCT)
+            productSessionController.reload()
+        }
     }
 
     // "Not now" means not on this visit; the build is still there to offer when the user comes back.
@@ -181,7 +199,7 @@ class SpaBrowserViewModelTest {
     }
 
     private fun verifyNothingApplied() {
-        coVerify(exactly = 0) { productUpdater.applyName(any()) }
+        coVerify(exactly = 0) { productUpdater.apply(any()) }
         verify(exactly = 0) { productSessionController.reload() }
     }
 

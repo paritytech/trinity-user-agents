@@ -20,10 +20,6 @@ import io.paritytech.polkadotapp.common.utils.toWorkerResult
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.hours
 
-/**
- * Downloads the new builds of the products on the device while the app is not in use, so they are ready
- * to apply by the time the user comes back. The system decides when a run happens.
- */
 @HiltWorker
 class ProductUpdateWorker @AssistedInject constructor(
     @Assisted appContext: Context,

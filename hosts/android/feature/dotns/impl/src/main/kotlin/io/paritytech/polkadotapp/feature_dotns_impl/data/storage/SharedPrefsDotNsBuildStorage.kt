@@ -6,6 +6,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 
 class SharedPrefsDotNsBuildStorage @Inject constructor(
@@ -19,12 +20,11 @@ class SharedPrefsDotNsBuildStorage @Inject constructor(
 
     override fun get(dotNsName: String): DotNsBuild? = builds.value[dotNsName]
 
-    override fun put(dotNsName: String, build: DotNsBuild) {
+    override fun putAll(builds: Map<String, DotNsBuild>) {
         prefs.edit {
-            putString(servedKey(dotNsName), build.served)
-            if (build.update != null) putString(updateKey(dotNsName), build.update) else remove(updateKey(dotNsName))
+            builds.forEach { (dotNsName, build) -> putString(dotNsName, Json.encodeToString(build)) }
         }
-        builds.update { it + (dotNsName to build) }
+        this.builds.update { it + builds }
     }
 
     override fun all(): Map<String, DotNsBuild> = builds.value
@@ -37,23 +37,12 @@ class SharedPrefsDotNsBuildStorage @Inject constructor(
     }
 
     private fun readAll(): Map<String, DotNsBuild> {
-        val entries = prefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap()
-
-        return entries.keys
-            .filter { it.startsWith(SERVED_PREFIX) }
-            .associate { key ->
-                val dotNsName = key.removePrefix(SERVED_PREFIX)
-                dotNsName to DotNsBuild(served = entries.getValue(key), update = entries[updateKey(dotNsName)])
-            }
+        return prefs.all.mapNotNull { (dotNsName, value) ->
+            (value as? String)?.let { dotNsName to Json.decodeFromString<DotNsBuild>(it) }
+        }.toMap()
     }
 
-    private fun servedKey(dotNsName: String) = SERVED_PREFIX + dotNsName
-
-    private fun updateKey(dotNsName: String) = UPDATE_PREFIX + dotNsName
-
     private companion object {
-        const val PREFS_NAME = "dotns_builds"
-        const val SERVED_PREFIX = "served:"
-        const val UPDATE_PREFIX = "update:"
+        const val PREFS_NAME = "dotns_names"
     }
 }

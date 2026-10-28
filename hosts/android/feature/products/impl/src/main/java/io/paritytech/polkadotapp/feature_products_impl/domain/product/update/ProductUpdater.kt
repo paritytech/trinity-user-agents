@@ -1,14 +1,17 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product.update
 
+import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapAsync
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -17,42 +20,44 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Keeps the product builds on the device current. A product coming into use is checked for a newer build, which
- * downloads beside the one running. The download is applied once nothing of the product is on screen, or when the
- * user agrees to reload the product's page, so no page or worker switches builds under them.
- */
+// A product's version is its manifest records and the content of its names, checked and applied as one. It is applied
+// once nothing of the product runs, or when the user reloads its page; a running worker keeps the code it loaded.
 @Singleton
 class ProductUpdater @Inject constructor(
     private val dotNsResolver: DotNsResolver,
     private val productsInUse: ProductsInUse,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val resolveProductUseCase: ResolveProductUseCase,
 ) {
-    /** Products with a downloaded build waiting to be applied. */
+    // A screen start and the product coming into use check at the same moment; the second check waits for the first
+    // and finds its names just read, so it does not read them again.
+    private val checkLocks = KeyedMutex<String>()
+
     fun observePending(): Flow<Set<ProductId>> {
         return observePendingNames()
             .map { names -> names.mapNotNull { productIdOf(it) }.toSet() }
             .distinctUntilChanged()
     }
 
-    /** Names with a downloaded build waiting to be applied. */
     fun observePendingNames(): Flow<Set<String>> = dotNsResolver.observePendingUpdates()
 
-    /** Downloads a newer build of each of [productId]'s names on the device, where one is published. */
-    suspend fun check(productId: ProductId): Result<Unit> = fetchUpdates(namesOf(productId))
+    suspend fun check(productId: ProductId): Result<Unit> = fetchUpdates(mapOf(productId.value to namesOf(productId)))
 
-    /** [check] for every product on the device. */
-    suspend fun checkAll(): Result<Unit> = fetchUpdates(dotNsResolver.namesOnDevice())
-
-    /** Serves the downloaded builds of [productId] from its next load on. */
-    suspend fun apply(productId: ProductId) {
-        namesOf(productId).forEach { dotNsResolver.applyUpdate(it) }
+    suspend fun checkAll(): Result<Unit> {
+        val names = dotNsResolver.namesOnDevice()
+        return fetchUpdates(names.groupBy { productIdOf(it)?.value ?: it })
     }
 
-    /** Serves the downloaded build of [dotNsName] alone from its next request on. */
-    suspend fun applyName(dotNsName: String) = dotNsResolver.applyUpdate(dotNsName)
+    suspend fun apply(productId: ProductId) {
+        val pending = observePendingNames().first()
+        val names = namesOf(productId).filter { it in pending }
+        if (names.isEmpty()) return
 
-    /** Runs the policy for the lifetime of [scope]. */
+        dotNsResolver.applyUpdates(names)
+        // The manifest may have changed with the version, and the next resolve has to read the one now served.
+        resolveProductUseCase.invalidate(productId)
+    }
+
     fun start(scope: CoroutineScope) {
         productsInUse.observe()
             .scan(emptySet<ProductId>() to emptySet<ProductId>()) { (previous, _), current -> current to (current - previous) }
@@ -68,9 +73,11 @@ class ProductUpdater @Inject constructor(
             .launchIn(scope)
     }
 
-    // A name chain no longer answers for must not fail the run; a run that reached nothing did fail.
-    private suspend fun fetchUpdates(dotNsNames: Collection<String>): Result<Unit> {
-        val results = dotNsNames.mapAsync { dotNsResolver.fetchUpdate(it) }
+    // A product chain no longer answers for must not fail the run; a run that reached nothing did fail.
+    private suspend fun fetchUpdates(namesByProduct: Map<String, List<String>>): Result<Unit> {
+        val results = namesByProduct.entries.mapAsync { (product, names) ->
+            checkLocks.withLock(product) { dotNsResolver.fetchUpdates(names) }
+        }
         val failure = results.firstNotNullOfOrNull { it.exceptionOrNull() }
 
         return if (failure != null && results.all { it.isFailure }) Result.failure(failure) else Result.success(Unit)
