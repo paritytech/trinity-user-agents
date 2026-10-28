@@ -103,9 +103,9 @@ Product ID methods and their rule tests live in [product_id.rs](rust/crates/trua
 Product links require an explicitly supplied network suffix; both direct names
 and `.li` links must match it. Share-host recognition and enumeration use one
 Rust suffix policy. Rust defines the `polkadotapp` deeplink and
-`polkadot` content schemes shared by both native hosts. iOS propagates
-product-resolution errors before loading content, while valid products without
-a manifest use their base name.
+`polkadot` content schemes shared by both native hosts. Both native hosts stop
+content loading on resolution errors or missing executables. Products without
+a manifest explicitly serve their app from the base name.
 Rust's reserved identity constructors return `ProductId` directly from the
 validated network suffix.
 

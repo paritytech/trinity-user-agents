@@ -21,7 +21,7 @@ class RealProductContentWarmUp @Inject constructor(
     private val runtimeSettings: ProductRuntimeSettings,
 ) : ProductContentWarmUp {
     override suspend fun warmUp(productId: ProductId): Result<Unit> =
-        runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()) }
+        runCancellableCatching { servingHostResolver.servingHostFor(productId.value, cardExecutable()).getOrThrow() }
             .flatMap { servingHost -> dotNsResolver.resolveToLocalUri(servingHost) }
             .map {}
 

@@ -1,40 +1,34 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
-import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import uniffi.truapi.ExecutableKind
-import uniffi.truapi.parseProductShareHost
+import uniffi.truapi.parseProductLink
+import uniffi.truapi.productIdOwner
 import javax.inject.Inject
 
-/**
- * A manifest product's content lives on its `app.<base>` subname; the canonical base host has no
- * archive of its own. Legacy products serve from the base host, so for them this is identity.
- */
+/** Resolves the published executable archive, including explicit base-host apps without a manifest. */
 class ProductServingHostResolver @Inject constructor(
     private val resolveProductUseCase: ResolveProductUseCase,
     private val dotNsTldProvider: DotNsTldProvider,
 ) : DotNsServingHostResolver {
-    override suspend fun servingHostFor(requestHost: String): String = servingHostFor(requestHost, ExecutableKind.APP)
+    override suspend fun servingHostFor(requestHost: String): Result<String> = servingHostFor(requestHost, ExecutableKind.APP)
 
-    /** A page under a Pocket card is the product's [ExecutableKind.WIDGET], served on the same origin as its app. */
-    suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): String {
-        // Settled by the time a request is intercepted, since the client awaits it first.
-        val tld = dotNsTldProvider.getTld().getOrNull() ?: return requestHost
-        // Archives are keyed by the canonical dotNS name, so a `.dot.li` mirror maps to it as well.
-        val host = parseProductShareHost(requestHost)?.value ?: requestHost
-        val productId = productIdFromHost(host, tld).getOrNull() ?: return requestHost
-        // A host that already names an executable is served by that executable's own archive.
-        if (!productId.value.equals(host, ignoreCase = true)) return host
+    /** A page under a Pocket card uses the product's [ExecutableKind.WIDGET]. */
+    suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): Result<String> = runCancellableCatching {
+        val tld = dotNsTldProvider.getTld().getOrThrow()
+        val identifier = parseProductLink(requestHost, tld.value)?.identifier ?: return@runCancellableCatching requestHost
+        val productId = productIdOwner(identifier)
+        if (identifier != productId) return@runCancellableCatching identifier.value
 
-        val resolved = resolveProductUseCase.resolve(productId).getOrNull() ?: return host
-
+        val resolved = resolveProductUseCase.resolve(productId).getOrThrow()
         val served = when (executable) {
             ExecutableKind.APP -> resolved.executables.app?.host
             ExecutableKind.WIDGET -> resolved.executables.widget?.host
             ExecutableKind.WORKER -> null
         }
-        return served?.value ?: host
+        checkNotNull(served) { "Product $productId has no $executable page" }.value
     }
 }

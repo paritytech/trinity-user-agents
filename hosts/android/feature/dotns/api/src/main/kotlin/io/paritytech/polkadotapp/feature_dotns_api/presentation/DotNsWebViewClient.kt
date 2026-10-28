@@ -7,6 +7,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import io.paritytech.polkadotapp.common.utils.notFoundResponse
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
@@ -14,6 +15,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_dotns_api.domain.resolveToLocalFile
 import kotlinx.coroutines.runBlocking
 import timber.log.Timber
+import uniffi.truapi.parseProductLink
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLConnection
@@ -70,9 +72,12 @@ open class DotNsWebViewClient(
         val host = uri?.host ?: return null
 
         return runBlocking {
-            val servedHost = servingHostResolver.servingHostFor(host)
-            dotNsResolver.resolveToLocalFile(servedHost)
-                .getOrNull() // TODO: Bad ux. We have to ask user to reload the page
+            runCancellableCatching {
+                val tld = dotNsTldProvider.getTld().getOrThrow()
+                val canonicalHost = parseProductLink(host, tld.value)?.identifier?.value ?: host
+                val servedHost = servingHostResolver.servingHostFor(canonicalHost).getOrThrow()
+                dotNsResolver.resolveToLocalFile(servedHost).getOrThrow()
+            }.onFailure { Timber.w(it, "Archive root not resolved for %s", host) }.getOrNull()
         }
     }
 
