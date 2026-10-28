@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.database.converters.ChainConverters
 import io.paritytech.polkadotapp.database.converters.ExternalApiConverters
 import io.paritytech.polkadotapp.database.converters.IntListConverter
 import io.paritytech.polkadotapp.database.converters.LongMathConverters
+import io.paritytech.polkadotapp.database.converters.ProductIdConverters
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
 import io.paritytech.polkadotapp.database.dao.ChainDao
 import io.paritytech.polkadotapp.database.dao.ChatBotStateDao
@@ -292,6 +293,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
     ExternalApiConverters::class,
     ChainConverters::class,
     IntListConverter::class,
+    ProductIdConverters::class,
 )
 abstract class AppDatabase : RoomDatabase() {
     companion object {

@@ -42,7 +42,7 @@ final class SSOProductSubtreeRequestHandler: SSORequestHandling {
             result = .success(.init(productPublicKey: publicKey))
         } catch {
             logger.error("Failed to derive product subtree key: \(error)")
-            result = .failure(Self.failureMessage(for: error))
+            result = .failure("failed to derive product subtree key")
         }
 
         let responseMessage = PolkadotHostRemoteMessage(
@@ -57,17 +57,6 @@ final class SSOProductSubtreeRequestHandler: SSORequestHandling {
             try await messageSender.postMessage(responseMessage, to: host)
         } catch {
             logger.error("Failed to send product subtree response: \(error)")
-        }
-    }
-}
-
-private extension SSOProductSubtreeRequestHandler {
-    // Hosts get a stable message; the underlying error stays in local logs.
-    static func failureMessage(for error: Error) -> String {
-        if error is ProductDerivationPathError {
-            "invalid product id"
-        } else {
-            "failed to derive product subtree key"
         }
     }
 }

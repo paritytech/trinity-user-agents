@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 import UIKit
@@ -18,7 +19,7 @@ struct SPABrowserCoordinatorTests {
 
     @Test("a nil page on a tab that is on a deep page navigates back to the root")
     func nilPageLeavesDeepPage() {
-        let tab = SPATab(dotDomain: "browse.dot", page: "/onboarding")
+        let tab = SPATab(dotDomain: try! ProductId("browse.dot"), page: "/onboarding")
         let (sut, tabManager, view) = makeSUT(existing: tab)
 
         let result = sut.findOrCreateTab(for: ProductPage(host: host, page: nil))
@@ -30,7 +31,7 @@ struct SPABrowserCoordinatorTests {
 
     @Test("a nil page on a tab already recorded at the root still navigates to the root")
     func nilPageOnRootTabNavigates() {
-        let tab = SPATab(dotDomain: "browse.dot", page: nil)
+        let tab = SPATab(dotDomain: try! ProductId("browse.dot"), page: nil)
         let (sut, _, view) = makeSUT(existing: tab)
 
         _ = sut.findOrCreateTab(for: ProductPage(host: host, page: nil))
@@ -41,7 +42,7 @@ struct SPABrowserCoordinatorTests {
 
     @Test("requesting the page a tab is already on does not navigate")
     func samePageDoesNotNavigate() {
-        let tab = SPATab(dotDomain: "browse.dot", page: "/onboarding")
+        let tab = SPATab(dotDomain: try! ProductId("browse.dot"), page: "/onboarding")
         let (sut, _, view) = makeSUT(existing: tab)
 
         _ = sut.findOrCreateTab(for: ProductPage(host: host, page: "/onboarding"))

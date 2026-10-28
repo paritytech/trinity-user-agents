@@ -4,18 +4,18 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class GameReminderTelemetryTest {
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
     private val timeProvider = mockk<TimeProvider> {
         every { now() } returns Instant.fromEpochMilliseconds(NOW)
     }

@@ -4,13 +4,21 @@
 //! same categorization and the `navigate_to` callback only receives
 //! already-validated input.
 
-use crate::platform::{ProductId, has_dotns_tld, normalize_chat_identifier};
-use unicode_normalization::UnicodeNormalization;
+use crate::{
+	dotns_name::normalize_host,
+	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+};
 use url::{Url, form_urlencoded};
 
 /// The app's own URL scheme, which its host routes such as `pair` and
 /// `pocket` live under.
-const APP_SCHEME: &str = "polkadotapp";
+pub const APP_SCHEME: &str = "polkadotapp";
+
+/// The internal URL scheme under which hosts serve product content.
+pub const PRODUCT_SCHEME: &str = "polkadot";
+
+const HTTP_SCHEME: &str = "http";
+const HTTPS_SCHEME: &str = "https";
 
 /// The host a Pocket deeplink names. Every dotNS product name ends in a TLD,
 /// so no product can take it.
@@ -38,7 +46,7 @@ pub enum NavigateDecision {
 	/// A dotNS identifier plus path/query/hash suffix (no leading `/`).
 	DotName {
 		/// Lower-cased dotNS host (e.g. `mytestapp.dot`).
-		identifier: String,
+		identifier: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
 		/// Normalized `polkadot://` form, which is what `navigate_to` hands the
@@ -49,7 +57,7 @@ pub enum NavigateDecision {
 	/// A `localhost[:port]` URL plus path/query/hash suffix (no leading `/`).
 	Localhost {
 		/// `localhost` with optional `:port` suffix.
-		host: String,
+		host: ProductId,
 		/// Path/query/hash suffix without a leading `/`.
 		path: String,
 		/// Loadable `http://` URL for this decision.
@@ -92,8 +100,52 @@ pub enum NavigateDecision {
 	},
 }
 
+/// A product destination verified against a host's explicit network suffix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ProductLink {
+	/// The full executable or product identity, with a share suffix removed.
+	pub identifier: ProductId,
+	/// The route with its leading slash, query and fragment.
+	pub path: String,
+	/// The HTTPS destination under the canonical dotNS host.
+	pub canonical_url: String,
+}
+
+impl ProductLink {
+	/// Accept direct and share URLs only on the explicitly configured network.
+	pub fn parse(input: &str, network_suffix: &str) -> Option<Self> {
+		let parsed = parse_with_explicit_https(input.trim())?;
+		if !matches!(parsed.scheme(), HTTP_SCHEME | HTTPS_SCHEME | APP_SCHEME | PRODUCT_SCHEME) ||
+			parsed.port().is_some() ||
+			!parsed.username().is_empty() ||
+			parsed.password().is_some()
+		{
+			return None;
+		}
+		let hostname = normalize_host(parsed.host_str()?);
+		let identifier =
+			ProductId::from_share_host(&hostname).or_else(|| hostname.parse::<ProductId>().ok())?;
+		if !identifier.matches_network(network_suffix) {
+			return None;
+		}
+		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
+		let path = route.to_string() + &suffix(&parsed);
+		let canonical_url = format!("{HTTPS_SCHEME}://{identifier}{path}");
+		Some(Self { identifier, path, canonical_url })
+	}
+}
+
+/// Public share domains for the canonical dotNS networks.
+pub fn product_share_hosts() -> Vec<String> {
+	crate::dotns_name::DOTNS_TLDS
+		.iter()
+		.map(|suffix| format!("{suffix}.li"))
+		.collect()
+}
+
 fn join_url(scheme: &str, host: &str, path: &str) -> String {
-	if path.is_empty() { format!("{scheme}{host}") } else { format!("{scheme}{host}/{path}") }
+	if path.is_empty() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}/{path}") }
 }
 
 /// Classify a URL the way the host navigation handler does: try the Pocket
@@ -122,15 +174,6 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 	}
 }
 
-/// Canonical host form: case-folded and NFC-normalized (belt-and-suspenders;
-/// `url` already applies IDNA to parsed hosts), with a trailing root dot
-/// dropped so the absolute form `example.dot.` keys identically to
-/// `example.dot`.
-fn normalize_host(host: &str) -> String {
-	let normalized: String = host.nfc().collect::<String>().to_lowercase();
-	normalized.strip_suffix('.').unwrap_or(&normalized).to_string()
-}
-
 /// dotNS TLD check, applied to the [`normalize_host`] form so `Example.DOT`
 /// and the trailing-dot FQDN `example.dot.` classify like `example.dot`.
 /// Shares [`crate::platform::DOTNS_TLDS`] with product-identifier validation
@@ -143,7 +186,7 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 	if let Ok(direct) = Url::parse(input) {
 		return Some(direct);
 	}
-	Url::parse(&format!("https://{input}")).ok()
+	Url::parse(&format!("{HTTPS_SCHEME}://{input}")).ok()
 }
 
 /// Recognize the host's own Pocket deeplink, `polkadotapp://pocket` with an
@@ -226,11 +269,7 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 /// - `Some(Reject)` for a dotNS URL with port or userinfo
 /// - `None` when the input isn't a dotNS URL (caller falls through to localhost / external)
 fn classify_dotns(input: &str) -> Option<NavigateDecision> {
-	let parsed = if input.starts_with("polkadot://") {
-		Url::parse(input).ok()?
-	} else {
-		parse_with_explicit_https(input)?
-	};
+	let parsed = parse_with_explicit_https(input)?;
 
 	let hostname = parsed.host_str()?;
 	if !is_dotns_domain(hostname) {
@@ -243,16 +282,22 @@ fn classify_dotns(input: &str) -> Option<NavigateDecision> {
 		});
 	}
 
-	let identifier = normalize_host(hostname);
+	let identifier = match normalize_host(hostname).parse::<ProductId>() {
+		Ok(identifier) => identifier,
+		Err(error) => return Some(NavigateDecision::Reject { reason: error.to_string() }),
+	};
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("polkadot://", &identifier, &path);
+	let canonical_url = join_url(PRODUCT_SCHEME, identifier.as_str(), &path);
 	Some(NavigateDecision::DotName { identifier, path, canonical_url })
 }
 
 /// Recognize `localhost[:port]` URLs, with or without an explicit scheme.
 fn classify_localhost(input: &str) -> Option<NavigateDecision> {
-	let with_scheme =
-		if input.starts_with("localhost") { format!("http://{input}") } else { input.to_string() };
+	let with_scheme = if input.starts_with("localhost") {
+		format!("{HTTP_SCHEME}://{input}")
+	} else {
+		input.to_string()
+	};
 
 	let parsed = Url::parse(&with_scheme).ok()?;
 	if parsed.host_str()? != "localhost" {
@@ -264,8 +309,11 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 		None => "localhost".to_string(),
 	};
 
+	let host = host
+		.parse::<ProductId>()
+		.expect("localhost with an optional u16 port is a valid product id; qed");
 	let path = strip_leading_slash(parsed.path()) + &suffix(&parsed);
-	let canonical_url = join_url("http://", &host, &path);
+	let canonical_url = join_url(HTTP_SCHEME, host.as_str(), &path);
 	Some(NavigateDecision::Localhost { host, path, canonical_url })
 }
 
@@ -273,7 +321,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 /// a [`NavigateDecision::Reject`] so dangerous schemes (`javascript:`,
 /// `data:`, `file:`, `vbscript:`, ...) cannot reach `Platform::navigate_to`.
 const ALLOWED_EXTERNAL_SCHEMES: &[&str] =
-	&["http", "https", "mailto", "tel", "sms", "maps", "polkadotapp"];
+	&[HTTP_SCHEME, HTTPS_SCHEME, "mailto", "tel", "sms", "maps", APP_SCHEME];
 
 /// Mirrors `normalizeUrl`: prepend `https://` if missing, otherwise pass the
 /// URL through as its canonical string form. Returns `Err(reason)` for an
@@ -312,6 +360,79 @@ fn suffix(url: &Url) -> String {
 mod tests {
 	use super::*;
 
+	#[test]
+	fn product_links_require_the_explicit_network_for_direct_and_share_forms() {
+		for suffix in crate::dotns_name::DOTNS_TLDS {
+			for mirror in ["", ".li"] {
+				let input = format!("https://app.arena.coinflip.{suffix}{mirror}/play?mode=1#turn");
+				assert_eq!(
+					ProductLink::parse(&input, suffix),
+					Some(ProductLink {
+						identifier: ProductId::for_test(&format!("app.arena.coinflip.{suffix}")),
+						path: "/play?mode=1#turn".to_string(),
+						canonical_url: format!(
+							"https://app.arena.coinflip.{suffix}/play?mode=1#turn"
+						),
+					})
+				);
+				for other in crate::dotns_name::DOTNS_TLDS.iter().filter(|other| *other != suffix) {
+					assert_eq!(ProductLink::parse(&input, other), None);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn product_links_normalize_supported_url_forms_and_preserve_routes() {
+		for (input, path) in [
+			("browse.dot", "/"),
+			("https://browse.dot/", "/"),
+			("polkadot://browse.dot", "/"),
+			("polkadotapp://browse.dot/onboarding?ref=abc#intro", "/onboarding?ref=abc#intro"),
+			("browse.dot.li/#/onboarding", "/#/onboarding"),
+			("browse.dot/onboarding?ref=abc", "/onboarding?ref=abc"),
+			("http://browse.dot.li?q=1#fragment", "/?q=1#fragment"),
+			(" HTTP://BROWSE.DOT.LI./a%20b?q=x%2Fy#frag ", "/a%20b?q=x%2Fy#frag"),
+		] {
+			assert_eq!(
+				ProductLink::parse(input, "dot"),
+				Some(ProductLink {
+					identifier: ProductId::for_test("browse.dot"),
+					path: path.to_string(),
+					canonical_url: format!("https://browse.dot{path}"),
+				}),
+				"{input}"
+			);
+		}
+	}
+
+	#[test]
+	fn product_links_reject_non_product_authorities() {
+		for input in [
+			"",
+			"browse.test.li",
+			"browse.com",
+			"localhost:3000",
+			"localhost.dot.li",
+			"https://browse.dot:8443/path",
+			"https://user@browse.dot.li/path",
+			"javascript://browse.dot",
+			"file://browse.dot",
+			"otherwallet://browse.dot",
+			"polkadotapp://pocket",
+			"https://invalid_name.dot.li",
+			"https://dot.li",
+			"https://stg.revx.dev/editor?mod=other.dot",
+		] {
+			assert_eq!(ProductLink::parse(input, "dot"), None, "{input}");
+		}
+	}
+
+	#[test]
+	fn share_hosts_use_the_canonical_network_suffixes() {
+		assert_eq!(product_share_hosts(), ["dot.li", "paseo.li", "testnet.li"]);
+	}
+
 	enum Expected {
 		Decision(NavigateDecision),
 		Reject,
@@ -325,9 +446,9 @@ mod tests {
 
 	fn dot(identifier: &str, path: &str) -> Expected {
 		Expected::Decision(NavigateDecision::DotName {
-			identifier: identifier.to_string(),
+			identifier: ProductId::for_test(identifier),
 			path: path.to_string(),
-			canonical_url: join_url("polkadot://", identifier, path),
+			canonical_url: join_url("polkadot", identifier, path),
 		})
 	}
 
@@ -356,9 +477,9 @@ mod tests {
 
 	fn localhost(host: &str, path: &str) -> Expected {
 		Expected::Decision(NavigateDecision::Localhost {
-			host: host.to_string(),
+			host: ProductId::for_test(host),
 			path: path.to_string(),
-			canonical_url: join_url("http://", host, path),
+			canonical_url: join_url("http", host, path),
 		})
 	}
 
@@ -368,6 +489,13 @@ mod tests {
 
 	/// Pinned as literals so the expectation does not borrow the production
 	/// builder it checks.
+	#[test]
+	fn product_destinations_require_canonical_product_identifiers() {
+		for input in ["polkadot://invalid_name.dot", "localhost.dot", "-invalid.dot"] {
+			assert!(matches!(parse_navigate(input), NavigateDecision::Reject { .. }), "{input}");
+		}
+	}
+
 	#[test]
 	fn a_product_destination_is_handed_over_as_a_polkadot_url() {
 		for (input, expected) in [

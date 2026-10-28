@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceive
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWire
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.toDomain
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
@@ -27,6 +27,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.ExperimentalTime
@@ -252,8 +253,8 @@ class RealExecuteTopUpUseCaseTest {
         val DOT_TLD: DotNsTld = requireNotNull(DotNsTld.parse("dot"))
 
         val ID = topUpId("topup-1")
-        val PRODUCT: ProductId = ProductId.fromString("alice.dot", DOT_TLD).getOrThrow()
-        val OTHER_PRODUCT: ProductId = ProductId.fromString("bob.dot", DOT_TLD).getOrThrow()
+        val PRODUCT: ProductId = productIdFromHost("alice.dot", DOT_TLD).getOrThrow()
+        val OTHER_PRODUCT: ProductId = productIdFromHost("bob.dot", DOT_TLD).getOrThrow()
         val REQUESTED: Balance = 100.intoBalance()
         val OPENED: Instant = Instant.fromEpochSeconds(1_000_000)
     }

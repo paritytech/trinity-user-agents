@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
@@ -5,7 +6,7 @@ import Products
 protocol ProductIconViewModelMaking {
     /// An icon for `domain` that resolves itself when a view loads it. The same domain always
     /// produces the same cache key, so browser tabs, chat previews and Settings share one download.
-    func createViewModel(for domain: String) -> any ImageViewModelProtocol
+    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol
 }
 
 final class ProductIconViewModelFactory {
@@ -25,7 +26,7 @@ final class ProductIconViewModelFactory {
 }
 
 extension ProductIconViewModelFactory: ProductIconViewModelMaking {
-    func createViewModel(for domain: String) -> any ImageViewModelProtocol {
+    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol {
         ProductIconImageViewModel(
             provider: ProductIconImageDataProvider(
                 domain: domain,

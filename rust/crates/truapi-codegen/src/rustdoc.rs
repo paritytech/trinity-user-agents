@@ -266,7 +266,7 @@ struct ItemCandidate {
 }
 
 /// This crate's newtypes over a private `String`. rustdoc omits the field, so
-/// codegen emits them as `str`.
+/// codegen supplies their string representation while retaining the name.
 const STRING_NEWTYPES: &[&str] = &["ProductId"];
 
 /// Maps rustdoc item ids and full paths to the output type names used in
@@ -275,7 +275,7 @@ const STRING_NEWTYPES: &[&str] = &["ProductId"];
 pub struct NameContext {
 	by_item_id: HashMap<String, String>,
 	by_path: HashMap<String, String>,
-	/// Item ids of the [`STRING_NEWTYPES`], which resolve to `str`.
+	/// Item ids of the [`STRING_NEWTYPES`].
 	string_newtypes: HashSet<String>,
 }
 
@@ -376,9 +376,7 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 		}
 
 		for candidate in candidates {
-			if should_skip_type_candidate(&name, &candidate) ||
-				names.string_newtypes.contains(&candidate.item_id)
-			{
+			if should_skip_type_candidate(&name, &candidate) {
 				continue;
 			}
 			let item = krate
@@ -392,7 +390,15 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 				.take(candidate.path.len().saturating_sub(1))
 				.cloned()
 				.collect();
-			let type_def = if candidate.kind == "struct" {
+			let type_def = if names.string_newtypes.contains(&candidate.item_id) {
+				TypeDef {
+					name: name.clone(),
+					module_path,
+					generic_params: Vec::new(),
+					kind: TypeDefKind::Alias(TypeRef::Primitive("str".to_string())),
+					docs: clean_docs(item.docs.as_deref()),
+				}
+			} else if candidate.kind == "struct" {
 				extract_struct(&candidate.item_id, item, krate, &names, module_path)?
 			} else if candidate.kind == "enum" {
 				extract_enum(&candidate.item_id, item, krate, &names, module_path)?
@@ -1071,7 +1077,10 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			.with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
 		let resolved_id = resolved.get("id").and_then(|id| value_id(id).ok());
 		if resolved_id.as_ref().is_some_and(|id| names.string_newtypes.contains(id)) {
-			return Ok(TypeRef::Primitive("str".to_string()));
+			return Ok(TypeRef::Named {
+				name: path_suffix(raw_name).to_string(),
+				args: Vec::new(),
+			});
 		}
 		let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
 		let args = resolve_resolved_path_args(resolved, names)?;
@@ -1521,6 +1530,19 @@ pub fn summarize_json(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn product_id_references_retain_nominal_identity() {
+		let names = NameContext {
+			string_newtypes: HashSet::from(["42".to_string()]),
+			..NameContext::default()
+		};
+		let reference = serde_json::json!({"resolved_path": {"path": "truapi::ProductId", "id": 42, "args": null}});
+		assert_eq!(
+			resolve_type(&reference, &names).unwrap(),
+			TypeRef::Named { name: "ProductId".to_string(), args: vec![] }
+		);
+	}
 
 	#[test]
 	fn clean_docs_strips_wire_markers() {

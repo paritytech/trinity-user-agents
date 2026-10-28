@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.search
 
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.search.ChatListSearchResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
@@ -7,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPay
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.first
+import uniffi.truapi.ProductId
 
 class ProductChatSearchResultProvider(
     private val arbitraryProductsEnabled: Boolean,
@@ -33,7 +35,8 @@ class ProductChatSearchResultProvider(
     }
 
     override suspend fun onAppResultSelected(result: ChatListSearchResult.App) {
-        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(result.id))
+        val productId = ProductId.parse(result.id).logFailure("Invalid product search result").getOrNull() ?: return
+        productsRouter.openSpaBrowser(SpaBrowserPayload.ByProductId(productId))
     }
 }
 

@@ -8,9 +8,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.presentation.ActivityIntentProvider
 import io.paritytech.polkadotapp.common.presentation.notifications.NotificationPublisher
 import io.paritytech.polkadotapp.common.presentation.notifications.PolkadotNotificationChannel
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.deeplink.VideoGameDeeplinkMapper
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 

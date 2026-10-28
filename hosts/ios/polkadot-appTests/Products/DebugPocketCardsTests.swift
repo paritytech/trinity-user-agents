@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import Products
@@ -22,9 +23,9 @@ struct DebugPocketCardsTests {
     ])
     func opensTheWidgetPageForTheCardItSitsUnder(typed: String, opened: String) throws {
         let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
-        store.save(card(productId: "GAME.paseo", widgetUrl: URL(string: "http://127.0.0.1:5173/\(typed)")))
+        store.save(card(productId: try! ProductId("GAME.paseo"), widgetUrl: URL(string: "http://127.0.0.1:5173/\(typed)")))
         store.save(card(cardId: "gold"))
-        let gold = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold"))
+        let gold = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "gold"))
 
         let url = try #require(store.widgetURL(for: loyaltyKey))
 
@@ -45,7 +46,7 @@ struct DebugPocketCardsTests {
         settings.set(anyValue: Data(stored.utf8), for: SettingsKey.debugPocketCards.rawValue)
         let store = DebugPocketCards(settingsManager: settings)
 
-        let definition = try #require(store.cards(for: "game.paseo").first)
+        let definition = try #require(store.cards(for: try ProductId("game.paseo")).first)
 
         #expect(definition == PocketCardDefinition(
             id: PocketCardId(value: "loyalty"),
@@ -61,10 +62,10 @@ struct DebugPocketCardsTests {
 
 private let faceUrl = "http://127.0.0.1:5173/faces/loyalty.json"
 
-private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+private let loyaltyKey = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
 private func card(
-    productId: String = "game.paseo",
+    productId: ProductId = try! ProductId("game.paseo"),
     cardId: String = "loyalty",
     widgetUrl: URL? = nil
 ) -> DebugPocketCard {

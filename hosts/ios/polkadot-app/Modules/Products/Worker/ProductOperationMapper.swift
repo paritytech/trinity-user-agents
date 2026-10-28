@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Operation_iOS
 
@@ -31,7 +32,7 @@ extension ProductOperationMapper: CoreDataMapperProtocol {
         }
 
         return ProductOperationRecord(
-            productId: productId,
+            productId: try ProductId(productId),
             id: id,
             label: entity.label,
             startedAt: startedAt
@@ -44,7 +45,7 @@ extension ProductOperationMapper: CoreDataMapperProtocol {
         using _: NSManagedObjectContext
     ) throws {
         entity.identifier = model.identifier
-        entity.productId = model.productId
+        entity.productId = model.productId.rawValue
         entity.operationId = Int64(model.id)
         entity.label = model.label
         entity.startedAt = model.startedAt

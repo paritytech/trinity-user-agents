@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
@@ -26,7 +25,7 @@ class ProductPermissionsViewModel @Inject constructor(
     private val router: ProductsRouter
 ) : BaseViewModel() {
     private val payload: ProductSettingsPayload = savedStateHandle.getPayload()
-    private val productId = ProductId.fromStoredValue(payload.productId)
+    private val productId = payload.productId
 
     private val productFlow = flowOf { interactor.getProduct(productId) }
 

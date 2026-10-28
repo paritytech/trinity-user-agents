@@ -10,7 +10,7 @@ use truapi::{
 
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
-	platform::{HostScan, ProductExecutionKind},
+	platform::{ExecutableKind, HostScan},
 	runtime::{ProductRuntimeHost, until_cancelled, versioning::version},
 };
 
@@ -35,7 +35,7 @@ impl Scanner for ProductRuntimeHost {
 				validate_request(&request).map_err(|reason| {
 					CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 				})?;
-				if self.connection.execution_kind() == ProductExecutionKind::Worker &&
+				if self.connection.execution_kind() == ExecutableKind::Worker &&
 					!self.connection.recently_tapped()
 				{
 					return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));

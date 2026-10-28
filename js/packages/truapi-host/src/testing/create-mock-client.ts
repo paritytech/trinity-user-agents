@@ -15,6 +15,7 @@
 // rather than a direct function call. What it does NOT exercise is the iframe
 // boundary and the browser's origin checks; the fixture covers those.
 
+import type { ProductId } from "@parity/truapi";
 import {
   createClient,
   createMessagePortProvider,
@@ -144,7 +145,7 @@ export async function createMockClient(
 interface SigningRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
   productRuntime(
-    product: { productId: string },
+    product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }

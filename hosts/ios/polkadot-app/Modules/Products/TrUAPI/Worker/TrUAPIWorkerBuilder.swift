@@ -40,7 +40,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         context: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime {
-        let resolved = try? await products.resolve(productId)
+        let resolved = try await products.resolve(productId)
         let source = try await workerSource(for: resolved, productId: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(
@@ -68,16 +68,14 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     /// to check: a holder must not take a reference on a modality the worker
     /// never declared.
     private func workerSource(
-        for resolved: ResolvedProduct?,
+        for resolved: ResolvedProduct,
         productId: ProductId
     ) async throws -> ProductWorkerSource {
-        let resolved = resolved ?? .legacy(id: productId)
-
         if let published = ProductWorkerSource.published(for: resolved) {
             // Fetched before the engine boots: the scheme handler reads the
             // archive off disk, and a page loaded before it is there fails as a
             // missing module rather than waiting.
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId.rawValue)
 
             return published
         }

@@ -71,7 +71,7 @@ use truapi::{
 	},
 	latest::GenericError,
 	platform::{
-		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+		ChatPlatform, ExecutableKind, HostInfo, PermissionStatusHost, PlatformInfo, ProductId,
 	},
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
@@ -364,10 +364,10 @@ enum ExecutionKind {
 }
 
 impl ExecutionKind {
-	fn context(self) -> ProductExecutionKind {
+	fn context(self) -> ExecutableKind {
 		match self {
-			Self::App => ProductExecutionKind::App,
-			Self::Worker => ProductExecutionKind::Worker,
+			Self::App => ExecutableKind::App,
+			Self::Worker => ExecutableKind::Worker,
 		}
 	}
 
@@ -395,7 +395,7 @@ struct PairingHostArgs {
 	script: Option<PathBuf>,
 	/// Product id the host serves; scopes storage and product accounts.
 	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
+	product_id: ProductId,
 	/// TCP address to serve product WebSocket frames on. When omitted, use a
 	/// private per-process Unix-domain socket.
 	#[arg(long)]
@@ -428,7 +428,7 @@ struct DevArgs {
 	/// Product id the host serves. Defaults to the development server's own
 	/// origin, which is what a product derives for itself locally.
 	#[arg(long = "product-id")]
-	product_id: Option<String>,
+	product_id: Option<ProductId>,
 	/// Network preset that supplies all RPC/backend/genesis config.
 	#[arg(long, value_enum, default_value = "paseo-next-v2")]
 	network: Network,
@@ -453,7 +453,7 @@ struct DevArgs {
 	command: Vec<String>,
 }
 
-#[derive(Args, Default)]
+#[derive(Args)]
 struct SigningHostArgs {
 	/// Execution kind the served product runs as. `worker` installs the CLI's
 	/// in-memory chat host; `app` leaves Chat unserved. `worker` also installs
@@ -465,7 +465,7 @@ struct SigningHostArgs {
 	script: Option<PathBuf>,
 	/// Product id used by scripts and product-scoped operations.
 	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
-	product_id: String,
+	product_id: ProductId,
 	/// Pairing deeplink to add. Managed interactive and serve sessions also
 	/// restore responders for every previously paired host.
 	#[arg(long)]
@@ -514,6 +514,28 @@ struct SigningHostArgs {
 	/// Execute one slash command without starting the terminal UI.
 	#[command(subcommand)]
 	action: Option<SigningHostAction>,
+}
+
+impl Default for SigningHostArgs {
+	fn default() -> Self {
+		Self {
+			execution_kind: ExecutionKind::default(),
+			script: None,
+			product_id: DEFAULT_PRODUCT_ID.parse().expect("default product id is valid"),
+			deeplink: None,
+			mnemonic: None,
+			account: None,
+			session: None,
+			reserved_username: None,
+			base_path: None,
+			network: Network::default(),
+			frame_listen: None,
+			auto_accept: false,
+			serve: false,
+			product_config: Vec::new(),
+			action: None,
+		}
+	}
 }
 
 #[derive(Subcommand)]
@@ -1269,7 +1291,7 @@ async fn run_pairing_host(
 	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
-		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
+		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1381,10 +1403,8 @@ async fn run_signing_host(
 	let exec_command = exec_input
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
-	let product = frame_server::ProductSelection::new(
-		args.product_id.clone(),
-		args.execution_kind.context(),
-	)?;
+	let product =
+		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
 	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path.clone());
@@ -2140,7 +2160,12 @@ async fn run_dev(
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
-	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
+	let product_id = match args.product_id {
+		Some(product_id) => product_id,
+		None => format!("localhost:{}", args.app_port)
+			.parse()
+			.expect("localhost with a u16 port is a valid product id; qed"),
+	};
 	let signing = SigningHostArgs {
 		product_id,
 		network: args.network,
@@ -4599,7 +4624,7 @@ mod cli_tests {
 			panic!("expected dev command");
 		};
 
-		assert_eq!(args.product_id.as_deref(), Some("playground.paseo"));
+		assert_eq!(args.product_id.as_ref().map(ProductId::as_str), Some("playground.paseo"));
 		assert_eq!(args.app_port, 3000);
 		assert!(args.command.is_empty());
 	}
@@ -4630,9 +4655,9 @@ mod cli_tests {
 			let directory = socket.parent().context("socket has no directory")?;
 			assert!(socket.exists());
 			let product = frame_server::ProductSelection::new(
-				"script-cleanup.testnet".to_string(),
-				ProductExecutionKind::App,
-			)?;
+				ProductId::for_test("script-cleanup.testnet"),
+				ExecutableKind::App,
+			);
 			let result = with_frame_server(
 				Arc::new(UnusedRuntimeFactory),
 				product,

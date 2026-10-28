@@ -462,7 +462,7 @@ pub trait NativeScannerCallbacks: Send + Sync {
 	async fn scan_code(
 		&self,
 		product_id: ProductId,
-		execution_kind: crate::platform::ProductExecutionKind,
+		execution_kind: crate::platform::ExecutableKind,
 		request: truapi::latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
 }

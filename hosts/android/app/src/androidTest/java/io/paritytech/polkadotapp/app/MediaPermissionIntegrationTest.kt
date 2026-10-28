@@ -11,15 +11,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dagger.hilt.android.testing.HiltAndroidTest
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -34,10 +30,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
+import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
+import uniffi.truapi.RemotePermission
 import java.lang.reflect.Proxy
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -73,7 +73,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("media.paseo").getOrThrow(), ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -81,7 +81,7 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                     webView.settings.javaScriptEnabled = true
                     webView.webChromeClient = ProductWebChromeClient(
                         unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
-                        unused(), unused(), "Media test", FixedProductId(ProductId.fromStoredValue("media.paseo")), scope, null,
+                        unused(), unused(), "Media test", FixedProductId(ProductId.parse("media.paseo").getOrThrow()), scope, null,
                     )
                     webView.addJavascriptInterface(reports, "mediaReport")
                     webView.webViewClient = object : WebViewClient() {

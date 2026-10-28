@@ -402,7 +402,7 @@ flows, permission state, and auth state transitions.
 
 Most host-facing wire types are imported from `truapi::latest` by this module and
 are exposed through the trait signatures below. `ProductContext` and
-`ProductExecutionKind` are defined here instead, and codegen emits their host
+`ExecutableKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
 `parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by

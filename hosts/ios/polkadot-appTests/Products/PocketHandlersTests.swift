@@ -11,13 +11,13 @@ import TrUAPIHost
 struct PocketHandlersTests {
     @Test
     func runsOneHandlerForAProductHoldingTheCardsItOffers() async throws {
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers)
 
         #expect(await handlers.reconcile([loyalty, streak]))
 
-        #expect(handlers.handler(of: "game.paseo") != nil)
-        #expect(workers.references.acquired == ["game.paseo"])
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) != nil)
+        #expect(workers.references.acquired == [try! ProductId("game.paseo")])
     }
 
     /// A product that offers no such card draws nothing, and a handler for it
@@ -27,12 +27,12 @@ struct PocketHandlersTests {
     func runsNoHandlerForACardTheProductDoesNotOffer() async throws {
         let published = StubPublishedCards()
         published.failures = [PocketPublishError.noPocket]
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers, published: published)
 
         #expect(await handlers.reconcile([loyalty]))
 
-        #expect(handlers.handler(of: "game.paseo") == nil)
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) == nil)
         #expect(workers.references.acquired.isEmpty)
     }
 
@@ -44,14 +44,14 @@ struct PocketHandlersTests {
     func reportsALookupThatDidNotLandAsUnsettled() async throws {
         let published = StubPublishedCards()
         published.failures = [URLError(.notConnectedToInternet)]
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers, published: published)
 
         #expect(await !handlers.reconcile([loyalty]))
-        #expect(handlers.handler(of: "game.paseo") == nil)
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) == nil)
 
         #expect(await handlers.reconcile([loyalty]))
-        #expect(handlers.handler(of: "game.paseo") != nil)
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) != nil)
     }
 
     /// A read that did not land is not the product saying its card is gone.
@@ -60,14 +60,14 @@ struct PocketHandlersTests {
     @Test
     func keepsAHandlerWhoseCardLookupDidNotLand() async throws {
         let published = StubPublishedCards()
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers, published: published)
         _ = await handlers.reconcile([loyalty])
 
         published.failures = [URLError(.notConnectedToInternet)]
         #expect(await !handlers.reconcile([loyalty]))
 
-        #expect(handlers.handler(of: "game.paseo") != nil)
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) != nil)
         #expect(workers.references.released.isEmpty)
     }
 
@@ -76,53 +76,53 @@ struct PocketHandlersTests {
     /// no longer draws it.
     @Test
     func givesTheWorkerBackWhenTheLastOfAProductsCardsGoes() async throws {
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers)
         _ = await handlers.reconcile([loyalty])
 
         _ = await handlers.reconcile([])
 
-        #expect(handlers.handler(of: "game.paseo") == nil)
-        #expect(workers.references.released == ["game.paseo"])
+        #expect(handlers.handler(of: try! ProductId("game.paseo")) == nil)
+        #expect(workers.references.released == [try! ProductId("game.paseo")])
     }
 
     /// A card already drawn must not be asked for twice: a second request for
     /// the same product is one the core counts and nothing gives back.
     @Test
     func doesNotAskAgainForAProductItIsAlreadyRunning() async throws {
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers)
         _ = await handlers.reconcile([loyalty])
 
         _ = await handlers.reconcile([loyalty, streak])
 
-        #expect(workers.references.acquired == ["game.paseo"])
+        #expect(workers.references.acquired == [try! ProductId("game.paseo")])
     }
 
     /// Nothing else holds a way back to the handlers, so a session that ended
     /// has to be what gives their requests back.
     @Test
     func givesEveryRequestBackWhenTheSessionStops() async throws {
-        let workers = workersRunning("game.paseo")
+        let workers = workersRunning(try! ProductId("game.paseo"))
         let handlers = makeHandlers(workers: workers)
         _ = await handlers.reconcile([loyalty])
 
         handlers.stop()
 
-        #expect(workers.references.released == ["game.paseo"])
+        #expect(workers.references.released == [try! ProductId("game.paseo")])
     }
 }
 
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
 
 private let streak = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "streak")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "streak")),
     title: "Streak",
     privileged: false
 )

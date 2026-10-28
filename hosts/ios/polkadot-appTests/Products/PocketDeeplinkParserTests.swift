@@ -1,6 +1,7 @@
 import Foundation
 import Products
 import Testing
+import struct TrUAPIHost.ProductId
 @testable import polkadot_app
 
 /// Classification goes through the core's own `parse_navigate`, so every host
@@ -13,9 +14,9 @@ struct PocketDeeplinkParserTests {
     }
 
     @Test
-    func readsAnAddLink() {
+    func readsAnAddLink() throws {
         #expect(classify("polkadotapp://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
-            productHost: "game.dot",
+            productHost: try ProductId("game.dot"),
             action: .add,
             cardId: PocketCardId(value: "loyalty"),
             canonicalUrl: "polkadotapp://pocket/add?product=game.dot&card=loyalty"

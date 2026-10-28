@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import MessageExchangeKit
 import Products
@@ -27,11 +28,11 @@ extension PolkadotHostRemoteMessage {
 
 extension PolkadotHostRemoteMessage.ProductSubtreeRequest: MessageExchange.CodableMessage {
     init(scaleDecoder: any ScaleDecoding) throws {
-        productId = try String(scaleDecoder: scaleDecoder)
+        productId = try ProductId(String(scaleDecoder: scaleDecoder))
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
-        try productId.encode(scaleEncoder: scaleEncoder)
+        try productId.rawValue.encode(scaleEncoder: scaleEncoder)
     }
 }
 

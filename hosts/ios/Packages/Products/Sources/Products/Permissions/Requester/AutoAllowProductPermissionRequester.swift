@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Grants every permission without prompting for an allowlisted set of products.
@@ -15,7 +16,7 @@ public struct AutoAllowProductPermissionRequester: ProductPermissionRequesting {
     }
 
     public func prompt(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async -> PermissionDecision {
         guard !isAutoAllowed(productId: productId) else { return .allowAlways }
@@ -24,7 +25,7 @@ public struct AutoAllowProductPermissionRequester: ProductPermissionRequesting {
     }
 
     public func promptBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async -> PermissionDecision {
         guard !isAutoAllowed(productId: productId) else { return .allowAlways }
@@ -37,9 +38,7 @@ private extension AutoAllowProductPermissionRequester {
     /// Matches the label only, dropping the root: the root is the chain TLD and
     /// differs per network, and resolving it here would put a network call in
     /// front of an auto-allow.
-    func isAutoAllowed(productId: String) -> Bool {
-        guard let name = ProductHost.name(fromDotDomain: productId) else { return false }
-
-        return allowedLabels.contains(name)
+    func isAutoAllowed(productId: ProductId) -> Bool {
+        allowedLabels.contains(ProductHost.name(fromDotDomain: productId))
     }
 }

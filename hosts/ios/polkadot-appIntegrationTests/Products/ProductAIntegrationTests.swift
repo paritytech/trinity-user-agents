@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productContentScheme
 @testable import polkadot_app
 import Products
 import SDKLogger
@@ -22,11 +24,11 @@ final class ProductAIntegrationTests: XCTestCase {
     private static let coinFlip = URL(string: "https://paritytech.github.io/coin-flip/worker/index.js")!
 
     func testProductAInitializes() async throws {
-        try await performTestProductScriptInitializes(product: "productA", scriptUrl: Self.productA)
+        try await performTestProductScriptInitializes(product: try ProductId("product-a.dot"), scriptUrl: Self.productA)
     }
 
     func testProductARendersMessages() async throws {
-        try await performTestRenderMessage(product: "productA", scriptUrl: Self.productA)
+        try await performTestRenderMessage(product: try ProductId("product-a.dot"), scriptUrl: Self.productA)
     }
 
     /// Tests that coinFlip initializes and responds to a user message.
@@ -35,11 +37,11 @@ final class ProductAIntegrationTests: XCTestCase {
     func testCoinFlipRespondsToMessage() async throws {
         let productScript = try await downloadProductScript(for: Self.coinFlip)
         let executor = ProductsScriptExecutor.makeExecutorWithMockedStorage(
-            productId: "coinFlip",
+            productId: try! ProductId("coinFlip.dot"),
             productScript: productScript
         )
         let nativeApi = MockProductsNativeApi(
-            localStorage: ProductsLocalStorage(productId: "coinFlip", settingsManager: InMemorySettingsManager())
+            localStorage: ProductsLocalStorage(productId: try! ProductId("coinFlip.dot"), settingsManager: InMemorySettingsManager())
         )
 
         try await executor.initializeBot(nativeApi: nativeApi)
@@ -60,7 +62,7 @@ final class ProductAIntegrationTests: XCTestCase {
     }
 
     /// Tests that the real product script initializes and sends its welcome message.
-    private func performTestProductScriptInitializes(product: String, scriptUrl: URL) async throws {
+    private func performTestProductScriptInitializes(product: ProductId, scriptUrl: URL) async throws {
         let productScript = try await downloadProductScript(for: scriptUrl)
         let executor = ProductsScriptExecutor.makeExecutorWithMockedStorage(
             productId: product,
@@ -81,7 +83,7 @@ final class ProductAIntegrationTests: XCTestCase {
     }
 
     /// Tests that renderMessage with the real product script produces a widget update.
-    private func performTestRenderMessage(product: String, scriptUrl: URL) async throws {
+    private func performTestRenderMessage(product: ProductId, scriptUrl: URL) async throws {
         let logger = Logger.shared
         let productScript = try await downloadProductScript(for: scriptUrl)
         let executor = ProductsScriptExecutor.makeExecutorWithMockedStorage(
@@ -158,7 +160,7 @@ final class ProductAIntegrationTests: XCTestCase {
 
 private extension ProductsScriptExecutor {
     static func makeExecutorWithMockedStorage(
-        productId: String = "test-product",
+        productId: ProductId = try! ProductId("test-product.dot"),
         productScript: String
     ) -> ProductsScriptExecutorProtocol {
         let storage = MockChatScriptStorage(scripts: [productId: productScript])
@@ -184,7 +186,7 @@ private extension ProductsScriptExecutor {
                     ],
                     hostWindowProvider: { nil },
                     urlSchemeHandlers: [
-                        ProductScriptSchemeHandler.scheme: schemeHandler
+                        productContentScheme(): schemeHandler
                     ],
                     settings: WKWebViewJSEngineSettings(usesPersistentLocalStorage: false),
                     logger: Logger.shared

@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApiImpl
@@ -90,7 +90,7 @@ class NativeSpaHost @Inject constructor(
         // publishes no worker is a no-op; the reference releases when the session scope ends.
         scope.launch {
             val tld = dotNsTldProvider.getTld().getOrNull() ?: return@launch
-            val productId = ProductId.fromUrl(initialUrl.toUri(), tld).getOrNull() ?: return@launch
+            val productId = productIdFromUrl(initialUrl.toUri(), tld).getOrNull() ?: return@launch
             workerRefCounter.withWorkerAcquired(productId, "spa:${productId.value}") {
                 awaitCancellation()
             }
@@ -107,7 +107,7 @@ class NativeSpaHost @Inject constructor(
             currentUrlFlow.value = url
             scope.launch {
                 val tld = dotNsTldProvider.getTld().getOrNull() ?: return@launch
-                ProductId.fromUrl(url.toUri(), tld).getOrNull()?.let {
+                productIdFromUrl(url.toUri(), tld).getOrNull()?.let {
                     productRegistrar.ensureRegistered(it)
                 }
             }

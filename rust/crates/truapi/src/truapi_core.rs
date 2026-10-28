@@ -185,6 +185,7 @@ mod tests {
 	use truapi::v01;
 
 	use crate::{
+		ProductId,
 		frame::{Payload, request_ids, subscription_ids},
 		test_support::{StubPlatform, runtime_config, test_spawner},
 	};
@@ -330,7 +331,7 @@ mod tests {
 		// manifest, which is the only thing that reaches a chain with this hash.
 		let request = truapi::versioned::local_storage::HostLocalStorageReadRequest::V2(
 			truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some(ProductId::for_test("wallet.dot")),
 				key: "k".to_string(),
 			},
 		);

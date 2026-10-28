@@ -6,7 +6,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.JsEngineState
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.webView.WebViewJsEngine
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
@@ -20,6 +19,7 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.truapi.ProductId
 
 @RunWith(AndroidJUnit4::class)
 class IsolationProbeTest {
@@ -45,7 +45,7 @@ class IsolationProbeTest {
 
     @Test
     fun isolationProbe() = runBlocking {
-        engine.initialize(ProductId("isolation-test"))
+        engine.initialize(ProductId.parse("isolation-test.dot").getOrThrow())
         engine.state.first { it is JsEngineState.Ready }
 
         // Load container script (includes isolation overrides)

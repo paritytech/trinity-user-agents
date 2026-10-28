@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.mapList
 import io.paritytech.polkadotapp.common.utils.requireSuffix
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 @HiltViewModel
@@ -51,12 +52,12 @@ class ProductBotManagementViewModel @Inject constructor(
 
     override fun onProductClick(productId: ProductId) {
         launch {
-            router.openSpaBrowser(SpaBrowserPayload.ByProductId(productId.value))
+            router.openSpaBrowser(SpaBrowserPayload.ByProductId(productId))
         }
     }
 
-    override fun onEditProductClick(productId: String) {
-        val product = state.value.products.find { it.id.value == productId } ?: return
+    override fun onEditProductClick(productId: ProductId) {
+        val product = state.value.products.find { it.id == productId } ?: return
         launch {
             val workerUrl = interactor.getUserWorkerUrl(product.id).orEmpty()
             val card = interactor.getDebugCard(product.id)
@@ -64,7 +65,7 @@ class ProductBotManagementViewModel @Inject constructor(
             state.update {
                 it.copy(
                     dialogState = ProductDialogState.Form(
-                        productId = product.id.value,
+                        productId = product.id,
                         dotNsName = product.name,
                         workerUrl = workerUrl,
                         cardId = card?.cardId?.value.orEmpty(),
@@ -78,8 +79,8 @@ class ProductBotManagementViewModel @Inject constructor(
         }
     }
 
-    override fun onDeleteProductClick(productId: String) = launchUnit {
-        interactor.deleteProduct(ProductId.fromStoredValue(productId))
+    override fun onDeleteProductClick(productId: ProductId) = launchUnit {
+        interactor.deleteProduct(productId)
             .onFailure(::showError)
     }
 
@@ -148,14 +149,14 @@ class ProductBotManagementViewModel @Inject constructor(
         val appUrl = form.appUrl.trim().ifEmpty { null }
 
         val result = if (form.productId != null) {
-            interactor.updateProduct(ProductId.fromStoredValue(form.productId), form.workerUrl, form.dotNsName, card, appUrl)
+            interactor.updateProduct(form.productId, form.workerUrl, form.dotNsName, card, appUrl)
         } else {
             runCatching { requireNotNull(interactor.currentTld()) { "Network TLD is not known yet" } }
                 .flatMap { tld ->
                     // Typed by hand in the debug menu, so it is validated rather than trusted.
                     val dotNs = form.dotNsName.lowercase().requireSuffix(tld.suffix)
 
-                    ProductId.fromString(dotNs, tld)
+                    productIdFromHost(dotNs, tld)
                 }
                 .flatMap { productId ->
                     interactor.upsertProduct(productId, form.workerUrl, form.dotNsName, card, appUrl)

@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 
 /// Manifest products and legacy ones share this shape, so callers branch on `executables`
@@ -28,15 +30,14 @@ public struct ResolvedProduct: Hashable, Sendable {
         self.hasManifest = hasManifest
     }
 
-    /// A product with no manifest: one app rooted at the base name, named after its domain. Also
-    /// the degraded shape when the chain cannot be reached, which keeps cached content usable.
+    /// A product with no manifest: one app rooted at the base name, named after its domain.
     ///
     /// Never the shape for a product whose manifest is published but broken — that one declared
     /// something, and serving the base name's archive instead would not be what it declared.
     public static func legacy(id: ProductId, displayName: String? = nil) -> ResolvedProduct {
         ResolvedProduct(
             id: id,
-            displayName: displayName ?? id,
+            displayName: displayName ?? id.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(

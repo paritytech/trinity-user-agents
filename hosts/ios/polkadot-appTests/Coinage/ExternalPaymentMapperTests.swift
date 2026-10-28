@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 import Coinage
@@ -15,7 +16,7 @@ struct ExternalPaymentMapperTests {
     func roundTripsIdentityAndStageData() async throws {
         let store = makeStore()
         var payment = ExternalPayment(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             paymentId: "0xab",
             amountInPlanks: 1_500,
             destination: destination
@@ -29,7 +30,7 @@ struct ExternalPaymentMapperTests {
 
         let fetched = try #require(try await store.fetchPayment(byId: payment.identifier))
         #expect(fetched.identifier == "external-payment:getcash.dot:0xab")
-        #expect(fetched.productId == "getcash.dot")
+        #expect(fetched.productId?.rawValue == "getcash.dot")
         #expect(fetched.paymentId == "0xab")
         #expect(fetched.amountInPlanks == 1_500)
         #expect(fetched.stage == .offboardVouchers)
@@ -42,7 +43,7 @@ struct ExternalPaymentMapperTests {
     func stageUpdatePersistsSettledValue() async throws {
         let store = makeStore()
         var payment = ExternalPayment(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             paymentId: "0xcd",
             amountInPlanks: 5,
             destination: destination,

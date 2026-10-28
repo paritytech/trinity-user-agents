@@ -1,7 +1,7 @@
 //! Product-facing account operations and login lifecycle.
 
 use crate::platform::{
-	PermissionAuthorizationStatus, ProductId, ProductSubtreeReview, UserConfirmationReview,
+	PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
 };
 use futures::StreamExt;
 use tracing::instrument;
@@ -182,11 +182,10 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountListRingVrfKeysRequest,
 	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
 		version(request)
-			.exec(|mut request| async move {
+			.exec(|request| async move {
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
-				request.owner = request.owner.parse::<ProductId>()?.into();
 				let cx = remote_authority_context(cx);
 				remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
 					.await

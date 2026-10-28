@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import UserNotifications
 import Keystore_iOS

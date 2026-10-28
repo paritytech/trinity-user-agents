@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import UIKit
@@ -28,7 +29,8 @@ struct ProductOpener: ProductOpening {
         // Opened directly: the product link is only routed when the products feature is on,
         // and a game product has to open without it.
         if tabBar != nil,
-           let host = ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared).host(rawString: productId) {
+           let host = ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared)
+               .host(rawString: productId.rawValue) {
             navigator.openProduct(page: ProductPage(host: host))
         } else if let url = URL(string: "\(AppConfig.ProductUniversalLink.scheme)://\(productId)") {
             DeferredLinkHandler.shared.handle(with: url)

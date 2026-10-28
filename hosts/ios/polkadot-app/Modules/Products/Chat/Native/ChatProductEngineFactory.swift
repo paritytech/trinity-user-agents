@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productContentScheme
 import Foundation
 import UIKit
 import Products
@@ -38,7 +40,7 @@ enum ChatProductEngineFactory {
                 ],
                 hostWindowProvider: { UIWindow.keyWindow },
                 urlSchemeHandlers: [
-                    ProductScriptSchemeHandler.scheme: schemeHandler
+                    productContentScheme(): schemeHandler
                 ],
                 logger: logger
             )

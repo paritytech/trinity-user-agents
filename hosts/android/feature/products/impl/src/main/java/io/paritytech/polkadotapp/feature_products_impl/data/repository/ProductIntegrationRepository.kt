@@ -3,11 +3,11 @@ package io.paritytech.polkadotapp.feature_products_impl.data.repository
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIntegration
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,7 +32,7 @@ class RealProductIntegrationRepository @Inject constructor(
     private val dao: ProductIntegrationDao,
 ) : ProductIntegrationRepository {
     override fun observeByProduct(productId: ProductId): Flow<List<ProductIntegration>> {
-        return dao.observeByProduct(productId.value).map { list -> list.map { it.toDomain() } }
+        return dao.observeByProduct(productId).map { list -> list.map { it.toDomain() } }
     }
 
     override fun observeByType(type: IntegrationType): Flow<List<ProductIntegration>> {
@@ -45,13 +45,13 @@ class RealProductIntegrationRepository @Inject constructor(
     }
 
     override suspend fun get(productId: ProductId, type: IntegrationType): ProductIntegration? {
-        return dao.get(productId.value, type.toLocal())?.toDomain()
+        return dao.get(productId, type.toLocal())?.toDomain()
     }
 
     override suspend fun install(productId: ProductId, type: IntegrationType) {
         dao.insert(
             ProductIntegrationLocal(
-                productId = productId.value,
+                productId = productId,
                 type = type.toLocal(),
                 metadata = null
             )
@@ -59,11 +59,11 @@ class RealProductIntegrationRepository @Inject constructor(
     }
 
     override suspend fun uninstall(productId: ProductId, type: IntegrationType) {
-        dao.delete(productId.value, type.toLocal())
+        dao.delete(productId, type.toLocal())
     }
 
     override suspend fun uninstallAll(productId: ProductId) {
-        dao.deleteAllByProduct(productId.value)
+        dao.deleteAllByProduct(productId)
     }
 
     private fun IntegrationType.toLocal(): String = when (this) {
@@ -72,7 +72,7 @@ class RealProductIntegrationRepository @Inject constructor(
 
     private fun ProductIntegrationLocal.toDomain(): ProductIntegration {
         return ProductIntegration(
-            productId = ProductId.fromStoredValue(productId),
+            productId = productId,
             type = typeFromLocal(type)
         )
     }

@@ -1,3 +1,4 @@
+import TrUAPIHost
 import Foundation
 import SDKLogger
 
@@ -92,8 +93,9 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("\(identifier): unsupported $v=\(String(describing: dto.version))")
         }
 
-        guard dto.kind == kind.rawValue else {
-            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kind.rawValue)'")
+        let kindLabel = executableKindLabel(kind: kind)
+        guard dto.kind == kindLabel else {
+            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kindLabel)'")
         }
 
         guard let appVersion = dto.appVersion?.value else {

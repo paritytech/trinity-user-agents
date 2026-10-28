@@ -24,6 +24,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPr
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.components.BatchedPromptContent
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.components.SinglePromptContent
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -147,7 +148,7 @@ private fun PermissionPromptScreenPreview() {
     PolkadotTheme {
         PermissionPromptScreenInternal(
             state = PermissionPromptUiState.Single(
-                productId = "alice.dot",
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permission = ProductPermission.RemotePermission.NetworkAccess(domain = "example.com"),
             ),
             onAllowOnceClicked = {},

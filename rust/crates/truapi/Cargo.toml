@@ -164,23 +164,23 @@ strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "golden_frame"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "platform_bounds"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "wasm_crypto_vectors"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "wire_result_shape"
-required-features = ["runtime"]
+required-features = ["mock"]
 
 [[test]]
 name = "signing_host_mock_platform"

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
@@ -59,7 +60,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         guard case let .app(app)? = executable else {
@@ -67,7 +68,7 @@ struct ProductManifestParserTests {
             return
         }
 
-        #expect(app.identifier == "app.hackm3.dot")
+        #expect(app.identifier.rawValue == "app.hackm3.dot")
         #expect(app.appVersion == SemVer(major: 1, minor: 2, patch: 3, build: nil))
     }
 
@@ -75,7 +76,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(version: #"[1, 2, 3, "abc123"]"#),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         guard case let .app(app)? = executable else {
@@ -96,7 +97,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(version: version),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         #expect(executable == nil)
@@ -107,7 +108,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(),
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         )
 
         #expect(executable == nil)
@@ -116,19 +117,19 @@ struct ProductManifestParserTests {
     @Test func rejectsUnknownKind() {
         let raw = #"{"$v":1,"kind":"gadget","appVersion":[1,0,0]}"#
 
-        #expect(parser.parseExecutable(raw, kind: .app, identifier: "app.hackm3.dot") == nil)
+        #expect(parser.parseExecutable(raw, kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
     }
 
     @Test func treatsAbsentExecutableRecordAsNotProvided() {
-        #expect(parser.parseExecutable(nil, kind: .app, identifier: "app.hackm3.dot") == nil)
-        #expect(parser.parseExecutable("", kind: .app, identifier: "app.hackm3.dot") == nil)
+        #expect(parser.parseExecutable(nil, kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
+        #expect(parser.parseExecutable("", kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
     }
 
     @Test func parsesWidgetManifest() throws {
         let executable = parser.parseExecutable(
             Fixtures.widget(),
             kind: .widget,
-            identifier: "widget.hackm3.dot"
+            identifier: try! ProductId("widget.hackm3.dot")
         )
 
         guard case let .widget(widget)? = executable else {
@@ -145,7 +146,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.widget(width: nil),
             kind: .widget,
-            identifier: "widget.hackm3.dot"
+            identifier: try! ProductId("widget.hackm3.dot")
         )
 
         guard case let .widget(widget)? = executable else {
@@ -157,11 +158,11 @@ struct ProductManifestParserTests {
     }
 
     @Test func rejectsWidgetWithoutHeights() {
-        #expect(parser.parseExecutable(Fixtures.widget(heights: "[]"), kind: .widget, identifier: "w") == nil)
+        #expect(parser.parseExecutable(Fixtures.widget(heights: "[]"), kind: .widget, identifier: try! ProductId("w.dot")) == nil)
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"widget","appVersion":[1,0,0]}"#,
             kind: .widget,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
     }
 
@@ -169,7 +170,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.worker(),
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         )
 
         guard case let .worker(worker)? = executable else {
@@ -187,7 +188,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.worker(chat: "false", pocket: "false"),
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         )
 
         guard case let .worker(worker)? = executable else {
@@ -361,7 +362,7 @@ struct ProductManifestParserTests {
         guard case let .worker(worker)? = (parser ?? self.parser).parseExecutable(
             manifest,
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         ) else {
             Issue.record("expected a worker executable")
             return nil
@@ -373,19 +374,19 @@ struct ProductManifestParserTests {
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}"#,
             kind: .worker,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
 
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
             kind: .worker,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
 
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#,
             kind: .worker,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
     }
 }

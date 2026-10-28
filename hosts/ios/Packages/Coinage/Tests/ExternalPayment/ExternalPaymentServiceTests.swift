@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -16,7 +17,7 @@ struct ExternalPaymentServiceTests {
         let harness = Factory.makeHarness()
 
         try await harness.service.initiatePayment(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             paymentId: "0xaa",
             amountInPlanks: Factory.planks(3),
             destination: Factory.destination
@@ -24,7 +25,7 @@ struct ExternalPaymentServiceTests {
 
         let stored = try #require(harness.store.payment(id: "external-payment:getcash.dot:0xaa"))
         #expect(stored.stage == .plan)
-        #expect(stored.productId == "getcash.dot")
+        #expect(stored.productId?.rawValue == "getcash.dot")
         #expect(stored.paymentId == "0xaa")
         #expect(stored.amountInPlanks == Factory.planks(3))
     }
@@ -32,12 +33,12 @@ struct ExternalPaymentServiceTests {
     @Test func replayIsRefused() async throws {
         let harness = Factory.makeHarness()
         try await harness.service.initiatePayment(
-            productId: "getcash.dot", paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
+            productId: try! ProductId("getcash.dot"), paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
         )
 
         await #expect(throws: ExternalPaymentError.alreadyExists) {
             try await harness.service.initiatePayment(
-                productId: "getcash.dot", paymentId: "0xaa", amountInPlanks: 2, destination: Factory.destination
+                productId: try! ProductId("getcash.dot"), paymentId: "0xaa", amountInPlanks: 2, destination: Factory.destination
             )
         }
         #expect(harness.store.all().count == 1)
@@ -46,10 +47,10 @@ struct ExternalPaymentServiceTests {
     @Test func sameIdUnderAnotherProductIsAnotherPayment() async throws {
         let harness = Factory.makeHarness()
         try await harness.service.initiatePayment(
-            productId: "getcash.dot", paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
+            productId: try! ProductId("getcash.dot"), paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
         )
         try await harness.service.initiatePayment(
-            productId: "other.dot", paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
+            productId: try! ProductId("other.dot"), paymentId: "0xaa", amountInPlanks: 1, destination: Factory.destination
         )
 
         #expect(harness.store.all().count == 2)
@@ -60,7 +61,7 @@ struct ExternalPaymentServiceTests {
 
         await #expect(throws: ExternalPaymentError.invalidPaymentId) {
             try await harness.service.initiatePayment(
-                productId: "getcash.dot", paymentId: "", amountInPlanks: 1, destination: Factory.destination
+                productId: try! ProductId("getcash.dot"), paymentId: "", amountInPlanks: 1, destination: Factory.destination
             )
         }
     }
@@ -73,7 +74,7 @@ struct ExternalPaymentServiceTests {
                 group.addTask {
                     do {
                         try await harness.service.initiatePayment(
-                            productId: "getcash.dot", paymentId: "0xaa", amountInPlanks: 1,
+                            productId: try! ProductId("getcash.dot"), paymentId: "0xaa", amountInPlanks: 1,
                             destination: Factory.destination
                         )
                         return true
@@ -114,7 +115,7 @@ struct ExternalPaymentServiceTests {
         let harness = Factory.makeHarness()
 
         await #expect(throws: ExternalPaymentError.notFound) {
-            for try await _ in harness.service.subscribePaymentStatus(productId: "getcash.dot", paymentId: "0xzz") {}
+            for try await _ in harness.service.subscribePaymentStatus(productId: try! ProductId("getcash.dot"), paymentId: "0xzz") {}
         }
     }
 

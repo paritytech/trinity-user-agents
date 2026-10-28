@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import os
@@ -50,8 +51,8 @@ struct ProductWorkerManagerTests {
         let factory = FakeWorkerFactory()
         let manager = ProductWorkerManager(factory: factory)
 
-        let chat = await manager.acquire(productId: "getcash")
-        let spa = await manager.acquire(productId: "getcash")
+        let chat = await manager.acquire(productId: try! ProductId("getcash.dot"))
+        let spa = await manager.acquire(productId: try! ProductId("getcash.dot"))
 
         #expect(factory.started == 1)
         #expect(factory.disposed == 0)
@@ -64,13 +65,13 @@ struct ProductWorkerManagerTests {
         let factory = FakeWorkerFactory()
         let manager = ProductWorkerManager(factory: factory)
 
-        let chat = await manager.acquire(productId: "getcash")
-        let spa = await manager.acquire(productId: "getcash")
+        let chat = await manager.acquire(productId: try! ProductId("getcash.dot"))
+        let spa = await manager.acquire(productId: try! ProductId("getcash.dot"))
 
         chat.token.unlock()
 
         // One consumer left: re-acquiring reuses the worker rather than restarting.
-        let again = await manager.acquire(productId: "getcash")
+        let again = await manager.acquire(productId: try! ProductId("getcash.dot"))
         #expect(factory.started == 1)
         #expect(factory.disposed == 0)
 
@@ -87,13 +88,13 @@ struct ProductWorkerManagerTests {
         let factory = FakeWorkerFactory()
         let manager = ProductWorkerManager(factory: factory)
 
-        let a = await manager.acquire(productId: "getcash")
-        let b = await manager.acquire(productId: "getcash")
+        let a = await manager.acquire(productId: try! ProductId("getcash.dot"))
+        let b = await manager.acquire(productId: try! ProductId("getcash.dot"))
 
         a.token.unlock()
         a.token.unlock() // second release must not drop b's claim
 
-        let c = await manager.acquire(productId: "getcash")
+        let c = await manager.acquire(productId: try! ProductId("getcash.dot"))
         #expect(factory.started == 1) // worker survived, no restart
         #expect(factory.disposed == 0)
 
@@ -106,7 +107,7 @@ struct ProductWorkerManagerTests {
         let manager = ProductWorkerManager(factory: factory)
 
         do {
-            _ = await manager.acquire(productId: "getcash")
+            _ = await manager.acquire(productId: try! ProductId("getcash.dot"))
         }
 
         await factory.awaitDisposed(1)
@@ -119,7 +120,7 @@ struct ProductWorkerManagerTests {
         let manager = ProductWorkerManager(factory: factory)
 
         for _ in 0 ..< 20 {
-            let lease = await manager.acquire(productId: "getcash")
+            let lease = await manager.acquire(productId: try! ProductId("getcash.dot"))
             lease.token.unlock()
         }
 

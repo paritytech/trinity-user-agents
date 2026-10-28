@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import FoundationExt
@@ -66,15 +67,15 @@ final class ProductBotProvider: ProductBotProviding {
                     let products = await listProducts(from: productDict)
                     continuation.yield(.listed(products))
 
-                    await builds.keep(only: Set(products.map(\.identifier)))
+                    await builds.keep(only: Set(products.map(\.id)))
 
                     for product in products {
-                        guard await builds.needsBuild(product.identifier) else { continue }
+                        guard await builds.needsBuild(product.id) else { continue }
 
-                        await builds.register(product.identifier) { [self] in
+                        await builds.register(product.id) { [self] in
                             let bot = await makeBot(for: product)
                             if let bot { continuation.yield(.botBuilt(bot)) }
-                            await builds.finished(product.identifier, built: bot != nil)
+                            await builds.finished(product.id, built: bot != nil)
                         }
                     }
                 }
@@ -99,16 +100,15 @@ final class ProductBotProvider: ProductBotProviding {
         /// from its own worker subname exactly as it would be in a real install.
         private static func simulatorChatProduct() -> Product? {
             let environment = ProcessInfo.processInfo.environment
-            guard let productId = environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                !productId.isEmpty
+            guard let input = environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"],
+                  let productId = try? ProductId(input)
             else {
                 return nil
             }
 
             let name = environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_NAME"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let displayName = name?.nilIfEmpty ?? productId
+            let displayName = name?.nilIfEmpty ?? productId.rawValue
 
             return Product(id: productId, name: displayName)
         }
@@ -150,8 +150,8 @@ private extension ProductBotProvider {
 
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
-        return HostPlacedProducts.all.map {
-            Product(id: $0.productId(tld), name: $0.fallbackName)
+        return HostPlacedProducts.all.compactMap {
+            try? Product(id: $0.productId(tld), name: $0.fallbackName)
         }
     }
 
@@ -163,24 +163,15 @@ private extension ProductBotProvider {
         return botFactory.create(resolved: resolved)
     }
 
-    /// Nil for a product whose published manifest is broken. That is the product's bug, and
-    /// running the base name's archive in its place would serve something it never declared.
-    ///
-    /// A name that cannot be read still degrades to the legacy shape. Since workers now come only
-    /// from a manifest, that yields a bot for hand-installed debug scripts and nothing else — a
-    /// published product's bot needs its worker subname, so it needs a resolve that succeeded.
     func resolveForBot(_ product: Product) async -> ResolvedProduct? {
         do {
-            let resolved = try await productResolver.resolve(product.identifier)
+            let resolved = try await productResolver.resolve(product.id)
             await warmWorkerArchive(of: resolved)
 
             return resolved
-        } catch ProductResolutionError.malformedManifest {
-            logger.error("Skipping the chat bot for \(product.identifier): its manifest is malformed")
-            return nil
         } catch {
-            logger.error("Falling back to the legacy chat worker for \(product.identifier): \(error)")
-            return .legacy(id: product.identifier, displayName: product.name)
+            logger.error("Skipping the chat bot for \(product.identifier): \(error)")
+            return nil
         }
     }
 
@@ -194,7 +185,7 @@ private extension ProductBotProvider {
         guard let worker = resolved.executables.worker, worker.serves(.chat) else { return }
 
         do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: worker.identifier)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: worker.identifier.rawValue)
         } catch {
             logger.error("Failed to warm the chat worker archive \(worker.identifier): \(error)")
         }
@@ -204,20 +195,20 @@ private extension ProductBotProvider {
 /// The build task of every product that has no bot yet, keyed by product id. A product counts as
 /// having a bot from the moment its build starts, so a second list change never builds it twice.
 private actor ProductBotBuilds {
-    private var tasks: [String: Task<Void, Never>] = [:]
-    private var built: Set<String> = []
+    private var tasks: [ProductId: Task<Void, Never>] = [:]
+    private var built: Set<ProductId> = []
 
-    func needsBuild(_ productId: String) -> Bool {
+    func needsBuild(_ productId: ProductId) -> Bool {
         tasks[productId] == nil && !built.contains(productId)
     }
 
-    func register(_ productId: String, _ build: @escaping @Sendable () async -> Void) {
+    func register(_ productId: ProductId, _ build: @escaping @Sendable () async -> Void) {
         tasks[productId] = Task(operation: build)
     }
 
     /// A build cancelled by `keep(only:)` still reaches here; it must not record a bot for a
     /// product that left, nor forget a build registered since for the same product.
-    func finished(_ productId: String, built isBuilt: Bool) {
+    func finished(_ productId: ProductId, built isBuilt: Bool) {
         guard !Task.isCancelled else { return }
 
         tasks[productId] = nil
@@ -228,7 +219,7 @@ private actor ProductBotBuilds {
     }
 
     /// Cancels the builds and forgets the bots of the products not in `productIds`.
-    func keep(only productIds: Set<String>) {
+    func keep(only productIds: Set<ProductId>) {
         for (productId, task) in tasks where !productIds.contains(productId) {
             task.cancel()
             tasks[productId] = nil

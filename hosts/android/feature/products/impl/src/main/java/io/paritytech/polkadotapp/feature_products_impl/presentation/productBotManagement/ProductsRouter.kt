@@ -3,10 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.productBotM
 import io.paritytech.polkadotapp.common.presentation.navigation.ReturnableRouter
 import io.paritytech.polkadotapp.common.presentation.navigation.TabRouter
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
+import uniffi.truapi.ProductId
 
 interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     fun openSpaBrowser(payload: SpaBrowserPayload)

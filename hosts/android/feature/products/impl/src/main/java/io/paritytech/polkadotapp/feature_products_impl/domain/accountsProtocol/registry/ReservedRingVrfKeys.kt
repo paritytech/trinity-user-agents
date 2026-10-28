@@ -14,8 +14,8 @@ import io.paritytech.polkadotapp.feature_people_api.domain.PEOPLE_LITE
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocationJunction
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 // Mirrors the personhood indices wired in ProductDerivationModule. RFC-0022 pins index 0 as the full
@@ -35,7 +35,7 @@ class ReservedRingVrfKeys @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
 ) {
     suspend fun isReserved(handle: ProductAccountId): Boolean {
-        if (handle.productId != personhoodId().value) return false
+        if (handle.productId != personhoodId()) return false
 
         return handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX
     }
@@ -85,7 +85,7 @@ class ReservedRingVrfKeys @Inject constructor(
         )
 
         return ReservedRingVrfKeyEntry(
-            handle = ProductAccountId(owner.value, index),
+            handle = ProductAccountId(owner, index),
             ring = ring,
         )
     }

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import KeyDerivation
@@ -67,7 +68,7 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
     }
 
     func startWorker(productId: ProductId) async throws -> ProductWorkerRunning {
-        let resolved = await resolve(productId)
+        let resolved = try await productResolver.resolve(productId)
 
         guard let source = workerSource(for: resolved) else {
             throw DefaultProductWorkerFactoryError.noWorker(productId)
@@ -144,17 +145,6 @@ private extension DefaultProductWorkerFactory {
         return (concrete, routers)
     }
 
-    /// Mirrors ``ProductBotProvider`` resolution: a malformed manifest yields no
-    /// worker, a name that cannot be read degrades to the legacy shape.
-    func resolve(_ productId: ProductId) async -> ResolvedProduct {
-        do {
-            return try await productResolver.resolve(productId)
-        } catch {
-            logger.error("Worker resolve fell back to legacy for \(productId): \(error)")
-            return .legacy(id: productId)
-        }
-    }
-
     func workerSource(for resolved: ResolvedProduct) -> ProductWorkerSource? {
         ProductWorkerSource.published(for: resolved, serving: .chat)
             ?? ProductWorkerSource.installedByHand(for: resolved) {
@@ -166,7 +156,7 @@ private extension DefaultProductWorkerFactory {
         guard let published = ProductWorkerSource.published(for: resolved, serving: .chat) else { return }
 
         do {
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId.rawValue)
         } catch {
             logger.error("Failed to warm the worker archive \(published.contentId): \(error)")
         }

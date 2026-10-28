@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 
 import { productAccountAddress } from "./product-account.js";
@@ -20,11 +21,14 @@ suite("the address a product account will be given", () => {
     expect(
       await productAccountAddress({
         account: "bob",
-        productId: "contracts-demo.dot",
+        productId: asProductId("contracts-demo.dot"),
       }),
     ).toBe(CONTRACTS);
     expect(
-      await productAccountAddress({ account: "bob", productId: "tx-demo.dot" }),
+      await productAccountAddress({
+        account: "bob",
+        productId: asProductId("tx-demo.dot"),
+      }),
     ).toBe(TX);
   });
 
@@ -33,11 +37,11 @@ suite("the address a product account will be given", () => {
     // do not share a balance -- which is why funding is per (product, account).
     const contracts = await productAccountAddress({
       account: "bob",
-      productId: "contracts-demo.dot",
+      productId: asProductId("contracts-demo.dot"),
     });
     const tx = await productAccountAddress({
       account: "bob",
-      productId: "tx-demo.dot",
+      productId: asProductId("tx-demo.dot"),
     });
     expect(contracts).not.toBe(tx);
   });
@@ -48,7 +52,7 @@ suite("the address a product account will be given", () => {
     // (product, account) rather than per product.
     const asCharlie = await productAccountAddress({
       account: "charlie",
-      productId: "contracts-demo.dot",
+      productId: asProductId("contracts-demo.dot"),
     });
     expect(asCharlie).not.toBe(CONTRACTS);
   });
@@ -56,7 +60,7 @@ suite("the address a product account will be given", () => {
   it("gives each index its own account", async () => {
     const second = await productAccountAddress({
       account: "bob",
-      productId: "contracts-demo.dot",
+      productId: asProductId("contracts-demo.dot"),
       index: 1,
     });
     expect(second).not.toBe(CONTRACTS);

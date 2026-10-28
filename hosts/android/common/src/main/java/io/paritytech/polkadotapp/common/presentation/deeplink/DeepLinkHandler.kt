@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.common.utils.openUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
+import uniffi.truapi.appDeeplinkScheme
 
 interface DeepLinkHandler {
     suspend fun canHandle(data: Uri): Boolean
@@ -16,14 +17,11 @@ interface DeepLinkHandler {
     suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome>
 
     companion object {
-        const val APP_SCHEME = "polkadotapp"
+        val APP_SCHEME = appDeeplinkScheme()
         const val WEB_HTTP_SCHEME = "http"
         const val WEB_HTTPS_SCHEME = "https"
     }
 }
-
-/** Swaps the scheme rather than prefixing it: ensureHttpsProtocol would mangle a polkadotapp:// deeplink. */
-fun Uri.asWebUri(): Uri = buildUpon().scheme(DeepLinkHandler.WEB_HTTPS_SCHEME).build()
 
 sealed class DeeplinkProcessingOutcome {
     class ShowMessage(val message: String) : DeeplinkProcessingOutcome()

@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.Derivatio
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.PaymentRequestError
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ProductPaymentRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
@@ -51,6 +50,7 @@ import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 import uniffi.truapi.PaymentTopUpSource as NativeTopUpSource
 
 /**
@@ -80,7 +80,7 @@ class TrUAPIPaymentPlatformsTest {
     private val pushedPayments = MutableStateFlow<List<HostPaymentStatusSubscribeItem>>(emptyList())
     private val pushedBalances = MutableStateFlow<List<Balance>>(emptyList())
 
-    private val product = ProductId.fromStoredValue("product.dot")
+    private val product = ProductId.parse("product.dot").getOrThrow()
     private val rawId = ByteArray(32) { 4 }
     private val topUpId = PaymentTopUpId.fromBytes(rawId.toDataByteArray()).getOrThrow()
     private val paymentId = ProductPaymentRequestId.fromBytes(rawId.toDataByteArray()).getOrThrow()
@@ -88,11 +88,11 @@ class TrUAPIPaymentPlatformsTest {
     init {
         platforms.attach(
             object : TrUAPIPaymentSink {
-                override fun topUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
+                override fun topUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
                     pushedTopUps.update { it + status }
                 }
 
-                override fun paymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
+                override fun paymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
                     pushedPayments.update { it + status }
                 }
 
@@ -116,7 +116,7 @@ class TrUAPIPaymentPlatformsTest {
             TopUpStatus.NotClaimed,
         )
 
-        platforms.topUp(product.value, topUpRequest(NativeTopUpSource.ProductAccount(DerivationIndex.Index(3u))))
+        platforms.topUp(product, topUpRequest(NativeTopUpSource.ProductAccount(DerivationIndex.Index(3u))))
 
         assertEquals(
             listOf(
@@ -134,8 +134,8 @@ class TrUAPIPaymentPlatformsTest {
         val engine = MutableStateFlow<TopUpStatus>(TopUpStatus.Claiming)
         every { topUpService.status(product, topUpId) } returns engine
 
-        val current = platforms.topUpStatus(product.value, rawId)
-        platforms.topUpStatus(product.value, rawId)
+        val current = platforms.topUpStatus(product, rawId)
+        platforms.topUpStatus(product, rawId)
         engine.value = TopUpStatus.ClaimedPartially(actualClaimed = planks(7))
 
         assertEquals(HostPaymentTopUpStatusSubscribeItem.Claiming, current)
@@ -153,7 +153,7 @@ class TrUAPIPaymentPlatformsTest {
     fun `a top-up the host never registered has no status`() {
         every { topUpService.status(product, topUpId) } returns flow { throw TopUpError.NotFound(topUpId) }
 
-        assertNull(platforms.topUpStatus(product.value, rawId))
+        assertNull(platforms.topUpStatus(product, rawId))
     }
 
     /** The ask runs on the core's thread, so an engine that has not answered yet must not hold it. */
@@ -163,7 +163,7 @@ class TrUAPIPaymentPlatformsTest {
         every { topUpService.status(product, topUpId) } returns engine
 
         val started = System.nanoTime()
-        val current = platforms.topUpStatus(product.value, rawId)
+        val current = platforms.topUpStatus(product, rawId)
         val waitedMs = (System.nanoTime() - started) / 1_000_000
 
         assertEquals(HostPaymentTopUpStatusSubscribeItem.Detecting, current)
@@ -177,7 +177,7 @@ class TrUAPIPaymentPlatformsTest {
     fun `an engine failure reaches the core with a fixed reason, not the engine's words`() {
         every { topUpService.status(product, topUpId) } returns flow { throw IllegalStateException("engine down at node 7") }
 
-        val error = runCatching { platforms.topUpStatus(product.value, rawId) }.exceptionOrNull()
+        val error = runCatching { platforms.topUpStatus(product, rawId) }.exceptionOrNull()
 
         assertEquals("status is unavailable", (error as HostRejection.Rejected).reason)
     }
@@ -191,11 +191,11 @@ class TrUAPIPaymentPlatformsTest {
             throw TopUpError.NotFound(topUpId)
         }
 
-        assertEquals(HostPaymentTopUpStatusSubscribeItem.Detecting, platforms.topUpStatus(product.value, rawId))
+        assertEquals(HostPaymentTopUpStatusSubscribeItem.Detecting, platforms.topUpStatus(product, rawId))
 
         engineAnswers.complete(Unit)
         withTimeout(5_000) {
-            while (platforms.topUpStatus(product.value, rawId) != null) delay(20)
+            while (platforms.topUpStatus(product, rawId) != null) delay(20)
         }
         assertEquals(listOf(HostPaymentTopUpStatusSubscribeItem.NotClaimed), pushedTopUps.value)
     }
@@ -205,7 +205,7 @@ class TrUAPIPaymentPlatformsTest {
     fun `a top-up whose statuses end before a final one is pushed as not claimed`() = runBlocking<Unit> {
         every { topUpService.status(product, topUpId) } returns flowOf(TopUpStatus.Detecting)
 
-        platforms.topUpStatus(product.value, rawId)
+        platforms.topUpStatus(product, rawId)
 
         assertEquals(
             listOf(HostPaymentTopUpStatusSubscribeItem.Detecting, HostPaymentTopUpStatusSubscribeItem.NotClaimed),
@@ -217,9 +217,9 @@ class TrUAPIPaymentPlatformsTest {
     fun `asking about a settled top-up again answers without reading the engine`() = runBlocking<Unit> {
         every { topUpService.status(product, topUpId) } returns flowOf(TopUpStatus.Claimed(finalized = true))
 
-        val first = platforms.topUpStatus(product.value, rawId)
+        val first = platforms.topUpStatus(product, rawId)
         pushedTopUps.awaitSize(1)
-        val again = platforms.topUpStatus(product.value, rawId)
+        val again = platforms.topUpStatus(product, rawId)
 
         assertEquals(HostPaymentTopUpStatusSubscribeItem.Claimed(finalized = true), first)
         assertEquals(first, again)
@@ -232,7 +232,7 @@ class TrUAPIPaymentPlatformsTest {
         val engine = MutableStateFlow<TopUpStatus>(TopUpStatus.Claiming)
         every { topUpService.status(product, topUpId) } returns engine
 
-        val answers = (1..4).map { async(Dispatchers.IO) { platforms.topUpStatus(product.value, rawId) } }.awaitAll()
+        val answers = (1..4).map { async(Dispatchers.IO) { platforms.topUpStatus(product, rawId) } }.awaitAll()
 
         assertEquals(List(4) { HostPaymentTopUpStatusSubscribeItem.Claiming }, answers)
         verify(exactly = 1) { topUpService.status(product, topUpId) }
@@ -244,7 +244,7 @@ class TrUAPIPaymentPlatformsTest {
         coEvery { topUpService.start(product, topUpId, planks(25), PaymentTopUpSource.PrivateKey(key.toDataByteArray())) } returns
             Result.failure(TopUpError.SourceBusy(topUpId))
 
-        val error = runCatching { platforms.topUp(product.value, topUpRequest(NativeTopUpSource.PrivateKey(key))) }
+        val error = runCatching { platforms.topUp(product, topUpRequest(NativeTopUpSource.PrivateKey(key))) }
             .exceptionOrNull()
 
         assertTrue(error is HostPaymentTopUpException.SourceBusy)
@@ -256,7 +256,7 @@ class TrUAPIPaymentPlatformsTest {
 
         for (amount in listOf("0", "-5", "ten")) {
             val request = topUpRequest(NativeTopUpSource.PrivateKey(key)).copy(amount = amount)
-            val error = runCatching { platforms.topUp(product.value, request) }.exceptionOrNull()
+            val error = runCatching { platforms.topUp(product, request) }.exceptionOrNull()
 
             assertTrue("$amount: $error", error is HostPaymentTopUpException.InvalidAmount)
         }
@@ -268,7 +268,7 @@ class TrUAPIPaymentPlatformsTest {
         coEvery { topUpService.start(product, topUpId, planks(25), any()) } returns
             Result.failure(IllegalStateException("coin 0x12 locked by claim 7"))
 
-        val error = runCatching { platforms.topUp(product.value, topUpRequest(NativeTopUpSource.PrivateKey(key))) }
+        val error = runCatching { platforms.topUp(product, topUpRequest(NativeTopUpSource.PrivateKey(key))) }
             .exceptionOrNull()
 
         assertTrue(error is HostPaymentTopUpException.Unknown)
@@ -284,7 +284,7 @@ class TrUAPIPaymentPlatformsTest {
             requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), ShortfallDisclosure.MASKED_BY_CORE)
         } returns Result.failure(PaymentRequestError.InsufficientBalance())
 
-        val error = runCatching { platforms.requestPayment(product.value, paymentRequest()) }.exceptionOrNull()
+        val error = runCatching { platforms.requestPayment(product, paymentRequest()) }.exceptionOrNull()
 
         assertTrue(error is HostPaymentException.InsufficientBalance)
     }
@@ -294,7 +294,7 @@ class TrUAPIPaymentPlatformsTest {
         every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns
             flow { throw PaymentRequestError.NotFound(paymentId) }
 
-        assertNull(platforms.paymentStatus(product.value, rawId))
+        assertNull(platforms.paymentStatus(product, rawId))
     }
 
     @Test
@@ -304,7 +304,7 @@ class TrUAPIPaymentPlatformsTest {
         every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns
             flowOf(PaymentStatus.Processing, PaymentStatus.PartiallyClaimed(planks(9)))
 
-        platforms.requestPayment(product.value, paymentRequest())
+        platforms.requestPayment(product, paymentRequest())
 
         assertEquals(
             listOf(
@@ -318,7 +318,7 @@ class TrUAPIPaymentPlatformsTest {
     @Test
     fun `a payment of nothing, or of no number, is an invalid amount`() = runBlocking<Unit> {
         for (amount in listOf("0", "-5", "ten")) {
-            val error = runCatching { platforms.requestPayment(product.value, paymentRequest().copy(amount = amount)) }
+            val error = runCatching { platforms.requestPayment(product, paymentRequest().copy(amount = amount)) }
                 .exceptionOrNull()
 
             assertTrue("$amount: $error", error is HostPaymentException.InvalidAmount)
@@ -330,7 +330,7 @@ class TrUAPIPaymentPlatformsTest {
         coEvery { requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), any()) } returns
             Result.failure(IllegalStateException("cheque store at /data/coinage is corrupt"))
 
-        val error = runCatching { platforms.requestPayment(product.value, paymentRequest()) }.exceptionOrNull()
+        val error = runCatching { platforms.requestPayment(product, paymentRequest()) }.exceptionOrNull()
 
         assertTrue(error is HostPaymentException.Unknown)
         assertEquals("payment could not be started", (error as HostPaymentException.Unknown).reason)
@@ -344,7 +344,7 @@ class TrUAPIPaymentPlatformsTest {
         every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns
             flowOf(PaymentStatus.Processing, PaymentStatus.Failed("only 12 planks spendable"))
 
-        platforms.requestPayment(product.value, paymentRequest())
+        platforms.requestPayment(product, paymentRequest())
 
         assertEquals(
             listOf(
@@ -364,7 +364,7 @@ class TrUAPIPaymentPlatformsTest {
             throw IllegalStateException("cheque store at /data/coinage is corrupt")
         }
 
-        platforms.requestPayment(product.value, paymentRequest())
+        platforms.requestPayment(product, paymentRequest())
 
         assertEquals(
             listOf(
@@ -385,7 +385,7 @@ class TrUAPIPaymentPlatformsTest {
             Result.success(balance(availablePrivate = 12, gainingPrivacy = 5)),
         )
 
-        val available = platforms.balance(product.value, purse = null)
+        val available = platforms.balance(product, purse = null)
 
         assertEquals("15", available)
         assertEquals(listOf(planks(15), planks(17)), pushedBalances.awaitSize(2))
@@ -398,7 +398,7 @@ class TrUAPIPaymentPlatformsTest {
         coEvery { totalBalanceUseCase.getBalance() } returns Result.success(balance(availablePrivate = 10, gainingPrivacy = 5))
         every { totalBalanceUseCase.subscribeTotalBalance() } returns balances
 
-        platforms.balance(product.value, purse = null)
+        platforms.balance(product, purse = null)
         pushedBalances.awaitSize(1)
 
         appState.value = AppLifecycleState.BACKGROUND
@@ -420,10 +420,10 @@ class TrUAPIPaymentPlatformsTest {
             flowOf(Result.success(balance(availablePrivate = 12, gainingPrivacy = 5))),
         )
 
-        platforms.balance(product.value, purse = null)
+        platforms.balance(product, purse = null)
         withTimeout(1_000) {
             while (true) {
-                platforms.balance(product.value, purse = null)
+                platforms.balance(product, purse = null)
                 if (pushedBalances.value.isNotEmpty()) break
                 delay(20)
             }
@@ -434,7 +434,7 @@ class TrUAPIPaymentPlatformsTest {
 
     @Test
     fun `a purse the host does not have is refused`() = runBlocking<Unit> {
-        val error = runCatching { platforms.balance(product.value, purse = 1u) }.exceptionOrNull()
+        val error = runCatching { platforms.balance(product, purse = 1u) }.exceptionOrNull()
 
         assertTrue(error is HostPaymentBalanceSubscribeException.Unknown)
         coVerify(exactly = 0) { totalBalanceUseCase.getBalance() }

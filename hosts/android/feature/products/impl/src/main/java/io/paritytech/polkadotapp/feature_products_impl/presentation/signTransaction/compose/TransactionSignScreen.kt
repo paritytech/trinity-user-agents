@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.signTransact
 import io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction.TransactionSignContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction.TransactionSignUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction.compose.loaded.LoadedContent
+import uniffi.truapi.ProductId
 
 @Composable
 fun TransactionSignScreen(contract: TransactionSignContract) {
@@ -91,7 +92,7 @@ private fun TransactionSignScreenLoadedPreview() {
                         callName = "Balances.transfer",
                         detailsJson = """{"address": "13Qbq8...", "call": {"module": "Balances", "function": "transfer"}}"""
                     ),
-                    signingAccount = SigningAccountUi.Product("my-product", "0"),
+                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot").getOrThrow(), "0"),
                 )
             ),
             onApproveClicked = {},
@@ -114,7 +115,7 @@ private fun TransactionSignScreenRawMessagePreview() {
                     content = SigningContent.RawMessage(
                         hexData = "0x48656c6c6f20576f726c6421"
                     ),
-                    signingAccount = SigningAccountUi.Product("my-product", "1"),
+                    signingAccount = SigningAccountUi.Product(ProductId.parse("my-product.dot").getOrThrow(), "1"),
                 )
             ),
             onApproveClicked = {},

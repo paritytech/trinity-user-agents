@@ -44,6 +44,7 @@ export {
   Vector,
   _void,
   compact,
+  enhanceCodec,
   i8,
   i16,
   i32,

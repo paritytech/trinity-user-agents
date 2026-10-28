@@ -138,7 +138,7 @@ pub struct ProductContext {
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
 	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// Trusted kind of product executable attached to a TrUAPI connection.
@@ -150,7 +150,7 @@ pub struct ProductContext {
 /// the only kind that may serve the Chat modality.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ProductExecutionKind {
+pub enum ExecutableKind {
 	/// Visible full-page entrypoint such as `app/index.html`.
 	#[default]
 	App,
@@ -159,6 +159,17 @@ pub enum ProductExecutionKind {
 	/// Headless executable the host runs while a modality holds a reference
 	/// to it; the only kind that may serve the Chat modality.
 	Worker,
+}
+
+impl ExecutableKind {
+	/// The dotNS prefix used for this kind's executable records.
+	pub fn dotns_label(self) -> &'static str {
+		match self {
+			Self::App => "app",
+			Self::Widget => "widget",
+			Self::Worker => "worker",
+		}
+	}
 }
 
 /// Host metadata.
@@ -268,11 +279,11 @@ fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigVali
 impl ProductContext {
 	/// A product context for an app.
 	pub fn new(product_id: ProductId) -> Self {
-		Self::new_with_execution(product_id, ProductExecutionKind::App)
+		Self::new_with_execution(product_id, ExecutableKind::App)
 	}
 
 	/// A product context for a host-selected executable kind.
-	pub fn new_with_execution(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
+	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
 		Self { product_id, execution_kind }
 	}
 }
@@ -965,14 +976,14 @@ pub enum PermissionAuthorizationRequest {
 	/// Product-scoped permission to access another product's account context.
 	AccountAccess {
 		/// Product whose account context may be accessed.
-		target_product_id: String,
+		target_product_id: ProductId,
 	},
 	/// Product-scoped approval to make one kind of signature with another
 	/// product's accounts. It is held in memory only and ends when the product
 	/// execution closes.
 	CrossProductSignature {
 		/// Product whose accounts sign.
-		target_product_id: String,
+		target_product_id: ProductId,
 		/// Kind of signature the user approved.
 		kind: CrossProductSignatureKind,
 	},
@@ -1200,10 +1211,10 @@ pub enum CoreStorageKey {
 	PairingDeviceIdentity,
 	/// Persisted authorization for one product-scoped permission request.
 	PermissionAuthorization {
-		/// Product whose permission decision is being stored.
-		product_id: String,
-		/// Permission request whose authorization is being stored.
-		request: PermissionAuthorizationRequest,
+		/// Stored full identifier or bare manifest label.
+		scope: String,
+		/// Permission encoded under this scope.
+		request: StoredPermissionRequest,
 	},
 	/// Persisted allowance-slot keys for one paired SSO session.
 	AllowanceKeys {
@@ -1216,7 +1227,7 @@ pub enum CoreStorageKey {
 	/// slot to reject and erase pre-scoping entries.
 	AutoSigningKey {
 		/// Product whose hard subtree the legacy secret controlled.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
 	AutoSigningKeys,
@@ -1273,8 +1284,8 @@ pub enum CoreStorageKey {
 	/// trust grant eventually take effect.
 	#[codec(index = 12)]
 	ProductManifest {
-		/// Product whose manifest was cached, normalized.
-		product_id: String,
+		/// Bare product label whose manifest was cached.
+		product_label: String,
 	},
 	/// Funding sessions: every live one plus a bounded tail of settled ones,
 	/// as one versioned SCALE blob.
@@ -1292,17 +1303,64 @@ pub enum CoreStorageKey {
 	FundingSessionPack,
 }
 
+/// Permission storage payload, whose targets can be bare manifest labels.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum StoredPermissionRequest {
+	/// Device permission decision.
+	Device(HostDevicePermissionRequest),
+	/// Remote permission decision.
+	Remote(RemotePermissionRequest),
+	/// Identity disclosure decision.
+	IdentityDisclosure,
+	/// Account access decision.
+	AccountAccess {
+		/// Full identifier or bare label in the stored scope.
+		target: String,
+	},
+	/// Execution-local approval for one signature kind.
+	CrossProductSignature {
+		/// Bare label whose accounts sign.
+		target: String,
+		/// Kind of signature approved.
+		kind: CrossProductSignatureKind,
+	},
+}
+
+impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
+	fn from(request: PermissionAuthorizationRequest) -> Self {
+		match request {
+			PermissionAuthorizationRequest::Device(permission) => Self::Device(permission),
+			PermissionAuthorizationRequest::Remote(request) => Self::Remote(request),
+			PermissionAuthorizationRequest::IdentityDisclosure => Self::IdentityDisclosure,
+			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+				Self::AccountAccess { target: target_product_id.into() }
+			},
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				Self::CrossProductSignature { target: target_product_id.into(), kind }
+			},
+		}
+	}
+}
+
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
 ///
 /// `kind` is the Rust variant name and is part of the host embedding contract.
-/// `product_id` is present only for keys whose storage slot is directly
-/// product-indexed.
+/// `owner` distinguishes full product identities from shared manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
 	/// Stable storage-key variant name.
 	pub kind: &'static str,
-	/// Product that owns this exact slot, when the key is product-indexed.
-	pub product_id: Option<String>,
+	/// Product or manifest label that owns this slot.
+	pub owner: Option<CoreStorageKeyOwner>,
+}
+
+/// The identity used to scope a persisted slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoreStorageKeyOwner {
+	/// An exact product executable.
+	Product(ProductId),
+	/// A manifest shared by the product's executable subnames.
+	ProductLabel(String),
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1327,29 +1385,38 @@ pub fn describe_core_storage_key(
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
-	let (kind, product_id) = match key {
+	let (kind, owner) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-		CoreStorageKey::PermissionAuthorization { product_id, .. } => {
-			("PermissionAuthorization", Some(product_id))
+		CoreStorageKey::PermissionAuthorization { scope, .. } => {
+			let owner = match scope.parse() {
+				Ok(product_id) => CoreStorageKeyOwner::Product(product_id),
+				Err(_) if is_dns_label(&scope) => CoreStorageKeyOwner::ProductLabel(scope),
+				Err(_) => return Err(CoreStorageKeyDescriptionError::InvalidEncoding),
+			};
+			("PermissionAuthorization", Some(owner))
 		},
 		CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
 		CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
-		CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
+		CoreStorageKey::AutoSigningKey { product_id } => {
+			("AutoSigningKey", Some(CoreStorageKeyOwner::Product(product_id)))
+		},
 		CoreStorageKey::ProductSubtree { product_id, .. } => {
-			("ProductSubtree", Some(product_id.into()))
+			("ProductSubtree", Some(CoreStorageKeyOwner::Product(product_id)))
 		},
 		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
 		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
 		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
-		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+		CoreStorageKey::ProductManifest { product_label } => {
+			("ProductManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
 		CoreStorageKey::FundingSessions => ("FundingSessions", None),
 		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
 		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
 	};
-	Ok(CoreStorageKeyDescription { kind, product_id })
+	Ok(CoreStorageKeyDescription { kind, owner })
 }
 
 impl CoreStorageKey {
@@ -1361,29 +1428,37 @@ impl CoreStorageKey {
 	/// storage write for every subname it makes up. Code that seeds this cache
 	/// must use this key.
 	pub fn product_manifest(product_id: &ProductId) -> Self {
-		Self::ProductManifest { product_id: product_id.bare_label().to_string() }
+		Self::ProductManifest { product_label: product_id.bare_label().to_string() }
+	}
+
+	/// Persist an authorization under the full product identity.
+	pub fn permission_authorization(
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Self {
+		Self::PermissionAuthorization { scope: product_id.to_string(), request: request.into() }
 	}
 
 	/// Persisted authorization key for one product-scoped device permission.
 	pub fn device_permission_authorization(
-		product_id: &str,
+		product_id: &ProductId,
 		permission: &HostDevicePermissionRequest,
 	) -> Self {
-		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::Device(*permission),
-		}
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::Device(*permission),
+		)
 	}
 
 	/// Persisted authorization key for one product-scoped remote permission.
 	pub fn remote_permission_authorization(
-		product_id: &str,
+		product_id: &ProductId,
 		request: &RemotePermissionRequest,
 	) -> Self {
-		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::Remote(canonical_remote_request(request)),
-		}
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::Remote(canonical_remote_request(request)),
+		)
 	}
 
 	/// Persisted authorization key for a single domain pattern inside a
@@ -1395,7 +1470,7 @@ impl CoreStorageKey {
 	/// a later single-host lookup. The key is a one-element
 	/// [`RemotePermission::Remote`] set, so this shares the encoding — and the
 	/// [`normalize_remote_domain`] canonicalization — of the bundle form.
-	pub fn remote_domain_authorization(product_id: &str, domain: &str) -> Self {
+	pub fn remote_domain_authorization(product_id: &ProductId, domain: &str) -> Self {
 		Self::remote_permission_authorization(
 			product_id,
 			&RemotePermissionRequest {
@@ -1405,20 +1480,50 @@ impl CoreStorageKey {
 	}
 
 	/// Persisted authorization key for product-scoped identity disclosure.
-	pub fn identity_disclosure_authorization(product_id: &str) -> Self {
+	pub fn identity_disclosure_authorization(product_id: &ProductId) -> Self {
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::IdentityDisclosure,
+		)
+	}
+
+	/// Persist an account decision under exact executable identities.
+	pub fn account_access_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+	) -> Self {
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: target_product_id.clone(),
+			},
+		)
+	}
+
+	/// Persist an account decision shared by every executable of both products.
+	pub fn product_account_access_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+	) -> Self {
 		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::IdentityDisclosure,
+			scope: product_id.bare_label().to_string(),
+			request: StoredPermissionRequest::AccountAccess {
+				target: target_product_id.bare_label().to_string(),
+			},
 		}
 	}
 
-	/// Persisted authorization key for one product accessing another product's
-	/// account context.
-	pub fn account_access_authorization(product_id: &str, target_product_id: &str) -> Self {
+	/// Signature approval shared by the product's executable subnames.
+	pub fn product_signature_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+		kind: CrossProductSignatureKind,
+	) -> Self {
 		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: target_product_id.to_string(),
+			scope: product_id.bare_label().to_string(),
+			request: StoredPermissionRequest::CrossProductSignature {
+				target: target_product_id.bare_label().to_string(),
+				kind,
 			},
 		}
 	}
@@ -2071,13 +2176,13 @@ mod tests {
 		// `product context encoding matches the Rust platform codec` in
 		// `js/packages/truapi-host/src/host-callbacks-adapter.test.ts`, which
 		// asserts the same bytes through that generated codec.
-		assert_eq!(ProductExecutionKind::App.encode(), [0]);
-		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
-		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
+		assert_eq!(ExecutableKind::App.encode(), [0]);
+		assert_eq!(ExecutableKind::Widget.encode(), [1]);
+		assert_eq!(ExecutableKind::Worker.encode(), [2]);
 
 		let context = ProductContext::new_with_execution(
 			ProductId::for_test("app.dot"),
-			ProductExecutionKind::Worker,
+			ExecutableKind::Worker,
 		);
 		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
 		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
@@ -2089,7 +2194,7 @@ mod tests {
 		// apply the same product-id policy as the constructor so decoding
 		// cannot mint a context with an unscoped or empty product id.
 		for product_id in ["evil.com", "", "  "] {
-			let frame = (product_id.to_string(), ProductExecutionKind::App).encode();
+			let frame = (product_id.to_string(), ExecutableKind::App).encode();
 			assert!(
 				ProductContext::decode(&mut frame.as_slice()).is_err(),
 				"{product_id:?} must not decode into a ProductContext"
@@ -2102,7 +2207,7 @@ mod tests {
 		// Derivation and product-scoped storage are keyed by `product_id`, so
 		// a non-canonical id off the wire has to land in the same scope the
 		// constructor would produce rather than opening a second one.
-		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
+		let frame = ("App.DOT".to_string(), ExecutableKind::App).encode();
 		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
 		assert_eq!(decoded.product_id.as_str(), "app.dot");
 		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
@@ -2111,7 +2216,7 @@ mod tests {
 	#[test]
 	fn core_storage_key_description_is_strict_and_product_scoped() {
 		let permission = CoreStorageKey::device_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
 		)
 		.encode();
@@ -2119,10 +2224,10 @@ mod tests {
 			describe_core_storage_key(&permission),
 			Ok(CoreStorageKeyDescription {
 				kind: "PermissionAuthorization",
-				product_id: Some("product.dot".to_string()),
+				owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 			})
 		);
-		for (key, kind, product_id) in [
+		for (key, kind, owner) in [
 			(CoreStorageKey::AuthSession, "AuthSession", None),
 			(CoreStorageKey::PairingDeviceIdentity, "PairingDeviceIdentity", None),
 			(
@@ -2132,9 +2237,9 @@ mod tests {
 			),
 			(CoreStorageKey::LastProcessedPairingStatement, "LastProcessedPairingStatement", None),
 			(
-				CoreStorageKey::AutoSigningKey { product_id: "product.dot".to_string() },
+				CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("product.dot") },
 				"AutoSigningKey",
-				Some("product.dot"),
+				Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 			),
 			(CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
 			(
@@ -2158,8 +2263,7 @@ mod tests {
 			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
-			assert_eq!(description.kind, kind);
-			assert_eq!(description.product_id.as_deref(), product_id);
+			assert_eq!(description, CoreStorageKeyDescription { kind, owner });
 		}
 
 		assert_eq!(
@@ -2179,24 +2283,75 @@ mod tests {
 	}
 
 	#[test]
+	fn persisted_permission_and_manifest_scopes_keep_their_string_encoding() {
+		let caller = ProductId::for_test("app.caller.dot");
+		let target = ProductId::for_test("worker.target.dot");
+		let cases = [
+			(
+				CoreStorageKey::account_access_authorization(&caller, &target),
+				(2u8, "app.caller.dot", 3u8, "worker.target.dot").encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::Product(caller.clone()),
+			),
+			(
+				CoreStorageKey::product_account_access_authorization(&caller, &target),
+				(2u8, "caller", 3u8, "target").encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::ProductLabel("caller".to_string()),
+			),
+			(
+				CoreStorageKey::product_signature_authorization(
+					&caller,
+					&target,
+					CrossProductSignatureKind::Raw,
+				),
+				(2u8, "caller", 4u8, "target", 2u8).encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::ProductLabel("caller".to_string()),
+			),
+			(
+				CoreStorageKey::product_manifest(&target),
+				(12u8, "target").encode(),
+				"ProductManifest",
+				CoreStorageKeyOwner::ProductLabel("target".to_string()),
+			),
+		];
+		for (key, encoded, kind, owner) in cases {
+			assert_eq!(key.encode(), encoded);
+			assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key));
+			assert_eq!(
+				describe_core_storage_key(&encoded),
+				Ok(CoreStorageKeyDescription { kind, owner: Some(owner) })
+			);
+		}
+	}
+
+	#[test]
 	fn permission_authorization_keys_separate_product_and_request_variants() {
 		let camera = CoreStorageKey::device_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
 		);
 		let other_product = CoreStorageKey::device_permission_authorization(
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 			&HostDevicePermissionRequest::Camera,
 		);
 		let remote = CoreStorageKey::remote_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
 		);
-		let identity = CoreStorageKey::identity_disclosure_authorization("product.dot");
-		let other_product_identity = CoreStorageKey::identity_disclosure_authorization("other.dot");
-		let account_access =
-			CoreStorageKey::account_access_authorization("product.dot", "target.dot");
-		let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+		let identity =
+			CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("product.dot"));
+		let other_product_identity =
+			CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("other.dot"));
+		let account_access = CoreStorageKey::account_access_authorization(
+			&ProductId::for_test("product.dot"),
+			&ProductId::for_test("target.dot"),
+		);
+		let other_target = CoreStorageKey::account_access_authorization(
+			&ProductId::for_test("product.dot"),
+			&ProductId::for_test("other.dot"),
+		);
 
 		assert_ne!(camera, other_product);
 		assert_ne!(camera, remote);
@@ -2281,9 +2436,12 @@ mod tests {
 		// A canonicalized bundle keys the same as the candidate list built from
 		// a live host, which is what makes the grant visible to enforcement.
 		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "API.Example.COM."),
 			CoreStorageKey::remote_domain_authorization(
-				"product.dot",
+				&ProductId::for_test("product.dot"),
+				"API.Example.COM."
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
 				&remote_domain_candidates("api.example.com.")[0]
 			)
 		);
@@ -2294,9 +2452,12 @@ mod tests {
 		// Enforcement keys a single host; a product granting that one domain
 		// must land in the same slot, or the grant is invisible to the gate.
 		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "Example.COM"),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"Example.COM"
+			),
 			CoreStorageKey::remote_permission_authorization(
-				"product.dot",
+				&ProductId::for_test("product.dot"),
 				&RemotePermissionRequest {
 					permission: RemotePermission::Remote {
 						domains: vec!["example.com".to_string()],
@@ -2305,12 +2466,24 @@ mod tests {
 			)
 		);
 		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("product.dot", "*.example.com")
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"example.com"
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"*.example.com"
+			)
 		);
 		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("other.dot", "example.com")
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"example.com"
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("other.dot"),
+				"example.com"
+			)
 		);
 	}
 
@@ -2327,8 +2500,14 @@ mod tests {
 			},
 		};
 		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &unsorted),
-			CoreStorageKey::remote_permission_authorization("product.dot", &sorted)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&unsorted
+			),
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&sorted
+			)
 		);
 
 		let mixed = RemotePermissionRequest {
@@ -2342,8 +2521,14 @@ mod tests {
 			},
 		};
 		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &mixed),
-			CoreStorageKey::remote_permission_authorization("product.dot", &canonical)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&mixed
+			),
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&canonical
+			)
 		);
 	}
 
@@ -2359,16 +2544,23 @@ mod tests {
 				domains: vec!["x".into(), "y".into(), "z".into()],
 			},
 		};
-		let injecting_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting);
-		let benign_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &benign_same_set);
+		let injecting_key = CoreStorageKey::remote_permission_authorization(
+			&ProductId::for_test("product.dot"),
+			&injecting,
+		);
+		let benign_key = CoreStorageKey::remote_permission_authorization(
+			&ProductId::for_test("product.dot"),
+			&benign_same_set,
+		);
 		assert_ne!(injecting_key, benign_key);
 
 		let webrtc = RemotePermissionRequest { permission: RemotePermission::WebRtc };
 		assert_ne!(
 			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &webrtc)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&webrtc
+			)
 		);
 
 		let injecting_reordered = RemotePermissionRequest {
@@ -2378,7 +2570,10 @@ mod tests {
 		};
 		assert_eq!(
 			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&injecting_reordered
+			)
 		);
 	}
 
@@ -2411,7 +2606,7 @@ mod tests {
 /// they accumulate for the life of the install.
 ///
 /// [`describe_core_storage_key`] names the product owning a slot:
-/// [`CoreStorageKeyDescription::product_id`] is `Some` exactly for the
+/// [`CoreStorageKeyDescription::owner`] names a full product for the
 /// product-indexed variants, which are `PermissionAuthorization`,
 /// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.

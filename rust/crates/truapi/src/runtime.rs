@@ -378,7 +378,7 @@ impl ProductConnection {
 	}
 
 	/// Trusted executable kind attached to this product connection.
-	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
+	pub fn execution_kind(&self) -> crate::platform::ExecutableKind {
 		self.product.execution_kind
 	}
 
@@ -631,7 +631,7 @@ impl ProductConnection {
 	}
 
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
 		{
 			return Err(CallError::Denied);

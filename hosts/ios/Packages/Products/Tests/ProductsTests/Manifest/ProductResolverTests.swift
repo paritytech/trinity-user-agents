@@ -1,81 +1,44 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 struct ProductResolverTests {
     @Test func fallsBackToALegacyAppWhenNoRootManifestIsPublished() async throws {
-        let resolved = try await makeResolver(StubDotNsResolver()).resolve("hackm3.dot")
+        let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
 
         #expect(!resolved.hasManifest)
         #expect(resolved.displayName == "hackm3.dot")
         #expect(resolved.icon == nil)
-        #expect(resolved.executables.app?.identifier == "hackm3.dot")
+        #expect(resolved.executables.app?.identifier.rawValue == "hackm3.dot")
         #expect(resolved.executables.worker == nil)
-        #expect(resolved.appContentId == "hackm3.dot")
+        #expect(resolved.appContentId.rawValue == "hackm3.dot")
     }
 
-    @Test(arguments: ["6E3F0A1C-2B4D", "hackm3", "hackm3.com", ""])
-    func neverAsksTheChainAboutAnIdThatCannotBeAName(_ productId: ProductId) async throws {
+    @Test func propagatesUnavailableNetworkBeforeReadingRecords() async throws {
         let stub = StubDotNsResolver()
-
-        let resolved = try await makeResolver(stub).resolve(productId)
-
-        #expect(stub.readCount == 0)
-        #expect(!resolved.hasManifest)
-        #expect(resolved.executables.worker == nil)
-    }
-
-    /// A mirror-hosted link resolves the same product as the canonical one, so no caller has to
-    /// canonicalise before asking and the cache cannot end up with two entries for one product.
-    @Test(arguments: ["hackm3.dot.li", "HackM3.DOT", "worker.hackm3.dot", "app.hackm3.dot"])
-    func resolvesEveryFormOfANameToOneProduct(_ productId: ProductId) async throws {
-        let stub = StubDotNsResolver()
-        stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
-        stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
-
-        let resolved = try await makeResolver(stub).resolve(productId)
-
-        #expect(resolved.id == "hackm3.dot")
-        #expect(resolved.displayName == "HackM3")
-        #expect(resolved.appContentId == "app.hackm3.dot")
-    }
-
-    /// The kind prefix still comes off when the TLD cannot be read, so an offline subname does not
-    /// become a product id of its own.
-    @Test func stripsTheKindPrefixEvenWhenTheNameCannotBeResolved() async throws {
         let resolver = ProductResolver(
-            dotNsResolver: StubDotNsResolver(),
+            dotNsResolver: stub,
             hostProvider: ProductHostFactory(tldProvider: FailingTldProvider()),
             logger: SilentLogger(),
             screening: .passingThrough
         )
 
-        let resolved = try await resolver.resolve("worker.hackm3.dot")
-
-        #expect(resolved.id == "hackm3.dot")
-        #expect(!resolved.hasManifest)
-    }
-
-    /// A hand-installed id is not a network name, so it round-trips byte-exact — the case-sensitive
-    /// script storage a debug bot's worker is read from, and the chat extension id, are keyed on it verbatim.
-    @Test func preservesTheExactCaseOfANonNameThatCannotBeResolved() async throws {
-        let stub = StubDotNsResolver()
-
-        let resolved = try await makeResolver(stub).resolve("E621E1F8-C36C-495A-93FC-0C247A3E6E5F")
-
+        await #expect(throws: FailingTldProvider.Unreachable.self) {
+            try await resolver.resolve(ProductId("worker.hackm3.dot"))
+        }
         #expect(stub.readCount == 0)
-        #expect(resolved.id == "E621E1F8-C36C-495A-93FC-0C247A3E6E5F")
-        #expect(!resolved.hasManifest)
     }
 
-    /// A mirror carries the root it mirrors, so a name under another root is a different product
-    /// rather than an alias of this one.
-    @Test func keepsAMirrorHostOnItsOwnRoot() async throws {
+    @Test(arguments: ["hackm3.paseo", "worker.hackm3.paseo", "localhost:3000"])
+    func rejectsProductsOutsideTheNetworkBeforeReadingRecords(_ input: String) async throws {
         let stub = StubDotNsResolver()
+        let resolver = makeResolver(stub)
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.paseo.li")
-
-        #expect(resolved.id == "hackm3.paseo")
+        await #expect(throws: ProductResolutionError.self) {
+            try await resolver.resolve(ProductId(input))
+        }
+        #expect(stub.readCount == 0)
     }
 
     @Test func readsMetadataAndEveryPublishedExecutable() async throws {
@@ -84,13 +47,13 @@ struct ProductResolverTests {
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set(Fixtures.worker, name: "worker.hackm3.dot", key: "executable")
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.hasManifest)
         #expect(resolved.displayName == "HackM3")
         #expect(resolved.description == "A hackathon product")
         #expect(resolved.icon?.cid == "bafyicon")
-        #expect(resolved.appContentId == "app.hackm3.dot")
+        #expect(resolved.appContentId.rawValue == "app.hackm3.dot")
         #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
     }
 
@@ -103,10 +66,10 @@ struct ProductResolverTests {
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.executables.widget?.identifier == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
+        #expect(resolved.executables.widget?.identifier.rawValue == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
     }
 
     /// A product that publishes no executable of a kind is served from its base
@@ -114,11 +77,11 @@ struct ProductResolverTests {
     /// both live. Every caller asking which archive backs a surface has to get
     /// the same answer.
     @Test func servesAnUnpublishedKindFromTheBaseName() async throws {
-        let resolved = try await makeResolver(StubDotNsResolver()).resolve("hackm3.dot")
+        let resolved = try await makeResolver(StubDotNsResolver()).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app) == "hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "hackm3.dot")
-        #expect(resolved.contentId(for: .worker) == "hackm3.dot")
+        #expect(resolved.contentId(for: .app).rawValue == "hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "hackm3.dot")
+        #expect(resolved.contentId(for: .worker).rawValue == "hackm3.dot")
     }
 
     @Test func servesEachPublishedKindFromItsOwnSubname() async throws {
@@ -128,11 +91,11 @@ struct ProductResolverTests {
         stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
         stub.set(Fixtures.worker, name: "worker.hackm3.dot", key: "executable")
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
-        #expect(resolved.contentId(for: .app) == "app.hackm3.dot")
-        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
-        #expect(resolved.contentId(for: .worker) == "worker.hackm3.dot")
+        #expect(resolved.contentId(for: .app).rawValue == "app.hackm3.dot")
+        #expect(resolved.contentId(for: .widget).rawValue == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .worker).rawValue == "worker.hackm3.dot")
     }
 
     @Test func skipsAMalformedExecutableWithoutLosingItsSiblings() async throws {
@@ -141,7 +104,7 @@ struct ProductResolverTests {
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
         stub.set("{ not json", name: "worker.hackm3.dot", key: "executable")
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.executables.app != nil)
         #expect(resolved.executables.worker == nil)
@@ -154,7 +117,7 @@ struct ProductResolverTests {
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.workerWithMalformedPocket, name: "worker.hackm3.dot", key: "executable")
 
-        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.executables.worker?.serves(.chat) == true)
         #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
@@ -166,7 +129,7 @@ struct ProductResolverTests {
         stub.set(#"{"$v":9,"displayName":"x"}"#, name: "hackm3.dot", key: "manifest")
 
         await #expect(throws: ProductResolutionError.self) {
-            try await makeResolver(stub).resolve("hackm3.dot")
+            try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
         }
     }
 
@@ -174,9 +137,9 @@ struct ProductResolverTests {
         let stub = StubDotNsResolver()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
-        let resolved = try await makeResolver(stub).resolve("WORKER.HackM3.dot")
+        let resolved = try await makeResolver(stub).resolve(ProductId("worker.hackm3.dot"))
 
-        #expect(resolved.id == "hackm3.dot")
+        #expect(resolved.id.rawValue == "hackm3.dot")
         #expect(resolved.displayName == "HackM3")
     }
 
@@ -185,10 +148,10 @@ struct ProductResolverTests {
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
         let resolver = makeResolver(stub)
-        _ = try await resolver.resolve("hackm3.dot")
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
         let readsAfterFirst = stub.readCount
 
-        _ = try await resolver.resolve("hackm3.dot")
+        _ = try await resolver.resolve(ProductId("hackm3.dot"))
 
         #expect(stub.readCount == readsAfterFirst)
     }
@@ -200,7 +163,7 @@ struct ProductResolverTests {
         stub.failingNames = ["app.hackm3.dot"]
 
         await #expect(throws: (any Error).self) {
-            try await makeResolver(stub).resolve("hackm3.dot")
+            try await makeResolver(stub).resolve(ProductId("hackm3.dot"))
         }
     }
 
@@ -210,12 +173,12 @@ struct ProductResolverTests {
         stub.readError = URLError(.notConnectedToInternet)
 
         let resolver = makeResolver(stub)
-        _ = try? await resolver.resolve("hackm3.dot")
+        _ = try? await resolver.resolve(ProductId("hackm3.dot"))
 
         stub.readError = nil
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
-        let resolved = try await resolver.resolve("hackm3.dot")
+        let resolved = try await resolver.resolve(ProductId("hackm3.dot"))
 
         #expect(resolved.displayName == "HackM3")
     }

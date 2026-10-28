@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
@@ -66,7 +67,7 @@ struct PublishedPocketCards: PublishedPocketCardsResolving {
 
         return PublishedPocketCard(
             productId: resolved?.id ?? productId,
-            productName: resolved?.displayName ?? productId,
+            productName: resolved?.displayName ?? productId.rawValue,
             workerContentId: resolved?.contentId(for: .worker) ?? productId,
             definition: definition
         )

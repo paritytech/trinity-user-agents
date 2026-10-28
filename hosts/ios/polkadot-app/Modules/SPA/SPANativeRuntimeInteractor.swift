@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -202,9 +203,9 @@ private extension SPANativeRuntimeInteractor {
             // is what permission grants and web storage are keyed by.
             let contentId = resolved.contentId(for: configuration.executable)
 
-            subscribeProgress(domain: contentId)
+            subscribeProgress(domain: contentId.rawValue)
 
-            let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+            let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
             let schemeHandler = makeSchemeHandler(
                 domain: domain,
                 contentURL: contentURL
@@ -252,7 +253,7 @@ private extension SPANativeRuntimeInteractor {
     }
 
     func makeSchemeHandler(
-        domain: String,
+        domain: ProductId,
         contentURL: URL
     ) -> ProductScriptSchemeHandler {
         let fileProvider = DotNsFileProvider(contentURL: contentURL)

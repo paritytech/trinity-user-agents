@@ -16,7 +16,7 @@ struct PocketCollectionUnreadable: Error {}
 /// tells a failure apart from an empty Pocket and a product does not ask again
 /// about a card it was told is gone.
 final class ProductPocketHostBridge: PocketHostBridge, @unchecked Sendable {
-    private let productId: String
+    private let productId: ProductId
     private let collection: any PocketCollection
     private let logger: LoggerProtocol
     private let snapshot = OSAllocatedUnfairLock(initialState: [PocketCard]?.none)
@@ -24,7 +24,7 @@ final class ProductPocketHostBridge: PocketHostBridge, @unchecked Sendable {
     private let following = OSAllocatedUnfairLock(initialState: Task<Void, Never>?.none)
     private let stopped = OSAllocatedUnfairLock(initialState: false)
 
-    init(productId: String, collection: any PocketCollection, logger: LoggerProtocol = Logger.shared) {
+    init(productId: ProductId, collection: any PocketCollection, logger: LoggerProtocol = Logger.shared) {
         self.productId = productId
         self.collection = collection
         self.logger = logger

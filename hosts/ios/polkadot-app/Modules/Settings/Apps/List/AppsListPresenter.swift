@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
@@ -27,7 +28,8 @@ extension AppsListPresenter: AppsListPresenterProtocol {
     }
 
     func selectApp(_ item: AppsListViewLayout.Item) {
-        wireframe.showAppDetail(productId: item.id, from: view)
+        guard let productId = try? ProductId(item.id) else { return }
+        wireframe.showAppDetail(productId: productId, from: view)
     }
 }
 

@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import androidx.lifecycle.SavedStateHandle
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
@@ -26,6 +25,7 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PermissionPromptCancellationTest {
@@ -33,7 +33,7 @@ class PermissionPromptCancellationTest {
     private val holder = PermissionContextHolder()
     private val router = PromptNavigation()
     private val requester = RealProductPermissionRequester(holder, router)
-    private val product = ProductId.fromStoredValue("product.paseo")
+    private val product = ProductId.parse("product.paseo").getOrThrow()
 
     @Before
     fun setUp() {

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import FoundationExt
 import Testing
@@ -10,8 +11,8 @@ import Products
 @MainActor
 @Suite("Product game reminder center")
 struct ProductGameReminderCenterTests {
-    private let productId = "game.dot"
-    private let other = "other.dot"
+    private let productId = try! ProductId("game.dot")
+    private let other = try! ProductId("other.dot")
     private let startsAt = Date(timeIntervalSince1970: 2_000_000_000)
 
     private func makeSUT(
@@ -243,13 +244,13 @@ struct ProductGameReminderCenterTests {
 }
 
 private extension ProductGameReminderCenter {
-    func schedule(productId: String, startsAt: Date, addCalendarEvent: Bool) async {
+    func schedule(productId: ProductId, startsAt: Date, addCalendarEvent: Bool) async {
         await schedule(productId: productId, startsAt: startsAt, ringAlarm: true, addCalendarEvent: addCalendarEvent)
     }
 }
 
 /// The reminder call the center makes for a product's start, which rings at the start itself.
-private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGameReminder.Call {
+private func reminderCall(_ startsAt: Date, _ productId: ProductId) -> RecordingGameReminder.Call {
     .init(gameDate: startsAt, productId: productId)
 }
 
@@ -258,28 +259,28 @@ private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGam
 private final class Fakes: @unchecked Sendable {
     var now: Date
     var applicationState: UIApplication.State = .active
-    var opened: [String] = []
+    var opened: [ProductId] = []
     let calendar = RecordingCalendar()
     private let alarmAvailable: Bool
-    private var alarms: [String: RecordingGameReminder] = [:]
-    private var notifications: [String: RecordingGameReminder] = [:]
+    private var alarms: [ProductId: RecordingGameReminder] = [:]
+    private var notifications: [ProductId: RecordingGameReminder] = [:]
 
     init(now: Date, alarmAvailable: Bool) {
         self.now = now
         self.alarmAvailable = alarmAvailable
     }
 
-    func alarm(for productId: String) -> RecordingGameReminder {
+    func alarm(for productId: ProductId) -> RecordingGameReminder {
         reminder(in: &alarms, for: productId)
     }
 
-    func notification(for productId: String) -> RecordingGameReminder {
+    func notification(for productId: ProductId) -> RecordingGameReminder {
         reminder(in: &notifications, for: productId)
     }
 
     private func reminder(
-        in store: inout [String: RecordingGameReminder],
-        for productId: String
+        in store: inout [ProductId: RecordingGameReminder],
+        for productId: ProductId
     ) -> RecordingGameReminder {
         if let reminder = store[productId] {
             return reminder
@@ -291,11 +292,11 @@ private final class Fakes: @unchecked Sendable {
 }
 
 extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, ProductOpening, CurrentDateProviding {
-    func makeAlarm(for productId: String) -> (any GameStartReminderServicing)? {
+    func makeAlarm(for productId: ProductId) -> (any GameStartReminderServicing)? {
         alarmAvailable ? alarm(for: productId) : nil
     }
 
-    func makeNotification(for productId: String) -> any GameStartReminderServicing {
+    func makeNotification(for productId: ProductId) -> any GameStartReminderServicing {
         notification(for: productId)
     }
 
@@ -303,7 +304,7 @@ extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, P
         calendar
     }
 
-    func open(productId: String) {
+    func open(productId: ProductId) {
         opened.append(productId)
     }
 }

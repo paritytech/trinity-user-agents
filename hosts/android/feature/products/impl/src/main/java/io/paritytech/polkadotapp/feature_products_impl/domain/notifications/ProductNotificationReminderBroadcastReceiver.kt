@@ -5,9 +5,9 @@ import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.utils.launchAsyncJob
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductNotificationPublisher
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -32,7 +32,7 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
         if (!intent.hasExtra(EXTRA_NOTIFICATION_ID)) return
         val notificationIdValue = intent.getIntExtra(EXTRA_NOTIFICATION_ID, 0)
 
-        val productId = ProductId.fromStoredValue(productIdValue)
+        val productId = ProductId.parse(productIdValue).getOrNull() ?: return
         val notificationId = NotificationId(notificationIdValue)
 
         launchAsyncJob {

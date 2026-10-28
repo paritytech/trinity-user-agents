@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BulletinChain
 import Foundation
 import Products

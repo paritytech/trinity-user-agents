@@ -18,7 +18,7 @@ extension AppsListViewModelFactory: AppsListViewModelMaking {
     func createItems(from products: [ResolvedProduct]) -> [AppsListViewLayout.Item] {
         products.map { product in
             AppsListViewLayout.Item(
-                id: product.id,
+                id: product.id.rawValue,
                 name: product.displayName,
                 subtitle: product.domainSubtitle,
                 avatar: product.placeholderAvatar,

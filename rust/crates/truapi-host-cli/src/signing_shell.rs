@@ -1043,7 +1043,7 @@ mod tests {
 		assert_eq!(
 			parse_command("/product example.com"),
 			Err(CommandParseError::Product(ProductIdError::Invalid {
-				product_id: "example.com".to_string()
+				input: "example.com".to_string()
 			}))
 		);
 		assert_eq!(

@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("NetworkAccessPermissionHandler Tests")
 struct NetworkAccessPermissionHandlerTests {
-    private let productId = "test-product"
+    private let productId = try! ProductId("test-product.dot")
 
     private func makeSUT(
         promptDecision: PermissionDecision = .allowAlways

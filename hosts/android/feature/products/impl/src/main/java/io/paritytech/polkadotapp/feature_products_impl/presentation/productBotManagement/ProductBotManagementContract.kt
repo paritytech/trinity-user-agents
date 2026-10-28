@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface ProductBotManagementContract {
     val state: StateFlow<ProductBotManagementState>
@@ -12,9 +12,9 @@ interface ProductBotManagementContract {
 
     fun onProductClick(productId: ProductId)
 
-    fun onEditProductClick(productId: String)
+    fun onEditProductClick(productId: ProductId)
 
-    fun onDeleteProductClick(productId: String)
+    fun onDeleteProductClick(productId: ProductId)
 
     fun onDialogDismiss()
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import ChainRegistry
 import Individuality
@@ -96,19 +97,22 @@ private extension APPersonhoodHandlerFactory {
 
     // Priority order: the full-person ("PoP") key first, then lite.
     func makeOptions() -> [CreateProofOrAliasOption] {
-        guard let tld = try? tldProvider.currentTldOrError() else {
-            logger.error("Personhood options unavailable: DotNs TLD not resolved")
+        guard let tld = try? tldProvider.currentTldOrError(),
+              let fullKeyManager = try? BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager),
+              let liteKeyManager = try? BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager)
+        else {
+            logger.error("Personhood options unavailable: DotNs product identity not resolved")
             return []
         }
 
         return [
             CreateProofOrAliasOption(
                 collectionId: PeoplePallet.membersIdentifier,
-                keyManager: BandersnatchKeyManager.fullPerson(for: tld, entropyManager: entropyManager)
+                keyManager: fullKeyManager
             ),
             CreateProofOrAliasOption(
                 collectionId: PeopleLitePallet.membersIdentifier,
-                keyManager: BandersnatchKeyManager.litePerson(for: tld, entropyManager: entropyManager)
+                keyManager: liteKeyManager
             )
         ]
     }

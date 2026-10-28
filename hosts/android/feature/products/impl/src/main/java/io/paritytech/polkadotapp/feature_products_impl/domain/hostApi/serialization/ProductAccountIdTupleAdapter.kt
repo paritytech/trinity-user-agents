@@ -8,6 +8,7 @@ import com.google.gson.JsonPrimitive
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
+import uniffi.truapi.ProductId
 import java.lang.reflect.Type
 
 class ProductAccountIdTupleAdapter : JsonSerializer<ProductAccountId>, JsonDeserializer<ProductAccountId> {
@@ -15,7 +16,7 @@ class ProductAccountIdTupleAdapter : JsonSerializer<ProductAccountId>, JsonDeser
 
     override fun serialize(src: ProductAccountId, typeOfSrc: Type, context: JsonSerializationContext): JsonElement {
         return JsonArray().apply {
-            add(JsonPrimitive(src.productId))
+            add(JsonPrimitive(src.productId.value))
             add(indexAdapter.serialize(src.index.toWire(), DerivationIndexWire::class.java, context))
         }
     }
@@ -28,7 +29,7 @@ class ProductAccountIdTupleAdapter : JsonSerializer<ProductAccountId>, JsonDeser
         val index = indexAdapter.deserialize(json[1], DerivationIndexWire::class.java, context)
 
         return ProductAccountId(
-            productId = json[0].asString,
+            productId = ProductId.parse(json[0].asString).getOrThrow(),
             index = index.toDomain().getOrThrow(),
         )
     }

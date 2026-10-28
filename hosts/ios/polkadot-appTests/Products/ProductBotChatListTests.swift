@@ -30,7 +30,7 @@ struct ProductBotChatListTests {
     func theRowIconIsTheProductManifestIcon() {
         let bot = makeBot(description: nil)
 
-        #expect(bot.peerMetadata.icon == .product(domain: "dim2.paseo"))
+        #expect(bot.peerMetadata.icon == .product(domain: try! ProductId("dim2.paseo")))
     }
 
     /// The sender describes each card, so the row says what this one shows rather than what the product is.
@@ -48,16 +48,16 @@ struct ProductBotChatListTests {
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
 
-        #expect(Chat.PeerMetadata.Icon.product(domain: "dim2.paseo").imageViewModel(using: iconFactory) != nil)
+        #expect(Chat.PeerMetadata.Icon.product(domain: try! ProductId("dim2.paseo")).imageViewModel(using: iconFactory) != nil)
         #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(using: iconFactory) == nil)
-        #expect(iconFactory.requestedDomains == ["dim2.paseo"])
+        #expect(iconFactory.requestedDomains == [try! ProductId("dim2.paseo")])
     }
 }
 
 private extension ProductBotChatListTests {
     func makeBot(description: String?) -> ProductBot {
         ProductBot(
-            product: Product(id: "dim2.paseo", name: "Jollity"),
+            product: Product(id: try! ProductId("dim2.paseo"), name: "Jollity"),
             description: description,
             runtime: IdleChatRuntime(),
             resolveImage: WidgetImageResolver { _ in nil }
@@ -66,11 +66,11 @@ private extension ProductBotChatListTests {
 
     func chatListPreview(alt: String?) throws -> String? {
         let bot = makeBot(description: "Play the weekly game with friends")
-        let chatId = Chat.Id.chatExtension(bot.product.id)
+        let chatId = Chat.Id.chatExtension(bot.product.id.rawValue)
         let message = Chat.LocalMessage(
             messageId: "results",
             chatId: chatId,
-            origin: .chatExtension(bot.product.id),
+            origin: .chatExtension(bot.product.id.rawValue),
             creationSource: .localDevice,
             status: .incoming(.seen),
             timestamp: 0,
@@ -87,7 +87,7 @@ private extension ProductBotChatListTests {
             relatedMessages: []
         )
         let chat = Chat.LocalModel(
-            peer: .chatExtension(bot.product.id),
+            peer: .chatExtension(bot.product.id.rawValue),
             message: message,
             unreadDisplayMessageCount: 0,
             hasIncomingReaction: false,
@@ -127,9 +127,9 @@ private struct FixedChatMessageDecoderFactory: ChatMessageDecoderMaking {
 }
 
 private final class RecordingProductIconViewModelFactory: ProductIconViewModelMaking {
-    private(set) var requestedDomains: [String] = []
+    private(set) var requestedDomains: [ProductId] = []
 
-    func createViewModel(for domain: String) -> any ImageViewModelProtocol {
+    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol {
         requestedDomains.append(domain)
         return StaticImageViewModel(image: nil)
     }

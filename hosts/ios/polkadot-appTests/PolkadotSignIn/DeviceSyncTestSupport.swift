@@ -7,6 +7,8 @@ import MessageExchangeKit
 import Operation_iOS
 import SubstrateSdk
 
+private let ownSignKeyId = try! WalletDerivationPath.main(for: "dot")
+
 extension DeviceSyncExchangeTests {
     func makeSession(
         peerAccountId: Data,
@@ -38,7 +40,7 @@ extension DeviceSyncExchangeTests {
                 outgoingUpdateTimeRepositoryFactory: outgoingUpdateTimeRepositoryFactory,
                 contactDataProviderFactory: MockChatContactDataProviderFactory(),
                 messageDataProviderFactory: MockChatMessageDataProviderFactory(),
-                ownSignKeyIds: [WalletDerivationPath.main(for: "dot")],
+                ownSignKeyIds: [ownSignKeyId],
                 contactsStorageService: ContactsLocalStorageService(
                     storageFacade: storageFacade,
                     logger: MockLogger()

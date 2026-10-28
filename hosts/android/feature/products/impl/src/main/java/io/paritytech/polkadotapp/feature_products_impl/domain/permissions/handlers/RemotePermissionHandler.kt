@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class RemotePermissionHandler @Inject constructor(

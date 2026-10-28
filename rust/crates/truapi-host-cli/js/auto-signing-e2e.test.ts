@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
+import { asProductId, type TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import {
   ALLOCATION_APPROVAL_ACTION,
   VRF_APPROVAL_ACTION,
@@ -45,7 +45,7 @@ describe("AutoSigning e2e approvals transcript", () => {
   test("skips without touching the client when the transcript is not wired", async () => {
     const row = await runAutoSigningE2e(
       undefined as unknown as TrUApiClient,
-      "truapi-playground.dot",
+      asProductId("truapi-playground.dot"),
       undefined,
     );
     expect(row.status).toBe("skipped");

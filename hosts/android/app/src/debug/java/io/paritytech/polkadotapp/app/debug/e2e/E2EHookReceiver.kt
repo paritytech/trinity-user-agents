@@ -12,7 +12,6 @@ import io.paritytech.polkadotapp.feature_backup_impl.ManualMnemonicInteractor
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2EAcks
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2ERuntimeMarkers
@@ -25,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductId
 
 /**
  * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, and posts a
@@ -66,7 +66,7 @@ class E2EHookReceiver : BroadcastReceiver() {
             seedIdentity(hooks, username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME)
         }
 
-        val productId = intent.stringExtra(EXTRA_PRODUCT_ID)?.let(ProductId::fromStoredValue)
+        val productId = intent.stringExtra(EXTRA_PRODUCT_ID)?.let { ProductId.parse(it).getOrNull() }
         val message = intent.stringExtra(EXTRA_MESSAGE)
 
         val workerUrl = intent.stringExtra(EXTRA_WORKER_URL)
@@ -88,7 +88,7 @@ class E2EHookReceiver : BroadcastReceiver() {
         val chatId = ChatId.forExtensionRoom(productId.toChatExtensionId(), roomId)
         runCatching { hooks.chatMessageSender().sendUserMessage(chatId = chatId, content = ChatMessage.Content.Text(text)) }
             .fold(
-                onSuccess = { log(E2EAcks.messageSent(productId.value, roomId)) },
+                onSuccess = { log(E2EAcks.messageSent(productId, roomId)) },
                 onFailure = { logError("message", it) },
             )
     }
@@ -107,7 +107,7 @@ class E2EHookReceiver : BroadcastReceiver() {
 
     private suspend fun registerProduct(hooks: Hooks, productId: ProductId, workerUrl: String, name: String) {
         hooks.productBotManagementInteractor().upsertProduct(productId, workerUrl, name, card = null, appUrl = null).fold(
-            onSuccess = { log(E2EAcks.productRegistered(productId.value)) },
+            onSuccess = { log(E2EAcks.productRegistered(productId)) },
             onFailure = { logError("product", it) }
         )
     }

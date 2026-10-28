@@ -4,16 +4,16 @@ import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.ProductProofContext
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class ProductProofContextTest {
     @Test
     fun `context bytes match the RFC-0004 test vector`() {
         val context = ProductProofContext(
-            productId = ProductId.fromStoredValue("voting.dot"),
+            productId = ProductId.parse("voting.dot").getOrThrow(),
             suffix = DerivationIndex32.fromUInt(0u),
         )
 
@@ -26,15 +26,15 @@ class ProductProofContextTest {
     @Test
     fun `different products yield different contexts for the same suffix`() {
         val suffix = DerivationIndex32.fromUInt(0u)
-        val a = ProductProofContext(ProductId.fromStoredValue("a.dot"), suffix).productContextBytes()
-        val b = ProductProofContext(ProductId.fromStoredValue("b.dot"), suffix).productContextBytes()
+        val a = ProductProofContext(ProductId.parse("a.dot").getOrThrow(), suffix).productContextBytes()
+        val b = ProductProofContext(ProductId.parse("b.dot").getOrThrow(), suffix).productContextBytes()
 
         assertFalse(a.value.contentEquals(b.value))
     }
 
     @Test
     fun `different suffixes yield different contexts for the same product`() {
-        val productId = ProductId.fromStoredValue("a.dot")
+        val productId = ProductId.parse("a.dot").getOrThrow()
         val first = ProductProofContext(productId, DerivationIndex32.fromUInt(0u)).productContextBytes()
         val second = ProductProofContext(productId, DerivationIndex32.fromUInt(1u)).productContextBytes()
 
@@ -43,7 +43,7 @@ class ProductProofContextTest {
 
     @Test
     fun `plain and raw selectors share one context space`() {
-        val productId = ProductId.fromStoredValue("a.dot")
+        val productId = ProductId.parse("a.dot").getOrThrow()
         val plain = DerivationIndex32.fromUInt(3u)
         val raw = DerivationIndex32.fromBytes(plain.bytes.value.toDataByteArray()).getOrThrow()
 

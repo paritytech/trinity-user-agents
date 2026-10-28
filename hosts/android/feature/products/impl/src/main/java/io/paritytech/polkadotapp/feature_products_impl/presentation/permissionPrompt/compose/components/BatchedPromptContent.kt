@@ -22,11 +22,12 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPr
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.shortLabel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 internal fun BatchedPromptContent(
-    productId: String,
+    productId: ProductId,
     permissions: ImmutableList<RemotePermission>,
 ) {
     NovaText(
@@ -85,7 +86,7 @@ private fun BatchedPromptContentPreview() {
     PolkadotTheme {
         Column {
             BatchedPromptContent(
-                productId = "alice.dot",
+                productId = ProductId.parse("alice.dot").getOrThrow(),
                 permissions = persistentListOf(
                     RemotePermission.NetworkAccess(domain = "example.com"),
                     RemotePermission.WebRtcAccess,

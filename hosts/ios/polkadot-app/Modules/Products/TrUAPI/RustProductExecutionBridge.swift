@@ -142,11 +142,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId.rawValue)
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirmPermission(
+            review: review,
+            from: dependencies.productId.rawValue
+        )
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -318,7 +321,7 @@ extension RemotePermission {
 
 extension NftPurseOwner {
     /// The owning product, or `nil` for purses of the user's own account.
-    var productId: String? {
+    var productId: ProductId? {
         switch self {
         case let .product(productId): productId
         case .root: nil

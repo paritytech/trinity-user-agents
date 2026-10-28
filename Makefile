@@ -142,7 +142,7 @@ wasm: check-generated ## Rebuild the truapi runtime and truapi-provider WASM bun
 	cd $(PROVIDER_WASM_PKG) && npm run build
 
 wasm-crypto-test: ## Run crypto/vector tests on wasm32 via wasm-pack/node.
-	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features runtime
+	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features mock
 
 dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 	cd $(DOTLI) && TRUAPI_REPO="$(CURDIR)" bun run link:truapi

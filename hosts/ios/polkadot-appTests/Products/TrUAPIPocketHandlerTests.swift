@@ -31,10 +31,10 @@ struct TrUAPIPocketHandlerTests {
         // Subscribed before anything is published, so the count of deliveries
         // below starts from the empty map the handler opens with.
         try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
-        workers.publish(["game.paseo": execution])
+        workers.publish([try! ProductId("game.paseo"): execution])
         try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
-        workers.publish(["game.paseo": execution, "shop.paseo": MockProductExecution()])
-        workers.publish(["game.paseo": execution])
+        workers.publish([try! ProductId("game.paseo"): execution, try! ProductId("shop.paseo"): MockProductExecution()])
+        workers.publish([try! ProductId("game.paseo"): execution])
         // The last republish arriving means the one before it has been handled.
         for _ in 0 ..< 3 {
             try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
@@ -60,12 +60,12 @@ struct TrUAPIPocketHandlerTests {
         let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
         defer { drawing.cancel() }
 
-        workers.publish(["game.paseo": first])
+        workers.publish([try! ProductId("game.paseo"): first])
         try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
 
         let replacement = MockProductExecution()
         replacement.keepsRenderStreamOpen = true
-        workers.publish(["game.paseo": replacement])
+        workers.publish([try! ProductId("game.paseo"): replacement])
         try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
@@ -74,8 +74,8 @@ struct TrUAPIPocketHandlerTests {
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
 private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
-    TrUAPIPocketHandler(productId: "game.paseo", workers: workers)
+    TrUAPIPocketHandler(productId: try! ProductId("game.paseo"), workers: workers)
 }

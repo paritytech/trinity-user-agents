@@ -120,7 +120,7 @@ fn a_product_lists_the_purse_it_created_without_a_prompt() {
 	let (_dir, host) = nft_host(platform.clone(), true);
 
 	let created = create(&host, "Tickets");
-	let own = list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned()));
+	let own = list(&host, v01::NftPurseOwner::Product(ProductId::for_test(PRODUCT)));
 
 	let response = v01::HostNftPurseCreatePurseResponse { purse: v01::NftPurseId(0) };
 	assert_eq!(created, Ok(HostNftPurseCreatePurseResponse::V1(response)));
@@ -162,7 +162,7 @@ fn another_product_without_purses_lists_none() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
-		list(&host, v01::NftPurseOwner::Product("other.dot".to_owned())),
+		list(&host, v01::NftPurseOwner::Product(ProductId::for_test("other.dot"))),
 		Ok(listed(vec![]))
 	);
 }
@@ -189,26 +189,17 @@ fn purses_need_a_paired_session() {
 
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Denied));
 	assert_eq!(
-		list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned())),
+		list(&host, v01::NftPurseOwner::Product(ProductId::for_test(PRODUCT))),
 		Err(CallError::Denied)
 	);
 	assert_eq!(create_items(&host, PurseId::MAIN.0, 1), Err(CallError::Denied));
 	assert_eq!(query(&host, PurseId::MAIN.0, 1), Err(CallError::Denied));
 }
 
-// The empty product id shares Root's empty tag, so naming it must fail before
-// any prompt rather than show Root's purses under a blank owner. Like any
-// product id a product sends that does not parse, it is a malformed request.
 #[test]
-fn an_empty_product_owner_is_refused_without_a_prompt() {
-	let platform = Arc::new(StubPlatform::default());
-	let (_dir, host) = nft_host(platform.clone(), true);
-
-	let refused = list(&host, v01::NftPurseOwner::Product(String::new()));
-
-	let reason = "product_id must not be empty".to_owned();
-	assert_eq!(refused, Err(CallError::MalformedFrame { reason }));
-	assert_eq!(requested_permissions(&platform), vec![]);
+fn an_empty_product_owner_cannot_decode_as_a_purse_request() {
+	let frame = (0u8, 0u8, "").encode();
+	assert!(HostNftPurseListPursesRequest::decode(&mut frame.as_slice()).is_err());
 }
 
 // A host that configured no core database has nowhere to keep purses.

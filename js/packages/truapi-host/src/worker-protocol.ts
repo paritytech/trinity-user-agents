@@ -29,6 +29,7 @@
 // views into WASM memory) and frames are small, so the copy is the simpler
 // safe choice.
 
+import type { ProductId } from "@parity/truapi";
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
 import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
 import type {
@@ -86,11 +87,12 @@ export type MainToWorker =
   | { kind: "setLogLevel"; level: LogLevel }
   | { kind: "frame"; coreId: number; bytes: Uint8Array }
   | { kind: "disconnectSession"; requestId: number }
+  | { kind: "parseProductId"; requestId: number; value: string }
   | { kind: "cancelPairing" }
   | { kind: "notifySessionStoreChanged" }
   | { kind: "notifyContactsChanged" }
-  | { kind: "acquireWorker"; productId: string }
-  | { kind: "releaseWorker"; productId: string }
+  | { kind: "acquireWorker"; productId: ProductId }
+  | { kind: "releaseWorker"; productId: ProductId }
   | { kind: "activateStoredSession"; requestId: number }
   | { kind: "activateExternalSession"; requestId: number; blob: Uint8Array }
   /**
@@ -129,19 +131,19 @@ export type MainToWorker =
   | { kind: "resetSessionState"; requestId: number }
   | {
       kind: "getPermissionAuthorizationStatus";
-      productId: string;
+      productId: ProductId;
       requestId: number;
       request: Uint8Array;
     }
   | {
       kind: "getPermissionAuthorizationStatuses";
-      productId: string;
+      productId: ProductId;
       requestId: number;
       requests: Uint8Array[];
     }
   | {
       kind: "setPermissionAuthorizationStatus";
-      productId: string;
+      productId: ProductId;
       requestId: number;
       request: Uint8Array;
       status: PermissionAuthorizationStatus;
@@ -152,7 +154,7 @@ export type MainToWorker =
   | {
       kind: "getProductSubtreePublicKey";
       requestId: number;
-      productId: string;
+      productId: ProductId;
       timeoutMs: number | undefined;
     }
   | {
@@ -321,7 +323,19 @@ export type WorkerToMain =
    * Demand on one product's worker crossed zero. Posted in ledger order, so
    * the latest message for a product is its current level.
    */
-  | { kind: "workerDemandChanged"; productId: string; wanted: boolean }
+  | { kind: "workerDemandChanged"; productId: ProductId; wanted: boolean }
+  | {
+      kind: "parseProductIdResponse";
+      requestId: number;
+      ok: true;
+      value: ProductId;
+    }
+  | {
+      kind: "parseProductIdResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
   | { kind: "publishRendererActionResponse"; requestId: number; ok: true }
   | {
       kind: "publishRendererActionResponse";

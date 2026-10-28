@@ -4,8 +4,8 @@ package io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotificati
 
 import io.paritytech.polkadotapp.database.dao.ScheduledProductNotificationDao
 import io.paritytech.polkadotapp.database.model.ScheduledProductNotificationLocal
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.ExperimentalTime
@@ -43,7 +43,7 @@ class RealScheduledProductNotificationRepository @Inject constructor(
         productId: ProductId,
         notificationId: NotificationId,
     ): ScheduledProductNotification? {
-        return dao.find(productId.value, notificationId.value)?.toDomain()
+        return dao.find(productId, notificationId.value)?.toDomain()
     }
 
     override suspend fun countAll(): Int {
@@ -51,20 +51,20 @@ class RealScheduledProductNotificationRepository @Inject constructor(
     }
 
     override suspend fun exists(productId: ProductId, notificationId: NotificationId): Boolean {
-        return dao.exists(productId.value, notificationId.value)
+        return dao.exists(productId, notificationId.value)
     }
 
     override suspend fun delete(productId: ProductId, notificationId: NotificationId) {
-        dao.delete(productId.value, notificationId.value)
+        dao.delete(productId, notificationId.value)
     }
 
     override suspend fun deleteAllByProduct(productId: ProductId) {
-        dao.deleteAllByProduct(productId.value)
+        dao.deleteAllByProduct(productId)
     }
 
     private fun ScheduledProductNotification.toLocal(): ScheduledProductNotificationLocal {
         return ScheduledProductNotificationLocal(
-            productId = productId.value,
+            productId = productId,
             notificationId = notificationId.value,
             text = text,
             deeplink = deeplink,
@@ -74,7 +74,7 @@ class RealScheduledProductNotificationRepository @Inject constructor(
 
     private fun ScheduledProductNotificationLocal.toDomain(): ScheduledProductNotification {
         return ScheduledProductNotification(
-            productId = ProductId.fromStoredValue(productId),
+            productId = productId,
             notificationId = NotificationId(notificationId),
             text = text,
             deeplink = deeplink,

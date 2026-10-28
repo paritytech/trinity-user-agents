@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import StructuredConcurrency
@@ -10,7 +11,7 @@ struct PublishedPocketCardsTests {
     func findsACardTheWorkerPublishes() async throws {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
-        let found = try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition == loyalty)
         #expect(found.productName == "Game")
@@ -22,20 +23,9 @@ struct PublishedPocketCardsTests {
     func namesTheWorkerArchiveTheFaceIsReadFrom() async throws {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
-        let found = try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
-        #expect(found.workerContentId == "worker.game.paseo")
-    }
-
-    /// A deeplink may name the product in any casing dotNS accepts, and the
-    /// collection is keyed by one id only, the one the resolver settled on.
-    @Test
-    func keysTheCardByTheResolvedProductIdRatherThanTheOneAskedFor() async throws {
-        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
-
-        let found = try await cards.find(productId: "GAME.paseo", cardId: PocketCardId(value: "loyalty"))
-
-        #expect(found.productId == "game.paseo")
+        #expect(found.workerContentId.rawValue == "worker.game.paseo")
     }
 
     @Test
@@ -43,7 +33,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: nil))
 
         await #expect(throws: PocketPublishError.noPocket) {
-            try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -52,7 +42,7 @@ struct PublishedPocketCardsTests {
     @Test
     func refusesAWorkerThatDeclaresNoPocket() async {
         let worker = ProductExecutable.Worker(
-            identifier: "worker.game.paseo",
+            identifier: try! ProductId("worker.game.paseo"),
             appVersion: .zero,
             entrypoint: "worker.js",
             modalities: [.chat]
@@ -60,7 +50,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: worker))
 
         await #expect(throws: PocketPublishError.noPocket) {
-            try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -76,7 +66,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .archive(path: "faces/loyalty.json"))
     }
@@ -90,7 +80,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .url("http://127.0.0.1:5173/pocket/devicehood.json"))
     }
@@ -101,13 +91,13 @@ struct PublishedPocketCardsTests {
     /// Left transient, the card asks the chain again every thirty seconds for
     /// as long as it is on screen, and never draws.
     @Test
-    func refusesAProductWhoseManifestCannotBeRead() async {
+    func refusesAProductWhoseManifestCannotBeRead() async throws {
         let cards = PublishedPocketCards(products: StubProductResolver(
-            alwaysFailing: ProductResolutionError.malformedManifest("game.paseo")
+            alwaysFailing: ProductResolutionError.malformedManifest(try ProductId("game.paseo"))
         ))
 
         await #expect(throws: PocketPublishError.unreadableProduct) {
-            try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -118,7 +108,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: StubProductResolver(alwaysFailing: URLError(.timedOut)))
 
         await #expect(throws: URLError.self) {
-            try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -131,7 +121,7 @@ struct PublishedPocketCardsTests {
             debugCards: { _ in [debugLoyalty] }
         )
 
-        let found = try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let found = try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(found.definition.preview == .url("http://127.0.0.1:5173/pocket/devicehood.json"))
     }
@@ -141,7 +131,7 @@ struct PublishedPocketCardsTests {
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([loyalty])))
 
         await #expect(throws: PocketPublishError.unknownCard) {
-            try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
+            try await cards.find(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))
         }
     }
 
@@ -193,7 +183,7 @@ private let faceAwayLoyalty = PocketCardDefinition(
     faceShown: false
 )
 
-private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+private let loyaltyKey = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
 private let debugLoyalty = PocketCardDefinition(
     id: PocketCardId(value: "loyalty"),
@@ -203,18 +193,16 @@ private let debugLoyalty = PocketCardDefinition(
 
 private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecutable.Worker {
     ProductExecutable.Worker(
-        identifier: "worker.game.paseo",
+        identifier: try! ProductId("worker.game.paseo"),
         appVersion: .zero,
         entrypoint: "worker.js",
         modalities: [.pocket(cards)]
     )
 }
 
-/// Answers any id with the one product these tests ask about, including the mixed-casing id one
-/// test deliberately asks under.
 private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResolver {
     StubProductResolver(alwaysResolvingTo: ResolvedProduct(
-        id: "game.paseo",
+        id: try! ProductId("game.paseo"),
         displayName: "Game",
         description: nil,
         icon: nil,

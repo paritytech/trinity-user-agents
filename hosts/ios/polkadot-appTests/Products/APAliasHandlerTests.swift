@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import SubstrateSdk
@@ -77,6 +78,6 @@ struct APAliasHandlerTests {
             )
         }
 
-        #expect(env.accountAccess.recordedProductIds == ["caller.product"])
+        #expect(env.accountAccess.recordedProductIds == [try! ProductId("caller.product.dot")])
     }
 }

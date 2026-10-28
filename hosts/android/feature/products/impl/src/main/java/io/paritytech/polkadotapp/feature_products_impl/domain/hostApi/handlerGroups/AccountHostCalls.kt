@@ -17,15 +17,16 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Si
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfSignature
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWire
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.DerivationIndexWireAdapter
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.ProductAccountIdTupleAdapter
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.ProductIdJsonAdapter
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
+import uniffi.truapi.ProductId
 
 class AccountHostCalls(
     private val botApi: ProductsBotApi,
@@ -126,7 +127,7 @@ private fun VrfSignature.toWire(): VrfSignatureWire = VrfSignatureWire(
 )
 
 private fun ProductProofContextWire.toDomain(): ProductProofContext = ProductProofContext(
-    productId = ProductId.fromStoredValue(productId),
+    productId = productId,
     suffix = suffix.toDomain().getOrThrow(),
 )
 
@@ -161,7 +162,8 @@ private data class ProductAccountResponse(val publicKey: String)
 private data class LegacyAccountResponse(val publicKey: String, val name: String?)
 
 private data class ProductProofContextWire(
-    val productId: String,
+    @JsonAdapter(ProductIdJsonAdapter::class)
+    val productId: ProductId,
     @JsonAdapter(DerivationIndexWireAdapter::class)
     val suffix: DerivationIndexWire,
 )

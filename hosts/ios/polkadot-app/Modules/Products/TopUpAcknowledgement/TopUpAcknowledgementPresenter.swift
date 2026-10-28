@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Coinage
 import Foundation
 import Products
@@ -18,7 +19,7 @@ final class TopUpAcknowledgementPresenter: IncomingPaymentAcknowledging, @unchec
     }
 
     func acknowledge(
-        productId: String,
+        productId: ProductId,
         paymentId _: IncomingPaymentId,
         requestedAmount: Balance,
         outcome: IncomingPaymentTerminalOutcome

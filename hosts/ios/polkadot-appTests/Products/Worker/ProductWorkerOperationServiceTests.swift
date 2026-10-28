@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import os
@@ -33,8 +34,8 @@ struct ProductWorkerOperationServiceTests {
         let store = FakeOperationStore()
         let service = ProductWorkerOperationService(store: store)
 
-        let first = try await service.beginOperation(productId: "getcash", label: "sync")
-        let second = try await service.beginOperation(productId: "getcash", label: nil)
+        let first = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: "sync")
+        let second = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: nil)
 
         #expect(first != 0)
         #expect(second != 0)
@@ -47,13 +48,13 @@ struct ProductWorkerOperationServiceTests {
         let store = FakeOperationStore()
         let service = ProductWorkerOperationService(store: store)
 
-        let id = try await service.beginOperation(productId: "getcash", label: nil)
-        try await service.endOperation(productId: "getcash", id: id)
+        let id = try await service.beginOperation(productId: try! ProductId("getcash.dot"), label: nil)
+        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: id)
         #expect(store.isEmpty)
 
         // Ending again, or an unknown id, is a no-op success.
-        try await service.endOperation(productId: "getcash", id: id)
-        try await service.endOperation(productId: "getcash", id: 999)
+        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: id)
+        try await service.endOperation(productId: try! ProductId("getcash.dot"), id: 999)
         #expect(store.isEmpty)
     }
 }

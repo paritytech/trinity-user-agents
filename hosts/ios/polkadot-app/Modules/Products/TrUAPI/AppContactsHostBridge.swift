@@ -62,7 +62,7 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// The list is read here only to answer an empty one without a sheet. The
     /// picker is the chat contact search, which reads the same store, so who is
     /// offered is decided in one place.
-    func pickContact(productId: String) async throws -> HostContactPick {
+    func pickContact(productId: ProductId) async throws -> HostContactPick {
         if try await currentAccounts().isEmpty { return .noContacts }
 
         let picked = await withCheckedContinuation { continuation in

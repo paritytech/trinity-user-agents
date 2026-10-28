@@ -10,7 +10,7 @@ declare const assert: ScriptAssert;
 
 const productContext = await truapi.system.getProductContext();
 assert(productContext.isOk(), "getProductContext failed", productContext);
-const productId: string = productContext.value.productId;
+const productId: HostContext["productId"] = productContext.value.productId;
 assert(productId.length > 0);
 
 const userId = await truapi.account.getUserId();
@@ -42,7 +42,7 @@ assert(subscriptionId.length > 0);
 subscription.unsubscribe();
 
 const account = host.productAccount(0);
-const accountProductId: string = account.dotNsIdentifier;
+const accountProductId: HostContext["productId"] = account.dotNsIdentifier;
 assert(accountProductId.length > 0);
 
 // @ts-expect-error Product accounts have no user-facing username.
@@ -53,3 +53,6 @@ host.productAccount("0");
 
 // @ts-expect-error The generated client rejects unknown services.
 truapi.unknownService;
+
+// @ts-expect-error The host preserves ProductId identity for product accounts.
+host.productId = "untyped.dot";

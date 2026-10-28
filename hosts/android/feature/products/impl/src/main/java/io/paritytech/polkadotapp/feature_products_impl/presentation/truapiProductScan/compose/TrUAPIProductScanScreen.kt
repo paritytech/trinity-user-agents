@@ -86,7 +86,7 @@ fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
             verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         ) {
             NovaText(
-                text = stringResource(RCommon.string.truapi_product_scan_title, viewModel.productId),
+                text = stringResource(RCommon.string.truapi_product_scan_title, viewModel.productId?.value.orEmpty()),
                 color = PolkadotTheme.colors.fg.staticWhite,
                 style = PolkadotTheme.typography.title.medium,
                 textAlign = TextAlign.Center,
@@ -108,7 +108,7 @@ fun TrUAPIProductScanScreen(viewModel: TrUAPIProductScanViewModel) {
                     .align(Alignment.BottomCenter)
                     .systemBarsPadding()
                     .padding(PolkadotTheme.spacings.extraLargeIncreased),
-                text = stringResource(RCommon.string.truapi_product_scan_not_for_product, viewModel.productId),
+                text = stringResource(RCommon.string.truapi_product_scan_not_for_product, viewModel.productId?.value.orEmpty()),
                 color = PolkadotTheme.colors.fg.staticWhite,
                 textAlign = TextAlign.Center,
             )

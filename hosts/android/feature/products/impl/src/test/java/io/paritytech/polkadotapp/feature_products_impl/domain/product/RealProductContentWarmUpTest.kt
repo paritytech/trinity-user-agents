@@ -3,8 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
 import io.paritytech.polkadotapp.test_shared.thenThrowUnsafe
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -16,6 +14,8 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 
 class RealProductContentWarmUpTest {
     private val dotNsResolver: DotNsResolver = mock()
@@ -30,7 +30,7 @@ class RealProductContentWarmUpTest {
     }
     private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver, runtimeSettings)
 
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.parse("game.dot").getOrThrow()
     private val archive: Uri = mock()
 
     // The archive is keyed by the host that serves the card, which for a manifest product is its

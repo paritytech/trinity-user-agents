@@ -1,3 +1,4 @@
+import TrUAPIHost
 import Foundation
 import Operation_iOS
 import Products
@@ -13,19 +14,22 @@ final class DebugProductsViewModel {
     private let scriptDownloader: ProductScriptDownloaderProtocol
     private let scriptStorage: ChatScriptStorageProtocol
     private let notificationScheduler: ProductNotificationScheduling
+    private let tldProvider: DotNsTldProviding
 
     init(
         productRepository: AnyDataProviderRepository<Product>,
         chatRepositoryFactory: ChatRepositoryMaking,
         scriptDownloader: ProductScriptDownloaderProtocol = HTTPProductScriptDownloader(),
         scriptStorage: ChatScriptStorageProtocol = FileChatScriptStorage(),
-        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared
+        notificationScheduler: ProductNotificationScheduling = ProductNotificationScheduler.shared,
+        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
     ) {
         self.productRepository = productRepository
         self.chatRepositoryFactory = chatRepositoryFactory
         self.scriptDownloader = scriptDownloader
         self.scriptStorage = scriptStorage
         self.notificationScheduler = notificationScheduler
+        self.tldProvider = tldProvider
     }
 
     func loadProducts() {
@@ -39,14 +43,14 @@ final class DebugProductsViewModel {
     }
 
     func saveProduct(name: String, scriptURL: String) {
-        let product = Product(id: UUID().uuidString, name: name)
-
         Task { @MainActor in
             downloadError = nil
 
             do {
+                let suffix = try await tldProvider.resolveTld()
+                let product = Product(id: try productIdFromName(name: UUID().uuidString, networkSuffix: suffix), name: name)
                 let content = try await scriptDownloader.download(url: scriptURL)
-                try scriptStorage.saveScript(productId: product.identifier, content: content)
+                try scriptStorage.saveScript(productId: product.id, content: content)
                 try await productRepository.saveOperation({ [product] }, { [] }).asyncExecute()
 
                 loadProducts()
@@ -62,10 +66,10 @@ final class DebugProductsViewModel {
         )
 
         Task { @MainActor [notificationScheduler] in
-            try? await notificationScheduler.cancelAll(forProductId: product.identifier)
+            try? await notificationScheduler.cancelAll(forProductId: product.id)
             try? await productRepository.saveOperation({ [] }, { [product.identifier] }).asyncExecute()
             try? await productChatRepository.deleteAllOperation().asyncExecute()
-            try? scriptStorage.deleteScript(productId: product.identifier)
+            try? scriptStorage.deleteScript(productId: product.id)
             loadProducts()
         }
     }

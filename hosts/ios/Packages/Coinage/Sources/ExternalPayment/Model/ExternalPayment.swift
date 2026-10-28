@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Foundation
 import Operation_iOS
@@ -26,8 +27,8 @@ public struct ExternalPayment: Equatable {
         }
     }
 
-    /// The product that owns `paymentId`; the in-app pay flow uses ``ExternalPayment/nativeProductId``.
-    public let productId: String
+    /// The product that owns `paymentId`, or nil for a wallet-created payment.
+    public let productId: ProductId?
     public let paymentId: String
     public let amountInPlanks: Balance
     public let destination: AccountId
@@ -45,7 +46,7 @@ public struct ExternalPayment: Equatable {
     public var updatedAt: Date
 
     public init(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId,
@@ -72,13 +73,10 @@ public struct ExternalPayment: Equatable {
 }
 
 public extension ExternalPayment {
-    /// The product id the wallet's own pay flow registers under.
-    static let nativeProductId = "native-payment"
-
     /// Identity is `(productId, paymentId)`: the same product-supplied id under two products is two
     /// payments. The prefix keeps the id unique among durability group ids as well.
-    static func identifier(productId: String, paymentId: String) -> String {
-        "external-payment:\(productId):\(paymentId)"
+    static func identifier(productId: ProductId?, paymentId: String) -> String {
+        "external-payment:\(productId?.rawValue ?? "native-payment"):\(paymentId)"
     }
 }
 

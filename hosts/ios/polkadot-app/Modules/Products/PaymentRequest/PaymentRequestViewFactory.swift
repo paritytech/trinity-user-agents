@@ -71,7 +71,7 @@ private extension PaymentRequestViewFactory {
             title: LocalizableResource { _ in
                 String(
                     localized: .Products.paymentRequestTitle(
-                        productId: context.productId
+                        productId: context.productId.rawValue
                     )
                 )
             },

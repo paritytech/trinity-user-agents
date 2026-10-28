@@ -707,8 +707,8 @@ fn core_key(key: &CoreStorageKey) -> String {
 	match key {
 		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
 		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-		CoreStorageKey::PermissionAuthorization { product_id, request } => {
-			format!("core:permission:{product_id}:{request:?}")
+		CoreStorageKey::PermissionAuthorization { scope, request } => {
+			format!("core:permission:{scope}:{request:?}")
 		},
 		CoreStorageKey::AutoSigningKey { product_id } => {
 			format!("core:auto-signing-key:{product_id}")
@@ -734,8 +734,8 @@ fn core_key(key: &CoreStorageKey) -> String {
 				hex_key(peer_encryption_public_key)
 			)
 		},
-		CoreStorageKey::ProductManifest { product_id } => {
-			format!("core:product-manifest:{product_id}")
+		CoreStorageKey::ProductManifest { product_label } => {
+			format!("core:product-manifest:{product_label}")
 		},
 		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
 		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),

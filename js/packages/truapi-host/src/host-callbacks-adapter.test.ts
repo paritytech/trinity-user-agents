@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
@@ -25,7 +26,7 @@ import {
   CoreStorageKey,
   PermissionDecision,
   ProductContext,
-  ProductExecutionKind,
+  ExecutableKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
@@ -40,7 +41,7 @@ const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {
     tag: "IdentityDisclosure" as const,
-    value: { productId: "playground.dot" },
+    value: { productId: asProductId("playground.dot") },
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
@@ -77,11 +78,11 @@ const namedTheme = (
   variant,
 });
 const PRODUCT_ACCOUNT = {
-  dotNsIdentifier: "playground.dot",
+  dotNsIdentifier: asProductId("playground.dot"),
   derivationIndex: { tag: "Index" as const, value: 0 },
 };
 const PROOF_CONTEXT = {
-  productId: "playground.dot",
+  productId: asProductId("playground.dot"),
   suffix: { tag: "Index" as const, value: 0 },
 };
 const RING_LOCATION = {
@@ -112,7 +113,7 @@ describe("createWasmRawCallbacks", () => {
     const cancelled: number[] = [];
     const askedBy: ProductContext[] = [];
     const worker: ProductContext = {
-      productId: "camera.dot",
+      productId: asProductId("camera.dot"),
       executionKind: "Worker",
     };
     const raw = createWasmRawCallbacks(
@@ -322,7 +323,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               request: {
                 account: PRODUCT_ACCOUNT,
                 payload: SIGN_PAYLOAD,
@@ -339,7 +340,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               request: {
                 account: PRODUCT_ACCOUNT,
                 payload: {
@@ -360,7 +361,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               payload: {
                 signer: PRODUCT_ACCOUNT,
                 genesisHash: GENESIS,
@@ -379,7 +380,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "AccountAlias",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
           },
@@ -391,7 +392,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "CreateProof",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
             message: new Uint8Array([7, 8]),
@@ -404,8 +405,8 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "AccountAccess",
           value: {
-            requestingProductId: "playground.dot",
-            targetProductId: "wallet.dot",
+            requestingProductId: asProductId("playground.dot"),
+            targetProductId: asProductId("wallet.dot"),
           },
         }),
       ),
@@ -415,7 +416,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "ResourceAllocation",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             resources: [{ tag: "StatementStoreAllowance" }],
           },
         }),
@@ -461,7 +462,7 @@ describe("createWasmRawCallbacks", () => {
     );
 
     const product = ProductContext.enc({
-      productId: "chat.dot",
+      productId: asProductId("chat.dot"),
       executionKind: "Worker",
     });
     const request = HostChatCreateRoomRequest.enc({
@@ -612,11 +613,14 @@ describe("ProductContext codec", () => {
   // ProductContext travels the wasm callback boundary encoded in Rust and
   // decoded here.
   it("product context encoding matches the Rust platform codec", () => {
-    expect([...ProductExecutionKind.enc("App")]).toEqual([0]);
-    expect([...ProductExecutionKind.enc("Widget")]).toEqual([1]);
-    expect([...ProductExecutionKind.enc("Worker")]).toEqual([2]);
+    expect([...ExecutableKind.enc("App")]).toEqual([0]);
+    expect([...ExecutableKind.enc("Widget")]).toEqual([1]);
+    expect([...ExecutableKind.enc("Worker")]).toEqual([2]);
 
-    const context = { productId: "app.dot", executionKind: "Worker" } as const;
+    const context = {
+      productId: asProductId("app.dot"),
+      executionKind: "Worker",
+    } as const;
     expect([...ProductContext.enc(context)]).toEqual([
       28,
       ...new TextEncoder().encode("app.dot"),

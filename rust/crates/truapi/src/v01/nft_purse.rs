@@ -1,3 +1,5 @@
+use crate::product_id::ProductId;
+
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
@@ -29,7 +31,7 @@ pub struct NftPurseReceiveKey(pub [u8; 32]);
 pub enum NftPurseOwner {
 	/// The product with this id created the purse.
 	#[display("{_0}")]
-	Product(String),
+	Product(ProductId),
 	/// No product owns the purse: the main purse, and purses recovered
 	/// without metadata.
 	#[display("your account")]

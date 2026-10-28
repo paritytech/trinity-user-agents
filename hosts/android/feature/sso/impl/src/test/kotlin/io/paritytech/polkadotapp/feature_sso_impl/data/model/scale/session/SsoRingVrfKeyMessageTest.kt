@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocationJunction
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfKeyDisclosure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toScale
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionId
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequest
@@ -19,13 +18,14 @@ import kotlinx.serialization.encodeToByteArray
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private val SESSION_ID = SsoSessionId("session")
 private val TLD = requireNotNull(DotNsTld.parse("dot"))
 private const val REQUEST_ID = "request"
 
-private val CALLER = ProductId.fromStoredValue("game.dot")
-private val KEY_HANDLE = ProductAccountId("peopl.dot", DerivationIndex32.fromUInt(0u))
+private val CALLER = ProductId.parse("game.dot").getOrThrow()
+private val KEY_HANDLE = ProductAccountId(ProductId.parse("peopl.dot").getOrThrow(), DerivationIndex32.fromUInt(0u))
 
 private val RING = RingLocation(
     chainId = ByteArray(32) { 7 }.toDataByteArray(),
@@ -63,7 +63,7 @@ class SsoRingVrfKeyMessageTest {
         val request = requestWith(
             SsoSessionRequest.Content.ListRingVrfKeysRequest(
                 callingProduct = CALLER,
-                owner = ProductId.fromStoredValue("peopl.dot"),
+                owner = ProductId.parse("peopl.dot").getOrThrow(),
                 disclosure = RingVrfKeyDisclosure.PUBLIC_KEY,
             )
         )
@@ -114,7 +114,7 @@ class SsoRingVrfKeyMessageTest {
 
         assertEquals(
             18,
-            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest("game.dot", DerivationIndex32.fromUInt(0u).toScale(), ringScale))
+            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest(ProductId.parse("game.dot").getOrThrow(), DerivationIndex32.fromUInt(0u).toScale(), ringScale))
         )
         assertEquals(
             19,
@@ -122,7 +122,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             20,
-            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest("game.dot", "peopl.dot", RingVrfKeyDisclosureScale.Anonymized))
+            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest(ProductId.parse("game.dot").getOrThrow(), ProductId.parse("peopl.dot").getOrThrow(), RingVrfKeyDisclosureScale.Anonymized))
         )
         assertEquals(
             21,
@@ -130,7 +130,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             22,
-            variantIndexOf(SsoMessageContent.RingVrfSignRequest("game.dot", KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
+            variantIndexOf(SsoMessageContent.RingVrfSignRequest(ProductId.parse("game.dot").getOrThrow(), KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
         )
         assertEquals(
             23,

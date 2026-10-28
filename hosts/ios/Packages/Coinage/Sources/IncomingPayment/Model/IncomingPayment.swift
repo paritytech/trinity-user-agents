@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import SubstrateSdk
@@ -10,7 +11,7 @@ public struct IncomingPayment: Equatable, Sendable {
     /// The product-supplied idempotency key. Unique only within a product.
     public let paymentId: IncomingPaymentId
     /// The product this payment is bound to. `(productId, paymentId)` is the global identity.
-    public let productId: String
+    public let productId: ProductId
     public let amount: Balance
     /// The retry window opened here; a resumed run finishes the window it was given.
     public let createdAt: Date
@@ -20,7 +21,7 @@ public struct IncomingPayment: Equatable, Sendable {
 
     public init(
         paymentId: IncomingPaymentId,
-        productId: String,
+        productId: ProductId,
         amount: Balance,
         createdAt: Date,
         outcome: IncomingPaymentTerminalOutcome?
@@ -43,7 +44,7 @@ public extension IncomingPayment {
     var isActive: Bool { outcome == nil }
 
     /// The durability group / record identity for a `(productId, paymentId)` pair.
-    static func groupId(productId: String, paymentId: IncomingPaymentId) -> CoinageTxGroupId {
+    static func groupId(productId: ProductId, paymentId: IncomingPaymentId) -> CoinageTxGroupId {
         "top up:\(productId):\(paymentId)"
     }
 }

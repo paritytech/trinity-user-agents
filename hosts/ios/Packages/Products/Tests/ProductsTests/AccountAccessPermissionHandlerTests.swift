@@ -1,11 +1,12 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("AccountAccessPermissionHandler Tests")
 struct AccountAccessPermissionHandlerTests {
-    private let productId = "requester-product"
-    private let targetProductId = "target-product"
+    private let productId = try! ProductId("requester-product.dot")
+    private let targetProductId = try! ProductId("target-product.dot")
 
     private func makeSUT(
         decision: PermissionDecision = .allowAlways

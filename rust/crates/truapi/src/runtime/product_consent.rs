@@ -13,10 +13,10 @@ use super::{
 };
 use crate::{
 	host_internal::permissions::{
-		account_access_status, cross_product_signature_key, set_account_access_status,
+		authorization_status, cross_product_signature_key, set_authorization_status,
 	},
 	platform::{
-		AccountAccessReview, CreateTransactionReview, CrossProductSignatureKind,
+		AccountAccessReview, CoreStorageKey, CreateTransactionReview, CrossProductSignatureKind,
 		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
 		SignRawReview, UserConfirmationReview,
 	},
@@ -56,11 +56,11 @@ impl ProductConsent {
 		// Filed per product, the granularity a manifest grant uses, so a refused
 		// product cannot keep access by respelling itself under a subname.
 		let pair = (requester.bare_label().to_string(), target.bare_label().to_string());
-		if let Some(status) = self.decided(&pair).await? {
+		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
 		}
 		let _prompt = self.permission_prompt.lock().await;
-		if let Some(status) = self.decided(&pair).await? {
+		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
 		}
 		let decision = prompt
@@ -78,9 +78,13 @@ impl ProductConsent {
 			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
 			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
 		};
-		set_account_access_status(self.platform.as_ref(), &pair.0, &pair.1, status)
-			.await
-			.map_err(AccountAccessError::PermissionStorage)?;
+		set_authorization_status(
+			self.platform.as_ref(),
+			CoreStorageKey::product_account_access_authorization(requester, target),
+			status,
+		)
+		.await
+		.map_err(AccountAccessError::PermissionStorage)?;
 		Ok(status)
 	}
 
@@ -153,11 +157,15 @@ impl ProductConsent {
 	/// A stored decision wins over Allow once, so a change made in settings applies at once.
 	async fn decided(
 		&self,
-		(requester, target): &(String, String),
+		requester: &ProductId,
+		target: &ProductId,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
-		let stored = account_access_status(self.platform.as_ref(), requester, target)
-			.await
-			.map_err(AccountAccessError::PermissionStorage)?;
+		let stored = authorization_status(
+			self.platform.as_ref(),
+			CoreStorageKey::product_account_access_authorization(requester, target),
+		)
+		.await
+		.map_err(AccountAccessError::PermissionStorage)?;
 		if stored != PermissionAuthorizationStatus::NotDetermined {
 			return Ok(Some(stored));
 		}
@@ -165,7 +173,7 @@ impl ProductConsent {
 			.allowed_once
 			.lock()
 			.expect("account access mutex poisoned")
-			.contains(&(requester.clone(), target.clone()));
+			.contains(&(requester.bare_label().to_string(), target.bare_label().to_string()));
 		Ok(allowed_once.then_some(PermissionAuthorizationStatus::Authorized))
 	}
 }
@@ -259,10 +267,12 @@ mod tests {
 	fn a_stored_decision_overrides_allow_once() {
 		let (platform, consent) = consent_answering([PermissionDecision::AllowOnce]);
 		access(&consent, "myapp.dot");
-		futures::executor::block_on(set_account_access_status(
+		futures::executor::block_on(set_authorization_status(
 			platform.as_ref(),
-			"myapp",
-			"peopl",
+			CoreStorageKey::product_account_access_authorization(
+				&ProductId::for_test("myapp.dot"),
+				&ProductId::for_test("peopl.dot"),
+			),
 			Denied,
 		))
 		.unwrap();

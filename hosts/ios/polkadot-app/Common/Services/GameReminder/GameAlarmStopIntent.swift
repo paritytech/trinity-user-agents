@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import AlarmKit
 import AppIntents
@@ -10,12 +11,14 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @Parameter(title: "Alarm ID")
     var alarmID: String?
 
+    // AppIntents persists this parameter name in scheduled alarms.
     @Parameter(title: "Product ID")
     var productId: String?
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        if let productId {
+        if let input = productId {
+            let productId = try ProductId(input)
             ProductOpener().open(productId: productId)
         }
 

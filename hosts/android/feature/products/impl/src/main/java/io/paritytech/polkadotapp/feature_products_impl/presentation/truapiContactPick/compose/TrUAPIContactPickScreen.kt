@@ -24,6 +24,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiContac
 import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiContactPick.TrUAPIContactPickRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.truapiContactPick.TrUAPIContactPickUiState
 import kotlinx.collections.immutable.persistentListOf
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -65,7 +66,7 @@ private fun TrUAPIContactPickScreenInternal(
             VerticalSpacer { small }
 
             NovaText(
-                text = stringResource(RCommon.string.truapi_contact_pick_body, state.productId),
+                text = stringResource(RCommon.string.truapi_contact_pick_body, state.productId?.value.orEmpty()),
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.secondary,
                 textAlign = TextAlign.Center,
@@ -103,7 +104,7 @@ private fun TrUAPIContactPickScreenPreview() {
     PolkadotTheme {
         TrUAPIContactPickScreenInternal(
             state = TrUAPIContactPickUiState(
-                productId = "browse.dot",
+                productId = ProductId.parse("browse.dot").getOrThrow(),
                 contacts = persistentListOf(
                     TrUAPIContactPickRow(index = 0, name = "alice"),
                     TrUAPIContactPickRow(index = 1, name = null),

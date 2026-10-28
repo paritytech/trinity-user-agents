@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -8,7 +9,7 @@ import Testing
 struct PocketCardLaunchUrlTests {
     @Test
     func opensTheProductAtItsOwnPageNamingTheCard() throws {
-        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+        let key = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity"))
 
         let url = try #require(key.launchUrl)
 
@@ -19,7 +20,7 @@ struct PocketCardLaunchUrlTests {
     /// query, and the product reads the id back out of this address.
     @Test
     func encodesACardIdThatNeedsIt() throws {
-        let key = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold card"))
+        let key = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "gold card"))
 
         let url = try #require(key.launchUrl)
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -8,7 +9,7 @@ struct PocketPreviewLoaderTests {
     func readsAFaceFromTheProductArchive() async throws {
         let loader = PocketPreviewLoader(archive: StubArchive(contents: minimalFace), fetch: refusingFetch)
 
-        let face = try await loader.load(contentId: "worker.game.paseo", preview: .archive(path: "faces/loyalty.json"))
+        let face = try await loader.load(contentId: try! ProductId("worker.game.paseo"), preview: .archive(path: "faces/loyalty.json"))
 
         guard case .column = face else {
             Issue.record("expected a column, got \(face)")
@@ -25,7 +26,7 @@ struct PocketPreviewLoaderTests {
         let loader = PocketPreviewLoader(archive: StubArchive(contents: oversized), fetch: refusingFetch)
 
         await #expect(throws: (any Error).self) {
-            try await loader.load(contentId: "worker.game.paseo", preview: .archive(path: "faces/big.json"))
+            try await loader.load(contentId: try! ProductId("worker.game.paseo"), preview: .archive(path: "faces/big.json"))
         }
     }
 
@@ -36,7 +37,7 @@ struct PocketPreviewLoaderTests {
         let archive = StubArchive(contents: minimalFace)
         let loader = PocketPreviewLoader(archive: archive, fetch: refusingFetch)
 
-        _ = try await loader.load(contentId: "worker.game.paseo", preview: .archive(path: "faces/loyalty.json"))
+        _ = try await loader.load(contentId: try! ProductId("worker.game.paseo"), preview: .archive(path: "faces/loyalty.json"))
 
         #expect(archive.boundedTo == PocketPreviewLoader.maxBytes)
     }
@@ -46,7 +47,7 @@ struct PocketPreviewLoaderTests {
         let loader = PocketPreviewLoader(archive: StubArchive(contents: nil), fetch: refusingFetch)
 
         await #expect(throws: (any Error).self) {
-            try await loader.load(contentId: "worker.game.paseo", preview: .archive(path: "faces/missing.json"))
+            try await loader.load(contentId: try! ProductId("worker.game.paseo"), preview: .archive(path: "faces/missing.json"))
         }
     }
 
@@ -60,7 +61,7 @@ struct PocketPreviewLoaderTests {
         )
 
         let face = try await loader.load(
-            contentId: "worker.game.paseo",
+            contentId: try! ProductId("worker.game.paseo"),
             preview: .url("http://127.0.0.1:5173/face.json")
         )
 
@@ -76,7 +77,7 @@ struct PocketPreviewLoaderTests {
         let loader = PocketPreviewLoader(archive: StubArchive(contents: nil), fetch: { _, _ in oversized })
 
         await #expect(throws: (any Error).self) {
-            try await loader.load(contentId: "worker.game.paseo", preview: .url("http://127.0.0.1:5173/big.json"))
+            try await loader.load(contentId: try! ProductId("worker.game.paseo"), preview: .url("http://127.0.0.1:5173/big.json"))
         }
     }
 }

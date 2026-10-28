@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
@@ -8,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class AutoAllowProductPermissionRequesterTest {
     private val delegate = RecordingRequester(PermissionDecision.Deny)
@@ -51,15 +51,7 @@ class AutoAllowProductPermissionRequesterTest {
         assertEquals(listOf(productId("arena.getcash.dot")), delegate.promptCalls)
     }
 
-    @Test
-    fun `prompt delegates a bare product id carrying no root`() = runBlocking {
-        val decision = requester.prompt(productId("getcash"), ProductPermission.BalanceAccess)
-
-        assertEquals(PermissionDecision.Deny, decision)
-        assertEquals(listOf(productId("getcash")), delegate.promptCalls)
-    }
-
-    private fun productId(value: String) = ProductId.fromStoredValue(value)
+    private fun productId(value: String) = ProductId.parse(value).getOrThrow()
 
     private fun networkAccess() = RemotePermission.NetworkAccess("example.com")
 }

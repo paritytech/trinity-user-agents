@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Carries the state of an in-flight permission prompt (single or batched).
@@ -7,18 +8,18 @@ import Foundation
 /// calls are ignored.
 @MainActor
 public final class ProductPermissionContext {
-    public nonisolated let productId: String
+    public nonisolated let productId: ProductId
     public nonisolated let permissions: [ProductPermission]
 
     private var continuation: CheckedContinuation<PermissionDecision, Never>?
 
-    public init(productId: String, permissions: [ProductPermission]) {
+    public init(productId: ProductId, permissions: [ProductPermission]) {
         self.productId = productId
         self.permissions = permissions
     }
 
     /// Convenience for a single permission prompt.
-    public convenience init(productId: String, permission: ProductPermission) {
+    public convenience init(productId: ProductId, permission: ProductPermission) {
         self.init(productId: productId, permissions: [permission])
     }
 

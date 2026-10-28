@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Coinage
 import Foundation
@@ -14,7 +15,7 @@ struct IncomingPaymentCoreDataStoreTests {
         IncomingPaymentCoreDataStore(storageFacade: UserDataStorageTestFacade())
     }
 
-    private func payment(_ id: String, productId: String = "prod", amount: Balance = 100) -> IncomingPayment {
+    private func payment(_ id: String, productId: ProductId = try! ProductId("prod.dot"), amount: Balance = 100) -> IncomingPayment {
         IncomingPayment(paymentId: id, productId: productId, amount: amount, createdAt: createdAt, outcome: nil)
     }
 

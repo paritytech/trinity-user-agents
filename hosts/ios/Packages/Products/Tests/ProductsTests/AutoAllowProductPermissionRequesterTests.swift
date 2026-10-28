@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
@@ -26,7 +27,7 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = await requester.prompt(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             permission: .networkAccess(domain: "example.com")
         )
 
@@ -39,7 +40,7 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = await requester.promptBatched(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             permissions: [.balanceAccess, .webRtcAccess]
         )
 
@@ -52,40 +53,19 @@ struct AutoAllowProductPermissionRequesterTests {
         let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
 
         let decision = await requester.prompt(
-            productId: "other.dot",
+            productId: try! ProductId("other.dot"),
             permission: .balanceAccess
         )
 
         #expect(decision == .deny)
         #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "other.dot")
+        #expect(wrapped.promptCalls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("prompt delegates bare productId without root")
-    func promptDelegatesBareProductId() async throws {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
-
-        let decision = await requester.prompt(
-            productId: "getcash",
-            permission: .balanceAccess
-        )
-
-        #expect(decision == .deny)
-        #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "getcash")
-    }
-
-    @Test("prompt delegates productId with an empty root label")
-    func promptDelegatesEmptyRootLabel() async throws {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .deny)
-
-        let decision = await requester.prompt(
-            productId: "getcash..dot",
-            permission: .balanceAccess
-        )
-
-        #expect(decision == .deny)
-        #expect(wrapped.promptCalls.count == 1)
-        #expect(wrapped.promptCalls.first?.productId == "getcash..dot")
+    @Test("malformed IDs cannot reach permission prompts", arguments: ["getcash", "getcash..dot"])
+    func malformedInputIsRejected(input: String) {
+        #expect(throws: (any Error).self) {
+            try ProductId(input)
+        }
     }
 }

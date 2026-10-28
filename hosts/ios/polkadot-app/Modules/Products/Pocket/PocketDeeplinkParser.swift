@@ -13,7 +13,7 @@ enum PocketLinkAction: Equatable {
 /// A `polkadotapp://pocket/<action>?product=<id>&card=<id>` link as the core
 /// classifies it. `productHost` is the product's lower-cased dotNS name.
 struct PocketDeeplink: Equatable {
-    let productHost: String
+    let productHost: ProductId
     let action: PocketLinkAction
     /// Already screened, by the core, as part of classifying the link. Nothing
     /// downstream screens it again.
@@ -42,10 +42,6 @@ enum PocketLinkClassification: Equatable {
 struct PocketDeeplinkParser {
     /// The host every Pocket link names.
     static let host = "pocket"
-    /// The scheme the core reads a Pocket link under: the app's own, without a
-    /// build flavor's suffix. A link under any of this app's schemes is read
-    /// under this one.
-    static let coreScheme = "polkadotapp"
 
     private let deeplinkMatcher: AppDeeplinkMatching
 
@@ -62,7 +58,7 @@ struct PocketDeeplinkParser {
             return .notOurs
         }
 
-        components.scheme = Self.coreScheme
+        components.scheme = appDeeplinkScheme()
         guard let link = components.string else {
             return .notOurs
         }

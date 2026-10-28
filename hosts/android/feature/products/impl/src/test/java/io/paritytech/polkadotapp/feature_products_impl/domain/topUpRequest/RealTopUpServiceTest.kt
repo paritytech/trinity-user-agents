@@ -9,7 +9,7 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.Derivatio
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
@@ -28,6 +28,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -484,8 +485,8 @@ class RealTopUpServiceTest {
 
         val ID = topUpId("topup-1")
         val SECOND_ID = topUpId("topup-2")
-        val PRODUCT: ProductId = ProductId.fromString("alice.dot", DOT_TLD).getOrThrow()
-        val OTHER_PRODUCT: ProductId = ProductId.fromString("bob.dot", DOT_TLD).getOrThrow()
+        val PRODUCT: ProductId = productIdFromHost("alice.dot", DOT_TLD).getOrThrow()
+        val OTHER_PRODUCT: ProductId = productIdFromHost("bob.dot", DOT_TLD).getOrThrow()
         val REQUESTED: Balance = 100.intoBalance()
         val COIN_A: DataByteArray = byteArrayOf(1).toDataByteArray()
         val COIN_B: DataByteArray = byteArrayOf(2).toDataByteArray()
