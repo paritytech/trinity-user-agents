@@ -21,11 +21,17 @@ import {
   fixtureDirectory,
   type UsernameDirectory,
 } from "../username-directory.js";
-import { FixtureContacts, type PickContact } from "./fixture-contacts.js";
-import { FixtureIdentityAuth, publicIdentity } from "./fixture-identity.js";
-import { LocalDelivery } from "./local-delivery.js";
-import { pageStore } from "./shared-store.js";
-import * as samples from "./sample-notifications.js";
+import {
+  FixtureContacts,
+  type PickContact,
+} from "../../fixtures/invitations/fixture-contacts.js";
+import {
+  FixtureIdentityAuth,
+  publicIdentity,
+} from "../../fixtures/invitations/fixture-identity.js";
+import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
+import { pageStore } from "../../fixtures/invitations/shared-store.js";
+import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
   TEST_USERS,
   chatContactsOf,
@@ -36,7 +42,7 @@ import {
   testUserKey,
   testUserScope,
   type TestUser,
-} from "./test-users.js";
+} from "../../fixtures/invitations/test-users.js";
 
 /**
  * DEV ONLY. The menu's Developer section and the test user mode it controls.

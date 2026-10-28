@@ -559,8 +559,8 @@ codegen gives them. Nothing in this repository's Rust crates, codegen or package
   and ends it through `setRoomCall` and its own signaling. The media is the host's: `callMedia.start` runs only within
   180 s of a press or an accept in that room, and the host's signals reach the product as `CallSignal` room events,
   which it carries to the other side. This host has no real call engine for v2 rooms: `start` answers `Unsupported`,
-  except for the local demo below, whose calls get `src/chat-v2/synthetic-media.ts`, an engine that opens no device and
-  trades made-up signals.
+  except for the local demo below, whose calls get `fixtures/products/synthetic-media.ts`, an engine that opens no
+  device and trades made-up signals.
 - **Capabilities** lists `product_source_rooms`, `participants`, `inline_attachments` and `call_buttons`, nothing else.
 - **Where it departs from the reference**, because the provider interface stays as it is: a `Rejected` message stays
   failed instead of being removed; a `Deleted` message outside the newest page goes only when the room is opened again;
@@ -573,8 +573,9 @@ codegen gives them. Nothing in this repository's Rust crates, codegen or package
   limits and most field bounds. Declarations live in memory for the session and are lost on reload, where the RFC keeps
   them across restarts. When a worker stops, its rooms' calls and call media end. The bridge is not TrUAPI, so the
   inspector does not show it.
-- **What runs it today.** No published product speaks the bridge. `browser/synthetic-chat-product.ts` is a synthetic
-  chat product, with made-up people and messages and no network or peer protocol; it is not the Verbosity chat product.
+- **What runs it today.** No published product speaks the bridge. `fixtures/products/synthetic-chat-product.ts` is a
+  synthetic chat product, with made-up people and messages and no network or peer protocol; it is not the Verbosity chat
+  product.
 
 #### Local demo
 
@@ -584,7 +585,7 @@ The dev server can run the synthetic chat product as a product worker, so the br
 by this host. **Stop** and **Restart** sit beside it; what it is stays folded under **About the chat demo**.
 
 - **How it runs.** `chat-product-demo-plugin.ts`, a dev-server plugin that a build leaves out, builds
-  `browser/chat-v2-product-worker.ts` into one module, packs it as an app archive, describes it at
+  `fixtures/products/chat-v2-product-worker.ts` into one module, packs it as an app archive, describes it at
   `__chat-product-demo/worker.json`, and serves that archive's blocks, and only those, at `/ipfs/<cid>`. The host
   (`src/chat-v2/local-demo.ts`) adds it as one of its own workers, so the ordinary loader fetches and checks the archive
   and the core runs it as a `Worker` execution. Its product id is `localhost:<port>`, a development id no published name
@@ -693,7 +694,7 @@ sample data or from [test users](#test-users-prototype).
   network and test user. Written only once used and removed when empty. Waiting requests and history survive a reload.
   `src/notifications.ts` holds the list, which does not know where a request came from, and
   `src/notifications-screen.ts` the screen. The sample requests, from senders and products ending in `.example`, are in
-  `src/dev-tools/sample-notifications.ts`, which adds and removes them by id.
+  `fixtures/notifications/sample-notifications.ts`, which adds and removes them by id.
 
 ### Test users (prototype)
 
@@ -723,11 +724,11 @@ authenticate both directions, and the products see only payloads and opaque hand
   host reads nothing on chain for it. The core still looks up the account's DotNS name on Asset Hub once, as it does at
   every sign-in. Sign-in and sign-out are off. The choice is kept for the tab, so a reload keeps it. Choosing a test
   user ends the tab's wallet session and leaves saved wallets and their data alone. Contacts are made up
-  (`src/dev-tools/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network and
-  test user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent) and
-  `...:received:v2` (received, and the sealed reply). The `v1` sent and received lists of the earlier prototype are left
-  in place and no longer read; **Reset** removes them too. Example Chat keeps its protocol secrets and topics in its own
-  TrUAPI local storage.
+  (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network
+  and test user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent)
+  and `...:received:v2` (received, and the sealed reply). The `v1` sent and received lists of the earlier prototype are
+  left in place and no longer read; **Reset** removes them too. Example Chat keeps its protocol secrets and topics in
+  its own TrUAPI local storage.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
   It reuses TrUAPI's `ContactHandle` and `ContactPickOutcome`. Each call has an `id` and one `result`.
   - Sender: `pickContact` (answers a `ContactPickOutcome`, as `contacts.pick` does), `request` (contact handle, purpose,
@@ -752,22 +753,22 @@ authenticate both directions, and the products see only payloads and opaque hand
   payload. A reply's covers the version, both identities, the product, the request id, the digest of the exact request
   and the exact payload. Kind and identity order keep one direction's evidence from checking as the other's. The
   sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
-  the request. Example Chat's own check is a toy protocol (`src/dev-tools/example-chat/setup.ts`).
+  the request. Example Chat's own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
   - The contact handle is 32 bytes the dev tools mint per test user and person. It stands in for the `contacts.pick`
     handle: the core gives the host no way to resolve that handle outside a transaction, so sending to it needs a
     host-only core operation (resolve or check a handle).
-  - The identity credential (`src/dev-tools/fixture-identity.ts`) is a reference profile over keys derived from public
-    test user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature is
-    sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account or
-    another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not decided.
-    The directory that says a key is a person is the fixture, and it holds every other test user, so a host takes a
-    request from any of them, not only from the contacts its picker lists.
-  - Delivery (`src/dev-tools/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host has an
-    inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a random
-    tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply only to
-    the inbox of the person who sent the request. The delivery can instead make a random topic per request (the tests
-    run both). Each side posts again every minute and each post lapses after five minutes; these are dev choices,
+  - The identity credential (`fixtures/invitations/fixture-identity.ts`) is a reference profile over keys derived from
+    public test user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature
+    is sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account
+    or another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not
+    decided. The directory that says a key is a person is the fixture, and it holds every other test user, so a host
+    takes a request from any of them, not only from the contacts its picker lists.
+  - Delivery (`fixtures/invitations/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host
+    has an inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a
+    random tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply
+    only to the inbox of the person who sent the request. The delivery can instead make a random topic per request (the
+    tests run both). Each side posts again every minute and each post lapses after five minutes; these are dev choices,
     separate from the request's deadline, which reposts never move. No notification account signs a post and no
     allowance is checked. Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can
     read or post.
@@ -780,9 +781,9 @@ authenticate both directions, and the products see only payloads and opaque hand
   transcripts their evidence covers, `sealing.ts` the sealing, `invitation-service.ts` one user's host side, and
   `outbox.ts` and `received.ts` what it keeps. `src/dev-tools/` holds what only tests and the dev server use: fixture
   contacts and identities, the local delivery, the Developer section (`dev-tools.ts`), the test users, the sample
-  notifications and Example Chat. `src/dev-tools/invitation-flow.test.ts` runs two and three users end to end. Only a
-  dev server on this machine loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads the test
-  user's contacts in place of the chat contacts.
+  notifications and Example Chat. `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end.
+  Only a dev server on this machine loads `src/dev-tools/`, so a build has none of it; the host's contact picker reads
+  the test user's contacts in place of the chat contacts.
 
 ### Contacts
 
@@ -1081,7 +1082,7 @@ From `hosts/web`:
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # unit tests under src/ (bun test)
+npm test            # unit tests under tests/unit/ (bun test)
 npm run build       # tsc --noEmit && vite build
 npm run test:browser
 ```
@@ -1113,17 +1114,18 @@ opens, so the light client reaches no chain. It checks that:
 - Chat starts at sign-in while another screen is in front, with no chain connection, derives the same identity account
   and chat key as the core, has no on or off controls, and stops at sign-out;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
-- a product built from `browser/contacts-product.ts`, with a synthetic wallet whose saved Nova chat holds two accepted
-  contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming the product
-  and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is neither the
-  account nor the name, the same handle again for the same person and another for the other; Cancel and Escape answer
-  `Dismissed`; and a wallet with no contacts still gets the picker, with no one listed, and Escape answers `Dismissed`;
-- a chat product's worker, built from `browser/chat-product-worker.ts`, with a synthetic wallet and every socket closed,
-  runs through the same loader and core and records where TrUAPI stops it: its conversations show as rooms in the one
-  list, but it has to push all its history and the host keeps the last 200 of 210 messages and never asks for a page;
-  every message it posts shows as the product's, even those its own model says Ada, Grace or the user sent; what the
-  user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact picker and get a
-  handle, which nothing turns into someone it can chat with;
+- a product built from `fixtures/products/contacts-product.ts`, with a synthetic wallet whose saved Nova chat holds two
+  accepted contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming the
+  product and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is neither
+  the account nor the name, the same handle again for the same person and another for the other; Cancel and Escape
+  answer `Dismissed`; and a wallet with no contacts still gets the picker, with no one listed, and Escape answers
+  `Dismissed`;
+- a chat product's worker, built from `fixtures/products/chat-product-worker.ts`, with a synthetic wallet and every
+  socket closed, runs through the same loader and core and records where TrUAPI stops it: its conversations show as
+  rooms in the one list, but it has to push all its history and the host keeps the last 200 of 210 messages and never
+  asks for a page; every message it posts shows as the product's, even those its own model says Ada, Grace or the user
+  sent; what the user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact
+  picker and get a handle, which nothing turns into someone it can chat with;
 - the local chat product demo, with a synthetic wallet, every socket closed and every request outside this host refused,
   starts from the Developer menu and runs through the dev server's archive, the same loader and the core, and speaks the
   Chat Extension v2 draft bridge: capabilities list only what the host serves; the list draws its rooms from their
@@ -1143,21 +1145,21 @@ opens, so the light client reaches no chain. It checks that:
   room; a send reaches the core's statement store through `statement_store.submit` and fails there for want of peers;
   the synthetic demo's worker asks for the identity and is refused; switching back stops the worker and shows the host's
   conversation with its record unchanged;
-- a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
-  manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
-  when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the core's
-  screening, shows the text as text, the file as a link with no referrer, its own reaction and not the one it removed,
-  receives the user's reaction through the core as `MessagePosted(Reaction)`, answers a press on its button for that
-  message, answers what the user types, makes no request outside this host, shows in the inspector, stops at sign-out,
-  is not seen by another wallet, and starts again when its wallet signs back in;
+- a product worker, built from `fixtures/products/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs
+  from its manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws
+  the card when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the
+  core's screening, shows the text as text, the file as a link with no referrer, its own reaction and not the one it
+  removed, receives the user's reaction through the core as `MessagePosted(Reaction)`, answers a press on its button for
+  that message, answers what the user types, makes no request outside this host, shows in the inspector, stops at
+  sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
 - the Humanity card, with every socket closed and every request outside this host, the stood-in Asset Hub and the
-  gateway refused: a worker built from `browser/pocket-worker.ts` starts only once Pocket is shown, draws the face after
-  it boots, and gets the face's button press; a press on the card opens the Widget built from
-  `browser/pocket-widget.ts`, not the app, at `?card=humanity`, as a `Widget` execution with the worker's account and
-  storage; choosing Pocket ends it; the face is kept for that wallet only and drawn at once on its next sign-in; and a
-  worker that does not offer the card is not started; a product with no widget runs its base name's content as the
-  Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
-  says why.
+  gateway refused: a worker built from `fixtures/products/pocket-worker.ts` starts only once Pocket is shown, draws the
+  face after it boots, and gets the face's button press; a press on the card opens the Widget built from
+  `fixtures/products/pocket-widget.ts`, not the app, at `?card=humanity`, as a `Widget` execution with the worker's
+  account and storage; choosing Pocket ends it; the face is kept for that wallet only and drawn at once on its next
+  sign-in; and a worker that does not offer the card is not started; a product with no widget runs its base name's
+  content as the Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens
+  nothing and says why.
 
 `browser/notifications.spec.ts` checks the Inbox prototype with synthetic phrases, every socket closed and every request
 outside this host refused: nothing is stored until sample data is asked for, from the developer tools; the badge counts

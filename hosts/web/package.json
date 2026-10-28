@@ -9,8 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src --timeout 60000",
-    "test:browser": "bun test browser --timeout 180000"
+    "test": "bun test ./tests/unit --timeout 60000",
+    "test:browser": "bun test ./browser --timeout 180000"
   },
   "dependencies": {
     "@noble/ciphers": "^2.4.0",

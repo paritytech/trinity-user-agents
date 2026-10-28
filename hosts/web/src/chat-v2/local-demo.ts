@@ -6,11 +6,11 @@ import {
   LOOPBACK_HOSTNAMES,
   type DemoWorkerAnswer,
 } from "./local-demo-route.js";
-import { syntheticCallMedia } from "./synthetic-media.js";
+import { syntheticCallMedia } from "../../fixtures/products/synthetic-media.js";
 
 /**
  * DEV ONLY. The local chat product demo, as the page runs it: the synthetic
- * chat product (`browser/synthetic-chat-product.ts`) as a product worker,
+ * chat product (`fixtures/products/synthetic-chat-product.ts`) as a product worker,
  * served by this dev server (`chat-product-demo-plugin.ts`).
  *
  * The user starts it for the signed-in session. It then runs as one of the
@@ -42,7 +42,7 @@ export class LocalChatDemo {
   readonly productId: string;
   /** Where the demo's code comes from, for the screen. */
   readonly source =
-    "browser/synthetic-chat-product.ts, served by this dev server";
+    "fixtures/products/synthetic-chat-product.ts, served by this dev server";
   private on = false;
 
   constructor(private readonly deps: LocalChatDemoDeps) {

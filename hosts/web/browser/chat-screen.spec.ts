@@ -1,7 +1,7 @@
 /**
  * Headless-browser test of the Chat screen over its chat providers, mounted
  * alone on a stand-in page of the host's Vite server by
- * `browser/chat-screen-harness.ts`. The chat product provider talks to the
+ * `browser/support/chat-screen-harness.ts`. The chat product provider talks to the
  * synthetic chat product over the Chat Extension v2 draft bridge in the page;
  * the Nova and product room providers have stand-ins behind them. Nothing reaches a network: every request outside this host is
  * refused and counted. Set CHAT_SCREENSHOTS to a directory to keep
@@ -11,8 +11,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
-import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
-import type { ChatHarness } from "./chat-screen-harness.js";
+import {
+  type RunningHost,
+  startHost,
+  testBrowser,
+} from "./support/fixtures.js";
+import type { ChatHarness } from "./support/chat-screen-harness.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 150_000;
@@ -29,7 +33,7 @@ const SCREEN_PAGE = `<!doctype html>
   <body data-surface="chat">
     <section id="chat-screen" class="chat-screen" hidden></section>
     <script type="module">
-      const { mountChatScreen } = await import("/browser/chat-screen-harness.ts");
+      const { mountChatScreen } = await import("/browser/support/chat-screen-harness.ts");
       window.__chat = await mountChatScreen(document.getElementById("chat-screen"));
     </script>
   </body>

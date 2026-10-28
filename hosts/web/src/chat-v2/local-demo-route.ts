@@ -10,7 +10,7 @@ export const DEMO_WORKER_PATH = "__chat-product-demo/worker.json";
 /** The Nova chat worker's description (`src/chat-worker/worker.ts`), under the host's base. */
 export const NOVA_WORKER_PATH = "__chat-product-demo/nova-worker.json";
 
-/** Example Chat's app archive (`src/dev-tools/example-chat/product.ts`), under the host's base. */
+/** Example Chat's app archive (`fixtures/products/example-chat/product.ts`), under the host's base. */
 export const EXAMPLE_CHAT_PATH = "__chat-product-demo/example-chat.json";
 
 /** What the dev server answers at {@link DEMO_WORKER_PATH}. */

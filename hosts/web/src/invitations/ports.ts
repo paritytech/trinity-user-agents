@@ -63,7 +63,7 @@ export interface AuthEvidence {
  * a contact, checks a contact's evidence, and opens what is sealed to the
  * user. The credential never leaves it; the request service only builds the
  * transcripts it covers. Which identity key a real host uses, and the exact
- * profile, are not decided; `src/dev-tools/fixture-identity.ts` is a
+ * profile, are not decided; `fixtures/invitations/fixture-identity.ts` is a
  * reference profile over made-up keys.
  */
 export interface IdentityAuth {

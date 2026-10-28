@@ -7,9 +7,13 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type Browser, type BrowserContext, type Page } from "playwright-core";
-import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
+import {
+  type RunningHost,
+  startHost,
+  testBrowser,
+} from "./support/fixtures.js";
 import type { ChatEventBody } from "../src/chat/diagnostics.js";
-import type { ScenarioValues } from "./chat-transport-scenario.js";
+import type { ScenarioValues } from "./support/chat-transport-scenario.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 120_000;
@@ -139,7 +143,7 @@ const VIEW_PAGE = `<!doctype html>
         count: () => diagnostics.list().length,
         async run() {
           const { runScenario } = await import(
-            "/browser/chat-transport-scenario.ts"
+            "/browser/support/chat-transport-scenario.ts"
           );
           return runScenario(diagnostics);
         },
