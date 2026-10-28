@@ -7,6 +7,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigMo
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CustomContentDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.MatchRendererCustomContentDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -26,11 +29,12 @@ interface ChatRoomDeclarationsWriter {
 
 class RealChatRoomDeclarationsRepository @Inject constructor(
     private val dao: ChatRoomDeclarationsDao,
+    private val extensionRegistry: ChatExtensionRegistry,
 ) : ChatRoomDeclarationsRepository, ChatRoomDeclarationsWriter {
     override fun observe(chatId: ChatId): Flow<ChatRoomDeclarations?> =
-        dao.observe(chatId.toLocal()).map { it?.toDomain() }.distinctUntilChanged()
+        dao.observe(chatId.toLocal()).map { it?.toDomain(contentDecoder()) }.distinctUntilChanged()
 
-    override suspend fun get(chatId: ChatId): ChatRoomDeclarations? = dao.get(chatId.toLocal())?.toDomain()
+    override suspend fun get(chatId: ChatId): ChatRoomDeclarations? = dao.get(chatId.toLocal())?.toDomain(contentDecoder())
 
     override suspend fun setConfig(chatId: ChatId, config: ChatRoomConfigModel) =
         dao.setConfig(chatId.toLocal(), config.encode())
@@ -39,7 +43,11 @@ class RealChatRoomDeclarationsRepository @Inject constructor(
         dao.setMetadata(chatId.toLocal(), metadata.description)
 
     override suspend fun setPreview(chatId: ChatId, preview: ChatRoomPreviewModel) =
-        dao.setPreview(chatId.toLocal(), preview.encode())
+        dao.setPreview(chatId.toLocal(), preview.encode(contentDecoder()))
 
     override suspend fun delete(chatId: ChatId) = dao.delete(chatId.toLocal())
+
+    private suspend fun contentDecoder(): CustomContentDecoder = MatchRendererCustomContentDecoder(
+        extensionRegistry.getAllExtensions().flatMap { it.customMessageRenderers() }.associateBy { it.id },
+    )
 }

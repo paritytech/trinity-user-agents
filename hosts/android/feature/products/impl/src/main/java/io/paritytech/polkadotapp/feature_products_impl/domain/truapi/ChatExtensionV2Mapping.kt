@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeMod
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import uniffi.truapi.ChatMediaItem
 import uniffi.truapi.ChatMediaMeta
 import uniffi.truapi.ChatResource
@@ -34,7 +35,7 @@ fun ChatRoomConfigModel.toCore() = ChatRoomConfig(
 
 fun ChatRoomMetadata.toModel() = ChatRoomMetadataModel(description = description)
 
-fun ChatRoomPreview.toModel() = ChatRoomPreviewModel(
+fun ChatRoomPreview.toModel(productId: ProductId) = ChatRoomPreviewModel(
     timestamp = timestamp?.toLong(),
     badge = badge?.let {
         when (it) {
@@ -42,8 +43,8 @@ fun ChatRoomPreview.toModel() = ChatRoomPreviewModel(
             is ChatRoomBadge.UnreadCount -> ChatRoomBadgeModel.Count(it.count.toInt())
         }
     },
-    lastMessage = lastMessage?.toModel(),
-    lastReaction = lastReaction?.let { ChatPreviewReactionModel(it.emoji, it.byUser, it.message?.toModel(), it.removed) },
+    lastMessage = lastMessage?.toModel(productId),
+    lastReaction = lastReaction?.let { ChatPreviewReactionModel(it.emoji, it.byUser, it.message?.toModel(productId), it.removed) },
     unseenReactions = unseenReactions.coerceAtMost(Int.MAX_VALUE.toUInt()).toInt(),
 )
 
