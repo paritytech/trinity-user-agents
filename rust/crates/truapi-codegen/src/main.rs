@@ -5,6 +5,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 
+#[cfg(test)]
+mod host_requests_tests;
+
 mod platform;
 mod platform_callbacks;
 mod rust;
