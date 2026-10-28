@@ -663,7 +663,8 @@ fn check_chat_count<T>(
 	Ok(())
 }
 
-/// Validate the name and description of a room.
+/// Validate the name, description and icon of a room. The icon has the rules
+/// of the icon of `create_room`.
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -673,6 +674,7 @@ pub fn validate_chat_room_metadata(
 			.description
 			.map(|description| validate_chat_description("description", &description))
 			.transpose()?,
+		icon: metadata.icon.map(|icon| validate_chat_icon("icon", &icon)).transpose()?,
 	})
 }
 
@@ -839,6 +841,9 @@ pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdat
 		},
 		ChatFeedUpdate::Replaced(message) => {
 			ChatFeedUpdate::Replaced(validate_chat_message(message)?)
+		},
+		ChatFeedUpdate::Deleted { message_id: id } => {
+			ChatFeedUpdate::Deleted { message_id: message_id(&id)? }
 		},
 	})
 }
@@ -2854,11 +2859,23 @@ mod tests {
 		);
 	}
 
+	// A deletion names its message as each other update does.
+	#[test]
+	fn a_deletion_names_a_screened_message() {
+		let deleted = |id: &str| ChatFeedUpdate::Deleted { message_id: id.to_string() };
+		assert_eq!(validate_chat_feed_update(deleted(" m1 ")), Ok(deleted("m1")));
+		assert_eq!(
+			validate_chat_feed_update(deleted("m\u{202e}1")),
+			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+	}
+
 	#[test]
 	fn room_declarations_are_bounded_as_the_limits_say() {
 		let metadata = |description: usize| ChatRoomMetadata {
 			name: "Support".to_string(),
 			description: Some("x".repeat(description)),
+			icon: None,
 		};
 		assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
 		assert_eq!(
@@ -2874,6 +2891,17 @@ mod tests {
 				..metadata(0)
 			}),
 			Err(ChatFieldError::TooLong { field: "name", limit: CHAT_FIELD_MAX_BYTES })
+		);
+		// A new icon has the rules of the icon of `create_room`.
+		let icon = |icon: &str| ChatRoomMetadata { icon: Some(icon.to_string()), ..metadata(0) };
+		assert_eq!(
+			validate_chat_room_metadata(icon(" https://icons.example/room.png ")),
+			Ok(icon("https://icons.example/room.png"))
+		);
+		assert_eq!(validate_chat_room_metadata(icon("")), Ok(icon("")));
+		assert_eq!(
+			validate_chat_room_metadata(icon("javascript:alert(1)")),
+			Err(ChatFieldError::RejectedScheme { field: "icon" })
 		);
 
 		// The preview carries messages, screened as a page message is.
@@ -2985,7 +3013,11 @@ mod tests {
 				&product,
 				HostChatSetRoomMetadataRequest {
 					room_id: "support".to_string(),
-					metadata: ChatRoomMetadata { name: "Support".to_string(), description: None },
+					metadata: ChatRoomMetadata {
+						name: "Support".to_string(),
+						description: None,
+						icon: None,
+					},
 				},
 			)),
 			Ok(())
@@ -3518,8 +3550,8 @@ pub trait ChatPlatform: Send + Sync {
 	/// stores the change, because it keeps the messages of the room. Without
 	/// it the host applies the change only to an open room screen and the chat
 	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
-	/// and, for an edit or a replacement of a message the product did not
-	/// write, `NotOwner`.
+	/// and, for an edit, a replacement or a deletion of a message the product
+	/// did not write, `NotOwner`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
