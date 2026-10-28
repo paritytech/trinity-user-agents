@@ -292,7 +292,7 @@ fn frames() -> Vec<String> {
 			"7.set_room_config.response",
 			wire_table::CHAT_SET_ROOM_CONFIG,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomConfigResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomConfigError>>(HostChatSetRoomConfigResponse::V1),
 		),
 		line(
 			"8.set_room_metadata.request",
@@ -307,15 +307,15 @@ fn frames() -> Vec<String> {
 			"8.set_room_metadata.response",
 			wire_table::CHAT_SET_ROOM_METADATA,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomMetadataResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomMetadataError>>(HostChatSetRoomMetadataResponse::V1),
 		),
 		line(
 			"8.set_room_metadata.error",
 			wire_table::CHAT_SET_ROOM_METADATA,
 			MESSAGE_TYPE_RESPONSE,
-			Err::<HostChatSetRoomMetadataResponse, _>(CallError::Domain(HostChatRoomError::V1(
-				v01::HostChatRoomError::NotRoomHost,
-			))),
+			Err::<HostChatSetRoomMetadataResponse, _>(CallError::Domain(
+				HostChatSetRoomMetadataError::V1(v01::HostChatSetRoomMetadataError::NotRoomHost),
+			)),
 		),
 		line(
 			"9.set_room_preview.request",
@@ -330,7 +330,7 @@ fn frames() -> Vec<String> {
 			"9.set_room_preview.response",
 			wire_table::CHAT_SET_ROOM_PREVIEW,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatRoomError>>(HostChatSetRoomPreviewResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomPreviewError>>(HostChatSetRoomPreviewResponse::V1),
 		),
 		line(
 			"10.delete_room.request",
@@ -342,7 +342,7 @@ fn frames() -> Vec<String> {
 			"10.delete_room.response",
 			wire_table::CHAT_DELETE_ROOM,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatRoomError>>(HostChatDeleteRoomResponse::V1),
+			Ok::<_, CallError<HostChatDeleteRoomError>>(HostChatDeleteRoomResponse::V1),
 		),
 		line(
 			"11.update_feed.request",
