@@ -26,8 +26,13 @@ and it makes no security promise against a hostile one. Its separations are for 
 - **The permission prompts are a development aid.** They show what a product asks for and let you answer. They are not
   custody. Every host prompt (permissions, confirmations, the contact picker, the invitation prompt, chat controls) is
   drawn as the Polkadot app's bottom sheet, over the app's rectangle only and at its scale, so the developer tools stay
-  visible beside it. It names the product that asks once, under its title. Escape or a tap outside the sheet gives the
-  safe answer (deny, reject, cancel), and focus returns where it was.
+  visible beside it. It names the product that asks once, under its title, as "Requested by" and the product id the core
+  holds, in full: a local URL's id keeps its port, and an id the user entered is shown as entered. Under it the host
+  adds, from what it opened itself, where the product came from (`App opened from http://localhost:5173/`) when the id
+  does not already say; when two open products share one id, the core cannot tell them apart and neither can the host,
+  and the sheet says so. Nothing a product sends changes either line. A prompt about a host action, such as clearing the
+  demo's invitations, names no product. Escape or a tap outside the sheet gives the safe answer (deny, reject, cancel),
+  and focus returns where it was.
 - **A product's own requests follow the browser.** The host does not intercept a product's `fetch`, XHR, WebSocket,
   WebRTC or media. They follow the browser's rules and the target's CORS headers, and camera and microphone also need
   the browser's and the operating system's permission. Calls a product makes through TrUAPI, such as signing or a
@@ -1249,10 +1254,11 @@ entries fit, long rows wrap, Dismiss is a full tap target, and nothing scrolls s
 
 `browser/prompts.spec.ts` checks the host's prompts with a demo user and a fixture product: in a phone preview the
 dialog covers the app's rectangle only, with a dark sheet inside it, the developer tools outside it and no page-wide
-backdrop; the picker names the product once and lists contacts by name only, with Cancel below; focus starts on the
-title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its detail and is denied; focus
-returns where it was; a scaled preview draws the sheet at the app's scale; and on a phone browser nothing scrolls
-sideways and the buttons are 44px or taller.
+backdrop; the picker names the product once and lists contacts by name only, with Cancel below; a permission names the
+product by its full id, adds where the host opened it from when an entered id does not say, and wraps a long id inside
+the sheet; focus starts on the title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its
+detail and is denied; focus returns where it was; a scaled preview draws the sheet at the app's scale; and on a phone
+browser nothing scrolls sideways and the buttons are 44px or taller.
 
 `browser/app-area.spec.ts` checks where a product in front sits, with a synthetic product on loopback that has a field
 at its very top and a button fixed to its bottom, no wallet, every socket closed and every request outside this host and

@@ -60,7 +60,10 @@ afterAll(async () => {
 
 type Calls = { pick(): Promise<unknown>; camera(): Promise<unknown> };
 
-async function start(viewport: { width: number; height: number }): Promise<{
+async function start(
+  viewport: { width: number; height: number },
+  productId = "",
+): Promise<{
   context: BrowserContext;
   page: Page;
   frame: Frame;
@@ -89,6 +92,11 @@ async function start(viewport: { width: number; height: number }): Promise<{
     .filter({ hasText: "Signed in as Alice" })
     .waitFor({ state: "attached" });
   expect(await page.locator(".test-product iframe").count()).toBe(0);
+  if (productId !== "") {
+    await setMenu(page, true, "product");
+    await page.click("#product-id-summary");
+    await page.fill("#product-id", productId);
+  }
   await setMenu(page, false);
   await showAddress(page);
   await page.fill("#address", product.url);
@@ -274,6 +282,63 @@ describe("the host's prompts", () => {
         expect(outside).toEqual([]);
       } finally {
         await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "a permission names the product by the id the core holds, and where the host opened it from when the id does not say",
+    async () => {
+      const own = await start({ width: 1280, height: 860 });
+      try {
+        // Opened by its own address the id is the host with its port, in full,
+        // and the host adds nothing that would only repeat it.
+        const asked = call(own.frame, "camera");
+        await sheet(own.page).waitFor();
+        expect(await sheet(own.page).locator(".prompt-from").innerText()).toBe(
+          `Requested by ${new URL(product.url).host}`,
+        );
+        expect(
+          await sheet(own.page).locator(".prompt-from-known").count(),
+        ).toBe(0);
+        await sheet(own.page).getByRole("button", { name: "Deny" }).click();
+        expect((await asked).granted).toBe(false);
+      } finally {
+        await own.context.close();
+      }
+
+      // Opened under an id it was given, the sheet names that id, and says the
+      // host opened it from the local address, which nothing the product
+      // sends can change.
+      const named = await start(
+        { width: 390, height: 844 },
+        "a-very-long-product-name-for-an-app-that-keeps-going.example.paseo",
+      );
+      try {
+        const asked = call(named.frame, "camera");
+        await sheet(named.page).waitFor();
+        expect(
+          await sheet(named.page).locator(".prompt-from").innerText(),
+        ).toBe(
+          "Requested by a-very-long-product-name-for-an-app-that-keeps-going.example.paseo",
+        );
+        expect(
+          await sheet(named.page).locator(".prompt-from-known").innerText(),
+        ).toBe(`App opened from ${product.url}`);
+        const where = await geometry(named.page);
+        expect(inside(where.sheet, where.app)).toBe(true);
+        expect(
+          await named.page.evaluate(
+            () => document.documentElement.scrollWidth - window.innerWidth,
+          ),
+        ).toBeLessThanOrEqual(0);
+        await screenshot(named.page, "permission-requester");
+        await sheet(named.page).getByRole("button", { name: "Deny" }).click();
+        expect((await asked).granted).toBe(false);
+        expect(named.outside).toEqual([]);
+      } finally {
+        await named.context.close();
       }
     },
     TEST_MS,

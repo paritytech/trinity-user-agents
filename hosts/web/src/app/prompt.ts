@@ -87,10 +87,21 @@ export interface PromptLookupView {
 
 let queue: Promise<unknown> = Promise.resolve();
 let area: HTMLElement | null = null;
+let describeRequester: (productId: string) => string | null = () => null;
 
 /** Draw prompts over `element`, the app's rectangle, instead of the whole page. */
 export function setPromptArea(element: HTMLElement | null): void {
   area = element;
+}
+
+/**
+ * Say, under "Requested by <product id>", what the host knows of that
+ * product beyond its id, or null for nothing. Read each time a prompt shows.
+ */
+export function setRequesterDescriber(
+  describe: (productId: string) => string | null,
+): void {
+  describeRequester = describe;
 }
 
 /**
@@ -276,8 +287,11 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   // or on the search field when there is one.
   title.autofocus = request.search === undefined;
   sheet.append(grabber, title);
-  if (request.from !== undefined)
+  if (request.from !== undefined) {
     sheet.append(el("p", "prompt-from", `Requested by ${request.from}`));
+    const known = describeRequester(request.from);
+    if (known !== null) sheet.append(el("p", "prompt-from-known", known));
+  }
   if (request.subtitle)
     sheet.append(el("p", "prompt-subtitle", request.subtitle));
 

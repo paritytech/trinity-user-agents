@@ -50,7 +50,8 @@ import {
   tabWalletKey,
   type NetworkChoice,
 } from "./platform/network-choice.js";
-import { ask, setPromptArea } from "./app/prompt.js";
+import { ask, setPromptArea, setRequesterDescriber } from "./app/prompt.js";
+import { describeRequester } from "./app/requester.js";
 import { RecentProducts, type RecentEntry } from "./app/recents.js";
 import { BrowseLanding } from "./app/browse-landing.js";
 import {
@@ -194,6 +195,15 @@ const productDetails = element("product-details");
 const productFrame = element("product-frame");
 // Prompts are drawn over the app, as the phone app draws its sheets.
 setPromptArea(productFrame);
+// A prompt names the product by its id; the host adds where it opened it from.
+setRequesterDescriber((productId) =>
+  describeRequester(productId, [
+    ...navigation.runningAs(productId),
+    ...(productWorkers.provider(productId) === null
+      ? []
+      : [{ kind: "Worker" as const, address: null }]),
+  ]),
+);
 const productSlot = element("product-slot");
 /** The host screen a minimized product goes back to: the last one shown. */
 let lastHost: "chat" | "pocket" = "chat";
