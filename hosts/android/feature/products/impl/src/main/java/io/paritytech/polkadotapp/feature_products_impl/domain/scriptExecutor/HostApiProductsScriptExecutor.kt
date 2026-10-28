@@ -1,30 +1,19 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor
 
-import android.content.Context
-import android.net.Uri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import dagger.hilt.android.qualifiers.ApplicationContext
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.chains.util.scaleEncodeBinary
-import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
-import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
-import io.paritytech.polkadotapp.common.presentation.deeplink.handleAndProcessOutcomeWithSystemFallback
-import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
-import io.paritytech.polkadotapp.common.presentation.notification.error
-import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.common.utils.HexString
 import io.paritytech.polkadotapp.common.utils.awaitTrue
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ExplicitInjection
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiEnvironment
@@ -32,13 +21,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiSes
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostCallGroupFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.handlerGroups.ChatRenderWidgetHostCalls
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.handlerGroups.HostCallHandlerGroup
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.toJsStringLiteral
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ChatWorkerNavigation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,10 +46,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
     private val hostCallGroupFactory: HostCallGroupFactory,
     private val sessionFactory: HostApiSession.Factory,
     private val chatWebViewProviderFactory: ChatWebViewProvider.Factory,
-    private val deepLinkHandler: DeepLinkHandler,
-    private val chatActiveTracker: ChatActiveTracker,
-    private val appNotifier: AppNotifier,
-    @param:ApplicationContext private val context: Context,
+    private val navigation: ChatWorkerNavigation,
     @Assisted private val productId: ProductId,
 ) : ProductsScriptExecutor {
     @AssistedFactory
@@ -95,9 +81,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
             val webViewRuntime = WebViewRuntime(webViewProvider)
 
             val transport = webViewRuntime.createTransport()
-            val navigationPolicy = NavigationPolicy.DeeplinkNavigation(
-                onDeeplinkNavigation = { launchDeeplinkNavigation(it, scope) }
-            )
+            val navigationPolicy = navigation.policy(productId, scope)
 
             val sharedGroups = hostCallGroupFactory.createShared(botApi, webViewProvider.callingProductIdProvider, navigationPolicy)
             val chatGroup = hostCallGroupFactory.createChatGroup(botApi)
@@ -164,35 +148,6 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
 
     private suspend fun awaitInitialized() {
         initialized.awaitTrue()
-    }
-
-    // App-level message surface for deeplink fallbacks (the chat executor has no UI of its own).
-    private val messageDisplay = object : MessageDisplay {
-        override fun showMessage(text: String) = appNotifier.error(text)
-    }
-
-    // The script keeps running while the chat is closed, so navigation is only honoured when the user
-    // is actually looking at this product's chat - otherwise a background bot could yank them off any screen.
-    private fun productChatIsActive(): Boolean {
-        val activeChatId = chatActiveTracker.getActive() ?: return false
-        return activeChatId.isExtensionChat(productId.toChatExtensionId())
-    }
-
-    private fun launchDeeplinkNavigation(destination: Uri, scope: CoroutineScope) {
-        if (!productChatIsActive()) {
-            Timber.d("Ignored navigation to $destination: chat of $productId is not active")
-            return
-        }
-
-        scope.launch {
-            with(ComputationalScope(this)) {
-                with(messageDisplay) {
-                    with(context) {
-                        deepLinkHandler.handleAndProcessOutcomeWithSystemFallback(destination)
-                    }
-                }
-            }
-        }
     }
 
     private suspend fun startRendering(
