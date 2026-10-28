@@ -136,12 +136,7 @@ fn build_module(api: &ApiDefinition, trait_def: &TraitDef) -> Result<String> {
 	Ok(code)
 }
 
-/// Emit the free functions that start a host-initiated subscription (a
-/// method the host calls into the product, e.g.
-/// `renderer_render`). Its `Start` payload is the request wrapper's own
-/// encoding, sent immediately rather than registered against the dispatcher;
-/// the product's `Receive`/`Interrupt` replies are routed back by
-/// `HostInitiatedSubscriptionManager`.
+/// Emit typed callers for methods the host invokes on the product.
 fn write_host_initiated_callers(
 	out: &mut String,
 	api: &ApiDefinition,
@@ -163,33 +158,48 @@ fn write_host_initiated_callers(
 				&request.type_ref,
 				&wrappers,
 			)?;
-			let ReturnType::Subscription { item, interrupt } = &method.return_type else {
-				bail!(
-					"Host-initiated method `{}` must return Subscription<Item, Interrupt>",
-					method.name
-				);
-			};
-			let item_name =
-				versioned_wrapper_root(&method.name, "host-initiated item", item, &wrappers)?;
-			let interrupt_path = error_type_path(
-				&module,
-				&versioned_error_wrapper(&method.name, interrupt, &wrappers)?,
-			);
+			let (response, error) = method.return_type.response_types();
+			let response_name = versioned_wrapper_root(
+				&method.name,
+				"host-initiated response",
+				response,
+				&wrappers,
+			)?;
+			let error_path =
+				error_type_path(&module, &versioned_error_wrapper(&method.name, error, &wrappers)?);
 			let wire_name = wire_method_name(&trait_def.name, &method.name);
 			let ids = const_name(&wire_name);
 			let request_path = format!("versioned::{module}::{request_name}");
-			let item_path = format!("versioned::{module}::{item_name}");
+			let response_path = format!("versioned::{module}::{response_name}");
+			match method.kind {
+				MethodKind::Request => writedoc!(
+					out,
+					r#"
 
-			writedoc!(
-				out,
-				r#"
+                /// Call the product's `{wire_name}` handler and await its response.
+                pub async fn {wire_name}(
+                    subscriptions: &HostInitiatedSubscriptionManager,
+                    transport: Arc<dyn Transport>,
+                    request: {request_path},
+                ) -> Result<{response_path}, truapi::CallError<{error_path}>> {{
+                    subscriptions.request(
+                        wire_table::{ids},
+                        parity_scale_codec::Encode::encode(&request),
+                        transport,
+                    ).await
+                }}
+                "#
+				),
+				MethodKind::Subscription => writedoc!(
+					out,
+					r#"
 
                 /// Start the host-initiated `{wire_name}` subscription.
                 pub fn {wire_name}(
                     subscriptions: &HostInitiatedSubscriptionManager,
                     transport: Arc<dyn Transport>,
                     request: {request_path},
-                ) -> truapi::Subscription<{item_path}, truapi::CallError<{interrupt_path}>> {{
+                ) -> truapi::Subscription<{response_path}, truapi::CallError<{error_path}>> {{
                     subscriptions.start(
                         wire_table::{ids},
                         parity_scale_codec::Encode::encode(&request),
@@ -197,7 +207,8 @@ fn write_host_initiated_callers(
                     )
                 }}
                 "#
-			)
+				),
+			}
 			.unwrap();
 		}
 	}
