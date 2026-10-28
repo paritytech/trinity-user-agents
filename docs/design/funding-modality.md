@@ -17,7 +17,7 @@ flowchart LR
 
   subgraph HOST["Host app · iOS / Android"]
     overlay["Overlay<br/>amount · providers · summary · deposit · cancel"]
-    frame["Provider frame<br/>App route or https page"]
+    frame["Provider frame<br/>relative App route or https page"]
     purse["Purse<br/>dock · Total panel · history"]
     wallet["Coin wallet<br/>top-ups · payments · balance"]
     secure["Secure storage<br/>auth tokens"]
@@ -60,10 +60,14 @@ flowchart LR
 | `Funding` | 22 | `request({ id, direction, amount? })` · `statusSubscribe({ id })` | product |
 | `FundingProvider` | 24 | core → worker: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` | core and provider worker |
 | `Payment` | 9 | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe` | provider worker |
-| `AuthTokens` | 26 | store · read | provider worker |
-| `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed` | core → host |
+| `AuthTokens` | 27 (#1553) | `store` · `get` · `remove` | provider worker |
+| `FundingPlatform` | host | `present_funding` · `present_provider_frame` · `detected_country` · `funding_session_changed` · `funding_quotes_changed` | core → host |
 
-Session id: `fs_` + hex(blake2("truapi/funding-id", product, id)). Reused id → `AlreadyExists`.
+Session id: `fs_` + hex(blake2("truapi/funding-id", product, id)). Reused id → `AlreadyExists`. Host-opened: `fs_` + nanoid(10).
+
+Worker payments name their session (`funding`). A session the worker doesn't serve, the wrong direction, or a full session (≤3 top-ups/payments) → `FundingNotServed`. A repeat under the same id must ask the same.
+
+Started funds are recorded Pending before the call and Accepted once the host holds them. Only Accepted funds can be named in a report, and only once. Unaccepted ones go after 1 h if the engine doesn't hold them.
 
 ```mermaid
 flowchart LR
@@ -88,15 +92,15 @@ sequenceDiagram
   P->>C: request(id, In, amount?)
   C->>H: present_funding
   H->>C: rail, asset, country
-  C->>W: quote (every provider)
+  C->>W: quote (every provider, 10 s deadline)
   W-->>C: Quoted
-  C->>H: quote list (request id, best)
+  C->>H: funding_quotes_changed: rows Pending → Quoted | Unavailable{Refused | Timeout}, best; re-asked every 60 s
   H->>C: select_funding_provider
   C->>W: assign
   W->>C: presentFrame
   C->>H: provider frame
   W->>C: AwaitingPayment, PaymentReceived, Converting
-  W->>W: keep state, then payment.topUp(id, amount)
+  W->>W: keep state, then payment.topUp(id, amount, funding: intent)
   C->>H: claim into CASH
   W->>C: Crediting(id, amount), Delivered
   Note over C: settles from final claims
@@ -112,13 +116,13 @@ sequenceDiagram
   participant C as Core
   participant W as Provider
   C->>W: assign (Out)
-  W->>W: keep state, then payment.request(id, amount)
+  W->>W: keep state, then payment.request(id, amount, funding: intent)
   C->>H: user approves debit
   W->>C: Collecting(id, amount)
   Note over C: Released (debited)
   W->>C: PayoutRetrying* → Payout
   alt payout failed
-    W->>C: payment.topUp refund
+    W->>C: payment.topUp refund (funding: intent)
     W->>C: Refunding(top_up_id, amount)
     Note over C: PayoutFailed { refunded }
   end
@@ -149,15 +153,19 @@ stateDiagram-v2
 
 The overlay runs on its own task: a request that goes away still starts or discards its session.
 
+One serialized reconciler, woken on every change, runs the background work: load or sweep, then retain quotes · hold workers · follow settlements · resolve starts · catch up links. Sweep retry 30 s, catch-up retry 5 s, provider call timeout 60 s.
+
 ## Cancel
 
 ```mermaid
 flowchart TD
-  c[user cancels] --> mm{money moved?}
+  c[user cancels] --> assigned{provider assigned?}
+  assigned -- no --> none[ended: Cancelled]
+  assigned -- yes --> mm{money moved?}
   mm -- no --> first{first ask?}
   first -- yes --> ask[cancel call] --> stopped[Stopped → ended: Cancelled]
   first -- no --> ended[ended: Cancelled]
-  mm -- yes --> late{top-up credited?}
+  mm -- yes --> late{credit started?}
   late -- yes --> toolate[TooLate]
   late -- no --> req[cancel call]
   req --> refused[Refused · carries on]
@@ -187,13 +195,16 @@ flowchart LR
   s -- ended --> h
   h -- acknowledge --> s
   k -- funding_history --> h
-  s -- corrupt/older blob --> u
+  s -- corrupt blob --> u
 ```
+
+Sessions blob format 2, pack format 1. Each blob leads with a u16 format.
 
 | Blob | Format rule |
 |---|---|
 | current format | read |
-| older or corrupt | set aside, start empty |
+| older | cleared, start empty |
+| corrupt | set aside (≤8), start empty |
 | newer (downgrade) | left untouched, funding unavailable |
 
 ## Rows
@@ -212,6 +223,7 @@ History: In progress · Completed.
 | TakingLonger | Delayed, don't pay again · out: Taking longer than usual (amber) |
 | ToppedUp / Sent / PaidOutAfterCancel | {moment} |
 | Refunded / PayoutFailed / Cancelled | Refunded / Payout failed / Cancelled · {moment} |
+| CancelRequested · CancelOffered · CancelRefused · Cancelling | Cancel requested, waiting for the provider · Cancel offer waiting for you (amber) · The provider can't cancel (amber) · Cancelling… |
 | Failed | Expired · {moment} / Payment failed · {moment} |
 
 ## Session sheet
@@ -221,7 +233,7 @@ History: In progress · Completed.
      $50 CASH
  ●─•─•─●─•─•─○        Started · Received · Added      (out: Received by provider · Sent)
  Checking your payment            band
- Checked with the provider 3s ago  last_heard_at_ms · after 60 s: Trying to reconnect
+ Checked with the provider 3s ago  last_heard_at_ms · just now / s / min / h
  Send this exact amount inc. fees   €50.55 ›
  Reference                    5729 4183 6602 ⧉
  Arrives  1–2 business days · Final Cash depends on the rate on arrival
@@ -233,8 +245,10 @@ History: In progress · Completed.
 | AwaitingPayment | Waiting for your payment · bank: "If you've sent the money from your bank, it's on its way to us…" |
 | CheckingPayment · OnItsWay | Checking your payment · Your money is on its way |
 | Adding · Added | Adding $50 CASH to your balance · $50 CASH added to your balance |
-| Converting · PreparingPayout · Sending · Sent | Converting your Cash · The provider is preparing your payout · Sending the money to your {rail} · Sent |
+| Converting · PreparingPayout · Sending · Sent | Converting your Cash · The provider is preparing your payout · Sending the money to your {rail} · Sent to your {rail} |
+| crypto: CheckingPayment · PreparingPayout · Sending · Sent | Confirming your {asset} deposit · Exchanging your money for {asset} · Sending your {asset} · Your {asset} is on its way to your wallet |
 | Retrying · Delayed | amber, "don't pay again" on top-ups |
+| Cancel · Ended | no line |
 
 A bank top-up cancelled before paying takes a transfer that arrives within 7 days: it opens again and is added.
 
@@ -263,6 +277,8 @@ sequenceDiagram
   C->>W: assign(last update) per session it serves, then unanswered cancel calls
   W->>W: continue from the state it kept
 ```
+
+Catch-up is one call at a time per link, retried until every call is answered.
 
 ## Test
 
