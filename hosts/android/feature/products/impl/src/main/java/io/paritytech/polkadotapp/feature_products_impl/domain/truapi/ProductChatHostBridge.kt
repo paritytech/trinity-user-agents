@@ -80,7 +80,7 @@ class ProductChatHostBridge(
     }
 
     override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) {
-        chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel()).orReject()
+        chatMessaging.setRoomPreview(requireRoom(roomId), preview.toModel(productId)).orReject()
     }
 
     override suspend fun deleteRoom(roomId: String) {

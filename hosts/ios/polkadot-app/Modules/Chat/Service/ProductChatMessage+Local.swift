@@ -77,7 +77,8 @@ extension ChatMessageBody {
         case let .richText(text, _): text
         case .event,
              .call,
-             .payment: nil
+             .payment,
+             .custom: nil
         }
     }
 
@@ -85,6 +86,7 @@ extension ChatMessageBody {
     ///
     /// A reply quote exists for a text body and a media body. This build draws the caption of a media body, and
     /// draws a media body without a caption, a call and a payment as a message that the host does not support.
+    /// The product draws a custom body, as it draws a custom message that it posts.
     func nativeContent(replyTo: String?) -> Chat.LocalMessage.Content {
         switch self {
         case let .text(text):
@@ -96,6 +98,15 @@ extension ChatMessageBody {
         case .call,
              .payment:
             .unsupported(nil)
+        case let .custom(message, alt):
+            .customRendered(
+                Chat.LocalMessage.Content.CustomRenderedData(
+                    decoderId: MessageDecoderIdentifier.product.rawValue,
+                    data: message.payload,
+                    identifier: message.messageType,
+                    alt: alt
+                )
+            )
         }
     }
 }
