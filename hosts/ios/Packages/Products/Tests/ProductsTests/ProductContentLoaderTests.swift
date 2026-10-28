@@ -125,6 +125,29 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 1)
     }
 
+    /// A product that publishes its app under a subname but no widget serves
+    /// an expanded Pocket card from its base name, so the base name's archive
+    /// has to be on disk too, not just the app's.
+    @Test func stagesTheBaseNameAWidgetlessCardIsServedFrom() async throws {
+        let appContentHash = try Data.randomOrError(of: 34)
+        contracts.set(
+            text: #"{"$v":1,"displayName":"Shop","description":"A shop","icon":{"cid":"bafyicon","format":"png"}}"#,
+            name: productId,
+            key: ProductManifestRecords.rootKey
+        )
+        contracts.set(
+            text: #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#,
+            name: "app.\(productId)",
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: appContentHash, name: "app.\(productId)")
+        let environment = try Environment(self)
+
+        let content = try await environment.loader.open(productId, policy: .attempts(1))
+
+        #expect(content.content(for: .widget)?.localURL == storage.directory(for: contentHash.toHex()))
+    }
+
     @Test func networkOpenReportsResolvingDownloadAndUnpacking() async throws {
         let environment = try Environment(self)
         let phases = PhaseRecorder()
