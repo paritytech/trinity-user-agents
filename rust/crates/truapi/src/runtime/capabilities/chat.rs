@@ -34,11 +34,11 @@ use truapi::{
 
 use crate::{
 	platform::{
-		ChatFieldError, ChatPlatform, ChatRateLimiter, normalize_chat_identifier,
-		validate_chat_feed_update, validate_chat_icon, validate_chat_message_content,
-		validate_chat_name, validate_chat_room_metadata, validate_chat_room_preview,
+		ChatFieldError, ChatPlatform, normalize_chat_identifier, validate_chat_feed_update,
+		validate_chat_icon, validate_chat_message_content, validate_chat_name,
+		validate_chat_room_metadata, validate_chat_room_preview,
 	},
-	runtime::{ChatHandler, ProductRuntimeHost, versioning::version},
+	runtime::{ChatHandler, ProductRuntimeHost, chat::ChatRateLimiter, versioning::version},
 	unix_time::current_unix_millis,
 };
 
@@ -201,7 +201,7 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				platform.set_chat_room_footer(&self.connection.product, request).await.map_err(
 					|error| {
 						CallError::Domain(latest::HostChatSetRoomFooterError::Unknown {
@@ -222,7 +222,7 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				platform
 					.set_chat_room_config(&self.connection.product, request)
 					.await
@@ -242,7 +242,7 @@ impl Chat for ProductRuntimeHost {
 				let platform = self.connection.chat_platform()?;
 				request.metadata =
 					validate_chat_room_metadata(request.metadata).map_err(room_field_error)?;
-				request.room_id = self.hosted_room(&platform, &request.room_id, None).await?;
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				platform
 					.set_chat_room_metadata(&self.connection.product, request)
 					.await
@@ -262,9 +262,13 @@ impl Chat for ProductRuntimeHost {
 				let platform = self.connection.chat_platform()?;
 				request.preview =
 					validate_chat_room_preview(request.preview).map_err(room_field_error)?;
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let limiter = &self.connection.services.chat_rate_limits.preview;
-				request.room_id =
-					self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+				if !self.take_room_budget(limiter, &request.room_id) {
+					return Err(CallError::Domain(
+						latest::HostChatSetRoomPreviewError::RateLimited,
+					));
+				}
 				platform
 					.set_chat_room_preview(&self.connection.product, request)
 					.await
@@ -282,7 +286,7 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				match self.hosted_room(&platform, &request.room_id, None).await {
+				match self.hosted_room(&platform, &request.room_id).await {
 					// Deleting a room that is gone already succeeds, so a product
 					// can retry a delete whose answer it lost.
 					Err(RoomRefusal::UnknownRoom) => Ok(()),
@@ -317,9 +321,11 @@ impl Chat for ProductRuntimeHost {
 				let platform = self.connection.chat_platform()?;
 				request.update =
 					validate_chat_feed_update(request.update).map_err(feed_field_error)?;
+				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
 				let limiter = &self.connection.services.chat_rate_limits.feed;
-				request.room_id =
-					self.hosted_room(&platform, &request.room_id, Some(limiter)).await?;
+				if !self.take_room_budget(limiter, &request.room_id) {
+					return Err(CallError::Domain(latest::HostChatUpdateFeedError::RateLimited));
+				}
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
@@ -350,20 +356,15 @@ enum RoomRefusal {
 	UnknownRoom,
 	/// The product takes part in the room as a bot.
 	NotRoomHost,
-	/// The room spent its call budget for now.
-	RateLimited,
 	/// The id was malformed, or the host could not list the rooms.
 	Failed(String),
 }
 
-// Only `set_room_preview` and `update_feed` ask for a rate limit, and a
-// delete of a room that does not exist succeeds before it reaches its error.
 impl From<RoomRefusal> for latest::HostChatSetRoomConfigError {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
 			RoomRefusal::UnknownRoom => Self::UnknownRoom,
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -374,7 +375,6 @@ impl From<RoomRefusal> for latest::HostChatSetRoomMetadataError {
 		match refusal {
 			RoomRefusal::UnknownRoom => Self::UnknownRoom,
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -385,7 +385,6 @@ impl From<RoomRefusal> for latest::HostChatSetRoomPreviewError {
 		match refusal {
 			RoomRefusal::UnknownRoom => Self::UnknownRoom,
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::RateLimited => Self::RateLimited,
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -395,8 +394,9 @@ impl From<RoomRefusal> for latest::HostChatDeleteRoomError {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
+			// A delete of a room that does not exist succeeds before it
+			// reaches its error.
 			RoomRefusal::UnknownRoom => Self::Unknown { reason: "unknown room".to_string() },
-			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -407,7 +407,6 @@ impl From<RoomRefusal> for latest::HostChatUpdateFeedError {
 		match refusal {
 			RoomRefusal::UnknownRoom => Self::UnknownRoom,
 			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::RateLimited => Self::RateLimited,
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -419,7 +418,6 @@ impl From<RoomRefusal> for latest::HostChatSetRoomFooterError {
 			// The footer error has no bot variant: a room the product does not
 			// host is, for the footer, a room it did not create.
 			RoomRefusal::UnknownRoom | RoomRefusal::NotRoomHost => Self::UnknownRoom,
-			RoomRefusal::RateLimited => Self::Unknown { reason: "rate limited".to_string() },
 			RoomRefusal::Failed(reason) => Self::Unknown { reason },
 		}
 	}
@@ -502,8 +500,7 @@ impl ProductRuntimeHost {
 		Ok(declared(&config))
 	}
 
-	/// The normalized id of a room this product hosts, once the room passed
-	/// the call budget `limiter` holds it to.
+	/// The normalized id of a room this product hosts.
 	///
 	/// The room list is read once for each call, so every host answers a room
 	/// the product never created, or joined only as a bot, the same way.
@@ -511,7 +508,6 @@ impl ProductRuntimeHost {
 		&self,
 		platform: &Arc<dyn ChatPlatform>,
 		room_id: &str,
-		limiter: Option<&ChatRateLimiter>,
 	) -> Result<String, RoomRefusal> {
 		let room_id = normalize_chat_identifier("roomId", room_id)
 			.map_err(|error| RoomRefusal::Failed(error.to_string()))?;
@@ -521,21 +517,22 @@ impl ProductRuntimeHost {
 			.map_err(|error| RoomRefusal::Failed(error.reason))?
 			.rooms;
 		match rooms.iter().find(|room| room.room_id == room_id) {
-			None => return Err(RoomRefusal::UnknownRoom),
+			None => Err(RoomRefusal::UnknownRoom),
 			Some(room) if room.participating_as != latest::ChatRoomParticipation::RoomHost => {
-				return Err(RoomRefusal::NotRoomHost);
+				Err(RoomRefusal::NotRoomHost)
 			},
-			Some(_) => {},
+			Some(_) => Ok(room_id),
 		}
-		if let Some(limiter) = limiter &&
-			!limiter.try_acquire(
-				self.connection.product.product_id.as_str(),
-				&room_id,
-				current_unix_millis(),
-			) {
-			return Err(RoomRefusal::RateLimited);
-		}
-		Ok(room_id)
+	}
+
+	/// Spend one call of the budget that `limiter` holds `room_id` to.
+	/// `false` when the room spent its budget for now.
+	fn take_room_budget(&self, limiter: &ChatRateLimiter, room_id: &str) -> bool {
+		limiter.try_acquire(
+			self.connection.product.product_id.as_str(),
+			room_id,
+			current_unix_millis(),
+		)
 	}
 }
 
@@ -548,7 +545,10 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		platform::{CHAT_FEED_UPDATES_PER_SECOND, ProductContext, ProductExecutionKind, ProductId},
+		platform::{
+			CHAT_FEED_UPDATES_PER_SECOND, CHAT_PREVIEW_UPDATES_PER_SECOND, ProductContext,
+			ProductExecutionKind, ProductId,
+		},
 		runtime::{PairingHostRole, RuntimeServices},
 		test_support::{runtime_config, session_info, stub_platform, test_spawner},
 	};
@@ -954,6 +954,40 @@ mod tests {
 			)))
 		);
 		assert_eq!(chat.feed.lock().unwrap().len(), CHAT_FEED_UPDATES_PER_SECOND as usize);
+	}
+
+	// The 6th preview in one second is refused, before the host sees it.
+	#[test]
+	fn the_preview_of_a_room_is_paced() {
+		let chat = RecordingHost::with_rooms(&[hosted("support")]);
+		let runtime = chat_runtime(chat.clone());
+		let set_preview = || {
+			block_on(Chat::set_room_preview(
+				&runtime,
+				&CallContext::default(),
+				HostChatSetRoomPreviewRequest::V1(latest::HostChatSetRoomPreviewRequest {
+					room_id: "support".to_string(),
+					preview: latest::ChatRoomPreview {
+						timestamp: None,
+						badge: None,
+						last_message: None,
+						last_reaction: None,
+						unseen_reactions: 0,
+					},
+				}),
+			))
+		};
+
+		for _ in 0..CHAT_PREVIEW_UPDATES_PER_SECOND {
+			assert_eq!(set_preview(), Ok(HostChatSetRoomPreviewResponse::V1));
+		}
+		assert_eq!(
+			set_preview(),
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+				latest::HostChatSetRoomPreviewError::RateLimited
+			)))
+		);
+		assert_eq!(chat.calls().len(), CHAT_PREVIEW_UPDATES_PER_SECOND as usize);
 	}
 
 	#[test]
