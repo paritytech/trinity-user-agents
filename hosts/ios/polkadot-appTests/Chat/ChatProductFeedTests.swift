@@ -351,7 +351,7 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
     let body: ChatMessageBody
     let content: Chat.LocalMessage.Content
 
-    private static let hop = TrUAPIChatResource.hop(
+    private static let hop = ChatResource.hop(
         identifier: Data(repeating: 1, count: 32),
         ticket: Data(repeating: 2, count: 32),
         node: "wss://hop",
