@@ -374,7 +374,7 @@ class PocketViewModelTest {
         assertNull("the removal dialog came back", list.removalCandidate)
     }
 
-    // A link can pick the screen a card's page opens on, while a tap opens the card as it always has.
+    // A link can pick the screen a card's page opens on. A tap opens the card's page without the link's params.
     @Test
     fun `a link's page params reach only the page that link opened`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
