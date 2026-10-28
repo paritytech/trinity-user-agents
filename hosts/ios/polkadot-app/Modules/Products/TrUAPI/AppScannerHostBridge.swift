@@ -39,9 +39,12 @@ final class AppScannerHostBridge: ScannerHostBridge, @unchecked Sendable {
                 return .notVisible
             }
             return await withCheckedContinuation { continuation in
-                let scanner = makeScanner(productId, request) { continuation.resume(returning: $0) }
+                var presented = true
+                let scanner = makeScanner(productId, request) { scan in
+                    continuation.resume(returning: presented ? scan : .notVisible)
+                }
                 pending.screen = scanner.controller
-                routerFacade.productsRouter.present(view: scanner)
+                presented = routerFacade.productsRouter.present(view: scanner)
             }
         }
     }

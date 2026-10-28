@@ -27,6 +27,21 @@ struct AppScannerHostBridgeTests {
         #expect(page.presentedViewController == nil)
     }
 
+    @Test("A scanner with nowhere to open answers NotVisible, not a Dismissed the user never chose")
+    func unpresentableScannerAnswersNotVisible() async throws {
+        let page = StubProductPage(productId: "shop.dot")
+        let window = try makeTestWindow(root: page)
+        let bridge = AppScannerHostBridge(
+            routerFacade: ProductRoutersFacade(productsRouter: ProductsRouter(), navigationRouter: MockNavigationRouter()),
+            visibility: ProductVisibility(application: StubApplication(), window: { window }),
+            makeScanner: { _, _, answer in StubScanner(answer: answer) }
+        )
+
+        let answer = try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request)
+
+        #expect(answer == .notVisible)
+    }
+
     @Test("A cancelled scan closes its scanner, and the next scan opens straight after")
     func cancelledScanClosesAndNextOpens() async throws {
         let page = StubProductPage(productId: "shop.dot")

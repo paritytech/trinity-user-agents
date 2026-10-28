@@ -77,8 +77,10 @@ final class ProductScanPresenter: QRScannerPresenter {
         }
     }
 
+    /// Waits while another screen is over the scanner: dismissing would close
+    /// that screen instead, unanswered. The camera reads the code again later.
     private func close(answering scan: HostScan) {
-        guard choice == nil else {
+        guard choice == nil, view?.controller.presentedViewController == nil else {
             return
         }
         choice = scan

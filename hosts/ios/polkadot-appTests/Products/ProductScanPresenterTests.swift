@@ -23,14 +23,39 @@ struct ProductScanPresenterTests {
 
     @Test("Any accepted code in a frame answers, once, after the scanner has closed")
     func acceptedCodeAnswersOnceAfterClosing() async throws {
-        let scanner = try await OpenScanner()
+        let answers = Answers()
+        weak var presenter: ProductScanPresenter?
+        do {
+            let scanner = try await OpenScanner(answers: answers)
+            presenter = scanner.presenter
+            scanner.presenter.handle(codes: [poster, receipt])
+            try await waitUntil { !answers.scans.isEmpty }
+            scanner.presenter.handle(codes: [receipt])
+        }
 
-        scanner.presenter.handle(codes: [poster, receipt])
-        try await waitUntil { !scanner.answers.scans.isEmpty }
+        try await waitUntil { presenter == nil }
+
+        #expect(answers.scans == [.scanned(text: "https://greenmarket.example/r/BAG6", format: .qr)])
+        #expect(answers.openWhenAnswered == [false])
+    }
+
+    @Test("A code read while another screen is over the scanner waits, so that screen stays up and keeps its answer")
+    func codeUnderAnotherScreenWaits() async throws {
+        let scanner = try await OpenScanner()
+        let prompt = UIViewController()
+        await present(prompt, over: scanner.view)
+
         scanner.presenter.handle(codes: [receipt])
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(scanner.answers.scans.isEmpty)
+        #expect(scanner.view.presentedViewController === prompt)
+
+        prompt.dismiss(animated: false)
+        try await waitUntil { scanner.view.presentedViewController == nil }
+        scanner.presenter.handle(codes: [receipt])
+        try await waitUntil { !scanner.answers.scans.isEmpty }
 
         #expect(scanner.answers.scans == [.scanned(text: "https://greenmarket.example/r/BAG6", format: .qr)])
-        #expect(scanner.answers.openWhenAnswered == [false])
     }
 
     @Test("A camera the app cannot use answers CameraUnavailable")
