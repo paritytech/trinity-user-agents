@@ -409,6 +409,12 @@ impl HostCallbacks for EventCallbacks {
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 	}
+
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+		Ok(crate::platform::ExtensionVersionMap::default())
+	}
 	async fn local_storage_read(
 		&self,
 		_key: String,
@@ -2241,6 +2247,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
+
+		async fn transaction_extension_versions(
+			&self,
+		) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+			Ok(crate::platform::ExtensionVersionMap::default())
+		}
 		async fn local_storage_read(
 			&self,
 			_key: String,
@@ -2409,6 +2421,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
 			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
+		}
+
+		async fn transaction_extension_versions(
+			&self,
+		) -> Result<crate::platform::ExtensionVersionMap, HostRejection> {
+			Ok(crate::platform::ExtensionVersionMap::default())
 		}
 		async fn local_storage_read(
 			&self,

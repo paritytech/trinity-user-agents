@@ -8,7 +8,10 @@
 //! runtime's extension pipeline, and signs only when the caller leaves
 //! `VerifyMultiSignature` to the host.
 
+use core::time::Duration;
 use std::collections::BTreeSet;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use parity_scale_codec::Encode;
 use schnorrkel::{PublicKey, SecretKey};
@@ -30,9 +33,18 @@ use subxt::{
 	tx::Signer,
 	utils::{AccountId32, H256, MultiAddress, MultiSignature},
 };
+use tracing::warn;
 use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
-use crate::{chain_runtime::ChainRuntime, host_logic::product_account::SR25519_SIGNING_CONTEXT};
+use crate::{
+	chain_runtime::{ChainRuntime, encode_hex},
+	host_logic::product_account::SR25519_SIGNING_CONTEXT,
+};
+
+/// Waiting longer than this for the current block is named in the host log.
+const SLOW_CURRENT_BLOCK: Duration = Duration::from_secs(2);
 
 /// The runtime name of the V5 authorization extension.
 ///
@@ -317,12 +329,31 @@ pub async fn build_local_transaction(
 	extensions: &[TxPayloadExtension],
 	tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
-	let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-	})?;
-	let at_block = client.at_current_block().await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
-	})?;
+	let started = Instant::now();
+	let at_block = async {
+		let client = chain.online_client(&genesis_hash).await.map_err(|error| {
+			LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
+		})?;
+		client.at_current_block().await.map_err(|error| {
+			LocalTransactionError::ChainUnavailable(format!(
+				"cannot select a metadata block: {error}"
+			))
+		})
+	}
+	.await;
+	let waited = started.elapsed();
+	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
+		let genesis = encode_hex(&genesis_hash);
+		match &at_block {
+			Err(error) => warn!(
+				"createTransaction could not get the current block of {genesis} after {waited:?}: {error}"
+			),
+			Ok(_) => {
+				warn!("createTransaction waited {waited:?} for the current block of {genesis}")
+			},
+		}
+	}
+	let at_block = at_block?;
 	let transaction = build_signed_transaction(
 		&Sr25519Signer::from_keypair(keypair),
 		genesis_hash,
@@ -624,7 +655,6 @@ pub fn build_signed_extrinsic_v5(
 #[cfg(test)]
 pub mod tests {
 	use super::*;
-	use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 	use parity_scale_codec::{Compact, Decode, Encode};
 	use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
 	use subxt::{
@@ -942,6 +972,13 @@ pub mod tests {
 		assert_eq!(tail, vec![0xbb, 0xaa, 0xff]);
 	}
 
+	/// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the `AsResources`
+	/// value for the V14 People fixture, whose variant indices are 3 and 1.
+	fn long_term_storage_claim_value() -> Vec<u8> {
+		[vec![0x01, 0x03], vec![0xEEu8; 785].encode(), 3u32.encode(), 9u32.encode(), vec![0x01]]
+			.concat()
+	}
+
 	/// Fixture extensions in metadata order, at their resting values.
 	fn fixture_extensions(
 		allowance_metadata: &AllowanceMetadata,
@@ -1151,32 +1188,18 @@ pub mod tests {
 		);
 	}
 
-	/// The proof-authorized path must lay the body out exactly like the
-	/// hand-rolled assembler behind chain-accepted allowance extrinsics. Both
-	/// sides source values from `encode_signed_extensions`, so this pins the
-	/// layout — preamble, ordering, no spliced signature — not the values.
+	/// The proof-authorized path must lay the body out exactly like
+	/// chain-accepted allowance extrinsics. The hash pins the 858-byte
+	/// reference body for these values: preamble, ordering, no spliced
+	/// signature.
 	#[test]
-	fn v5_proof_authorized_bytes_match_the_statement_allowance_assembler() {
-		use crate::runtime::statement_allowance::extrinsic::{
-			build_long_term_storage_extra, build_unsigned_extrinsic,
-		};
-
+	fn v5_proof_authorized_bytes_have_the_reference_layout() {
 		let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let call_data = fixture_call_data();
 
-		let as_resources_extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
-		let expected =
-			build_unsigned_extrinsic(&allowance_metadata, &state, &call_data, &as_resources_extra)
-				.unwrap();
+		let as_resources_extra = long_term_storage_claim_value();
 
 		let as_resources_index = allowance_metadata.as_resources_index().unwrap();
 		let mut extensions = fixture_extensions(&allowance_metadata, &state);
@@ -1192,7 +1215,10 @@ pub mod tests {
 		)
 		.unwrap();
 
-		assert_eq!(transaction, expected);
+		assert_eq!(
+			hex::encode(sp_crypto_hashing::blake2_256(&transaction)),
+			"5d9c863271cc2aa0d8cdd9fece8098d356288b7ca346f3bb2c6b86330c178791"
+		);
 	}
 
 	/// A caller may also supply a `Signed` value; the host must not replace it.
@@ -1365,8 +1391,6 @@ pub mod tests {
 	/// ring-VRF claim is the whole point of the caller-authorized path.
 	#[test]
 	fn v5_accepts_a_real_as_resources_proof_value() {
-		use crate::runtime::statement_allowance::extrinsic::build_long_term_storage_extra;
-
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let mut extensions = fixture_signed_extensions(&allowance_metadata, &state);
@@ -1374,14 +1398,7 @@ pub mod tests {
 			.iter_mut()
 			.find(|extension| extension.id == "AsResources")
 			.unwrap()
-			.extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
+			.extra = long_term_storage_claim_value();
 
 		build_signed_extrinsic_v5(
 			&test_signer(),

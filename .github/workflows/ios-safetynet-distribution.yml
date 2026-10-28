@@ -7,12 +7,10 @@ name: Safetynet Distribution
 # Configs/base.safetynet.xcconfig.
 #
 # This is the only workflow here that builds Safetynet: the leg in
-# ios-nightly-distribution.yml is held, because Safetynet ships from the app repository.
-# It deliberately does not reuse ios-build-distribute.yml: that workflow's security gate
-# fails any workflow_dispatch
-# not triggered by github-actions[bot], which is exactly the human-triggered case here.
-# The scope is correspondingly narrower — one variant, no release PR,
-# no release notification.
+# ios-nightly.yml is held, because Safetynet ships from the app repository.
+# It deliberately does not reuse ios-build-distribute.yml, which refuses the
+# Safetynet configuration for the same reason. The scope is correspondingly
+# narrower — one variant, no release PR, no release notification.
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.source_branch }}
@@ -51,8 +49,8 @@ jobs:
     # TestFlight build number the production record depends on.
     #
     # This workflow calls the distribute action directly rather than through
-    # ios-build-distribute.yml, so it does not inherit that workflow's
-    # github-actions[bot] check and nothing else would stop a hand-started run.
+    # ios-build-distribute.yml, so it does not inherit that workflow's check of
+    # who started the upload, and nothing else would stop a hand-started run.
     #
     # Removing this is part of the cutover, tracked on #764.
     if: false
