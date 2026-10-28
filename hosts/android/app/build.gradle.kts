@@ -123,6 +123,7 @@ dependencies {
     implementation(libs.coil.kt)
 
     implementation(project(":common"))
+    implementation(libs.sentry)
     implementation(project(":design"))
     implementation(project(":chains"))
     implementation(project(":database"))
@@ -130,7 +131,6 @@ dependencies {
     // Region features
     implementation(project(":feature:backup:impl"))
     implementation(project(":feature:xcm:impl"))
-    implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
     implementation(project(":feature:device-sync:impl"))
