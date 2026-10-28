@@ -8,6 +8,10 @@ import {
 } from "../chat/draft/identity-bridge.js";
 import type { FrameTap } from "./tap.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
+import {
+  readConsoleMessage,
+  type WorkerConsoleEntry,
+} from "./worker-console.js";
 
 /** A product URL the host can embed: http or https only. */
 export function parseProductUrl(raw: string): URL {
@@ -116,6 +120,12 @@ export interface OpenProductOptions {
    * without this the port is closed unanswered.
    */
   onInvitationsPort?(port: MessagePort): void;
+  /**
+   * Called with each console line the frame's worker shell forwards
+   * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
+   * this frame's and no other's.
+   */
+  onConsole?(entry: WorkerConsoleEntry): void;
 }
 
 /**
@@ -148,6 +158,7 @@ export async function openProduct(
     onChatV2Port,
     onNovaIdentityPort,
     onInvitationsPort,
+    onConsole,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
     throw new Error(
@@ -210,6 +221,13 @@ export async function openProduct(
       else onNovaIdentityPort(event.ports[0]);
       return;
     }
+    if (onConsole !== undefined) {
+      const line = readConsoleMessage(data, Date.now());
+      if (line !== null) {
+        onConsole(line);
+        return;
+      }
+    }
     if (isInvitationsHello(data, event.ports)) {
       if (onInvitationsPort === undefined) event.ports[0].close();
       else onInvitationsPort(event.ports[0]);
@@ -224,7 +242,8 @@ export async function openProduct(
     onSandboxStatus ||
     onChatV2Port ||
     onNovaIdentityPort ||
-    onInvitationsPort
+    onInvitationsPort ||
+    onConsole
   )
     window.addEventListener("message", onWindowMessage);
   return {

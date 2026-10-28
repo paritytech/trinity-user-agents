@@ -1,0 +1,373 @@
+/*
+ * The inspector's Workers view, in the TrUAPI and Chat views' look: a dark
+ * monospace box, a list beside the selected worker's details, pill chips
+ * with the active one filled green. Docked at the bottom the list sits
+ * beside the details; on the right or on a phone it sits above them.
+ */
+.workers-inspector {
+  --wi-line: rgb(255 255 255 / 0.07);
+  --wi-meta: #8b8f99;
+  --wi-on: #4ade80;
+  --wi-warn: #fbbf24;
+  --wi-failed: #f87171;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  container-type: inline-size;
+  overflow: hidden;
+  border: 1px solid #1d1f24;
+  border-radius: 0 0 12px 12px;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color-scheme: dark;
+}
+
+.workers-inspector[hidden],
+.workers-inspector [hidden] {
+  display: none !important;
+}
+
+.workers-inspector button {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  transition: none;
+  cursor: pointer;
+}
+
+.workers-inspector button:active:not(:disabled) {
+  transform: none;
+}
+
+.workers-inspector button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.workers-inspector :focus-visible {
+  outline: 1px solid var(--wi-on);
+  outline-offset: 1px;
+}
+
+.wi-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--wi-line);
+}
+
+.wi-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.wi-title .accent {
+  color: var(--wi-on);
+}
+
+.wi-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(64px, auto) minmax(0, 1fr);
+  min-height: 0;
+}
+
+@container (min-width: 620px) {
+  .wi-body {
+    grid-template-columns: minmax(180px, 30%) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .wi-list-pane {
+    border-right: 1px solid var(--wi-line);
+    border-bottom: 0;
+  }
+}
+
+.wi-list-pane {
+  min-height: 0;
+  max-height: 168px;
+  overflow: auto;
+  border-bottom: 1px solid var(--wi-line);
+}
+
+@container (min-width: 620px) {
+  .wi-list-pane {
+    max-height: none;
+  }
+}
+
+.wi-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workers-inspector .wi-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.03);
+  text-align: left;
+}
+
+.workers-inspector .wi-row:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.workers-inspector .wi-row[aria-pressed="true"] {
+  background: rgb(74 222 128 / 0.13);
+  box-shadow: inset 2px 0 0 var(--wi-on);
+}
+
+.wi-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4b5563;
+}
+
+.wi-row[data-state="running"] .wi-dot {
+  background: var(--wi-on);
+  box-shadow: 0 0 4px var(--wi-on);
+}
+
+.wi-row[data-state="starting"] .wi-dot {
+  background: var(--wi-warn);
+}
+
+.wi-row[data-state="failed"] .wi-dot {
+  background: var(--wi-failed);
+}
+
+.wi-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wi-row-state {
+  color: var(--wi-meta);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.wi-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow: auto;
+}
+
+.wi-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.wi-name {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wi-badge {
+  padding: 0 7px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--wi-meta);
+  font-size: 11px;
+}
+
+.wi-badge[data-state="running"] {
+  background: rgb(74 222 128 / 0.16);
+  color: var(--wi-on);
+}
+
+.wi-badge[data-state="starting"] {
+  color: var(--wi-warn);
+}
+
+.wi-badge[data-state="failed"] {
+  background: rgb(248 113 113 / 0.16);
+  color: var(--wi-failed);
+}
+
+.wi-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.workers-inspector .wi-action,
+.workers-inspector .wi-chip {
+  padding: 1px 9px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 10px;
+  color: #94a3b8;
+}
+
+.workers-inspector .wi-action:hover:not(:disabled),
+.workers-inspector .wi-chip:hover:not(:disabled) {
+  color: #f4f4f5;
+}
+
+.workers-inspector .wi-chip[aria-pressed="true"] {
+  border-color: var(--wi-on);
+  background: var(--wi-on);
+  color: #0a0a0a;
+}
+
+.wi-problem {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(248 113 113 / 0.1);
+  color: var(--wi-failed);
+  overflow-wrap: anywhere;
+}
+
+.wi-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 8px 0 0;
+}
+
+.wi-facts dt {
+  color: var(--wi-meta);
+}
+
+.wi-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wi-note {
+  margin: 6px 0 0;
+  color: var(--wi-warn);
+}
+
+.wi-note:empty {
+  display: none;
+}
+
+.wi-console-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--wi-line);
+}
+
+.wi-console-head h4 {
+  margin: 0 6px 0 0;
+  font: inherit;
+  font-weight: 600;
+}
+
+.wi-filters {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.wi-lines {
+  flex: 1 0 120px;
+  min-height: 120px;
+  max-height: 60vh;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  outline: none;
+}
+
+.wi-line {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 0 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgb(255 255 255 / 0.03);
+}
+
+.wi-line[data-new-run="true"] {
+  margin-top: 6px;
+  border-top: 1px dashed rgb(255 255 255 / 0.18);
+  padding-top: 4px;
+}
+
+.wi-run,
+.wi-time {
+  color: var(--wi-meta);
+}
+
+.wi-level {
+  min-width: 5ch;
+  color: var(--wi-meta);
+}
+
+.wi-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wi-line[data-level="warn"] .wi-level,
+.wi-line[data-level="warn"] .wi-text {
+  color: var(--wi-warn);
+}
+
+.wi-line[data-level="error"] .wi-level,
+.wi-line[data-level="error"] .wi-text {
+  color: var(--wi-failed);
+}
+
+.wi-empty,
+.wi-status {
+  margin: 8px 10px;
+  color: var(--wi-meta);
+}
+
+.wi-status {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
+/* Wide, as docked at the bottom: the facts in two columns, to leave the console room. */
+@container (min-width: 900px) {
+  .wi-facts {
+    grid-template-columns: repeat(2, max-content minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 420px) {
+  .wi-line {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .wi-run {
+    display: none;
+  }
+}

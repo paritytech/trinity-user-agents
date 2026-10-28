@@ -470,12 +470,12 @@ workers keep in the same list as the person-to-person conversations above. These
 calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 
 - **Adding a worker.** Product → **Workers** takes a product name, such as `myapp.paseo`, and lists the signed-in
-  wallet's workers with their state and **Remove**. The host reads `worker.<name>`: its `executable` text record must be
-  a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint` module inside the directory) whose `includes.chat` is
-  true, and its `contenthash` locates the files. The archive is fetched and verified like a product opened by name, and
-  the entry module is loaded in a hidden frame under the product's mount, connected to the core as the product's
-  `Worker` execution. The product id is the name, the one its app opens under, so the two share the product's storage
-  and accounts.
+  wallet's workers with their state, **Inspect**, which opens the Inspector's Workers view at the worker, and
+  **Remove**. The host reads `worker.<name>`: its `executable` text record must be a worker manifest (`$v` 1, `kind`
+  `worker`, an `entrypoint` module inside the directory) whose `includes.chat` is true, and its `contenthash` locates
+  the files. The archive is fetched and verified like a product opened by name, and the entry module is loaded in a
+  hidden frame under the product's mount, connected to the core as the product's `Worker` execution. The product id is
+  the name, the one its app opens under, so the two share the product's storage and accounts.
 - **Lifetime.** The list of workers is kept per network and wallet. A worker runs while its wallet is signed in and the
   tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
   and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
@@ -855,7 +855,7 @@ it are five tabs:
 - **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
-- **Inspector:** the Activity view, the TrUAPI traces and the Chat diagnostics.
+- **Inspector:** the Activity view, the TrUAPI traces, the Chat diagnostics and the Workers view.
 - **More:** Versions, and the dev server's own controls (test users, sample Inbox items, the chat engine and the chat
   demo).
 
@@ -928,6 +928,28 @@ the product and the core, in both directions, and the debugger groups and decode
 own wire schema: if it differs from the page bundle's, the inspector lists operations without decoding them and the log
 says so. Frames stay in the tab, may carry sensitive payloads, and are held in memory only.
 
+**Workers.** The inspector's **Workers** tab lists the product workers the session wants or runs, the ones the host adds
+and those only Pocket holds included, each with the state the worker manager holds: not started, starting, running or
+failed with its reason. The selected worker shows how long it has been in that state, what it runs for, who added it,
+its run number, and, while it runs, its record, content, version and entry. **Traces** opens the TrUAPI view at the
+worker's channel, narrowed through the TrUAPI view's own channel chips; when the worker has sent no frame yet, the note
+says so. **Restart** is offered only for a worker the user added that runs for Chat alone, where a new frame changes
+nothing else the host relies on; the host's own workers, the Nova chat worker and the local demo among them, and a
+worker Pocket holds, have none, and **Remove** stays in Product → Workers.
+
+The worker's **Console** shows what it wrote to its console, its uncaught errors and its unhandled rejections. The
+worker shell loads `truapi-sandbox/console.js` (`src/products/loader/console.ts`) as a classic script before the entry
+module, so the first statement's line is seen. Each console method calls the original first and returns what it returns,
+and errors are only listened to, so the worker and the browser's own console see no difference. Each argument is
+described within fixed budgets (`describe.ts`): three levels deep, 20 entries, 500 characters a string, 4,000 a line, no
+getter run, binary data by size only, and a loop marked `[Circular]`. At most 50 lines a second are forwarded, and as
+many errors, and the rest are counted. The host takes a line only from a worker frame it runs, puts it down to that
+frame whatever the line says, bounds it again and strips credentials from its URLs (`src/products/worker-console.ts`).
+It keeps the last 200 lines of each worker in memory, across a restart with each line labelled by its run, and forgets
+them when the worker is removed or the session changes. Console lines are the worker's own text and can hold whatever it
+logs; the host does not promise to clean them. Lines filter by level, and **Copy** and **Clear** act on the selected
+worker's.
+
 **Chat diagnostics.** The inspector's **Chat** tab lists what the host's chat engine does: start, stop, reconnects,
 subscriptions, requests received and why one was set aside, key lookups and which chain named the key, session requests
 with the kind number of each message, responses, and every submission with its purpose and the store's answer. Chat is
@@ -963,18 +985,18 @@ receives or submits, and their plaintext, never from keys or the secrets derived
 this tab, at most 300 frames, 300 statements and 4 MB, with a frame or statement cut at 256 KB, and the status line
 counts what is evicted or cut. Lowering the level drops what it no longer keeps.
 
-**Activity.** The inspector's **Activity** tab, the first of Activity, TrUAPI and Chat, lists what the host did, oldest
-first, one short row each: the time, a category (Session, Products, Workers, Network or Host), what happened and to
-what, such as `Products Opened browse.paseo` or `Workers Started people.paseo`, and a reason in red when it failed. A
-row with more opens, by click or Enter, to its details: the product id, the execution kind, the record and content, or
-the loader URL. The chips show one category, **Errors** shows only failures and refusals, and the field searches every
-text, details included. **Pause** stops following new events but not logging them, and counts what arrives; **Follow**
-or the count shows them again. **Copy** copies the rows shown, with their details, and **Clear** forgets every event.
-Parts of the host report facts to the log (`src/platform/activity.ts`) instead of sentences; the log (`tools/activity/`)
-keeps the last 500 events in memory in this tab, and nothing is stored or sent. Events carry names, product ids,
-addresses and reasons, never keys, recovery phrases or what a product shows the user, and a URL loses any user name,
-password and secret-looking query parameter. Network events are the host's own: the light client starting and the
-answers to a product's network permissions, not the traffic itself, which the TrUAPI view shows.
+**Activity.** The inspector's **Activity** tab, the first of Activity, TrUAPI, Chat and Workers, lists what the host
+did, oldest first, one short row each: the time, a category (Session, Products, Workers, Network or Host), what happened
+and to what, such as `Products Opened browse.paseo` or `Workers Started people.paseo`, and a reason in red when it
+failed. A row with more opens, by click or Enter, to its details: the product id, the execution kind, the record and
+content, or the loader URL. The chips show one category, **Errors** shows only failures and refusals, and the field
+searches every text, details included. **Pause** stops following new events but not logging them, and counts what
+arrives; **Follow** or the count shows them again. **Copy** copies the rows shown, with their details, and **Clear**
+forgets every event. Parts of the host report facts to the log (`src/platform/activity.ts`) instead of sentences; the
+log (`tools/activity/`) keeps the last 500 events in memory in this tab, and nothing is stored or sent. Events carry
+names, product ids, addresses and reasons, never keys, recovery phrases or what a product shows the user, and a URL
+loses any user name, password and secret-looking query parameter. Network events are the host's own: the light client
+starting and the answers to a product's network permissions, not the traffic itself, which the TrUAPI view shows.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
@@ -1254,33 +1276,37 @@ index; and with no session the core refuses the pick with NotConnected and no pi
 
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
-the bottom across the window, the Phone-sized app keeping its size and its device frame; that the inspector's three
-views, Activity, TrUAPI and Chat, fill the tools one at a time and the arrow keys move between them, that their top edge
-sets their height at the bottom, that on the right their left edge sets their width by drag and keys within its bounds,
-apart from the height, kept after a reload and without reloading the product, and that the side is kept after a reload;
-that Focus gives the app the whole window and brings the tools back at the same view; that the side switch is a
+the bottom across the window, the Phone-sized app keeping its size and its device frame; that the inspector's four
+views, Activity, TrUAPI, Chat and Workers, fill the tools one at a time and the arrow keys move between them, that their
+top edge sets their height at the bottom, that on the right their left edge sets their width by drag and keys within its
+bounds, apart from the height, kept after a reload and without reloading the product, and that the side is kept after a
+reload; that Focus gives the app the whole window and brings the tools back at the same view; that the side switch is a
 segmented control of two 36 × 26 px pills, each inside its track, and Hide a 28 px circle, icons centred, on either
 side, in either colour scheme and on hover and focus; that a narrow window keeps them a sheet over the app; and that the
 Pill opens the search card with focus in the field, shows why an address cannot open, and on `Escape` closes and gives
-focus back. `browser/activity-log.spec.ts` mounts the Activity view alone on made-up events and checks the rows and
-their keyboard details, focus kept as events arrive, the filters, search and empty states, pause and the event limit,
-copy, clear, and that a URL's credentials do not show. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat
-view alone on made-up events, and runs a chat exchange between two synthetic wallets over an in-memory JSON-RPC
-statement store to check each payload layer, the copies, the capture levels, and that no key or secret shows.
-`browser/chat-screen.spec.ts` mounts the Chat screen alone over the Nova and product room providers with stand-ins
-behind them and the chat product provider with the synthetic chat product on the other side of the bridge in the page,
-synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
-sender names and the user's own messages, status changes, a retried message staying one message, a product room's custom
-card, buttons, reaction and non-`https` file, the chat product answering while another room is open, unread cleared only
-for messages on screen, a product restart and a new session. It checks New chat through the host's contact picker over a
-test username index: Cancel changes nothing, a username that names another account on chain is not chosen, a contact
-opens their chat, anyone else opens a request that the provider is asked to send only on Send, once, and a choice made
-after the session changed is dropped. It also checks the user's reactions in a Nova conversation and a product room,
-blocking, unblocking and leaving, a generated image sent and fetched through a HOP node held in the page, and audio and
-video calls over real WebRTC to a second call manager in the same page, with generated media (a WebAudio tone and a
-canvas), not a camera or microphone, and every track stopped when the call ends. The shared Chromium runs with
-`WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set `CHAT_SCREENSHOTS` to a directory to keep
-screenshots.
+focus back. `browser/workers-inspector.spec.ts` runs two synthetic workers through the loader, offline, and checks that
+the Workers view shows their state, the first line and the bounded, circular, binary, error, rejection and flood lines,
+that the worker's own console and code are unchanged, that a line is put down to the frame that sent it, the filters and
+Copy, that Traces narrows the TrUAPI view to the worker, that Restart keeps the earlier run's lines labelled, and that a
+removed worker, signing out and another wallet leave none of it. `browser/activity-log.spec.ts` mounts the Activity view
+alone on made-up events and checks the rows and their keyboard details, focus kept as events arrive, the filters, search
+and empty states, pause and the event limit, copy, clear, and that a URL's credentials do not show.
+`browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs a chat exchange
+between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer, the copies, the
+capture levels, and that no key or secret shows. `browser/chat-screen.spec.ts` mounts the Chat screen alone over the
+Nova and product room providers with stand-ins behind them and the chat product provider with the synthetic chat product
+on the other side of the bridge in the page, synthetic data only and every request outside this host refused, and checks
+one list across providers, paging on scroll, sender names and the user's own messages, status changes, a retried message
+staying one message, a product room's custom card, buttons, reaction and non-`https` file, the chat product answering
+while another room is open, unread cleared only for messages on screen, a product restart and a new session. It checks
+New chat through the host's contact picker over a test username index: Cancel changes nothing, a username that names
+another account on chain is not chosen, a contact opens their chat, anyone else opens a request that the provider is
+asked to send only on Send, once, and a choice made after the session changed is dropped. It also checks the user's
+reactions in a Nova conversation and a product room, blocking, unblocking and leaving, a generated image sent and
+fetched through a HOP node held in the page, and audio and video calls over real WebRTC to a second call manager in the
+same page, with generated media (a WebAudio tone and a canvas), not a camera or microphone, and every track stopped when
+the call ends. The shared Chromium runs with `WebRtcHideLocalIpsWithMdns` off, so its candidates carry addresses. Set
+`CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -1333,22 +1359,24 @@ nothing else of it.
   finding people by username (`username-directory.ts`, `username-search.ts`) and the Docklet's people
   (`search-people.ts`).
 - `src/products/`: embedding a product and relaying its frames (`product.ts`, `tap.ts`), product workers
-  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), name lookup (`dotns.ts`), preimage lookups
-  (`preimage.ts`), the stage's loading and status lines (`loading.ts`, `status.ts`) and the cards a worker draws
-  (`render.ts`).
+  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), a worker's console lines (`worker-console.ts`), name
+  lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's loading and status lines (`loading.ts`,
+  `status.ts`) and the cards a worker draws (`render.ts`).
   - `archive/`: CAR, UnixFS and CID verification and unpacking.
-  - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths, the archive cache. The plugin
-    bundles them as static files, which the build emits and the dev server also answers.
+  - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths, the archive cache, and a
+    worker's console capture (`console.ts`, `describe.ts`). The plugin bundles them as static files, which the build
+    emits and the dev server also answers.
 - `src/pocket/`: the Pocket cards and the Pocket the core's calls see (`pocket.ts`), the screen (`screen.ts`), a card's
   faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
 - `src/notifications/`: the Inbox prototype's store and screen.
 - `src/invitations/`: invitations between users' hosts.
 - `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
-  `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `inspector/` collects
-  and shows: `frame-tap.ts` feeds TrUAPI frames to the debugger, and `diagnostics.ts`, `capture.ts`, `inspect.ts`,
-  `chat-diagnostics-view.ts` and `chat-transport-view.ts` keep, decode and draw what the Nova engine reports. The
-  developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out: the Developer
-  section, the local chat demo and its routes, and the switch between the host's engine and the Nova chat worker.
+  `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
+  inspector's Workers view and the workers' console lines it keeps. `inspector/` collects and shows: `frame-tap.ts`
+  feeds TrUAPI frames to the debugger, and `diagnostics.ts`, `capture.ts`, `inspect.ts`, `chat-diagnostics-view.ts` and
+  `chat-transport-view.ts` keep, decode and draw what the Nova engine reports. The developer tools ship in every build.
+  `demos/` holds the dev server's controls, which a build leaves out: the Developer section, the local chat demo and its
+  routes, and the switch between the host's engine and the Nova chat worker.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
   synthetic chat product, its call media and Example Chat. `invitations/`, `notifications/`: test users, local delivery
   and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.

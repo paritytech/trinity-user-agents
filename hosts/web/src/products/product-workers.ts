@@ -8,6 +8,7 @@ import { archiveCacheName, fileKey } from "./loader/files.js";
 import { loaderUrl, mountScope } from "./loader/mount.js";
 import { WORKER_SHELL, archivePath, contentTypeOf } from "./loader/serve.js";
 import type { ResolvedWorker, WorkerManifest } from "./worker-manifest.js";
+import type { WorkerConsoleEntry } from "./worker-console.js";
 
 /**
  * The product workers the user added, run while their wallet is signed in.
@@ -40,6 +41,43 @@ export type WorkerState =
 
 /** What a worker runs for: Chat's list of workers, or a card in Pocket. */
 export type WorkerSurface = "chat" | "pocket";
+
+/** One worker as the developer tools see it. */
+export interface WorkerSnapshot {
+  name: string;
+  /**
+   * Which start this is, numbered across the tab, so lines of a run before a
+   * restart are told apart. Null for a worker that has not started.
+   */
+  run: number | null;
+  /** The worker's own state, whatever any surface makes of it. Null when it has not started. */
+  state: WorkerState | null;
+  /** When the state last changed. */
+  since: number | null;
+  /** What wants it to run. */
+  surfaces: WorkerSurface[];
+  /** The host runs it for every wallet; the user cannot remove it. */
+  addedByHost: boolean;
+  /** Why the worker it runs does not serve a surface that wants it. */
+  refusals: { surface: WorkerSurface; reason: string }[];
+  /**
+   * Whether {@link ProductWorkers.restart} may be offered for it: the user
+   * added it, and nothing else holds it, so a new frame changes nothing the
+   * host relies on.
+   */
+  restartable: boolean;
+}
+
+/** What the developer tools learn of the workers as they run. */
+export interface WorkerObserver {
+  /** The session changed: what was seen of the last one's workers is stale. */
+  sessionChanged(): void;
+  /** One run of a worker wrote `entry` to its console. */
+  console(
+    worker: { name: string; run: number },
+    entry: WorkerConsoleEntry,
+  ): void;
+}
 
 export interface WorkerSession {
   walletId: string;
@@ -79,11 +117,14 @@ export interface ProductWorkersDeps {
     connect(productId: string, port: MessagePort): void;
     disconnect(productId: string): void;
   };
+  observer?: WorkerObserver;
 }
 
 interface Running {
   generation: number;
+  run: number;
   state: WorkerState;
+  since: number;
   handle: OpenProduct | null;
   cid: string | null;
   images: Map<string, string>;
@@ -92,6 +133,9 @@ interface Running {
   /** Settles once the start that made this entry has run or failed. */
   ready: Promise<void>;
 }
+
+/** The inspector channel a worker's frames are traced under. */
+export const workerChannel = (name: string): string => `${name} (worker)`;
 
 export const workersKey = (network: string, walletId: string): string =>
   `truapi-web-signing-host:network:${network}:workers:${walletId}:v1`;
@@ -102,6 +146,7 @@ const errorText = (error: unknown): string =>
 export class ProductWorkers {
   private session: WorkerSession | null = null;
   private generation = 0;
+  private runs = 0;
   private readonly workers = new Map<string, Running>();
   /** Products Pocket holds a worker for, with the cards it draws. */
   private readonly pocketCards = new Map<string, string[]>();
@@ -203,6 +248,7 @@ export class ProductWorkers {
       return;
     this.stopAll();
     this.session = session;
+    this.deps.observer?.sessionChanged();
     for (const name of this.names()) void this.start(name);
     this.changed();
   }
@@ -320,7 +366,7 @@ export class ProductWorkers {
     if ([...wanted].every((surface) => running.refusals.has(surface))) {
       const [reason] = running.refusals.values();
       this.stop(name);
-      running.state = { state: "failed", reason: reason! };
+      this.setState(running, { state: "failed", reason: reason! });
     }
     this.changed();
   }
@@ -332,7 +378,9 @@ export class ProductWorkers {
     this.stop(name);
     const running: Running = {
       generation: this.generation,
+      run: (this.runs += 1),
       state: { state: "starting" },
+      since: Date.now(),
       handle: null,
       cid: null,
       images: new Map(),
@@ -386,7 +434,7 @@ export class ProductWorkers {
         {
           mounted: true,
           executionKind: "Worker",
-          tap: this.deps.tap(`${name} (worker)`),
+          tap: this.deps.tap(workerChannel(name)),
           ...(this.deps.chatV2 !== undefined && worker.manifest.includes.chat
             ? {
                 onChatV2Port: (port: MessagePort) => {
@@ -404,9 +452,20 @@ export class ProductWorkers {
                 },
               }
             : {}),
+          ...(this.deps.observer === undefined
+            ? {}
+            : {
+                onConsole: (entry: WorkerConsoleEntry) => {
+                  if (current())
+                    this.deps.observer?.console(
+                      { name, run: running.run },
+                      entry,
+                    );
+                },
+              }),
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
-              running.state = { state: "failed", reason: detail };
+              this.setState(running, { state: "failed", reason: detail });
               this.failed(name, detail);
               this.changed();
             }
@@ -422,12 +481,12 @@ export class ProductWorkers {
       running.handle = handle;
       running.cid = worker.cid;
       if (running.state.state === "starting")
-        running.state = {
+        this.setState(running, {
           state: "running",
           manifest: worker.manifest,
           record: worker.record,
           cid: worker.cid,
-        };
+        });
       this.deps.activity({
         category: "workers",
         action: "Started",
@@ -441,10 +500,51 @@ export class ProductWorkers {
     } catch (error) {
       if (!current()) return;
       running.refusals = new Map();
-      running.state = { state: "failed", reason: errorText(error) };
+      this.setState(running, { state: "failed", reason: errorText(error) });
       this.failed(name, errorText(error));
     }
     this.changed();
+  }
+
+  private setState(running: Running, state: WorkerState): void {
+    running.state = state;
+    running.since = Date.now();
+  }
+
+  /**
+   * Every worker this session wants or runs, in the order the menu lists
+   * them, then those only Pocket holds.
+   */
+  inspect(): WorkerSnapshot[] {
+    const names = [
+      ...new Set([
+        ...this.names(),
+        ...this.pocketCards.keys(),
+        ...this.workers.keys(),
+      ]),
+    ];
+    return names.map((name) => {
+      const running = this.workers.get(name);
+      const surfaces = [...this.wanted(name)];
+      const addedByHost = this.isDefault(name);
+      return {
+        name,
+        run: running?.run ?? null,
+        state: running?.state ?? null,
+        since: running?.since ?? null,
+        surfaces,
+        addedByHost,
+        refusals: [...(running?.refusals ?? new Map())].map(
+          ([surface, reason]) => ({ surface, reason }),
+        ),
+        restartable:
+          !addedByHost &&
+          surfaces.length === 1 &&
+          surfaces[0] === "chat" &&
+          running !== undefined &&
+          running.state.state !== "starting",
+      };
+    });
   }
 
   private failed(name: string, reason: string): void {

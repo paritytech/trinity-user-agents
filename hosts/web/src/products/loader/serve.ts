@@ -99,21 +99,29 @@ export function responseFor(file: ServedFile): Response {
 /**
  * The page a worker executable runs in, at the root of its mount. A worker
  * archive is JavaScript only, so the service worker answers this one reserved
- * path itself, with a page that loads the entry module and nothing else.
+ * path itself, with a page that loads the host's console capture
+ * (`console.ts`), then the entry module, and nothing else.
  */
 export const WORKER_SHELL = "__truapi-worker.html";
+
+/** The console capture's path under the host's base, where the build emits it. */
+export const CONSOLE_CAPTURE = "truapi-sandbox/console.js";
 
 /**
  * The shell page for `entry`, or null when `entry` is not a module path
  * inside the archive. The path is checked like any other request and encoded
- * segment by segment, so it cannot leave the attribute or the mount.
+ * segment by segment, so it cannot leave the attribute or the mount. `base`
+ * is the host's base path, where the console capture is served from. The
+ * capture is a classic script, so it runs before the module starts.
  */
-export function workerShellHtml(entry: string): string | null {
+export function workerShellHtml(entry: string, base: string): string | null {
   if (archivePath(`/${entry}`) !== entry || !/\.m?js$/.test(entry)) return null;
-  const src = entry.split("/").map(encodeURIComponent).join("/");
+  const encode = (path: string) =>
+    path.split("/").map(encodeURIComponent).join("/");
   return `<!doctype html>
 <meta charset="utf-8">
 <title>worker</title>
-<script type="module" src="./${src}"></script>
+<script src="${encode(`${base}${CONSOLE_CAPTURE}`)}"></script>
+<script type="module" src="./${encode(entry)}"></script>
 `;
 }

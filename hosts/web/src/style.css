@@ -417,7 +417,7 @@ textarea {
 
 .worker-list li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0 8px;
   padding: 6px 0;
   border-top: 1px solid var(--hairline);
@@ -446,6 +446,10 @@ textarea {
   grid-row: 1 / span 2;
   align-self: center;
   margin: 0;
+}
+
+.worker-list .quiet + .quiet {
+  grid-column: 3;
 }
 
 .field-row button {
@@ -3401,7 +3405,7 @@ body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
   border-top-color: var(--border);
 }
 
-/* The inspector fills its view, under its own Activity | TrUAPI | Chat tabs. */
+/* The inspector fills its view, under its own Activity | TrUAPI | Chat | Workers tabs. */
 .inspector {
   display: flex;
   flex-direction: column;
@@ -4401,7 +4405,7 @@ body[data-search="open"] .product-slot::after {
 
 /* A worker: a dot for its state, its name, and the state under it. */
 .devtools .worker-list li {
-  grid-template-columns: 8px minmax(0, 1fr) auto;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 0 12px;
   padding: 8px 4px;
@@ -4439,6 +4443,10 @@ body[data-search="open"] .product-slot::after {
 
 .devtools .worker-list .quiet {
   grid-column: 3;
+}
+
+.devtools .worker-list .quiet + .quiet {
+  grid-column: 4;
 }
 
 /* The inspector: one box, its view tabs on top, underlined. */
