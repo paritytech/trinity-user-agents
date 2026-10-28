@@ -229,6 +229,18 @@ class ProductMessageSourceTest {
     }
 
     @Test
+    fun `a deleted message leaves the window, and a message the window does not hold changes nothing`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 3)
+        val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
+
+        source.apply(productRoom, ProductFeedUpdateModel.Deleted("m1"))
+        source.apply(productRoom, ProductFeedUpdateModel.Deleted("m9"))
+
+        assertEquals(listOf("m0", "m2"), source.oldestFirstIds())
+        assertEquals(listOf("m2", "m0"), source.snapshot.messages.map { it.id })
+    }
+
+    @Test
     fun `an incoming message is unread until the product reads it`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 3)
         val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))

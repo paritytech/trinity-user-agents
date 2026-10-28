@@ -339,6 +339,7 @@ class ProductMessageSource(
                 window.modify(update.messageId) { it.adjustReaction(update.emoji, update.participantId, placed = false) }
 
             is ProductFeedUpdateModel.StatusChanged -> window.modify(update.messageId) { it.copy(status = update.status) }
+            is ProductFeedUpdateModel.Deleted -> window.remove(update.messageId)
         }
     }
 
