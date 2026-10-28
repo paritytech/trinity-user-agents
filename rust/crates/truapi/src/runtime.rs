@@ -1078,7 +1078,7 @@ const CHAIN_FAILURE_CONDITIONS_MAX: usize = 64;
 /// The reason is part of it because a connection that drops and a payload that
 /// will not decode are different conditions, and one must not stand in for the
 /// other.
-type ChainFailureKey = (RuntimeFailureKind, &'static str, String);
+type ChainFailureKey = (RuntimeFailureKind, &'static str, String, Option<Vec<u8>>);
 
 /// When each condition was last seen, and how many times it has happened in
 /// the episode it belongs to.
@@ -1104,7 +1104,12 @@ fn report_chain_call_failure(failure: &RuntimeFailure) {
 		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 		count_failure(
 			&mut reported,
-			(failure.kind(), failure.method(), failure.reason()),
+			(
+				failure.kind(),
+				failure.method(),
+				failure.reason(),
+				failure.chain().map(<[u8]>::to_vec),
+			),
 			Instant::now(),
 			CHAIN_FAILURE_QUIET,
 		)
@@ -1112,12 +1117,24 @@ fn report_chain_call_failure(failure: &RuntimeFailure) {
 	if !reports_at(seen) {
 		return;
 	}
-	tracing::warn!(
-		kind = ?failure.kind(),
-		reason = %failure,
-		seen,
-		"chain call failed"
-	);
+	// The chain is named because a failing call says little without it. The
+	// report that sent us looking at this code turned on which chain a
+	// transaction was being built against, and the line never said.
+	match failure.chain() {
+		Some(chain) => tracing::warn!(
+			kind = ?failure.kind(),
+			chain = %hex::encode(chain),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+		None => tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+	}
 }
 
 /// Whether the `seen`th failure of one condition is one of the reported ones.

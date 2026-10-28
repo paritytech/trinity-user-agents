@@ -190,25 +190,42 @@ pub struct RuntimeFailure {
 	kind: RuntimeFailureKind,
 	method: &'static str,
 	reason: Option<String>,
+	/// Chain the call was made against, where the failure knows it.
+	///
+	/// Kept beside the reason rather than inside it, because the reason is what
+	/// the product is told and that should not change, while a host reading its
+	/// log needs to know which chain went quiet. A failure raised before a
+	/// chain is chosen has none.
+	chain: Option<Vec<u8>>,
 }
 
 impl RuntimeFailure {
 	/// Backend refused the call for unavailability reasons (no provider, the
 	/// connection died, etc.).
 	pub fn unavailable(method: &'static str) -> Self {
-		Self { kind: RuntimeFailureKind::Unavailable, method, reason: None }
+		Self { kind: RuntimeFailureKind::Unavailable, method, reason: None, chain: None }
 	}
 
 	/// Backend produced a structural error (malformed json-rpc, unexpected
 	/// shape, ...).
 	pub fn host_failure(method: &'static str, reason: impl Into<String>) -> Self {
-		Self { kind: RuntimeFailureKind::HostFailure, method, reason: Some(reason.into()) }
+		Self {
+			kind: RuntimeFailureKind::HostFailure,
+			method,
+			reason: Some(reason.into()),
+			chain: None,
+		}
 	}
 
 	/// [`Self::unavailable`] carrying the underlying failure text for
 	/// diagnostics.
 	pub fn unavailable_with_reason(method: &'static str, reason: impl Into<String>) -> Self {
-		Self { kind: RuntimeFailureKind::Unavailable, method, reason: Some(reason.into()) }
+		Self {
+			kind: RuntimeFailureKind::Unavailable,
+			method,
+			reason: Some(reason.into()),
+			chain: None,
+		}
 	}
 
 	/// Failure classification.
@@ -219,6 +236,21 @@ impl RuntimeFailure {
 	/// Method tag the failure originated from.
 	pub fn method(&self) -> &'static str {
 		self.method
+	}
+
+	/// Say which chain this failure happened on.
+	///
+	/// A failure raised before a chain is chosen leaves it unset, so a reader
+	/// can tell "this chain went quiet" from "we never got that far".
+	#[must_use]
+	pub fn on_chain(mut self, genesis_hash: &[u8]) -> Self {
+		self.chain = Some(genesis_hash.to_vec());
+		self
+	}
+
+	/// Chain the call was made against, where the failure knows it.
+	pub fn chain(&self) -> Option<&[u8]> {
+		self.chain.as_deref()
 	}
 
 	/// Diagnostic reason. Always non-empty for `HostFailure`.
@@ -233,7 +265,12 @@ impl RuntimeFailure {
 	/// the original method and reason so the caller still sees where it
 	/// failed.
 	fn reclassify(&self, method: &'static str) -> RuntimeFailure {
-		RuntimeFailure { kind: self.kind, method, reason: Some(self.reason()) }
+		RuntimeFailure {
+			kind: self.kind,
+			method,
+			reason: Some(self.reason()),
+			chain: self.chain.clone(),
+		}
 	}
 }
 
@@ -544,7 +581,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_header(&remote_follow_id, hash)
 			.await
-			.map_err(|err| rpc_failure(method, err))?
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?
 			.map(|header| header.0);
 		Ok(RemoteChainHeadHeaderResponse { header })
 	}
@@ -565,7 +602,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_body(&remote_follow_id, hash_from_bytes(method, &request.hash)?)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadBodyResponse { operation })
 	}
@@ -593,7 +630,7 @@ impl ChainRuntime {
 				request.child_trie.as_deref(),
 			)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadStorageResponse { operation })
 	}
@@ -619,7 +656,7 @@ impl ChainRuntime {
 				&request.call_parameters,
 			)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadCallResponse { operation })
 	}
@@ -645,7 +682,7 @@ impl ChainRuntime {
 				.methods
 				.chainhead_v1_unpin(&remote_follow_id, hash)
 				.await
-				.map_err(|err| rpc_failure(method, err))?;
+				.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		}
 		Ok(())
 	}
@@ -665,7 +702,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_continue(&remote_follow_id, &request.operation_id)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 	}
 
 	/// Stop a chain-head operation.
@@ -683,7 +720,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_stop_operation(&remote_follow_id, &request.operation_id)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 	}
 
 	/// Echo back the chain genesis hash via chainSpec_v1_genesisHash.
@@ -698,7 +735,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_genesis_hash()
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.map(hash_to_bytes)?;
 		Ok(RemoteChainSpecGenesisHashResponse { genesis_hash })
 	}
@@ -715,7 +752,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_chain_name()
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		Ok(RemoteChainSpecChainNameResponse { chain_name })
 	}
 
@@ -731,7 +768,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_properties::<Value>()
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		let properties = serde_json::to_string(&value)
 			.map_err(|err| RuntimeFailure::host_failure(method, err.to_string()))?;
 		Ok(RemoteChainSpecPropertiesResponse { properties })
@@ -749,7 +786,7 @@ impl ChainRuntime {
 			.methods
 			.transaction_v1_broadcast(&request.transaction)
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		let operation_id = provider_operation_id.map(|provider_operation_id| {
 			let sequence = self.next_transaction_operation_id.fetch_add(1, Ordering::Relaxed);
 			self.with_transaction_operations(|operations| {
@@ -1523,7 +1560,7 @@ impl ChainConnection {
 		}
 		let mut follow = self.methods.chainhead_v1_follow(with_runtime).await.map_err(|err| {
 			self.remove_follow(&local_follow_id);
-			rpc_failure(FOLLOW_METHOD, err)
+			rpc_failure(FOLLOW_METHOD, err).on_chain(&self.genesis_hash)
 		})?;
 		let remote_follow_id = follow
 			.subscription_id()
@@ -1558,8 +1595,10 @@ impl ChainConnection {
 						},
 					},
 					Err(error) => {
-						connection
-							.interrupt_follow(&pump_follow_id, rpc_failure(FOLLOW_METHOD, error));
+						connection.interrupt_follow(
+							&pump_follow_id,
+							rpc_failure(FOLLOW_METHOD, error).on_chain(&connection.genesis_hash),
+						);
 						break;
 					},
 				}

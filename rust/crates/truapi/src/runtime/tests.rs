@@ -9495,7 +9495,7 @@ fn a_chain_failure_carries_how_many_it_stands_for() {
 
 	let quiet = Duration::from_secs(30);
 	let mut reported = BTreeMap::new();
-	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
 	let now = Instant::now();
 
 	let counts: Vec<u64> = (0..5)
@@ -9515,7 +9515,7 @@ fn a_chain_failure_after_a_quiet_spell_starts_counting_again() {
 
 	let quiet = Duration::from_secs(30);
 	let mut reported = BTreeMap::new();
-	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
 	let started = Instant::now();
 
 	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 1);
@@ -9538,8 +9538,8 @@ fn chain_failures_are_counted_per_condition() {
 	let quiet = Duration::from_secs(30);
 	let mut reported = BTreeMap::new();
 	let now = Instant::now();
-	let closed = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string());
-	let malformed = (RuntimeFailureKind::HostFailure, "chain_probe", "malformed".to_string());
+	let closed = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let malformed = (RuntimeFailureKind::HostFailure, "chain_probe", "malformed".to_string(), None);
 
 	assert_eq!(crate::runtime::count_failure(&mut reported, closed.clone(), now, quiet), 1);
 	assert_eq!(crate::runtime::count_failure(&mut reported, closed, now, quiet), 2);
@@ -9547,5 +9547,54 @@ fn chain_failures_are_counted_per_condition() {
 		crate::runtime::count_failure(&mut reported, malformed, now, quiet),
 		1,
 		"a different condition was answered by another's count",
+	);
+}
+
+/// A failing chain call names the chain it was made against. The report that
+/// sent us looking at this code turned on which chain a transaction was being
+/// built against, and a line that does not say is most of a diagnosis short.
+#[test]
+fn a_failed_chain_call_names_its_chain() {
+	super::forget_chain_failures();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _: CallError<()> = super::runtime_failure_to_call_error(
+			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
+				"get_head_header",
+				"json-rpc connection closed",
+			)
+			.on_chain(&[0xcc; 32]),
+		);
+	});
+
+	let line = lines.first().expect("a failing chain call said nothing");
+	assert!(
+		line.contains(&format!("chain={}", hex::encode([0xcc; 32]))),
+		"the line did not name its chain: {line}",
+	);
+}
+
+/// Two chains failing the same way are counted apart, so one going quiet does
+/// not stand in for another and neither hides behind the other's count.
+#[test]
+fn two_chains_failing_alike_are_counted_apart() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+	let reason = "json-rpc connection closed".to_string();
+	let people =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason.clone(), Some(vec![0xaa]));
+	let asset_hub =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason, Some(vec![0xcc]));
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, people.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, people, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, asset_hub, now, quiet),
+		1,
+		"one chain's failures were answered by another chain's count",
 	);
 }
