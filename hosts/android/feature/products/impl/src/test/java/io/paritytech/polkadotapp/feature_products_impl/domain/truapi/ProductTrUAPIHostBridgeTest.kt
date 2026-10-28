@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -48,9 +49,11 @@ class ProductTrUAPIHostBridgeTest {
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
+        extensionVersions = mockk(),
         scope = scope,
     )
 
@@ -148,7 +151,7 @@ class ProductTrUAPIHostBridgeTest {
 
         coVerify {
             gameReminder.schedule(game, 1_000)
-            gameReminder.cancel(game)
+            gameReminder.cancelByProduct(game)
         }
     }
 

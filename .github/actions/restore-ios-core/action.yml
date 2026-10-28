@@ -1,0 +1,26 @@
+name: "Restore the in-tree iOS core"
+description: >-
+  Unpacks a core an earlier job in the same run built, in place of
+  bootstrap-ios-core: the TrUAPIHost bindings and xcframework, and the
+  TrUAPIProvider bindings. Fails when the artifact lacks a path the app's
+  package graph needs, so a build never runs against a partial core.
+inputs:
+  name:
+    description: "The artifact holding ios-core.tgz"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ runner.temp }}
+
+    - name: Unpack the generated core
+      shell: bash
+      run: |
+        set -euo pipefail
+        tar -xzf "$RUNNER_TEMP/ios-core.tgz"
+        test -d ios/truapi-host/Binaries/truapi_server.xcframework
+        test -d ios/truapi-host/Sources/truapiFFI/include
+        test -d ios/truapi-provider/Sources/TrUAPIProvider
