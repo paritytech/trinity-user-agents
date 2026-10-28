@@ -792,7 +792,7 @@ pub struct HostChatUpdateFeedRequest {
 }
 
 /// Failure to push a change to the messages of a room.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 pub enum HostChatUpdateFeedError {
 	/// This product created no room with this id.
 	UnknownRoom,
@@ -810,6 +810,7 @@ pub enum HostChatUpdateFeedError {
 	/// The product pushed updates to this room too often.
 	RateLimited,
 	/// Catch-all.
+	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,
