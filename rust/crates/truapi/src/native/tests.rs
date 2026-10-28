@@ -2011,7 +2011,6 @@ fn room_preview() -> truapi::latest::ChatRoomPreview {
 		last_message: None,
 		last_reaction: None,
 		unseen_reactions: 0,
-		last_call: None,
 	}
 }
 
