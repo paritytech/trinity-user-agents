@@ -2958,9 +2958,12 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
 }
 
-/// Open a session and cancel it, so it ends before the host records it. Drops
-/// the expiry sweep that opening it scheduled, which would otherwise wait out
-/// the session's deadline.
+/// Opens a funding session and cancels it, returning its intent. The session
+/// is left ended but not acknowledged by the host, which is what a resume
+/// announces.
+///
+/// Opening also schedules an expiry task that sleeps until the session's
+/// deadline. It is discarded, so a test running the held tasks never waits on it.
 fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
