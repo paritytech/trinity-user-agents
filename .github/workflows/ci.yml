@@ -183,7 +183,7 @@ jobs:
 
   codegen:
     name: Codegen
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,6 +218,13 @@ jobs:
 
       - name: Run codegen
         run: ./scripts/codegen.sh
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Test generated host requests across Rust and TypeScript
+        run: cargo test -p truapi-codegen --bin truapi-codegen host_initiated_request_roundtrip -- --ignored --nocapture
 
       - name: Type-check headless host scripts
         run: node scripts/check-host-script-types.mjs
