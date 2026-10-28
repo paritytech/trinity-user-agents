@@ -42,9 +42,11 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 /// execution opens, and forwards to whatever draws the overlay.
 final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     private let overlay: FundingOverlayPresenting
+    private let progressBook: FundingProgressBook
 
-    init(overlay: FundingOverlayPresenting) {
+    init(overlay: FundingOverlayPresenting, progressBook: FundingProgressBook = .shared) {
         self.overlay = overlay
+        self.progressBook = progressBook
     }
 
     func presentFunding(
@@ -64,7 +66,8 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
+    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
+        progressBook.record(intent: intent, progress: progress)
         overlay.fundingSessionChanged(intent: intent, status: status)
     }
 

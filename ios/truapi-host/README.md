@@ -364,9 +364,9 @@ first, and again at each refresh), hand it to the chosen provider with
 one of its own screens asks through `presentProviderFrame`, answered `.closed`
 when the screen closed itself and `.dismissed` when the user closed it.
 
-`fundingSessions()`, `fundingSession(intent:)` and `fundingProgress(intent:)`
-feed the host's in-flight and history views, refreshed on
-`fundingSessionChanged`. Ended sessions are handed over again on each resume
+`fundingSessionChanged` carries each session's status and progress, so the
+host keeps the latest progress itself; `fundingSessions()` and
+`fundingSession(intent:)` feed its in-flight and history views. Ended sessions are handed over again on each resume
 until the host records them with `acknowledgeFundingSession(intent:)`.
 `setFundingProviders(_:)` lists the providers the host ships with their Worker
 manifests; amounts cross as decimal strings of CASH units.

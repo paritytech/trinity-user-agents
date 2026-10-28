@@ -29,7 +29,12 @@ protocol FundingRuntime: AnyObject, Sendable {
     func openFunding(direction: FundingDirection, amount: U128?) async throws -> String?
 }
 
-extension TrUAPIHostRuntime: FundingRuntime {}
+extension TrUAPIHostRuntime: FundingRuntime {
+    /// What the core last handed over with the session's change.
+    func fundingProgress(intent: String) -> FundingProgress? {
+        FundingProgressBook.shared.progress(intent: intent)
+    }
+}
 
 extension FundingRail {
     static let displayOrder: [FundingRail] = [.crypto, .card, .bank]
