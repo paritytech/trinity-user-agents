@@ -435,14 +435,22 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
 
-// Info lines leave the device. Other core markers carry notification bodies, URLs and permission
-// requests, so only the core tracing warnings and errors are raised to info.
+// Info lines leave the device; everything else stays on it.
 internal fun logCoreLine(marker: String, detail: String) {
-    val priority = if (marker.startsWith(CORE_TRACING_MARKER_PREFIX)) Log.INFO else Log.DEBUG
+    val exported = EXPORTED_CORE_MARKER_PREFIXES.any { prefix -> marker.startsWith(prefix) }
+    val priority = if (exported) Log.INFO else Log.DEBUG
     Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
 }
 
-private const val CORE_TRACING_MARKER_PREFIX = "truapi.tracing."
+// An allowlist rather than the inverse: a marker the core adds later stays local until someone says
+// what it carries. `truapi.native.*` is what stays behind, because those lines carry notification
+// bodies, URLs and permission requests. The iOS host keeps the same list in `logCoreLine`.
+private val EXPORTED_CORE_MARKER_PREFIXES = listOf(
+    "truapi.tracing.",
+    "truapi.chain.",
+    "truapi.core.",
+    "truapi.ws_bridge.",
+)
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"
