@@ -22,6 +22,7 @@ import {
   closeTools,
   openTools,
   type DevTab,
+  useTestAccount,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -79,17 +80,15 @@ async function start(viewport: { width: number; height: number }): Promise<{
   const page = await context.newPage();
   await page.goto(host.origin);
   await ready(page);
-  await setMenu(page, true, "more");
-  await Promise.all([
-    page.waitForEvent("load"),
-    page.selectOption("#test-user", "alice"),
-  ]);
+  await useTestAccount(page, "alice");
   await ready(page);
-  // The tab has booted once the test user's own product shows.
+  // The tab has booted once the core signed the test user in. Nothing else
+  // opens: the product below is the one the test user tries.
   await page
-    .frameLocator(".test-product iframe")
-    .locator('[data-action="pick-contact"]')
-    .waitFor();
+    .locator("#session")
+    .filter({ hasText: "Signed in as Alice" })
+    .waitFor({ state: "attached" });
+  expect(await page.locator(".test-product iframe").count()).toBe(0);
   await setMenu(page, false);
   await showAddress(page);
   await page.fill("#address", product.url);

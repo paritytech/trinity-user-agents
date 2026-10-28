@@ -436,6 +436,22 @@ export async function closeTools(page: Page): Promise<void> {
     .waitFor({ state: "attached" });
 }
 
+/**
+ * Account → pick test account `id` and Sign in, or Sign out of the test
+ * account with null. Either reloads the tab; this waits for the load.
+ */
+export async function useTestAccount(
+  page: Page,
+  id: string | null,
+): Promise<void> {
+  await openTools(page, "account");
+  if (id !== null) await page.selectOption("#wallet", `test-account:${id}`);
+  await Promise.all([
+    page.waitForEvent("load"),
+    page.click(id === null ? "#sign-out" : "#sign-in"),
+  ]);
+}
+
 /** Open the developer tools at the tab that holds `selector`. */
 export async function reveal(page: Page, selector: string): Promise<void> {
   const tab = await page

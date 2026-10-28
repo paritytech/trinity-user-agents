@@ -114,7 +114,7 @@ import {
   walletLabel,
 } from "./app/wallet-label.js";
 import { walletPanel, type WalletMode } from "./app/wallet-panel.js";
-import { WalletStore } from "./platform/wallets.js";
+import { WalletStore, type Wallet } from "./platform/wallets.js";
 import {
   ProductNavigation,
   SANDBOX_FAILED,
@@ -159,6 +159,8 @@ const walletSelect = element<HTMLSelectElement>("wallet");
 const signInButton = element<HTMLButtonElement>("sign-in");
 const signOutButton = element<HTMLButtonElement>("sign-out");
 const forgetButton = element<HTMLButtonElement>("forget");
+/** What a test account is, shown while the picker points at one. */
+const testAccountsAbout = element<HTMLDetailsElement>("test-accounts-about");
 const walletNameInput = element<HTMLInputElement>("wallet-name");
 const mnemonicInput = element<HTMLTextAreaElement>("mnemonic");
 const importForm = element<HTMLFormElement>("import-form");
@@ -431,6 +433,7 @@ const devSession =
         base: BASE,
         notifications: notifications.store,
         section: element("developer"),
+        about: testAccountsAbout,
         marker: element("test-user-marker"),
         stage: element("product-slot"),
         leaveWalletSession: () => {
@@ -450,6 +453,29 @@ const devSession =
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
+// A test account's session starts no chat engine, so Chat is off rather than signed out.
+if (testUser !== null)
+  chatScreen.setNoChat({
+    title: "Chat is off for test accounts",
+    body: "Chat starts only for a wallet. Sign in with a wallet in Account to chat. The Inbox still gets invitations.",
+  });
+/** The account picker's value for a test account, kept apart from wallet ids. */
+const TEST_ACCOUNT = "test-account:";
+const testAccountId = (value: string): string | null =>
+  value.startsWith(TEST_ACCOUNT) ? value.slice(TEST_ACCOUNT.length) : null;
+/** The picker's value for the account this tab is signed in to, or null. */
+function activeAccount(): string | null {
+  if (testUser !== null) return `${TEST_ACCOUNT}${testUser.id}`;
+  return walletSession.active?.id ?? null;
+}
+/**
+ * Leave the test account for `wallet`: the reload signs the tab in to it, as
+ * any reload does the tab's wallet.
+ */
+function leaveTestAccountFor(wallet: Wallet): void {
+  sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
+  devSession?.useAccount(null);
+}
 /**
  * The people the signed-in wallet blocked in Chat. The host's chat record
  * keeps them whichever engine runs, so the contact picker and the Nova chat
@@ -795,15 +821,19 @@ let importMode: WalletMode | null = null;
  * while the mode does not change so a fold you opened stays open.
  */
 function renderWalletPanel(): void {
+  const selected = walletSelect.value;
   const panel = walletPanel({
-    saved: savedCount,
-    activeId: walletSession.active?.id ?? null,
-    selectedId: wallets.has(walletSelect.value) ? walletSelect.value : "",
+    saved: savedCount + (devSession?.accounts.length ?? 0),
+    activeId: activeAccount(),
+    selectedId:
+      wallets.has(selected) || testAccountId(selected) !== null ? selected : "",
   });
   walletSelect.hidden = !panel.showPicker;
   signInButton.hidden = !panel.showSignIn;
   signOutButton.hidden = !panel.showSignOut;
-  forgetButton.hidden = !panel.showForget;
+  // A test account is not saved, so there is nothing to forget.
+  forgetButton.hidden = !panel.showForget || !wallets.has(selected);
+  testAccountsAbout.hidden = testAccountId(selected) === null;
   walletActions.hidden = !(
     panel.showSignIn ||
     panel.showSignOut ||
@@ -817,18 +847,41 @@ function renderWalletPanel(): void {
 }
 
 function renderWallets(): void {
-  const selected = walletSelect.value || walletSession.active?.id || "";
+  const selected = walletSelect.value || activeAccount() || "";
   const saved = wallets.list();
   const problem = wallets.problem();
-  walletSelect.replaceChildren(
-    ...saved.map(
-      (wallet) =>
-        new Option(
-          walletLabel(wallet, walletInfo.get(wallet.id, activeNetwork.id)),
-          wallet.id,
-        ),
-    ),
+  const walletOptions = saved.map(
+    (wallet) =>
+      new Option(
+        walletLabel(wallet, walletInfo.get(wallet.id, activeNetwork.id)),
+        wallet.id,
+      ),
   );
+  const testAccounts = devSession?.accounts ?? [];
+  if (testAccounts.length === 0) walletSelect.replaceChildren(...walletOptions);
+  else {
+    const group = (label: string, options: HTMLOptionElement[]) => {
+      const node = document.createElement("optgroup");
+      node.label = label;
+      node.append(...options);
+      return node;
+    };
+    walletSelect.replaceChildren(
+      ...(walletOptions.length === 0
+        ? []
+        : [group("Your wallets", walletOptions)]),
+      group(
+        "Test accounts",
+        testAccounts.map(
+          (account) =>
+            new Option(
+              `${account.name} (test account)`,
+              `${TEST_ACCOUNT}${account.id}`,
+            ),
+        ),
+      ),
+    );
+  }
   if (saved.length === 0 && problem !== null) {
     const notice = new Option(problem, "", false, true);
     notice.disabled = true;
@@ -837,7 +890,10 @@ function renderWallets(): void {
   if (problem !== loggedWalletProblem && problem !== null)
     activity.record({ category: "session", action: problem, failed: true });
   loggedWalletProblem = problem;
-  if (saved.some((wallet) => wallet.id === selected))
+  if (
+    saved.some((wallet) => wallet.id === selected) ||
+    testAccounts.some((account) => `${TEST_ACCOUNT}${account.id}` === selected)
+  )
     walletSelect.value = selected;
   savedCount = saved.length;
   renderControls();
@@ -847,11 +903,11 @@ function renderControls(): void {
   const ready = runtime !== null && !queue.busy;
   signInButton.disabled =
     !ready ||
-    walletSelect.value === walletSession.active?.id ||
-    testUser !== null;
-  signOutButton.disabled = !ready || walletSession.active === null;
+    walletSelect.value === "" ||
+    walletSelect.value === activeAccount();
+  signOutButton.disabled = !ready || activeAccount() === null;
   forgetButton.disabled = !ready || !wallets.has(walletSelect.value);
-  addWalletButton.disabled = !ready || testUser !== null;
+  addWalletButton.disabled = !ready;
   openButton.disabled = !ready;
   addressGo.disabled = !ready;
   closeButton.disabled = !ready || navigation.product === null;
@@ -1027,9 +1083,11 @@ function renderDock(): void {
       ? "No product open"
       : `${DESTINATION_LABELS[bare]} has no product yet`;
   stageEmptyNote.textContent =
-    bare === null
-      ? "Pick Chat, Pocket or Browse, or open a product with the search button."
-      : "Open a name or URL with the search button. The host remembers it for this tab.";
+    testUser !== null
+      ? `Search for a product to try it as ${testUser.name}. Example Chat is in More.`
+      : bare === null
+        ? "Pick Chat, Pocket or Browse, or open a product with the search button."
+        : "Open a name or URL with the search button. The host remembers it for this tab.";
   renderShelf();
 }
 
@@ -1103,7 +1161,9 @@ function renderHostScreens(): void {
         : "chat"
       : destination === "pocket"
         ? destination
-        : testUser !== null && navigation.product === null
+        : testUser !== null &&
+            navigation.product === null &&
+            devSession?.exampleChatOpen() === true
           ? "test-product"
           : "product";
   document.body.dataset.surface = surface;
@@ -1137,7 +1197,10 @@ function renderHostScreens(): void {
   devSession?.showProduct(surface === "test-product");
   if (destination === "chat" || destination === "pocket")
     lastHost = destination;
-  renderAppChrome(surface === "product" && navigation.product !== null);
+  renderAppChrome(
+    (surface === "product" && navigation.product !== null) ||
+      surface === "test-product",
+  );
 }
 
 /**
@@ -1155,6 +1218,8 @@ function renderAppChrome(shown: boolean): void {
   const holds = navigation.holdKey() !== null;
   appMinimize.hidden = !holds;
   appClose.hidden = holds;
+  // The test accounts' demo product has no Details in the Product tab.
+  appMore.hidden = document.body.dataset.surface === "test-product";
 }
 
 const appArea = element("viewport-app-area");
@@ -1179,7 +1244,11 @@ function setAppMenu(open: boolean): void {
 }
 
 /** Close the product in front, as the Product tab's Close does. */
-const closeFront = (): void => navigation.closeFront();
+const closeFront = (): void => {
+  if (document.body.dataset.surface === "test-product")
+    devSession?.closeExampleChat();
+  else navigation.closeFront();
+};
 
 appMinimize.addEventListener(
   "click",
@@ -1556,13 +1625,14 @@ async function syncSessionUsername(): Promise<void> {
   }
 }
 
-/** Forget the chain state when the account changes, and read it again for the new one. */
+/**
+ * Forget the chain state when the account changes, and read it again for the
+ * new one. A test account's chain state is read only when its status fold
+ * opens: it has no wallet to give a username, so a read at sign-in would serve
+ * nothing.
+ */
 function trackChainAccount(state: AuthState): void {
-  // A test user signs in with a public test phrase; the host reads nothing on chain for it.
-  const key =
-    state.tag === "Connected" && testUser === null
-      ? state.value.publicKey
-      : null;
+  const key = state.tag === "Connected" ? state.value.publicKey : null;
   if (key === chainFor) return;
   chainFor = key;
   chainRun += 1;
@@ -1572,7 +1642,7 @@ function trackChainAccount(state: AuthState): void {
   void refreshProductAllowance();
   if (key === null) return;
   if (accountStatusFold.open) void refreshChainStatus();
-  else void syncSessionUsername();
+  else if (testUser === null) void syncSessionUsername();
 }
 
 accountStatusRefresh.addEventListener("click", () => {
@@ -1604,12 +1674,15 @@ function renderSession(state: AuthState): void {
     case "Connected": {
       const { publicKey, identityAccountId, fullUsername, liteUsername } =
         state.value;
+      // A test account's name is the one the picker shows; any username the
+      // public phrase's account holds is not the test account's.
       const name =
-        fullUsername ??
-        liteUsername ??
-        walletSession.active?.name ??
-        testUser?.name ??
-        "wallet";
+        testUser !== null
+          ? `${testUser.name} (test account)`
+          : (fullUsername ??
+            liteUsername ??
+            walletSession.active?.name ??
+            "wallet");
       sessionLine.textContent = `Signed in as ${name} · ${abbreviate(publicKey)}`;
       sessionLine.title = `Root key ${publicKey}${identityAccountId ? `\nIdentity account ${identityAccountId}` : ""}`;
       break;
@@ -1628,12 +1701,20 @@ function renderSession(state: AuthState): void {
 }
 
 signInButton.addEventListener("click", () => {
+  const test = testAccountId(walletSelect.value);
+  if (test !== null) {
+    devSession?.useAccount(test);
+    return;
+  }
   const wallet = wallets.find(walletSelect.value);
-  if (wallet) void walletSession.signIn(wallet);
+  if (!wallet) return;
+  if (testUser !== null) leaveTestAccountFor(wallet);
+  else void walletSession.signIn(wallet);
 });
 
 signOutButton.addEventListener("click", () => {
-  void walletSession.signOut();
+  if (testUser !== null) devSession?.useAccount(null);
+  else void walletSession.signOut();
 });
 
 forgetButton.addEventListener("click", () => {
@@ -1664,7 +1745,8 @@ importForm.addEventListener("submit", (event) => {
     importDetails.open = false;
     renderWallets();
     walletSelect.value = wallet.id;
-    void walletSession.signIn(wallet);
+    if (testUser !== null) leaveTestAccountFor(wallet);
+    else void walletSession.signIn(wallet);
   } catch (error) {
     activity.record({
       category: "session",

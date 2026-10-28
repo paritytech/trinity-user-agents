@@ -71,6 +71,8 @@ export class ChatScreen {
   private renderQueued = false;
   /** The call layer, over every screen, so an incoming call shows wherever the user is. */
   private readonly call = new CallOverlay();
+  /** What shows in place of the signed-out note while the tab's session runs no chat, or null. */
+  private noChat: { title: string; body: string } | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -117,6 +119,15 @@ export class ChatScreen {
       ),
     );
     this.queueRender();
+  }
+
+  /**
+   * Say why there is no chat while the tab is signed in to a session that
+   * runs none, in place of the note that asks the user to sign in.
+   */
+  setNoChat(note: { title: string; body: string } | null): void {
+    this.noChat = note;
+    this.render();
   }
 
   /** Show or hide the screen. Chat keeps running while it is hidden. */
@@ -258,10 +269,12 @@ export class ChatScreen {
       return [
         this.bar("Chats"),
         ...this.header(),
-        this.empty(
-          "Sign in to chat",
-          "Choose a wallet in Settings. Chat uses that wallet's identity.",
-        ),
+        this.noChat === null
+          ? this.empty(
+              "Sign in to chat",
+              "Choose a wallet in Settings. Chat uses that wallet's identity.",
+            )
+          : this.empty(this.noChat.title, this.noChat.body),
       ];
     if (this.view.kind === "blocked") return this.drawBlocked();
     if (this.view.kind === "request") {

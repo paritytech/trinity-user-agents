@@ -509,9 +509,9 @@
           <p class="note">Switching reloads the tab.</p>
         </section>
         <section class="dev-group" aria-labelledby="account-title">
-          <h2 id="account-title">Wallet</h2>
+          <h2 id="account-title">Account</h2>
           <p id="session" class="session">Signed out</p>
-          <label for="wallet" class="visually-hidden">Wallet</label>
+          <label for="wallet" class="visually-hidden">Account</label>
           <select id="wallet"></select>
           <div id="wallet-actions" class="row">
             <button id="sign-in" class="primary" type="button" disabled>
@@ -520,6 +520,9 @@
             <button id="sign-out" type="button" disabled>Sign out</button>
             <button id="forget" type="button" disabled>Forget</button>
           </div>
+          <details id="test-accounts-about" class="fold" hidden>
+            <summary>About test accounts</summary>
+          </details>
           <details id="import" class="fold">
             <summary>Import a wallet</summary>
             <form id="import-form">
