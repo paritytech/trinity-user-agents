@@ -82,6 +82,29 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
+		// Events the core addresses to a host reach this log regardless of the
+		// trace level, which defaults to ERROR and so drops everything the core
+		// would otherwise say about itself.
+		// Held weakly: the sink is process-wide and nothing clears it, so a
+		// strong handle would pin this host's object graph for the life of the
+		// process and keep delivering into it after it was torn down.
+		crate::logging::set_host_log_sink({
+			let callbacks = Arc::downgrade(&callbacks);
+			Arc::new(move |marker: &str, detail: &str| {
+				if let Some(callbacks) = callbacks.upgrade() {
+					callbacks.on_core_log(marker.to_string(), detail.to_string());
+				}
+			})
+		});
+		// Raised through tracing rather than called directly, so every host log
+		// opens with proof that the layer forwarding marked targets is alive.
+		// A host that reaches a later condition and sees nothing can tell a
+		// quiet core from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }

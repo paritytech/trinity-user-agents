@@ -282,6 +282,11 @@ impl RuntimeChainProvider for HostChainProvider {
 	}
 }
 
+/// Follows a node allows per connection, as [`ConnectionScope`] describes. A
+/// connection holding this many refuses the next one, whichever caller it
+/// belongs to.
+const FOLLOWS_A_NODE_BUDGETS: usize = 4;
+
 /// Which caller a chain connection belongs to.
 ///
 /// A node allows four `chainHead_v1_follow` subscriptions and sixteen concurrent
@@ -1187,6 +1192,11 @@ struct ChainConnection {
 	/// one metadata cache.
 	chain_config: OnceLock<SubstrateConfig>,
 	legacy_connection: Mutex<Option<LegacyConnection>>,
+	/// Whether this connection has already reported itself at the budget.
+	/// dotNS opens and drops a follow per lookup, so a connection sitting at
+	/// the budget would otherwise repeat the line on every lookup, into a
+	/// device log the level filter cannot quiet.
+	budget_reported: AtomicBool,
 }
 
 impl ChainConnection {
@@ -1212,6 +1222,7 @@ impl ChainConnection {
 			subxt_connection_generation: AtomicU64::new(0),
 			chain_config: OnceLock::new(),
 			legacy_connection: Mutex::new(None),
+			budget_reported: AtomicBool::new(false),
 		})
 	}
 
@@ -1578,7 +1589,43 @@ impl ChainConnection {
 		};
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
+		let holding = Self::follows_holding_a_slot(&follows);
+		drop(follows);
+		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
+		// Reported on the way into the budget and again only after the
+		// connection has come back out of it, so a connection that sits there
+		// says so once rather than on every follow that renews the condition.
+		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
+		if at_budget && !already_reported {
+			// The refusal this predicts surfaces far from here, on whichever
+			// call happens to open the next follow, and says nothing about
+			// follows when it does. The target addresses it to the host, so it
+			// arrives whatever the level is, and hosts run at `ERROR`.
+			let genesis = encode_hex(&self.genesis_hash);
+			let held = holding.len();
+			let occupants = holding.join(", ");
+			warn!(
+				target: "truapi.chain.follow_budget_reached",
+				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
+			);
+		}
 		true
+	}
+
+	/// Local ids of the follows holding a slot in this connection's budget.
+	///
+	/// A follow is recorded on intent and gains a remote id once the node
+	/// acknowledges one, so only the acknowledged ones occupy the node's
+	/// budget. Counting intents instead would report a connection as full
+	/// while the node still had room.
+	fn follows_holding_a_slot(follows: &HashMap<String, FollowState>) -> Vec<String> {
+		let mut holding: Vec<String> = follows
+			.iter()
+			.filter(|(_, follow)| follow.remote_subscription_id.is_some())
+			.map(|(local_follow_id, _)| local_follow_id.clone())
+			.collect();
+		holding.sort();
+		holding
 	}
 
 	/// Abort every follow pump on this connection.
@@ -3577,6 +3624,35 @@ mod tests {
 		assert!(
 			messages.iter().any(|m| m.contains("chainHead_v1_unfollow")),
 			"unfollow not sent; messages: {messages:?}",
+		);
+	}
+
+	/// Only follows the node acknowledged hold a slot in its budget. A follow
+	/// recorded on intent has asked for nothing yet, so counting it would
+	/// report a connection as full while the node still had room.
+	#[test]
+	fn only_acknowledged_follows_hold_a_slot_in_the_budget() {
+		let mut follows: HashMap<String, FollowState> = HashMap::new();
+		let intended = |remote: Option<&str>| FollowState {
+			with_runtime: false,
+			client_subscription_id: None,
+			remote_subscription_id: remote.map(str::to_string),
+			abort: None,
+			sender: mpsc::unbounded().0,
+			cancelled: Arc::new(AtomicBool::new(false)),
+		};
+		follows.insert("acknowledged-b".to_string(), intended(Some("REMOTE-B")));
+		follows.insert("intent-only".to_string(), intended(None));
+		follows.insert("acknowledged-a".to_string(), intended(Some("REMOTE-A")));
+
+		assert_eq!(
+			ChainConnection::follows_holding_a_slot(&follows),
+			vec!["acknowledged-a".to_string(), "acknowledged-b".to_string()],
+			"an unacknowledged follow occupies nothing on the node",
+		);
+		assert!(
+			ChainConnection::follows_holding_a_slot(&follows).len() < FOLLOWS_A_NODE_BUDGETS,
+			"two acknowledged follows are below the budget",
 		);
 	}
 
