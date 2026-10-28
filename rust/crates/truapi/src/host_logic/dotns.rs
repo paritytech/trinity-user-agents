@@ -224,9 +224,19 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			.join("&"),
 		PocketDeeplinkAction::Add => String::new(),
 	};
-	if page_query.len() > 2048 {
+	// `url` leaves bytes such as `{` or a lone `%` raw under a custom scheme,
+	// and the hosts' https URL parsers refuse them.
+	let legal_bytes = page_query
+		.bytes()
+		.all(|byte| byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/?%".contains(&byte));
+	let whole_escapes = page_query.split('%').skip(1).all(|escape| {
+		escape
+			.get(..2)
+			.is_some_and(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+	});
+	if page_query.len() > 2048 || !legal_bytes || !whole_escapes {
 		return Some(NavigateDecision::Reject {
-			reason: "pocket deeplink page params too long".into(),
+			reason: "pocket deeplink page params are too long or not URL-encoded".into(),
 		});
 	}
 	// The arguments arrive percent-decoded, so they are encoded again here: a
@@ -796,6 +806,9 @@ mod tests {
 			"polkadotapp://pocket/add?product=game.dot&card=loy%E2%80%8Dalty".to_string(),
 			"polkadotapp://pocket/add?product=game.dot&card=%20%20".to_string(),
 			format!("polkadotapp://pocket/open?product=game.dot&card=a&v={}", "a".repeat(2048)),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v={x}".to_string(),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v=1%".to_string(),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v=%+1".to_string(),
 		] {
 			assert!(
 				matches!(parse_navigate(&input), NavigateDecision::Reject { .. }),
