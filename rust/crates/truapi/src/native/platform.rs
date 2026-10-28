@@ -686,6 +686,14 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.boxed()
 	}
 
+	async fn list_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> Result<truapi::latest::HostChatListSubscribeItem, truapi::latest::GenericError> {
+		let rooms = self.chat.list_rooms().await.map_err(truapi::latest::GenericError::from)?;
+		Ok(truapi::latest::HostChatListSubscribeItem { rooms })
+	}
+
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
