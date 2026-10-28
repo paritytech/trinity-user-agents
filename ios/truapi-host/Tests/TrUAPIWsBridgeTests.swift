@@ -4,6 +4,25 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    /// The core raises a start marker as a runtime comes up, so a host log opens
+    /// with proof that the channel carrying every later marker reaches Swift at
+    /// all. It is raised below the core's console floor on purpose, so this also
+    /// covers a host log that does not depend on the trace level.
+    @Test(.timeLimit(.minutes(1)))
+    func testStartingARuntimeReportsTheCoreLogChannel() throws {
+        let bridge = StubHostBridge()
+        let runtime = try TrUAPIHostRuntime(
+            bridge: bridge,
+            runtimeConfig: Self.makeHostRuntimeConfig()
+        )
+        defer { _ = runtime }
+
+        #expect(
+            bridge.coreLogs.contains { $0.hasPrefix("truapi.core.started") },
+            "the core's start marker did not reach the host: \(bridge.coreLogs)"
+        )
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func testFeatureSupportedRoundTripOverWsBridge() async throws {
         let bridge = StubHostBridge()
