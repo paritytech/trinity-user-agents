@@ -194,7 +194,8 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Replace the name and description of a room.
+	/// Replace the name and description of a room, and its icon when the
+	/// metadata names one.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -205,7 +206,11 @@ pub trait Chat: Send + Sync {
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomMetadata({
 	///   roomId: "test-room",
-	///   metadata: { name: "Renamed Room", description: "Now with a description" },
+	///   metadata: {
+	///     name: "Renamed Room",
+	///     description: "Now with a description",
+	///     icon: "https://example.com/renamed.png",
+	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomMetadata failed:", result);
 	/// ```
@@ -279,7 +284,8 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Push one change to the messages of a room. The change is a new message, an
-	/// edit, a reaction, a status, or new content for a message with no edit mark.
+	/// edit, a reaction, a status, new content for a message with no edit mark,
+	/// or a deletion.
 	/// The host stores the change for a room it stores, and only shows it for a
 	/// room the product keeps.
 	///
