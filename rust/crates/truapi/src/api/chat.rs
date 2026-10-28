@@ -5,13 +5,14 @@ use crate::{
 	versioned::chat::{
 		HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatDeleteRoomRequest, HostChatDeleteRoomResponse, HostChatListSubscribeError,
-		HostChatListSubscribeItem, HostChatListSubscribeRequest, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatRoomError,
-		HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse, HostChatSetRoomFooterError,
-		HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
-		HostChatSetRoomMetadataRequest, HostChatSetRoomMetadataResponse,
+		HostChatDeleteRoomError, HostChatDeleteRoomRequest, HostChatDeleteRoomResponse,
+		HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomConfigError, HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse,
+		HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+		HostChatSetRoomMetadataError, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewError,
 		HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
 		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatMessagesQueryItem,
 		ProductChatMessagesQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
@@ -195,7 +196,7 @@ pub trait Chat: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: HostChatSetRoomConfigRequest,
-	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatSetRoomConfigError>> {
 		Err(CallError::unavailable())
 	}
 
@@ -219,7 +220,7 @@ pub trait Chat: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: HostChatSetRoomMetadataRequest,
-	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomMetadataResponse, CallError<HostChatSetRoomMetadataError>> {
 		Err(CallError::unavailable())
 	}
 
@@ -257,7 +258,7 @@ pub trait Chat: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: HostChatSetRoomPreviewRequest,
-	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatSetRoomPreviewError>> {
 		Err(CallError::unavailable())
 	}
 
@@ -279,7 +280,7 @@ pub trait Chat: Send + Sync {
 		&self,
 		_cx: &CallContext,
 		_request: HostChatDeleteRoomRequest,
-	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatRoomError>> {
+	) -> Result<HostChatDeleteRoomResponse, CallError<HostChatDeleteRoomError>> {
 		Err(CallError::unavailable())
 	}
 

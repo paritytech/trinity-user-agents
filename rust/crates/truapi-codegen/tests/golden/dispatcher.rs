@@ -802,11 +802,11 @@ where
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
-                    let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomConfigError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatSetRoomConfigError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatSetRoomConfigError>> =
                     match host.set_room_config(&cx, request).await {
                         Ok(response) => Ok(<versioned::chat::HostChatSetRoomConfigResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -827,11 +827,11 @@ where
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
-                    let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomMetadataError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatSetRoomMetadataError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                let result: Result<versioned::chat::HostChatSetRoomMetadataResponse, truapi::CallError<versioned::chat::HostChatSetRoomMetadataError>> =
                     match host.set_room_metadata(&cx, request).await {
                         Ok(response) => Ok(<versioned::chat::HostChatSetRoomMetadataResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -852,11 +852,11 @@ where
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
-                    let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomPreviewError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatSetRoomPreviewError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                let result: Result<versioned::chat::HostChatSetRoomPreviewResponse, truapi::CallError<versioned::chat::HostChatSetRoomPreviewError>> =
                     match host.set_room_preview(&cx, request).await {
                         Ok(response) => Ok(<versioned::chat::HostChatSetRoomPreviewResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
@@ -877,11 +877,11 @@ where
                 let target_version = request.version();
                 let cx = CallContext::with_parts(request_id, cancel);
                 if !execution_allowed {
-                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
-                    let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    let error: truapi::CallError<versioned::chat::HostChatDeleteRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatDeleteRoomError>> = Err(error);
                     return result.encode();
                 }
-                let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                let result: Result<versioned::chat::HostChatDeleteRoomResponse, truapi::CallError<versioned::chat::HostChatDeleteRoomError>> =
                     match host.delete_room(&cx, request).await {
                         Ok(response) => Ok(<versioned::chat::HostChatDeleteRoomResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
