@@ -36,8 +36,4 @@ extension ProductHost {
     static func fromUrl(_ url: URL, tld: String) -> ProductHost? {
         parse(url.absoluteString, tld: tld)
     }
-
-    static func fromNavigationDestination(_ dest: String, tld: String) -> ProductHost? {
-        parse(dest, tld: tld)
-    }
 }

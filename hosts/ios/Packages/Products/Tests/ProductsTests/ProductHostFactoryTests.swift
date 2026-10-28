@@ -4,9 +4,9 @@ import Testing
 
 // MARK: - Stub
 
-private final class StubDotNsTldProvider: DotNsTldProviding {
-    var tld: String?
-    var resolveError: (any Error)?
+private struct StubDotNsTldProvider: DotNsTldProviding {
+    let tld: String?
+    let resolveError: (any Error)?
 
     func currentTld() -> String? {
         tld
@@ -30,11 +30,7 @@ private final class StubDotNsTldProvider: DotNsTldProviding {
 }
 
 private func makeFactory(tld: String?, resolveError: (any Error)? = nil) -> ProductHostFactory {
-    let stub = StubDotNsTldProvider()
-    stub.tld = tld
-    stub.resolveError = resolveError
-
-    return ProductHostFactory(tldProvider: stub)
+    ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: tld, resolveError: resolveError))
 }
 
 // MARK: - Tests
@@ -68,12 +64,6 @@ struct ProductHostFactoryTests {
         #expect(result?.toDotDomain().rawValue == "browse.testnet")
     }
 
-    @Test func labelProvesSuffixingBeforeParsingFails() {
-        // A bare label can never satisfy the isDotDomain check without suffixing.
-        #expect(ProductHost.parse("browse", tld: "testnet") == nil)
-        #expect(makeFactory(tld: "testnet").host(label: "browse") != nil)
-    }
-
     // MARK: - resolveHost(label:)
 
     @Test func resolveHostLabelSucceedsWhenTldResolved() async throws {
@@ -90,20 +80,6 @@ struct ProductHostFactoryTests {
         }
     }
 
-    // MARK: - host(navigationDestination:)
-
-    @Test func navigationDestinationAcceptsValidDotDomain() {
-        let result = makeFactory(tld: "dot").host(navigationDestination: "browse.dot")
-
-        #expect(result != nil)
-    }
-
-    @Test func navigationDestinationRejectsExternalHost() {
-        let result = makeFactory(tld: "dot").host(navigationDestination: "https://stg.revx.dev/editor")
-
-        #expect(result == nil)
-    }
-
     // MARK: - page(navigationDestination:)
 
     @Test func pageNavigationDestinationReturnsNilWhenTldIsNil() {
@@ -117,11 +93,5 @@ struct ProductHostFactoryTests {
 
         #expect(result?.host.toDotDomain().rawValue == "browse.dot")
         #expect(result?.page == "/onboarding")
-    }
-
-    @Test func pageNavigationDestinationRejectsExternalHost() {
-        let result = makeFactory(tld: "dot").page(navigationDestination: "https://stg.revx.dev/editor")
-
-        #expect(result == nil)
     }
 }

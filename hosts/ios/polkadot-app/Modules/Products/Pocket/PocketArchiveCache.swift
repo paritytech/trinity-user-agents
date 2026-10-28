@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import Foundation
 import Products
 
@@ -32,8 +32,8 @@ struct PocketWorkerArchiveName: Sendable {
         published: @escaping @Sendable () async -> ProductId?,
         onDisk: @escaping @Sendable (ProductId) -> URL? = PocketArchiveCache.onDisk
     ) {
-        conventional = try? ProductManifestRecords.subname(
-            base: ProductManifestRecords.baseName(of: productId),
+        conventional = try? productIdExecutable(
+            productId: productIdOwner(productId: productId),
             kind: .worker
         )
         self.published = published

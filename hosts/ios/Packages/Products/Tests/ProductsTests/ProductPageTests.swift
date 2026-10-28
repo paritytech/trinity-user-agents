@@ -3,49 +3,17 @@ import Testing
 @testable import Products
 
 struct ProductPageTests {
-    @Test(arguments: ["browse.paseo", "browse.paseo.li"])
-    func rejectsOtherNetworkDestinations(_ host: String) {
-        #expect(ProductPage.fromNavigationDestination("\(host)/page?ref=abc#section", tld: "dot") == nil)
+    @Test func rootRouteBecomesNoPage() throws {
+        let page = try #require(ProductPage.fromUrl(URL(string: "https://browse.dot/")!, tld: "dot"))
+        #expect(page.page == nil)
     }
 
-    @Test func preservesNestedShareLinkRouteOnItsNetwork() {
-        let page = ProductPage.fromNavigationDestination("app.arena.browse.paseo.li/page?ref=abc#section", tld: "paseo")
-        #expect(page?.host.toDotDomain().rawValue == "app.arena.browse.paseo")
-        #expect(page?.page == "/page?ref=abc#section")
-    }
+    @Test func foundationURLBecomesAProductPage() throws {
+        let url = URL(string: "https://browse.dot/onboarding?ref=abc#section")!
+        let page = try #require(ProductPage.fromUrl(url, tld: "dot"))
 
-    // MARK: - fromUrl(_:)
-
-    @Test func fromUrlWithoutPage() {
-        let page = ProductPage.fromUrl(URL(string: "https://browse.dot")!, tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == nil)
-    }
-
-    @Test func fromUrlWithRootPath() {
-        let page = ProductPage.fromUrl(URL(string: "https://browse.dot/")!, tld: "dot")
-        #expect(page?.page == nil)
-    }
-
-    @Test func fromUrlWithPath() {
-        let page = ProductPage.fromUrl(URL(string: "https://browse.dot/onboarding/step")!, tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == "/onboarding/step")
-    }
-
-    @Test func fromUrlKeepsFragmentInRelativePart() {
-        let page = ProductPage.fromUrl(URL(string: "https://browse.dot.li/#/onboarding")!, tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == "/#/onboarding")
-    }
-
-    @Test func fromUrlKeepsQueryInRelativePart() {
-        let page = ProductPage.fromUrl(URL(string: "https://browse.dot/onboarding?ref=abc")!, tld: "dot")
-        #expect(page?.page == "/onboarding?ref=abc")
-    }
-
-    @Test func fromUrlRejectsInvalidHost() {
-        #expect(ProductPage.fromUrl(URL(string: "https://browse.com/page")!, tld: "dot") == nil)
+        #expect(page.host.toDotDomain().rawValue == "browse.dot")
+        #expect(page.page == "/onboarding?ref=abc#section")
     }
 
     // MARK: - applied(to:)
@@ -83,55 +51,5 @@ struct ProductPageTests {
         let base = URL(string: "product://browse.dot/index.html")!
         let result = ProductPage(host: host, page: "#/onboarding").applied(to: base)
         #expect(result.absoluteString == "product://browse.dot/#/onboarding")
-    }
-
-    // MARK: - fromNavigationDestination(_:)
-
-    @Test func fromNavigationDestinationUrlKeepsPage() {
-        let page = ProductPage.fromNavigationDestination("https://browse.dot/onboarding", tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == "/onboarding")
-    }
-
-    @Test func fromNavigationDestinationUrlKeepsFragmentRoute() {
-        let page = ProductPage.fromNavigationDestination("https://browse.dot.li/#/onboarding", tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == "/#/onboarding")
-    }
-
-    @Test func fromNavigationDestinationBareDomainHasNoPage() {
-        let page = ProductPage.fromNavigationDestination("browse.dot", tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == nil)
-    }
-
-    @Test func fromNavigationDestinationRejectsExternalHost() {
-        #expect(ProductPage.fromNavigationDestination("https://stg.revx.dev/editor", tld: "dot") == nil)
-    }
-
-    @Test func fromNavigationDestinationRejectsInvalid() {
-        #expect(ProductPage.fromNavigationDestination("invalid", tld: "dot") == nil)
-    }
-
-    @Test func fromNavigationDestinationSchemelessHostKeepsFragmentRoute() {
-        let page = ProductPage.fromNavigationDestination("getcash.paseo/#/", tld: "paseo")
-        #expect(page?.host.toDotDomain().rawValue == "getcash.paseo")
-        #expect(page?.page == "/#/")
-    }
-
-    @Test func fromNavigationDestinationSchemelessHostKeepsPath() {
-        let page = ProductPage.fromNavigationDestination("browse.dot/onboarding?ref=abc", tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == "/onboarding?ref=abc")
-    }
-
-    @Test func fromNavigationDestinationSchemelessRootPathHasNoPage() {
-        let page = ProductPage.fromNavigationDestination("browse.dot/", tld: "dot")
-        #expect(page?.host.toDotDomain().rawValue == "browse.dot")
-        #expect(page?.page == nil)
-    }
-
-    @Test func fromNavigationDestinationSchemelessExternalHostWithPath() {
-        #expect(ProductPage.fromNavigationDestination("stg.revx.dev/editor", tld: "dot") == nil)
     }
 }

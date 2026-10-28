@@ -15,25 +15,6 @@ struct ProductResolverTests {
         #expect(resolved.appContentId.rawValue == "hackm3.dot")
     }
 
-    @Test(arguments: ["6E3F0A1C-2B4D", "hackm3", "hackm3.com", ""])
-    func invalidInputCannotReachTheResolver(_ input: String) {
-        #expect(throws: (any Error).self) { try ProductId(input) }
-    }
-
-    @Test(arguments: ["HackM3.DOT", "worker.hackm3.dot", "app.hackm3.dot"])
-    func resolvesEveryFormOfANameToOneProduct(_ input: String) async throws {
-        let productId = try ProductId(input)
-        let stub = StubDotNsResolver()
-        stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
-        stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
-
-        let resolved = try await makeResolver(stub).resolve(productId)
-
-        #expect(resolved.id.rawValue == "hackm3.dot")
-        #expect(resolved.displayName == "HackM3")
-        #expect(resolved.appContentId.rawValue == "app.hackm3.dot")
-    }
-
     @Test func propagatesUnavailableNetworkBeforeReadingRecords() async throws {
         let stub = StubDotNsResolver()
         let resolver = ProductResolver(
@@ -156,7 +137,7 @@ struct ProductResolverTests {
         let stub = StubDotNsResolver()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
 
-        let resolved = try await makeResolver(stub).resolve(ProductId("WORKER.HackM3.dot"))
+        let resolved = try await makeResolver(stub).resolve(ProductId("worker.hackm3.dot"))
 
         #expect(resolved.id.rawValue == "hackm3.dot")
         #expect(resolved.displayName == "HackM3")

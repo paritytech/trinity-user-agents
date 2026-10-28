@@ -2,30 +2,16 @@ package io.parity.truapi
 
 import android.os.Parcel
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductIdException
 
 class ProductIdTest {
     @Test
-    fun normalizedIdsShareCollectionKeys() {
-        val first = ProductId.parse("  PEOPL.DOT  ")
+    fun equalNativeValuesShareCollectionKeys() {
+        val first = ProductId.parse("peopl.dot")
         val second = ProductId.parse("peopl.dot")
 
         assertEquals(mapOf(second to "account"), mapOf(first to "account"))
-    }
-
-    @Test
-    fun invalidInputReturnsAParsingError() {
-        listOf("", "example.com", "my_app.dot", "localhost:3000.evil.dot").forEach { input ->
-            assertThrows(ProductIdException::class.java) { ProductId.parse(input) }
-        }
-    }
-
-    @Test
-    fun executableIdentityIsPreserved() {
-        assertEquals("app.peopl.paseo", ProductId.parse("APP.PEOPL.PASEO").value)
     }
 
     @Test

@@ -4,8 +4,10 @@
 //! same categorization and the `navigate_to` callback only receives
 //! already-validated input.
 
-use crate::platform::{ProductId, has_dotns_tld, normalize_chat_identifier};
-use unicode_normalization::UnicodeNormalization;
+use crate::{
+	dotns_name::normalize_host,
+	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+};
 use url::{Url, form_urlencoded};
 
 /// The app's own URL scheme, which its host routes such as `pair` and
@@ -128,16 +130,6 @@ impl ProductLink {
 	}
 }
 
-impl ProductId {
-	/// Parse only a supported `.li` share host, without a URL or network lookup.
-	pub fn from_share_host(input: &str) -> Option<Self> {
-		let hostname = normalize_host(input);
-		let identifier = hostname.strip_suffix(".li")?.parse::<Self>().ok()?;
-		identifier.network_suffix()?;
-		Some(identifier)
-	}
-}
-
 /// Public share domains for the canonical dotNS networks.
 pub fn product_share_hosts() -> Vec<String> {
 	crate::dotns_name::DOTNS_TLDS
@@ -174,15 +166,6 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 		Ok(url) => NavigateDecision::External { url },
 		Err(reason) => NavigateDecision::Reject { reason },
 	}
-}
-
-/// Canonical host form: case-folded and NFC-normalized (belt-and-suspenders;
-/// `url` already applies IDNA to parsed hosts), with a trailing root dot
-/// dropped so the absolute form `example.dot.` keys identically to
-/// `example.dot`.
-fn normalize_host(host: &str) -> String {
-	let normalized: String = host.nfc().collect::<String>().to_lowercase();
-	normalized.strip_suffix('.').unwrap_or(&normalized).to_string()
 }
 
 /// dotNS TLD check, applied to the [`normalize_host`] form so `Example.DOT`
@@ -395,16 +378,26 @@ mod tests {
 	}
 
 	#[test]
-	fn product_links_share_url_normalization_without_changing_external_navigation() {
-		assert_eq!(
-			ProductLink::parse(" HTTP://BROWSE.DOT.LI./a%20b?q=x%2Fy#frag ", "dot"),
-			Some(ProductLink {
-				identifier: ProductId::for_test("browse.dot"),
-				path: "/a%20b?q=x%2Fy#frag".to_string(),
-				canonical_url: "https://browse.dot/a%20b?q=x%2Fy#frag".to_string(),
-			})
-		);
-		assert!(matches!(parse_navigate("browse.dot.li"), NavigateDecision::External { .. }));
+	fn product_links_normalize_supported_url_forms_and_preserve_routes() {
+		for (input, path) in [
+			("browse.dot", "/"),
+			("https://browse.dot/", "/"),
+			("polkadot://browse.dot", "/"),
+			("browse.dot.li/#/onboarding", "/#/onboarding"),
+			("browse.dot/onboarding?ref=abc", "/onboarding?ref=abc"),
+			("http://browse.dot.li?q=1#fragment", "/?q=1#fragment"),
+			(" HTTP://BROWSE.DOT.LI./a%20b?q=x%2Fy#frag ", "/a%20b?q=x%2Fy#frag"),
+		] {
+			assert_eq!(
+				ProductLink::parse(input, "dot"),
+				Some(ProductLink {
+					identifier: ProductId::for_test("browse.dot"),
+					path: path.to_string(),
+					canonical_url: format!("https://browse.dot{path}"),
+				}),
+				"{input}"
+			);
+		}
 	}
 
 	#[test]
@@ -420,6 +413,7 @@ mod tests {
 			"javascript://browse.dot",
 			"https://invalid_name.dot.li",
 			"https://dot.li",
+			"https://stg.revx.dev/editor?mod=other.dot",
 		] {
 			assert_eq!(ProductLink::parse(input, "dot"), None, "{input}");
 		}
@@ -428,13 +422,6 @@ mod tests {
 	#[test]
 	fn share_hosts_use_the_canonical_network_suffixes() {
 		assert_eq!(product_share_hosts(), ["dot.li", "paseo.li", "testnet.li"]);
-		assert_eq!(
-			ProductId::from_share_host("BROWSE.TESTNET.LI"),
-			Some(ProductId::for_test("browse.testnet"))
-		);
-		for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
-			assert_eq!(ProductId::from_share_host(input), None, "{input}");
-		}
 	}
 
 	enum Expected {

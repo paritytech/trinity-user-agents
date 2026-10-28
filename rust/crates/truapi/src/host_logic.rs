@@ -18,7 +18,6 @@ pub mod entropy;
 pub mod features;
 pub mod funding;
 pub mod product_account;
-mod product_identity;
 pub mod raw_signing;
 pub mod scanner;
 pub mod session;

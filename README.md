@@ -94,7 +94,8 @@ Swift's `try ProductId("my-product.dot")` and Kotlin's
 `ProductId.parse("my-product.dot")` call Rust once and return immutable values
 owned by the native application. Browser hosts can use their existing worker
 runtime's `parseProductId` method for the same validation and normalization.
-Native product name, executable-owner and share-link helpers also delegate to Rust.
+Native callers use Rust for product names, executable ownership and share-link parsing.
+Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
 Product links require an explicitly supplied network suffix; both direct names
 and `.li` links must match it. iOS propagates product-resolution errors before
 loading content, while valid products without a manifest use their base name.
@@ -386,6 +387,8 @@ Rust linting treats correctness and complexity diagnostics as errors, and public
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
+Product ID and link parsing rules are tested in Rust. Swift and Kotlin tests
+cover native serialization, adapters and host integration.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 

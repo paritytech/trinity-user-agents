@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import Foundation
 import SDKLogger
 
@@ -47,7 +47,7 @@ public actor ProductResolver: ProductResolving {
     }
 
     public func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
-        let unprefixed = try ProductManifestRecords.baseName(of: productId)
+        let unprefixed = try productIdOwner(productId: productId)
 
         guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
             throw ProductResolutionError.productNotOnNetwork(unprefixed)
@@ -124,7 +124,7 @@ private extension ProductResolver {
     /// different thing and propagates: swallowing it would cache a product as missing executables
     /// it actually publishes, and every surface would serve the base archive until the next launch.
     func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ProductExecutable? {
-        let subname = try ProductManifestRecords.subname(base: baseName, kind: kind)
+        let subname = try productIdExecutable(productId: baseName, kind: kind.executionKind)
 
         let text = try await dotNsResolver.getMetadataEntry(
             dotNsName: subname.rawValue,

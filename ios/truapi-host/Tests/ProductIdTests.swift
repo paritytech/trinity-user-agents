@@ -4,17 +4,16 @@ import TrUAPIHost
 
 struct ProductIdTests {
     @Test
-    func normalizedIdsShareNativeDictionaryEntries() throws {
-        let original = try ProductId(" Peopl.DOT ")
+    func equalIdsShareNativeDictionaryEntries() throws {
+        let original = try ProductId("peopl.dot")
         let canonical = try ProductId("peopl.dot")
 
         #expect([original: "grant"][canonical] == "grant")
-        #expect(original.rawValue == "peopl.dot")
     }
 
     @Test
     func executableIdentitySurvivesSerialization() throws {
-        let original = try ProductId(" APP.Peopl.PASEO ")
+        let original = try ProductId("app.peopl.paseo")
         let encoded = try JSONEncoder().encode(original)
 
         #expect(encoded == Data("\"app.peopl.paseo\"".utf8))
@@ -29,13 +28,12 @@ struct ProductIdTests {
         #expect(try FfiConverterTypeProductId_lift(lowered) == original)
     }
 
-    @Test(arguments: ["", "peopl", "peopl.com", "localhost.dot", "my_app.dot", "tést.dot"])
-    func invalidInputCannotBecomeAnId(value: String) {
+    @Test
+    func decodingPropagatesRustValidationErrors() throws {
+        let encoded = try JSONEncoder().encode("not a product id")
+
         #expect(throws: ProductIdError.self) {
-            try ProductId(value)
-        }
-        #expect(throws: ProductIdError.self) {
-            try JSONDecoder().decode(ProductId.self, from: JSONEncoder().encode(value))
+            try JSONDecoder().decode(ProductId.self, from: encoded)
         }
     }
 }

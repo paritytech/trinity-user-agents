@@ -161,6 +161,17 @@ pub enum ProductExecutionKind {
 	Worker,
 }
 
+impl ProductExecutionKind {
+	/// The dotNS prefix used for this kind's executable records.
+	pub fn dotns_label(self) -> &'static str {
+		match self {
+			Self::App => "app",
+			Self::Widget => "widget",
+			Self::Worker => "worker",
+		}
+	}
+}
+
 /// Host metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostInfo {
