@@ -8,8 +8,8 @@ import UIKit
 /// filling the space below.
 ///
 /// The card keeps drawing up here, so it stays live for as long as it is open.
-/// Card and product share one scroll, so the gesture that reads the product
-/// also carries the card away and leaves the product the whole screen.
+/// The user moves the face by dragging it, or the navigation bar once it is
+/// away. A drag on the product stays the product's, which may draw with it.
 ///
 /// The product is sized to the screen the card leaves it, so a page built to
 /// fit its viewport keeps its bottom edge in view. It is resized only when the
@@ -20,13 +20,14 @@ final class PocketCardScreenViewController: UIViewController {
     private let face: UIHostingController<PocketOpenedCardView>
     private weak var origin: PocketCardOrigin?
 
-    private let scrollView = UIScrollView()
+    private let scrollView = FaceScrollView()
     private var productHeight: Constraint?
 
     private var pendingFaceShown: Bool? = true
     private var userOwnsFace = false
     private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
+    private var barDragStart: CGFloat?
     private var isInFlight = false
     private weak var coveredScreen: UIViewController?
 
@@ -56,6 +57,7 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
+        setupBarDrag()
 
         // The card flies over the page when it is opened and closed.
         scrollView.bringSubviewToFront(face.view)
@@ -127,6 +129,24 @@ final class PocketCardScreenViewController: UIViewController {
         guard isOnDisplay, !faceMovedSinceOpening else { return }
 
         placeFace(shown: shown, animated: true)
+    }
+
+    /// Follows a drag on the navigation bar by `distance` from where it started.
+    func dragFace(by distance: CGFloat) {
+        if barDragStart == nil {
+            holdFace()
+            barDragStart = scrollView.contentOffset.y
+        }
+        guard let barDragStart else { return }
+
+        let offset = min(max(barDragStart - distance, 0), PocketOpenedCardView.height)
+        scrollView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+    }
+
+    func releaseFace() {
+        barDragStart = nil
+        userOwnsFace = false
+        moveFace(shown: scrollView.contentOffset.y < PocketOpenedCardView.height / 2, animated: true)
     }
 
     /// From the start of its presentation until its dismissal starts, even
@@ -237,10 +257,7 @@ extension PocketCardScreenViewController {
 
 extension PocketCardScreenViewController: UIScrollViewDelegate {
     func scrollViewWillBeginDragging(_: UIScrollView) {
-        userOwnsFace = true
-        faceMovedSinceOpening = true
-        pageMoveTarget = nil
-        growProduct()
+        holdFace()
     }
 
     func scrollViewDidEndDragging(_: UIScrollView, willDecelerate decelerate: Bool) {
@@ -261,6 +278,17 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
         guard !userOwnsFace else { return }
 
         fitProduct()
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension PocketCardScreenViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !isInFlight else { return false }
+
+        let velocity = pan.velocity(in: view)
+        return abs(velocity.y) > abs(velocity.x)
     }
 }
 
@@ -288,16 +316,34 @@ private extension PocketCardScreenViewController {
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = false
 
-        // The product's page keeps its own scrolling for content taller than
-        // the screen, but must not rubber-band a page that fits: that would
-        // swallow the gesture meant to carry the card away.
+        // A page that fits the screen stays put, as it does on Android.
         product.pageScrollView.bounces = false
+    }
+
+    func setupBarDrag() {
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(followBarDrag))
+        pan.delegate = self
+        navigationController?.navigationBar.addGestureRecognizer(pan)
+    }
+
+    @objc func followBarDrag(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began,
+             .changed:
+            dragFace(by: pan.translation(in: view).y)
+        case .ended,
+             .cancelled:
+            releaseFace()
+        default:
+            break
+        }
     }
 
     /// The scroll is a screenful plus the face, whatever the product's own
     /// height, so the face can always be scrolled away.
     func setupFace() {
         embed(face)
+        scrollView.face = face.view
 
         face.view.snp.makeConstraints { make in
             make.top.leading.trailing.equalTo(scrollView.contentLayoutGuide)
@@ -326,6 +372,13 @@ private extension PocketCardScreenViewController {
         addChild(child)
         scrollView.addSubview(child.view)
         child.didMove(toParent: self)
+    }
+
+    func holdFace() {
+        userOwnsFace = true
+        faceMovedSinceOpening = true
+        pageMoveTarget = nil
+        growProduct()
     }
 
     func placeFace(shown: Bool, animated: Bool) {
@@ -390,5 +443,25 @@ struct PocketOpenedCardView: View {
         PocketCollectionCardView(card: card)
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.vertical, Self.verticalInset)
+    }
+}
+
+/// Scrolls only for drags that start on the face.
+final class FaceScrollView: UIScrollView {
+    weak var face: UIView?
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
+        guard gestureRecognizer === panGestureRecognizer else { return true }
+
+        // The pan begins only once the finger has travelled, so it started that far back.
+        let now = panGestureRecognizer.location(in: self)
+        let travelled = panGestureRecognizer.translation(in: self)
+        return movesFace(from: CGPoint(x: now.x - travelled.x, y: now.y - travelled.y))
+    }
+
+    /// Whether a drag starting at `point`, in this view's coordinates, is on the face.
+    func movesFace(from point: CGPoint) -> Bool {
+        face?.frame.contains(point) ?? false
     }
 }
