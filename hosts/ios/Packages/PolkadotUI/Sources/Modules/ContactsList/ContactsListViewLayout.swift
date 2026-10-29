@@ -1,4 +1,5 @@
 import UIKit
+import DesignSystem
 internal import SnapKit
 
 public final class ContactsListViewLayout: DiffableCollectionViewProviderView<String, String> {
@@ -99,8 +100,8 @@ public extension ContactsListViewLayout {
 
 private extension ContactsListViewLayout {
     static let incomingRequestCellId: String = "incoming_requests_header"
-    static let newChatButtonTrailingInset: CGFloat = 22
-    static let newChatButtonBottomInset: CGFloat = 16
+    static let newChatButtonTrailingInset = DSSpacings.large
+    static let newChatButtonBottomInset = DSSpacings.mediumIncreased
 
     // Aligns separator with the DSChatListItem text column:
     //   12pt outer padding + 64pt avatar + 12pt avatar↔content spacing = 88pt
