@@ -23,6 +23,8 @@ final class TabBarBarViewModel {
     var isShelfOpen = false
     /// The room open panels may take above the bar row, measured from the chrome's own safe area.
     var availablePanelHeight: CGFloat = 0
+    /// How far the bar sits above its resting place to clear the keyboard. Non-zero only while the scan panel is open.
+    var keyboardLift: CGFloat = 0
     /// The shelf content's measured height, written back by the bar row. The shelf is capped at `availablePanelHeight`.
     var shelfContentHeight: CGFloat = 0 {
         didSet { onShelfContentHeightChanged?() }
