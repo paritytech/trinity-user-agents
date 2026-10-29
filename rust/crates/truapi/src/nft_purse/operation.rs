@@ -16,49 +16,71 @@ use super::{NftPurses, PurseOwner};
 use crate::{
 	durable::RegistrationError,
 	nft::{
-		ItemKey, OperationKey, PurseId, StartOperationError, TransferDestinations,
-		TransferProgress, TransferRequest, TransferState,
+		ItemKey, NftLedger, OperationKey, PurseId, StartOperationError, TransferProgress,
+		TransferRequest, TransferState, TransferType,
 	},
 	platform::ProductId,
 	store::DbError,
 	stream_extensions::StreamExtensions,
 };
 
+/// An operation nothing refused when it was prepared: its key was unused and
+/// its items idle. Starting it checks both again.
+pub struct PreparedOperation {
+	ledger: NftLedger,
+	request: TransferRequest,
+}
+
+impl PreparedOperation {
+	/// Registers the operation's transfers.
+	pub async fn start(self) -> Result<(), RegistrationError<StartOperationError>> {
+		self.ledger.start_transfers(self.request).await
+	}
+}
+
 impl NftPurses {
-	/// Registers transferring `items` from `from` into fresh keys of `to`, as
+	/// Prepares transferring `items` from `from` into fresh keys of `to`, as
 	/// the operation `caller` names `idempotency_key`. The caller asks for
-	/// [`drain_needs_confirmation`] first.
-	pub async fn rebalance(
+	/// [`drain_needs_confirmation`] before starting it.
+	pub async fn prepare_rebalance(
 		&self,
 		caller: &ProductId,
 		from: PurseId,
 		to: PurseId,
 		items: BTreeSet<ItemKey>,
 		idempotency_key: NftPurseIdempotencyKey,
-	) -> Result<(), RegistrationError<StartOperationError>> {
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
 		let operation = operation_key(caller, idempotency_key);
-		let destinations = TransferDestinations::AllocatedIn(to);
-		self.ledger
-			.start_transfers(TransferRequest { operation, from, items, destinations })
-			.await
+		let transfer = TransferType::Local { inputs: items, into: to };
+		self.prepare_unless_refused(TransferRequest { operation, from, transfer }).await
 	}
 
-	/// Registers transferring `item`, held in `from`, to `destination` outside the
+	/// Prepares transferring `item`, held in `from`, to `destination` outside the
 	/// purses, as the operation `caller` names `idempotency_key`.
-	pub async fn transfer(
+	pub async fn prepare_transfer(
 		&self,
 		caller: &ProductId,
 		from: PurseId,
 		item: NftPurseItemKey,
 		destination: NftPurseItemKey,
 		idempotency_key: NftPurseIdempotencyKey,
-	) -> Result<(), RegistrationError<StartOperationError>> {
-		let items = [ItemKey(item.0)].into_iter().collect();
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
 		let operation = operation_key(caller, idempotency_key);
-		let destinations = TransferDestinations::Foreign(ItemKey(destination.0));
+		let transfer =
+			TransferType::Foreign { input: ItemKey(item.0), into: ItemKey(destination.0) };
+		self.prepare_unless_refused(TransferRequest { operation, from, transfer }).await
+	}
+
+	/// `request` as an operation to start, unless it is already refused.
+	async fn prepare_unless_refused(
+		&self,
+		request: TransferRequest,
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
 		self.ledger
-			.start_transfers(TransferRequest { operation, from, items, destinations })
+			.check_transfers_can_start(&request)
 			.await
+			.map_err(RegistrationError::Hook)?;
+		Ok(PreparedOperation { ledger: self.ledger.clone(), request })
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.
@@ -283,7 +305,9 @@ mod tests {
 		let item = held_item_in_new_purses(&ledger);
 		let key = NftPurseIdempotencyKey([1; 32]);
 		let items = BTreeSet::from([item]);
-		block_on(purses.rebalance(&caller, PurseId(0), PurseId(1), items, key)).unwrap();
+		let prepared =
+			block_on(purses.prepare_rebalance(&caller, PurseId(0), PurseId(1), items, key));
+		block_on(prepared.unwrap().start()).unwrap();
 		finalize_every_transfer(&db);
 
 		let observed = block_on(async {

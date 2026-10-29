@@ -570,6 +570,24 @@ mod operations {
 		);
 	}
 
+	// A retry under a key already used must not ask the user again only to be
+	// refused once they confirm.
+	#[test]
+	fn a_drain_retried_under_the_same_key_is_refused_without_asking_again() {
+		let platform = StubPlatform { nft_purse_drain_confirmed: true, ..Default::default() };
+		let platform = Arc::new(platform);
+		let purses = product_purses(platform.clone());
+		let root = purses.root_purse();
+		let items = purses.held_items(root, 1);
+		rebalance(&purses.host, root.0, 0, items.clone()).unwrap();
+
+		let again = rebalance(&purses.host, root.0, 0, items);
+
+		let exists = rebalance_refusal(v01::NftPurseRebalancePurseError::OperationExists);
+		assert_eq!(again, Err(exists));
+		assert_eq!(drain_reviews(&platform).len(), 1);
+	}
+
 	#[test]
 	fn a_transfer_of_an_item_in_no_purse_answers_item_not_found() {
 		let purses = product_purses(Arc::new(StubPlatform::default()));
