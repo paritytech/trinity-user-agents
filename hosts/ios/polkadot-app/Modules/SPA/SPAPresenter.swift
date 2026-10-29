@@ -88,8 +88,7 @@ extension SPAPresenter: SPAPresenterProtocol {
     }
 
     func didTapShare() {
-        let host = configuration.page.host.name
-        guard let url = AppConfig.ProductUniversalLink.url(for: host) else {
+        guard let url = AppConfig.ProductUniversalLink.url(for: configuration.page.host) else {
             return
         }
         wireframe.shareURL(url, from: view)
