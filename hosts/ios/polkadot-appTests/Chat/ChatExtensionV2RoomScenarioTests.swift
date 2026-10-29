@@ -230,8 +230,7 @@ private extension ChatExtensionV2RoomScenarioTests {
             timestamp: timestamp,
             body: .text(text: text),
             status: status,
-            replyTo: nil,
-            replyPreview: nil,
+            reply: nil,
             editedAt: nil,
             reactions: [],
             request: false
