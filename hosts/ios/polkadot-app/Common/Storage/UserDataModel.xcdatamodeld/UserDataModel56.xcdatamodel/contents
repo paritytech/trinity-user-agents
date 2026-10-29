@@ -120,13 +120,18 @@
     </entity>
     <entity name="CDChatRoomMetadata" representedClassName="CDChatRoomMetadata" syncable="YES" codeGenerationType="class">
         <attribute name="badgeCount" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="badgeIcon" optional="YES" attributeType="String"/>
         <attribute name="badgeKind" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="chatRelativeId" optional="YES" attributeType="String"/>
         <attribute name="config" optional="YES" attributeType="Binary"/>
         <attribute name="configGeneration" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="icon" optional="YES" attributeType="String"/>
         <attribute name="name" optional="YES" attributeType="String"/>
+        <attribute name="placeholder" optional="YES" attributeType="String"/>
+        <attribute name="previewActivityOngoing" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="previewActivityText" optional="YES" attributeType="String"/>
         <attribute name="previewMessage" optional="YES" attributeType="Binary"/>
+        <attribute name="previewPinned" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
         <attribute name="previewTimestamp" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="previewUnseenReaction" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
         <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="roomMetadata" inverseEntity="CDChat"/>

@@ -113,6 +113,6 @@ private extension ChatRoomPolicyDeclarationsTests {
         config: Chat.RoomConfig? = nil,
         generation: Int64 = 0
     ) -> Chat.RoomDeclarations {
-        Chat.RoomDeclarations(config: config, configGeneration: generation, preview: .hostDefault)
+        Chat.RoomDeclarations(config: config, configGeneration: generation, preview: .hostDefault, placeholder: nil)
     }
 }

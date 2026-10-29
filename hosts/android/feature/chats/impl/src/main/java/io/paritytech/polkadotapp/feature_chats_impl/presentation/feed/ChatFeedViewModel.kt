@@ -270,6 +270,10 @@ class ChatFeedViewModel @Inject constructor(
         interactor.getCustomAppearanceForChat(chatId)
     }.stateInBackground(initialValue = null)
 
+    override val emptyRoomText = interactor.observeEmptyRoomText(chatId)
+        .distinctUntilChanged()
+        .stateInBackground(initialValue = null)
+
     init {
         seedMessageRevealProgress()
         handleMarkMessagesAsReadTrigger()
