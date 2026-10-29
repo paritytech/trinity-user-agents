@@ -258,6 +258,8 @@ funding_phase() {
   export TRUAPI_FUNDING_PROVIDERS="$PRODUCT_ID"
   # The ledger top-up and payment engines' record, kept across the restart.
   export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
+  # The product the cases run as is also the provider they choose.
+  export TRUAPI_FUNDING_PROVIDERS="$PRODUCT_ID"
   export TRUAPI_FUNDING_STATE="$ROOT/$LOG_DIR/funding-battery-state.json"
   rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
   # Run as a Worker, so the script can also serve the sessions it asks for as

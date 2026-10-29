@@ -1,0 +1,5 @@
+---
+"@parity/truapi": major
+---
+
+`get_funding_quote(intent, ask)` prices a funding ask with every funding provider's worker, whatever its manifest declares: the core calls the new host-initiated `FundingProvider.quote` (`onQuote` on the worker) and takes its one answer. Rows resolve one by one, a provider that does not answer in 10 seconds is unavailable, and recent answers are reused. `select_funding_provider` takes the chosen quote id, which must price the session's amount when it has one (a session without one takes the quote's), and the provider receives the quote with `assign`. Hosts implement `funding_quote_changed` on `NativeFundingCallbacks`. What the answers show about what each provider serves is kept for 12 hours and folded into `funding_candidates` while the provider's manifest serves Funding.

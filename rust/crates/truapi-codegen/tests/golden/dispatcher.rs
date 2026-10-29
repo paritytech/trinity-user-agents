@@ -84,6 +84,19 @@ where
     register_worker(dispatcher, host);
 }
 
+/// Call the product's `funding_provider_quote` handler and await its response.
+pub async fn funding_provider_quote(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingQuoteRequest,
+) -> Result<versioned::funding_provider::ProductFundingQuoteResponse, truapi::CallError<versioned::funding_provider::ProductFundingQuoteError>> {
+    subscriptions.request(
+        wire_table::FUNDING_PROVIDER_QUOTE,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
+}
+
 /// Call the product's `funding_provider_assign` handler and await its response.
 pub async fn funding_provider_assign(
     subscriptions: &HostInitiatedSubscriptionManager,

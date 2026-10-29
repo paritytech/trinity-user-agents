@@ -1,12 +1,15 @@
 //! The CLI signing host's funding surface: the overlay, provider screens, and
 //! the user's answers, as a host app serves them.
 //!
-//! A product's funding request shows the overlay: the user picks one of the
-//! providers named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated product
-//! ids) or closes it. Every question goes through the host's approval policy,
-//! as its other confirmations do: a prompt on a terminal, the first provider
-//! and every offer accepted under `--auto-accept`, and a refusal when a
-//! prompt has no terminal to ask on. The user cancels a session with
+//! The host offers the providers named in `TRUAPI_FUNDING_PROVIDERS`
+//! (comma-separated product ids), each shipped with the manifest in
+//! [`SHIPPED_PROVIDER_MANIFEST`], as an app ships its providers' manifests.
+//! A product's funding request shows the overlay: the core lists the
+//! providers that serve the session and asks each for a quote, and the user
+//! picks a quote or closes the overlay. Every question goes through the
+//! host's approval policy, as its other confirmations do: a prompt on a
+//! terminal, the first quote and every offer accepted under `--auto-accept`,
+//! and a refusal when a prompt has no terminal to ask on. The user cancels a session with
 //! `/funding cancel <intent>`, and the provider's cancel offer is put to them
 //! the same way.
 //!
@@ -33,26 +36,81 @@ use std::{
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
 	SigningHostRuntime,
-	host_logic::funding::{CancelTerms, FundingCancel},
+	host_logic::{
+		funding::{CancelTerms, FundingCancel},
+		funding_providers::FundingProviderEntry,
+	},
 	latest::{
-		FundingDirection, FundingFrameOutcome, FundingFrameTarget, GenericError,
-		HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
+		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk, FundingRail,
+		GenericError, HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
 		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
 		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem,
 	},
 	platform::{
-		FundingPlatform, FundingPresentOutcome, FundingPresentation, PaymentPlatform,
-		ProductContext, ProductId, TopUpPlatform, async_trait,
+		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteRow,
+		FundingQuoteState, PaymentPlatform, ProductContext, TopUpPlatform, async_trait,
 	},
 };
 
 use crate::{platform::CliPlatform, transcript::Transcript};
 
+/// The manifest the CLI ships for every provider it offers: card in, and
+/// crypto in and out, quoted by its worker.
+const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+
+/// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` as a funding
+/// provider with [`SHIPPED_PROVIDER_MANIFEST`], also kept as its cached dotNS
+/// manifest, so the core neither reads the chain for it nor drops it for
+/// publishing nothing there.
+pub async fn offer_providers(
+	runtime: &SigningHostRuntime,
+	platform: &dyn CoreStorage,
+) -> anyhow::Result<()> {
+	let Ok(spec) = std::env::var("TRUAPI_FUNDING_PROVIDERS") else {
+		return Ok(());
+	};
+	let now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+	let mut providers = Vec::new();
+	for entry in spec.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+		let product_id = entry
+			.parse()
+			.map_err(|error| anyhow::anyhow!("funding provider {entry}: {error}"))?;
+		platform
+			.write_core_storage(
+				truapi::worker_manifest_cache_key(&product_id),
+				truapi::encode_cached_root_manifest(Some(SHIPPED_PROVIDER_MANIFEST), now_secs),
+			)
+			.await
+			.map_err(|error| anyhow::anyhow!("caching the manifest of {entry}: {error:?}"))?;
+		providers.push(FundingProviderEntry {
+			product_id: entry.to_string(),
+			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
+		});
+	}
+	runtime
+		.set_funding_providers(providers)
+		.map_err(|error| anyhow::anyhow!("offering funding providers: {}", error.reason))
+}
+
+/// What the overlay asks to be quoted when the user takes its defaults: a
+/// card payment in EUR inbound, USDT outbound.
+fn default_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
+	let (rail, asset) = match direction {
+		FundingDirection::In => (FundingRail::Card, "EUR"),
+		FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+	};
+	FundingQuoteAsk {
+		direction,
+		rail,
+		asset: asset.to_string(),
+		amount: amount.unwrap_or(1_000),
+		country: None,
+	}
+}
+
 /// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
-	/// The providers the overlay offers, in order.
-	providers: Vec<ProductId>,
 	/// Where the user's answers come from.
 	user: Arc<CliPlatform>,
 	transcript: Arc<Transcript>,
@@ -62,24 +120,10 @@ pub struct CliFundingHost {
 }
 
 impl CliFundingHost {
-	/// Serve funding on `runtime`, asking `user`, with the providers and
-	/// files the environment names.
+	/// Serve funding on `runtime`, asking `user`, with the files the
+	/// environment names.
 	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
-		let providers = std::env::var("TRUAPI_FUNDING_PROVIDERS")
-			.unwrap_or_default()
-			.split(',')
-			.map(str::trim)
-			.filter(|entry| !entry.is_empty())
-			.filter_map(|entry| match entry.parse() {
-				Ok(provider) => Some(provider),
-				Err(error) => {
-					tracing::warn!(%entry, %error, "skipping a funding provider that is not a product id");
-					None
-				},
-			})
-			.collect();
 		runtime.set_funding_platform(Arc::new(Self {
-			providers,
 			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
 			runtime: Arc::downgrade(runtime),
@@ -166,14 +210,33 @@ impl FundingPlatform for CliFundingHost {
 		};
 		let amount = session.amount.map(|amount| amount.to_string());
 		let asker = product.map_or("the host", |product| product.product_id.as_str());
+		let Some(runtime) = self.runtime.upgrade() else {
+			return Ok(FundingPresentOutcome::Dismissed);
+		};
+		let candidates: Vec<String> = runtime
+			.funding_candidates(&session.intent)
+			.into_iter()
+			.map(|candidate| candidate.provider_id)
+			.collect();
+		let rows: Vec<FundingQuoteRow> = runtime
+			.get_funding_quote(&session.intent, default_ask(session.direction, session.amount))
+			.collect()
+			.await;
 		let mut chosen = None;
-		for provider in &self.providers {
+		for row in &rows {
+			let FundingQuoteState::Quoted { quote } = &row.state else {
+				continue;
+			};
 			let detail = format!(
-				"{asker} asks to move {} {direction} with {provider}",
+				"{asker} asks to move {} {direction}: {} quotes {} sent for {} received, fees {}",
 				amount.as_deref().unwrap_or("an amount you choose"),
+				row.provider_id,
+				quote.send_amount,
+				quote.receive_amount,
+				quote.provider_fee + quote.network_fee,
 			);
 			if self.user.decide("fund with a provider", detail).await {
-				chosen = Some(provider.clone());
+				chosen = Some((row.provider_id.clone(), quote.quote_id.clone()));
 				break;
 			}
 		}
@@ -183,13 +246,24 @@ impl FundingPlatform for CliFundingHost {
 			"direction": direction,
 			"amount": amount,
 			"product": product.map(|product| product.product_id.as_str()),
-			"provider": chosen.as_ref().map(ProductId::as_str),
+			"providers": candidates,
+			"quotes": rows.iter().map(|row| serde_json::json!({
+				"provider": row.provider_id,
+				"state": match &row.state {
+					FundingQuoteState::Pending => "Pending".to_string(),
+					FundingQuoteState::Quoted { quote } => format!("Quoted:{}", quote.quote_id),
+					FundingQuoteState::Unavailable { reason } => format!("Unavailable:{reason:?}"),
+				},
+			})).collect::<Vec<_>>(),
+			"provider": chosen.as_ref().map(|(provider, _)| provider),
 			"outcome": if chosen.is_some() { "Started" } else { "Dismissed" },
 		}));
-		let (Some(provider), Some(runtime)) = (chosen, self.runtime.upgrade()) else {
+		let Some((provider, quote_id)) = chosen else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		runtime.select_funding_provider(&session.intent, provider.as_str()).await?;
+		runtime
+			.select_funding_provider(&session.intent, &provider, Some(&quote_id))
+			.await?;
 		Ok(FundingPresentOutcome::Started)
 	}
 

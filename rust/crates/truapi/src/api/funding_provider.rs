@@ -7,7 +7,8 @@ use crate::{
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
 		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignRequest,
 		ProductFundingAssignResponse, ProductFundingCancelError, ProductFundingCancelRequest,
-		ProductFundingCancelResponse, ProductFundingSettleCancelError,
+		ProductFundingCancelResponse, ProductFundingQuoteError, ProductFundingQuoteRequest,
+		ProductFundingQuoteResponse, ProductFundingSettleCancelError,
 		ProductFundingSettleCancelRequest, ProductFundingSettleCancelResponse,
 	},
 	wire, wire_trait,
@@ -27,6 +28,27 @@ use crate::{
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {
+	/// Price an ask for the host's quote list, or say why the provider will
+	/// not. The core asks every provider and drops a call that has not
+	/// answered within 10 seconds.
+	///
+	/// ```ts
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onQuote(({ ask }) => {
+	///   console.log("asked to price:", ask.amount);
+	///   return ok({ tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 0)]
+	async fn quote(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingQuoteRequest,
+	) -> Result<ProductFundingQuoteResponse, CallError<ProductFundingQuoteError>> {
+		Err(CallError::unavailable())
+	}
+
 	/// Take a session the user chose this provider for, or resume one after
 	/// the worker restarted: `last_update` says where it stopped. The worker
 	/// answers once it holds the session.

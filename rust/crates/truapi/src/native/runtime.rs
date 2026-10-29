@@ -300,8 +300,10 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		self.runtime.set_funding_platform(Arc::new(FundingCallbackPlatform {
+			funding: callbacks,
+			services: Arc::downgrade(self.runtime.services()),
+		}))
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -431,14 +433,41 @@ impl NativeTrUApiHostRuntime {
 		}
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest JSON it ships for it.
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_funding_providers(providers)?)
+	}
+
+	/// The providers funding session `intent` can be handed to.
+	pub fn funding_candidates(
+		&self,
+		intent: String,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.runtime.funding_candidates(&intent)
+	}
+
+	/// Ask the candidates for funding session `intent` to price `ask`. Each
+	/// provider's row arrives through `funding_quote_changed`.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+		self.runtime.request_funding_quotes(&intent, ask);
+	}
+
 	/// Hand open funding session `intent` to the provider the user chose, by
-	/// product id.
+	/// product id, on the quote it was chosen by when it was quoted.
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
 		provider_id: String,
+		quote_id: Option<String>,
 	) -> Result<bool, HostRejection> {
-		Ok(self.runtime.select_funding_provider(&intent, &provider_id).await?)
+		Ok(self
+			.runtime
+			.select_funding_provider(&intent, &provider_id, quote_id.as_deref())
+			.await?)
 	}
 }
 
@@ -750,6 +779,15 @@ impl NativeTrUApiHostRuntime {
 			self.runtime.activate_local_session_with_identity(secret, lite_username),
 		)
 		.map_err(Into::into)
+	}
+
+	/// `product_id`'s Worker manifest from dotNS, cached for a day. `None`
+	/// when the product publishes no Worker, or one the core cannot use.
+	pub async fn worker_manifest(
+		&self,
+		product_id: String,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
+		Ok(self.runtime.worker_manifest(&product_id).await?)
 	}
 
 	/// Reports the core database's SQLite version, schema version and file
