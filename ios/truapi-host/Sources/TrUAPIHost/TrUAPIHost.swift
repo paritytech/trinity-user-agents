@@ -271,7 +271,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Return the configuration the product last declared for a room, or
     /// ``ChatRoomConfig/hostDefault`` when it declared none. The core reads it
-    /// before each feed update, posted message and query of the room.
+    /// before each feed update, preview and posted message of the room.
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
     /// Replace the configuration of a room whole, and keep it across
@@ -281,7 +281,8 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// pages of the room.
     func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws
 
-    /// Replace the name and description of a room.
+    /// Replace the name, description, icon and empty-room text of a room. An
+    /// icon of `nil` keeps the icon, and an empty icon removes it.
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
 
     /// Replace how a room shows in the chat list.
@@ -302,9 +303,9 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
-/// The product receives a rejection for each request, except for metadata,
-/// which the host ignores and keeps the name and icon of `createRoom`, and for
-/// a configuration that keeps the behaviour the host serves anyway.
+/// The product receives a rejection for each request, with two exceptions. The
+/// host ignores metadata and keeps the name and icon of `createRoom`. The host
+/// accepts a configuration that keeps the behaviour that it serves.
 public extension ChatHostBridge {
     func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
         .hostDefault
