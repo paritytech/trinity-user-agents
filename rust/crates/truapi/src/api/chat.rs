@@ -234,7 +234,8 @@ pub trait Chat: Send + Sync {
 
 	/// Replace how a room shows in the chat list. The preview gives the sort time,
 	/// the badge, whether the room is pinned, and the newest message and reaction
-	/// for the preview line, or an activity line that replaces it.
+	/// for the preview line, or an activity line that replaces it. In a room the
+	/// host stores, the preview cannot show a message or a reaction of the user.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
