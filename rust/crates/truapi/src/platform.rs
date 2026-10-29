@@ -1277,10 +1277,6 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
-	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one versioned SCALE blob.
-	#[codec(index = 13)]
-	FundingSessions,
 	/// A product's Worker executable manifest as last read from dotNS, and when,
 	/// cached for the same lifetime as [`Self::ProductManifest`].
 	#[codec(index = 14)]
@@ -1296,16 +1292,6 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 16)]
 	FundingSupport,
-	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-	/// raw blobs, newest last, so a stored session is never overwritten
-	/// unread and a later bad blob does not replace an earlier one. Kept for
-	/// diagnosis only: the core never reads them back.
-	#[codec(index = 17)]
-	FundingSessionsUnreadable,
-	/// Recorded funding sessions compacted out of the funding sessions blob,
-	/// as one versioned SCALE blob. Never trimmed.
-	#[codec(index = 18)]
-	FundingSessionPack,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1361,12 +1347,9 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
-		CoreStorageKey::FundingSessions => ("FundingSessions", None),
 		CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
 		CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
-		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
-		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2172,7 +2155,6 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
-			(CoreStorageKey::FundingSessions, "FundingSessions", None),
 			(
 				CoreStorageKey::WorkerManifest { product_id: "ramp".to_string() },
 				"WorkerManifest",
@@ -2180,8 +2162,6 @@ mod tests {
 			),
 			(CoreStorageKey::PublishedProducts, "PublishedProducts", None),
 			(CoreStorageKey::FundingSupport, "FundingSupport", None),
-			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
-			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
