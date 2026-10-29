@@ -64,7 +64,7 @@ extension ChatMessage {
 
     /// The content of the native chat.
     var nativeContent: Chat.LocalMessage.Content {
-        body.nativeContent(replyTo: replyTo)
+        body.nativeContent(replyTo: reply?.messageId)
     }
 
     /// The last edit, which the native preview line shows as "Edited: <text>".
