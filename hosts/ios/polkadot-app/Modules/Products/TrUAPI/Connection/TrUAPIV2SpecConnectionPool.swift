@@ -182,6 +182,7 @@ extension TrUAPIV2SpecConnectionPool {
         case .peerClosed,
              .connectTimeout,
              .livenessTimeout,
+             .pathLost,
              .resumed:
             "chain connection \(connectionId) closed on \(url): \(reason)"
         }
