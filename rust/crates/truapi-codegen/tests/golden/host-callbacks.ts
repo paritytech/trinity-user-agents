@@ -237,11 +237,6 @@ export type CoreStorageKey =
    */
   | { tag: "ProductManifest"; value: { productId: string } }
   /**
-   * Funding sessions: every live one plus a bounded tail of settled ones,
-   * as one versioned SCALE blob.
-   */
-  | { tag: "FundingSessions"; value?: undefined }
-  /**
    * A product's Worker executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
@@ -255,19 +250,7 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined }
-  /**
-   * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-   * raw blobs, newest last, so a stored session is never overwritten
-   * unread and a later bad blob does not replace an earlier one. Kept for
-   * diagnosis only: the core never reads them back.
-   */
-  | { tag: "FundingSessionsUnreadable"; value?: undefined }
-  /**
-   * Recorded funding sessions compacted out of the funding sessions blob,
-   * as one versioned SCALE blob. Never trimmed.
-   */
-  | { tag: "FundingSessionPack"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -916,53 +899,66 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      FundingSessions: S._void,
-      WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      PublishedProducts: S._void,
-      FundingSupport: S._void,
-      FundingSessionsUnreadable: S._void,
-      FundingSessionPack: S._void,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          productId: S.str,
+          request: PermissionAuthorizationRequest,
+        }) as S.Codec<{
+          productId: string;
+          request: PermissionAuthorizationRequest;
+        }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
+          sessionId: string;
+          productId: string;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      WorkerManifest: [
+        14,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      PublishedProducts: [15, S._void] as const,
+      FundingSupport: [16, S._void] as const,
     }),
 );
 

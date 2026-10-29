@@ -236,13 +236,7 @@ impl ProductRuntimeHost {
 			}
 		}
 		let recorded = registry
-			.record_start(
-				self.connection.platform.as_ref(),
-				current_unix_millis(),
-				provider_id,
-				&intent,
-				asked,
-			)
+			.record_start(current_unix_millis(), provider_id, &intent, asked)
 			.await?;
 		match recorded {
 			None | Some(StartRecord::Full) => Err(CallError::Domain(not_served)),
@@ -267,13 +261,7 @@ impl ProductRuntimeHost {
 			.connection
 			.services
 			.funding()
-			.finish_start(
-				self.connection.platform.as_ref(),
-				current_unix_millis(),
-				&start.intent,
-				start.host_id,
-				taken,
-			)
+			.finish_start(current_unix_millis(), &start.intent, start.host_id, taken)
 			.await;
 		if let Err(error) = finished {
 			tracing::warn!(%error, "storing what the host did with started funds failed");
