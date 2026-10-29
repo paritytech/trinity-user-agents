@@ -10,7 +10,7 @@ struct PocketCardLaunchUrlTests {
     func opensTheProductAtItsOwnPageNamingTheCard() throws {
         let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
 
-        let url = try #require(key.launchUrl)
+        let url = try #require(key.launchUrl())
 
         #expect(url.absoluteString == "https://peopl.paseo?card=humanity")
     }
@@ -21,7 +21,7 @@ struct PocketCardLaunchUrlTests {
     func encodesACardIdThatNeedsIt() throws {
         let key = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold card"))
 
-        let url = try #require(key.launchUrl)
+        let url = try #require(key.launchUrl())
 
         #expect(url.absoluteString == "https://game.paseo?card=gold%20card")
     }
