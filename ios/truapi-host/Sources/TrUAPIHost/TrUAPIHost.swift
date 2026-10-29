@@ -372,13 +372,36 @@ public protocol FundingHostBridge: AnyObject, Sendable {
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
 
-    /// Session `intent` changed: its status, and the progress the host draws,
-    /// so the host keeps the latest of each and never reads them back. Every
-    /// session in flight, and every ended one not yet acknowledged, comes
-    /// through again when funding resumes. `progress` is `nil` once the core
-    /// keeps only the session's summary. Called inline, so hand it off rather
-    /// than drawing here.
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?)
+    /// Session `intent` changed: its status, the session as the core now
+    /// holds it (its choice, cancel offer and amounts) and the progress the
+    /// host draws, so the host keeps the latest of each and never reads them
+    /// back. Every session in flight, and every ended one not yet
+    /// acknowledged, comes through again when funding resumes. `session` and
+    /// `progress` are `nil` once the core keeps only the session's summary.
+    /// Called inline, so hand it off rather than drawing here.
+    func fundingSessionChanged(
+        intent: String,
+        status: HostFundingStatusSubscribeItem,
+        session: FundingSession?,
+        progress: FundingProgress?
+    )
+
+    /// Every ended session the host acknowledged or the core compacted, as
+    /// summaries newest first, once each time funding resumes, so the host
+    /// rebuilds its own history when that was lost. Called inline.
+    func fundingHistory(_ history: [FundingSessionSummary])
+
+    /// Whether a provider still works on any session: once funding resumes,
+    /// and again whenever it changes. A host that keeps it starts funding at
+    /// its next launch. Called inline.
+    func fundingInProgressChanged(_ inProgress: Bool)
+
+    /// What session `intent`'s overlay offers: its providers, and the
+    /// countries and amount range for the selection reported with
+    /// ``TrUAPIHostRuntime/selectFundingOptions(intent:selection:)``. Sent
+    /// before `presentFunding` is called, after each selection and after
+    /// each quote list. Called inline.
+    func fundingOptionsChanged(intent: String, options: FundingOptions)
 
     /// The quote list requested with
     /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
@@ -680,8 +703,25 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         }
     }
 
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
-        bridge.fundingSessionChanged(intent: intent, status: status, progress: progress)
+    func fundingSessionChanged(
+        intent: String,
+        status: HostFundingStatusSubscribeItem,
+        session: FundingSession?,
+        progress: FundingProgress?
+    ) {
+        bridge.fundingSessionChanged(intent: intent, status: status, session: session, progress: progress)
+    }
+
+    func fundingHistory(history: [FundingSessionSummary]) {
+        bridge.fundingHistory(history)
+    }
+
+    func fundingInProgressChanged(inProgress: Bool) {
+        bridge.fundingInProgressChanged(inProgress)
+    }
+
+    func fundingOptionsChanged(intent: String, options: FundingOptions) {
+        bridge.fundingOptionsChanged(intent: intent, options: options)
     }
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -1116,31 +1156,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.openFunding(direction: direction, amount: amount)
     }
 
-    /// Session `intent` as the core holds it.
-    public func fundingSession(intent: String) -> FundingSession? {
-        inner.fundingSession(intent: intent)
-    }
-
-    /// Whether a provider still works on any funding session, read from
-    /// storage if funding has not resumed yet. A host that remembers it
-    /// starts funding at its next launch, and asks again on each
-    /// ``FundingHostBridge/fundingSessionChanged(intent:status:)``.
-    public func fundingInProgress() async throws -> Bool {
-        try await inner.fundingInProgress()
-    }
-
-    /// Every session the core keeps: in flight first, then ended ones the
-    /// host has not acknowledged, each newest first.
-    public func fundingSessions() -> [FundingSession] {
-        inner.fundingSessions()
-    }
-
-    /// Every session the host recorded, as summaries newest first, for
-    /// rebuilding the host's history when it was lost.
-    public func fundingHistory() -> [FundingSessionSummary] {
-        inner.fundingHistory()
-    }
-
     /// Cancel session `intent` at the user's request. Before money moved the
     /// provider is asked to stop, and asking again ends the session; after,
     /// the provider answers with an offer the user confirms, or a refusal.
@@ -1170,11 +1185,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.setFundingProviders(providers: providers)
     }
 
-    /// The providers session `intent` can be handed to.
-    public func fundingCandidates(intent: String) -> [FundingCandidate] {
-        inner.fundingCandidates(intent: intent)
-    }
-
     /// Ask every provider to price `ask` for session `intent`. The list
     /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
     /// and is asked for again every minute until a provider is chosen, the
@@ -1192,28 +1202,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.stopFundingQuotes(intent: intent)
     }
 
-    /// What the core knows about each country for session `intent` on
-    /// `rail` and `asset`. Countries it knows nothing about are left out.
-    public func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry] {
-        inner.fundingCountries(intent: intent, rail: rail, asset: asset)
-    }
-
-    /// The amounts session `intent` can take on `rail`, `asset`, `network`
-    /// and `country` across every provider. The minimum is never below the
-    /// product floor.
-    public func fundingAmountLimits(
-        intent: String,
-        rail: FundingRail,
-        asset: String,
-        network: String?,
-        country: String?
-    ) -> FundingAmountLimits {
-        inner.fundingAmountLimits(intent: intent, rail: rail, asset: asset, network: network, country: country)
-    }
-
-    /// The country quotes go by until the user picks one.
-    public func detectedFundingCountry() async -> String? {
-        await inner.detectedFundingCountry()
+    /// Report the rail, asset, network and country the user has picked in
+    /// session `intent`'s overlay, whenever one changes. The countries and
+    /// amount range for it arrive through
+    /// ``FundingHostBridge/fundingOptionsChanged(intent:options:)``. Ignored
+    /// once the overlay has closed.
+    public func selectFundingOptions(intent: String, selection: FundingSelection) {
+        inner.selectFundingOptions(intent: intent, selection: selection)
     }
 
     /// Hand open session `intent` to the provider the user chose, on the

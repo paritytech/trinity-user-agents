@@ -3,8 +3,8 @@ import Observation
 import os
 import TrUAPIHost
 
-/// The CASH card's funding lists: sessions still in the core, then the ended
-/// ones the host keeps.
+/// The CASH card's funding lists: the sessions the core last pushed, then the
+/// ended ones the host keeps.
 ///
 /// A session that is no longer in flight is written to the host's store, then
 /// acknowledged, after which the core drops it. A withdrawal stays in flight
@@ -23,14 +23,16 @@ final class FundingActivityCenter {
 
     private var records: [String: FundingRecord] = [:]
     private let store: FundingHistoryStoring
+    private let book: FundingSessionBook
     private let rebuilder: FundingHistoryRebuilder
     private var refreshTask: Task<Void, Never>?
-    /// Reads the sessions again when one turns to taking longer.
+    /// Draws the sessions again when one turns to taking longer.
     private var longerTask: Task<Void, Never>?
     private var needsRefresh = false
 
-    init(store: FundingHistoryStoring) {
+    init(store: FundingHistoryStoring, book: FundingSessionBook = .shared) {
         self.store = store
+        self.book = book
         rebuilder = FundingHistoryRebuilder(store: store)
     }
 
@@ -80,8 +82,8 @@ final class FundingActivityCenter {
         Self.attached.withLock { $0.overlay }?.showHistory()
     }
 
-    /// Reads the core's sessions again and settles the ended ones. Calls that
-    /// arrive while one is running are folded into one more pass.
+    /// Draws the sessions the core last pushed and settles the ended ones.
+    /// Calls that arrive while one is running are folded into one more pass.
     func refresh() {
         guard refreshTask == nil else {
             needsRefresh = true
@@ -116,9 +118,7 @@ private extension FundingActivityCenter {
             return
         }
 
-        let sessions = runtime.fundingSessions().map { session in
-            (session: session, progress: runtime.fundingProgress(intent: session.intent))
-        }
+        let sessions = book.unrecorded()
 
         let moving = sessions.filter { Self.isInFlight($0.session, progress: $0.progress) }
         justFinished = Self.finished(
@@ -136,7 +136,9 @@ private extension FundingActivityCenter {
             .filter { !Self.isInFlight($0.session, progress: $0.progress) }
             .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
         await settle(ended, runtime: runtime)
-        await rebuilder.rebuildOnce(reading: runtime.fundingHistory)
+        if let history = book.history {
+            await rebuilder.rebuildOnce { history }
+        }
         await loadStored(coreSessions: ended)
     }
 
@@ -152,6 +154,7 @@ private extension FundingActivityCenter {
             do {
                 try await store.save(record)
                 _ = try await runtime.acknowledgeFundingSession(intent: record.intent)
+                book.markRecorded(intent: record.intent)
             } catch {
                 Logger.shared.error("[funding] \(record.intent): keeping the ended session failed: \(error)")
             }
@@ -159,7 +162,7 @@ private extension FundingActivityCenter {
     }
 
     /// The core turns a session to taking longer at `longerAtMs` without a
-    /// report to announce it, so read the sessions again then.
+    /// report to announce it, so draw the sessions again then.
     func scheduleTakingLonger(_ deadlines: [UInt64]) {
         longerTask?.cancel()
         let now = Date()
