@@ -35,8 +35,9 @@ npx trinity-stack update   # exits 2 when it wrote something, so a scheduled job
 ```
 
 They write `.trinity/`, committed with the project: each stack's signed copy, its dotNS contracts read at Asset Hub's
-latest finalized block, and an `index.js` that bundles them. At run time a reader serves those copies and refreshes them
-by the policy the project picks:
+latest finalized block, and an `index.js` that bundles them. A stack that fails to update keeps its copies, and `update`
+exits 1. The contracts are read over the stack's `eth-rpc`, so a stack with a dotNS gateway and no `eth-rpc` fails. At
+run time a reader serves those copies and refreshes them by the policy the project picks:
 
 ```ts
 import { createStackReader, service } from "@parity/trinity-stack/reader";

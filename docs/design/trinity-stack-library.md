@@ -276,7 +276,8 @@ never connects to a chain itself, so it leaves that check to the client, which a
   nothing fetches per request. A server sees one request per process with `"once"`, one per reader per `maxAgeMs` with
   `{ maxAgeMs }`, and none with `"never"` until the project asks.
 - **Refreshes are conditional.** The reader keeps the `ETag` it was served and sends `If-None-Match`, so an unchanged
-  stack costs a `304` with no body.
+  stack costs a `304` with no body. After a conditional fetch fails it fetches without the header once, since a browser
+  cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
 - **The copy it starts from** is the store's, if the project gave one and it holds a copy, otherwise the build's. Both
   go through `accept`, so the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
