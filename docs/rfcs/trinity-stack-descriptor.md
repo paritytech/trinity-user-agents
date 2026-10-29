@@ -443,7 +443,8 @@ An operator MUST publish a new descriptor whenever something a descriptor carrie
 time. It SHOULD take genesis hashes and specs from the live chains rather than copy them by hand, and SHOULD have a
 person approve each publish when the key guards a stack with real funds. A runtime upgrade or a dotNS redeploy needs no
 publish, because readers read those from the chains. An operator SHOULD serve the descriptor with an `ETag`, so a reader
-can check for a change without downloading it again.
+can check for a change without downloading it again, and SHOULD allow the `If-None-Match` request header and expose
+`ETag` to cross-origin readers, which a browser otherwise cannot send or read.
 
 How an operator does this is its choice. [Appendix A](#appendix-a-how-operators-publish-today) shows how
 previewnet-engine and a git-kept stack such as paseo-next-v2 would.
@@ -461,7 +462,7 @@ A reader runs from a copy it holds, and fetching only refreshes that copy:
   fetch is never a reason to stop.
 - A reader SHOULD NOT fetch a descriptor per request. It fetches when its user asks, or on a schedule of its own, at
   most once per process or once per period it chooses. It SHOULD send `If-None-Match` with the `ETag` it was last
-  served.
+  served, and SHOULD fetch without it after a conditional fetch fails.
 - A reader MAY stay on its build copy and never fetch. It then follows no change until it is rebuilt, and a chain
   reporting a genesis hash other than the copy's tells it the stack was restarted.
 
