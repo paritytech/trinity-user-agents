@@ -3,17 +3,23 @@
 use core::num::NonZeroU32;
 use std::sync::Arc;
 
-use futures::stream::BoxStream;
+use futures::{StreamExt, stream::BoxStream};
 
 use super::{
 	dao,
 	holding::{HeldItem, record_holdings},
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
+	operation::{
+		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
+		nft_domain, plan_transfers, progress_of, record_inputs, validate_can_start,
+	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
+	scarcity::TRANSFER_POLICY,
 };
 use crate::{
-	installation::InstallationIdProvider,
+	durable::{DurableRequest, DurableTxEngine, PolicyId, RegistrationError},
+	installation::{InstallationId, InstallationIdProvider},
 	store::{Db, DbError},
 };
 
@@ -25,6 +31,8 @@ pub struct NftLedgerDeps {
 	pub installation: Arc<dyn InstallationIdProvider>,
 	/// Derives the keys of new items.
 	pub keys: Arc<dyn ItemKeyDeriver>,
+	/// Registers and follows the transfers of items.
+	pub durable: Arc<DurableTxEngine>,
 }
 
 /// Layer 1's store of purses and their items.
@@ -33,13 +41,14 @@ pub struct NftLedger {
 	db: Db,
 	installation: Arc<dyn InstallationIdProvider>,
 	keys: Arc<dyn ItemKeyDeriver>,
+	durable: Arc<DurableTxEngine>,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys } = deps;
-		Self { db, installation, keys }
+		let NftLedgerDeps { db, installation, keys, durable } = deps;
+		Self { db, installation, keys, durable }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
@@ -103,6 +112,76 @@ impl NftLedger {
 	/// Every item key, now and after each allocation.
 	pub fn observe_item_keys(&self) -> BoxStream<'static, Result<Vec<ItemKey>, DbError>> {
 		dao::observe_item_keys(&self.db)
+	}
+
+	/// Registers the transfers of `request` as one operation, in one write that
+	/// checks every item is idle in its purse, allocates destination keys
+	/// and records what each transfer spends. Returns once they are registered.
+	pub async fn start_transfers(
+		&self,
+		request: TransferRequest,
+	) -> Result<(), RegistrationError<StartOperationError>> {
+		let items = request.transfer.inputs();
+		if items.is_empty() {
+			return Err(RegistrationError::Hook(StartOperationError::NoItems));
+		}
+		let installation = self.current_installation().await?;
+		let planned = self.planned_transfers(request, installation);
+		let record =
+			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &items, ids);
+		self.durable.execute_with(planned, record).await.map(|_| ())
+	}
+
+	/// Refuses `request` as [`Self::start_transfers`] would when its operation
+	/// is already registered or one of its items is not idle, without writing.
+	/// Registration checks both again in its own write.
+	pub async fn check_transfers_can_start(
+		&self,
+		request: &TransferRequest,
+	) -> Result<(), StartOperationError> {
+		let request = request.clone();
+		self.db.read(move |conn| Ok(validate_can_start(conn, &request))).await?
+	}
+
+	/// The installation new keys are allocated under now.
+	async fn current_installation(
+		&self,
+	) -> Result<InstallationId, RegistrationError<StartOperationError>> {
+		self.installation.current_installation().await.map_err(|error| {
+			RegistrationError::Hook(AllocateItemsError::InstallationUnavailable(error).into())
+		})
+	}
+
+	/// `request` as a durable request whose transfers are planned in its write.
+	fn planned_transfers(
+		&self,
+		request: TransferRequest,
+		installation: InstallationId,
+	) -> DurableRequest<StartOperationError> {
+		let group = Some(request.operation.group().clone());
+		let deriver = self.keys.clone();
+		let plan = move |tx: &rusqlite::Transaction<'_>| {
+			let keys = DestinationKeys { installation, deriver: deriver.as_ref() };
+			plan_transfers(tx, &request, keys)
+		};
+		DurableRequest::scheduled_in(nft_domain(), group, PolicyId::new(TRANSFER_POLICY), plan)
+	}
+
+	/// Every transfer of `operation`, in registration order, now and after every
+	/// change. Empty while no such operation exists.
+	pub fn observe_operation(
+		&self,
+		operation: &OperationKey,
+	) -> BoxStream<'static, Result<Vec<TransferProgress>, DbError>> {
+		self.durable
+			.observe_group(&nft_domain(), operation.group())
+			.map(|transfers| transfers.and_then(progress_of))
+			.boxed()
+	}
+
+	/// The purse `item` belongs to, if it is one of ours.
+	pub async fn purse_of(&self, item: ItemKey) -> Result<Option<PurseId>, DbError> {
+		self.db.read(move |conn| dao::purse_of(conn, &item)).await
 	}
 
 	/// Stores what each key holds, in one write. Called by the tracker.

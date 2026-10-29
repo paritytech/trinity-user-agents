@@ -263,7 +263,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 The core builds its own extrinsics through `ExtrinsicService` in the `chain`
 module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
-preimages, and the CLI's dotNS registrations. A caller names the call and the
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
 extensions after it, signs, and returns a mortal extrinsic born at the finalized
@@ -307,10 +307,19 @@ purses: its own freely, Root's or another product's with the user's
 `//nft//<purse>//<installation>//<index>`, under the installation the host
 reports through `currentInstallation`. A tracker watches
 `Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
-`queryPurse` pages through the keys that hold an NFT. The same grant covers
-both. Calls that move items answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the four served
-calls.
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
+
+`rebalancePurse` and `transferItem` register an operation under an idempotency
+key the product chooses and return; `observeOperationStatus` follows it by that
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
+submitted, and proven landed when its instance is at the destination. What
+each transfer spends is recorded in `nft_consumption`, and a failed transfer
+frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review. The cheque calls answer
+unavailable for now. A host without a core database, such as the browser core,
+answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -348,6 +357,12 @@ so `make dev` leaves the board empty with no error.
 2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
+
+Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
+`async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript
+`onMethod` handler returning a typed result, carried by a one-item subscription.
+A method returning `Subscription` generates a streaming handler. See the
+[client handler contract](js/packages/truapi/README.md#host-initiated-requests).
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
@@ -419,9 +434,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures. Android hosts with Sentry enabled report the reminder lifecycle
-through `host.reminder.*` Sentry events without changing reminder delivery or
-cleanup.
+host failures. Android and iOS hosts with Sentry enabled report the reminder
+lifecycle through `host.reminder.*` Sentry events without changing reminder
+delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer

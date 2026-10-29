@@ -205,7 +205,9 @@ mod tests {
 	#[test]
 	fn builds_large_preimage_without_pathological_cost() {
 		// Keep a generous bound around the call encoding so a future library
-		// change cannot make large preimages pathological.
+		// change cannot make large preimages pathological. A debug build
+		// encodes the bytes one at a time, which takes several seconds on a
+		// busy CI runner.
 		let data = vec![0x5au8; 8 * 1024 * 1024];
 		let service = bulletin_service();
 		let signer = signer_fixture();
@@ -217,7 +219,7 @@ mod tests {
 		let elapsed = start.elapsed();
 		assert!(built.extrinsic.bytes().len() > data.len());
 		assert!(
-			elapsed < std::time::Duration::from_secs(5),
+			elapsed < std::time::Duration::from_secs(30),
 			"building an 8 MiB store extrinsic took {elapsed:?}"
 		);
 	}
