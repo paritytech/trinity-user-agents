@@ -182,8 +182,7 @@ private extension ChatRoomSourceContextTests {
             timestamp: 1_000,
             body: .text(text: id),
             status: .sent,
-            replyTo: nil,
-            replyPreview: nil,
+            reply: nil,
             editedAt: nil,
             reactions: [],
             request: false

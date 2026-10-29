@@ -107,8 +107,7 @@ private func message(_ index: Int) -> ChatMessage {
         timestamp: UInt64(index) * 1_000,
         body: .text(text: "message \(index)"),
         status: .delivered,
-        replyTo: nil,
-        replyPreview: nil,
+        reply: nil,
         editedAt: nil,
         reactions: [],
         request: false
