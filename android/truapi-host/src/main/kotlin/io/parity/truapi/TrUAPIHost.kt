@@ -482,14 +482,14 @@ interface ChatHostBridge {
 
     // The members below have defaults for a host that does not serve the Chat
     // Extension v2 requests yet. The product receives a rejection for each
-    // request, except for metadata, which the host ignores and keeps the name
-    // and icon of `createRoom`, and for a configuration that keeps the
-    // behaviour the host serves anyway.
+    // request, with two exceptions. The host ignores metadata and keeps the
+    // name and icon of `createRoom`. The host accepts a configuration that
+    // keeps the behaviour that it serves.
 
     /**
      * Return the configuration the product last declared for a room, or
      * [HOST_DEFAULT_CHAT_ROOM_CONFIG] when it declared none. The core reads it
-     * before each feed update, posted message and query of the room.
+     * before each feed update, preview, posted message and query of the room.
      */
     @Throws(HostRejection::class)
     suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
@@ -506,7 +506,10 @@ interface ChatHostBridge {
         if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw unservedChatRequest("setRoomConfig")
     }
 
-    /** Replace the name and description of a room. */
+    /**
+     * Replace the name, description, icon and empty-room text of a room. An
+     * icon of `null` keeps the icon, and an empty icon removes it.
+     */
     @Throws(HostRejection::class)
     suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
 

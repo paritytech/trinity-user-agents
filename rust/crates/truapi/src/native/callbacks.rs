@@ -299,7 +299,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the configuration the product last declared for a room, or the
 	/// default configuration when it declared none. The core reads it before
-	/// each feed update, posted message and query of the room.
+	/// each feed update, preview, posted message and query of the room.
 	async fn room_config(
 		&self,
 		room_id: String,
@@ -313,7 +313,8 @@ pub trait NativeChatCallbacks: Send + Sync {
 		config: truapi::latest::ChatRoomConfig,
 	) -> Result<(), HostRejection>;
 
-	/// Replace the name and description of a room.
+	/// Replace the name, description, icon and empty-room text of a room. An
+	/// icon of `None` keeps the icon, and an empty icon removes it.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
