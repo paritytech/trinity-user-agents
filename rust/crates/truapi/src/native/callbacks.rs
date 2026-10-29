@@ -293,38 +293,6 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
 }
 
-/// Native Pocket collection adapter. Hosts with a Pocket surface pass an
-/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`]; hosts
-/// without one pass `None`. `list_cards` runs inline on the core runtime
-/// shared by every product execution, so it must return promptly;
-/// `remove_card` is awaited and may suspend while the host's storage works.
-///
-/// The host decides a removal and reports what it did, so the check and the
-/// removal happen together under whatever lock it holds. A card cannot be
-/// pinned between the two.
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativePocketCallbacks: Send + Sync {
-	/// Return the product's cards as this host currently holds them, each with
-	/// the flag saying whether the host pinned it.
-	fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection>;
-
-	/// Remove one of the product's cards, reporting whether the card was
-	/// taken out, was already gone, or is pinned and stays.
-	async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection>;
-}
-
-/// What a host did with a removal request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum NativePocketRemoval {
-	/// The card was present and not pinned, and the host took it out.
-	Removed,
-	/// The host does not hold the card, so it is already gone.
-	Absent,
-	/// The host pins the card and keeps it.
-	Privileged,
-}
-
 /// Native game-reminder adapter. Hosts that can hold reminders pass an
 /// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
 /// hosts without one pass `None`. Both callbacks are async, so a host may hop

@@ -195,44 +195,29 @@ untrusted: they may name a message in another room, or one that never existed.
 
 ## Pocket
 
-A host with a Pocket surface owns the card collection and implements
-`PocketHostBridge`, passed as `pocket:` to `openProductExecution`. Pocket is
-reachable only from a Worker execution with an active session, so a product
-on a signed-out host is denied before the bridge is consulted. Hosts without
-the bridge pass nothing and Pocket calls answer unsupported.
+The core keeps the Pocket collection in its database: the cards in the Pocket
+and the newest face of each. Products reach it only from a Worker execution
+with an active session. The host lists the cards it pins in
+`HostRuntimeConfig.pinnedPocketCards` and reads and edits the collection on the
+runtime.
 
 ```swift
-final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
-    private let store: PocketStore
-
-    init(store: PocketStore) { self.store = store }
-
-    // `privileged` marks a card this host pinned, which the product sees and
-    // cannot remove.
-    func listCards() throws -> [PocketCard] { store.cards() }
-
-    // Decide and remove together so a card cannot be pinned in between.
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        store.removeIfRemovable(cardId)
-    }
-}
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "game.dot", executionKind: .worker),
-    pocket: MyPocketBridge(store: pocketStore)
+let config = HostRuntimeConfig(
+    // ...
+    pinnedPocketCards: [PinnedPocketCard(productId: "peopl.paseo", cardId: "humanity", title: "Humanity")]
 )
 
-// Pocket needs an active session too: without `activateLocalSession` every
-// Pocket call answers denied, whatever this bridge holds.
+// Every card, pinned first, now and after each change.
+for try await cards in runtime.pocketCards() { show(cards) }
 
-// Republish after the host's own collection changes.
-execution.notifyPocketCardsChanged(cards: pocketStore.cards())
+// A card the user approved, with the face they approved it by.
+try await runtime.addPocketCard(productId: "game.dot", cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: "game.dot", cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loyalty")
 ```
 
-A card's face does not cross this bridge. The host keeps each card's newest
-face itself: that is what the card shows while the worker is down, and at cold
-start before the worker answers.
+The core keeps the newest face of a card from every Pocket card render, so a
+card has one to show while its worker is down and at cold start.
 
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`

@@ -48,8 +48,7 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 protocol TrUAPIWorkerBuilding: Sendable {
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
+        context: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime
 }
 
@@ -57,7 +56,6 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private struct Running {
         let boot: Boot
         let runtime: TrUAPIWorkerRuntime
-        let pocket: ProductPocketHostBridge
     }
 
     /// What the manager holds for one product. A boot claims the product
@@ -93,7 +91,6 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private let builder: any TrUAPIWorkerBuilding
-    private let collection: any PocketCardStore
     /// The core's reference ledger, which is what decides whether a worker runs.
     private let references: @Sendable () throws -> any TrUAPIWorkerReferencing
     /// How long a request waits for the worker it asked for. A boot that fails
@@ -118,13 +115,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
     init(
         builder: any TrUAPIWorkerBuilding,
-        collection: any PocketCardStore,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
-        self.collection = collection
         self.references = references
         self.startupWindow = startupWindow
         self.logger = logger
@@ -231,35 +226,24 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func bringUp(_ productId: ProductId, as boot: Boot) async {
-        let bridge = ProductPocketHostBridge(productId: productId, collection: collection)
-
         do {
             let runtime = try await builder.makeRuntime(
                 productId: productId,
-                context: context(of: productId),
-                pocket: bridge
+                context: context(of: productId)
             )
             guard held[productId]?.belongsTo(boot) == true else {
                 await runtime.dispose()
                 return
             }
-            held[productId] = .running(Running(boot: boot, runtime: runtime, pocket: bridge))
+            held[productId] = .running(Running(boot: boot, runtime: runtime))
 
-            // The worker's card list is served from the bridge's snapshot, and
-            // the script that subscribes to it comes up inside `start()`.
-            await bridge.begin()
             try await runtime.start { [weak self] in
                 self?.transitions.continuation.yield((productId, .reboot(boot)))
             }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-            // Published before the bridge republishes, because republishing
-            // reads the execution back out of this map.
             executionSubject.send(executionSubject.value.merging([productId: runtime.execution]) { _, new in new })
-            bridge.start { [weak self] cards in
-                self?.publishCards(cards, of: productId)
-            }
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -287,15 +271,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         // finds its claim gone, so there is nothing else to tear down yet.
         guard case let .running(worker)? = held.removeValue(forKey: productId) else { return }
 
-        worker.pocket.stop()
         var executions = executionSubject.value
         executions[productId] = nil
         executionSubject.send(executions)
 
         await worker.runtime.dispose()
-    }
-
-    private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {
-        executionSubject.value[productId]?.notifyPocketCardsChanged(cards: cards)
     }
 }

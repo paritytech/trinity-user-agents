@@ -33,7 +33,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,7 +83,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val pocketCardStore: PocketCardStore,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
@@ -114,7 +112,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     )
 
     private var execution: TrUAPIProductExecution? = null
-    private var pocketBridge: ProductPocketHostBridge? = null
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -291,19 +288,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
             cachedChains.set(chains)
-            val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId.value, kind),
                 chat = chat,
-                pocket = pocket,
                 game = gameBridge(productId),
             )
             execution = opened
-            pocketBridge = pocket
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            pocket.start(opened::notifyPocketCardsChanged)
             chainProvider.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
@@ -350,10 +343,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
-        // Before the execution closes: a card change arriving afterwards would republish through a
-        // handle that no longer exists.
-        pocketBridge?.stop()
-        pocketBridge = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()

@@ -50,7 +50,7 @@ struct WalletMainPocketTests {
         try await presenter.waitForCards { $0.contains(loyalty.key) }
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
 
-        _ = try await collection.removeCard(loyalty.key)
+        try await collection.removeCard(loyalty.key)
         try await presenter.waitForCards { !$0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)

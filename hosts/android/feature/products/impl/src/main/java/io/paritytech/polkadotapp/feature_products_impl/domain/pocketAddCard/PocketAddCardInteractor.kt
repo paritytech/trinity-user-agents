@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocketAddCard
 
 import android.net.Uri
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -44,7 +45,7 @@ class PocketAddCardInteractor @Inject constructor(
     suspend fun resolveFaceImage(productId: ProductId, source: JsImageSource): Result<Uri> =
         images.resolve(productId, source)
 
-    suspend fun approve(offer: PocketAddCardOffer): Result<Unit> = runCatching {
+    suspend fun approve(offer: PocketAddCardOffer): Result<Unit> = runCancellableCatching {
         store.addCard(CachedPocketCard(PocketCard(offer.key, offer.title, privileged = false), offer.face))
     }
 }

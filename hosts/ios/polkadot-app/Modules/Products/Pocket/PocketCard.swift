@@ -9,7 +9,7 @@ struct PocketCardKey: Hashable {
     let productId: ProductId
     let cardId: PocketCardId
 
-    /// Flat form the card is stored under, and the one CoreData keys rows by.
+    /// Flat form that names the card in one string.
     var storageId: String { "\(productId)/\(cardId.value)" }
 
     /// Where the card's product opens: its own page, told which card the user
@@ -33,18 +33,6 @@ struct PocketCardEntry: Equatable {
     let privileged: Bool
 }
 
-/// What a removal did. A privileged card is refused with
-/// ``PocketRemoveError/privileged`` instead; removing a card that is not held
-/// is a success, which the core asks a host to tell apart from one it performed.
-enum PocketRemoval {
-    case removed
-    case absent
-}
-
-enum PocketRemoveError: Error, Equatable {
-    case privileged
-}
-
 /// The host-owned collection as a product sees it. Cards enter only through the
 /// host's own approval flow, so there is no add here.
 protocol PocketCollection: Sendable {
@@ -57,7 +45,9 @@ protocol PocketCollection: Sendable {
     /// writer cannot forget to say it wrote.
     func observeCards() -> AnyAsyncSequence<[PocketCardEntry]>
 
-    func removeCard(_ key: PocketCardKey) async throws -> PocketRemoval
+    /// Removes a card on the user's behalf, together with its face. A
+    /// privileged card stays.
+    func removeCard(_ key: PocketCardKey) async throws
 }
 
 /// The collection as the host's own flows see it: what a product may read, plus
@@ -72,18 +62,14 @@ protocol PocketCardStore: PocketCollection {
     /// The newest face held for `key`: the last one its product drew, or the
     /// bundled one for a host-placed card that has never drawn.
     func face(for key: PocketCardKey) async -> RendererNode?
-
-    /// Keeps the newest face a product drew, so the card has it offline and at
-    /// cold start.
-    func cacheFace(_ face: RendererNode, for key: PocketCardKey) async
 }
 
 /// The cards the host itself places: present on first run, removable by nobody.
 protocol PinnedPocketCards: Sendable {
-    func cards() async -> [PocketCardEntry]
+    /// The cards the runtime is started with.
+    func cards() -> [PinnedPocketCard]
 
-    /// The host-placed card `key` names, if it names one. Answers without
-    /// awaiting: a removal arrives from the core on a thread it cannot spare.
+    /// The host-placed card `key` names, if it names one.
     func pinned(_ key: PocketCardKey) -> PocketCardEntry?
 
     /// The face shipped with the app for a host-placed card.

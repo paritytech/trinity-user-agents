@@ -17,8 +17,6 @@ pub struct NativeEventBus {
 	storage_changes: Mutex<Vec<StorageSubscription>>,
 	chain_events: Mutex<NativeChainEvents>,
 	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
-	pocket_card_changes:
-		Mutex<Subscribers<(), Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
 }
 
 #[derive(Default)]
@@ -228,74 +226,5 @@ impl NativeEventBus {
 			.lock()
 			.expect("native Chat room subscribers mutex poisoned")
 			.send(&(), &item);
-	}
-
-	/// Subscribe to the host's card collection. `snapshot` reads the host's
-	/// cards while the subscriber mutex is held, so a replacement cannot land
-	/// between the read and the registration: the snapshot is always the first
-	/// item and every later change follows it in order. `snapshot` must not
-	/// call back into [`super::NativeProductExecution::notify_pocket_cards_changed`],
-	/// which takes the same mutex.
-	pub fn subscribe_pocket_cards(
-		&self,
-		snapshot: impl FnOnce() -> Result<v01::HostPocketListSubscribeItem, v01::GenericError>,
-	) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-		let (tx, rx) = mpsc::unbounded();
-		let mut subscribers = self
-			.pocket_card_changes
-			.lock()
-			.expect("native Pocket card subscribers mutex poisoned");
-		let current = snapshot();
-		subscribers.register((), tx);
-		drop(subscribers);
-		stream::once(async move { current }).chain(rx).boxed()
-	}
-
-	/// Deliver a full card-list replacement to every live Pocket subscriber.
-	pub fn notify_pocket_cards_changed(&self, cards: Vec<v01::PocketCard>) {
-		self.send_pocket_cards(Ok(v01::HostPocketListSubscribeItem { cards }));
-	}
-
-	/// Report that the host can no longer say what the collection holds. The
-	/// product reads it as a failed stream rather than as an empty collection.
-	pub fn notify_pocket_cards_failed(&self, error: v01::GenericError) {
-		self.send_pocket_cards(Err(error));
-	}
-
-	/// Send one Pocket stream item to every live subscriber, dropping closed ones.
-	pub fn send_pocket_cards(
-		&self,
-		item: Result<v01::HostPocketListSubscribeItem, v01::GenericError>,
-	) {
-		self.pocket_card_changes
-			.lock()
-			.expect("native Pocket card subscribers mutex poisoned")
-			.send(&(), &item);
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// A cancelled subscriber is pruned when the next one registers, so a
-	/// product that subscribes and drops repeatedly cannot grow the list
-	/// without bound between host notifications.
-	#[test]
-	fn a_cancelled_pocket_subscriber_is_pruned_on_the_next_registration() {
-		let bus = NativeEventBus::default();
-		let snapshot = || Ok(v01::HostPocketListSubscribeItem { cards: Vec::new() });
-		for _ in 0..5 {
-			drop(bus.subscribe_pocket_cards(snapshot));
-		}
-		let _live = bus.subscribe_pocket_cards(snapshot);
-
-		assert_eq!(
-			bus.pocket_card_changes
-				.lock()
-				.expect("native Pocket card subscribers mutex poisoned")
-				.len(),
-			1
-		);
 	}
 }

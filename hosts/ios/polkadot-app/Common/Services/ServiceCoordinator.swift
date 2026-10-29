@@ -254,7 +254,7 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        if let service = ProductPocketService.make() {
+        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
             RootDependencyLocator.setDependency(service)
             service.start(
                 runtimeProvider: truapiRuntimeProvider,

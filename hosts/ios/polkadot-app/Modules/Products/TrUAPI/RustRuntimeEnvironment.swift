@@ -56,19 +56,18 @@ struct RustRuntimeEnvironment {
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
     /// execution per product and closes the previous one when another opens, so
-    /// every modality is served from this one: both bridges are handed over
-    /// here rather than attached afterwards, because the worker may list its
-    /// cards or post a chat message as soon as it connects.
+    /// every modality is served from this one: the chat bridge is handed over
+    /// here rather than attached afterwards, because the worker may post a chat
+    /// message as soon as it connects.
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging,
-        pocket: any PocketHostBridge
+        chatMessaging: any ProductChatMessaging
     ) throws -> ExecutionModel {
         try makeExecution(
             productId: productId,
             routers: routers,
-            purpose: .worker(chatMessaging: chatMessaging, pocket: pocket)
+            purpose: .worker(chatMessaging: chatMessaging)
         )
     }
 }
@@ -78,7 +77,7 @@ enum ExecutionPurpose {
     /// A product's page, under the face of the Pocket card it was opened from, if any.
     case page(cardFace: (any ExpandedCardFaceShowing)?)
     /// The product's one worker, serving its chat bot and its Pocket cards.
-    case worker(chatMessaging: any ProductChatMessaging, pocket: any PocketHostBridge)
+    case worker(chatMessaging: any ProductChatMessaging)
 }
 
 private extension RustRuntimeEnvironment {
@@ -108,7 +107,6 @@ private extension RustRuntimeEnvironment {
             bridge: bridges.host,
             configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
             chat: bridges.chat,
-            pocket: purpose.pocket,
             game: gameReminders == nil ? nil : bridges.host
         )
 
@@ -169,12 +167,6 @@ extension ExecutionPurpose {
 }
 
 private extension ExecutionPurpose {
-    var pocket: (any PocketHostBridge)? {
-        guard case let .worker(_, pocket) = self else { return nil }
-
-        return pocket
-    }
-
     /// A worker's bridge also answers its chat callbacks, so it is handed back twice.
     func makeBridges(
         dependencies: RustProductExecutionBridge.Dependencies
@@ -182,7 +174,7 @@ private extension ExecutionPurpose {
         switch self {
         case let .page(cardFace):
             return (RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace), nil)
-        case let .worker(chatMessaging, _):
+        case let .worker(chatMessaging):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)
         }

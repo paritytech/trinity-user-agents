@@ -29,13 +29,6 @@ final class TrUAPIPocketHandler: PocketFaceStreaming, @unchecked Sendable {
         /// renders are expected to be refused.
         static let connectWindow = Duration.seconds(10)
         static let connectDelay = Duration.milliseconds(250)
-
-        /// Doubling from a second up to half a minute: a worker that is simply
-        /// slow is picked up at once, and a broken one is not asked on a loop
-        /// for as long as its card is on screen.
-        static let reopenDelay = Duration.seconds(1)
-        static let maxReopenDelay = Duration.seconds(30)
-        static let maxBackoffDoublings = 5
     }
 
     private let productId: ProductId
@@ -192,7 +185,7 @@ private extension TrUAPIPocketHandler {
                 logger.warning("[pocket] the face stream for \(key.cardId.value) ended, reopening: \(error)")
             }
 
-            try? await Task.sleep(for: reopenDelay(after: attempt))
+            try? await Task.sleep(for: pocketReopenDelay(after: attempt))
             attempt += 1
         }
     }
@@ -223,10 +216,13 @@ private extension TrUAPIPocketHandler {
             retryEvery: Retry.connectDelay
         )
     }
+}
 
-    func reopenDelay(after attempt: Int) -> Duration {
-        let doublings = min(attempt, Retry.maxBackoffDoublings)
+/// How long to wait before opening a failed Pocket stream again. Doubling from
+/// a second up to half a minute: a stream that is simply slow is picked up at
+/// once, and a broken one is not asked on a loop.
+func pocketReopenDelay(after attempt: Int) -> Duration {
+    let doublings = min(attempt, 5)
 
-        return min(Retry.reopenDelay * (1 << doublings), Retry.maxReopenDelay)
-    }
+    return min(.seconds(1) * (1 << doublings), .seconds(30))
 }
