@@ -85,7 +85,7 @@ private extension ProductUpdateFetcher {
     }
 
     func optionalContentIds(of resolved: ResolvedProduct) -> [ProductId] {
-        [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier].compactMap { $0 }
+        ExecutableKind.allCases.map(resolved.contentId(for:))
     }
 
     func resolveOptional(
@@ -96,7 +96,7 @@ private extension ProductUpdateFetcher {
         do {
             return try await dotNsResolver.stageContent(dotNsName: contentId)
         } catch DotNsContractError.contentHashNotFound {
-            resolverFactory.logger.warning("Product \(productId) declares \(contentId) with no published content")
+            resolverFactory.logger.warning("Product \(productId) has no published content at \(contentId)")
             return nil
         }
     }
