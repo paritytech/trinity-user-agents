@@ -27,9 +27,9 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomRegistrationStatus,
   GenericError,
   HostChatCreateRoomRequest,
-  HostChatCreateRoomResponse,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
@@ -1389,12 +1389,16 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. `room_id` is the id
+   * that the core derived from the product and `request.room_id_source`. The
+   * host stores the room under this id, and every later call names the room
+   * with it.
    */
   createChatRoom(
     product: ProductContext,
+    roomId: string,
     request: HostChatCreateRoomRequest,
-  ): Promise<HostChatCreateRoomResponse>;
+  ): Promise<ChatRoomRegistrationStatus>;
 
   /**
    * Register or resolve a product-scoped native chat bot. Host-owned in the

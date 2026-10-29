@@ -1297,16 +1297,20 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-					.map_err(chat_create_room_field_error)?;
+				request.room_id_source =
+					normalize_chat_identifier("roomIdSource", &request.room_id_source)
+						.map_err(chat_create_room_field_error)?;
 				request.name = validate_chat_name("name", &request.name)
 					.map_err(chat_create_room_field_error)?;
 				request.icon = validate_chat_icon("icon", &request.icon)
 					.map_err(chat_create_room_field_error)?;
-				platform
-					.create_chat_room(&self.connection.product, request)
+				let room_id =
+					self.connection.product.product_id.chat_room_id(&request.room_id_source);
+				let status = platform
+					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
-					.map_err(CallError::Domain)
+					.map_err(CallError::Domain)?;
+				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
 	}

@@ -1171,20 +1171,21 @@ impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		room_id: String,
+		_request: latest::HostChatCreateRoomRequest,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&request.room_id) {
+			if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
-					request.room_id.clone(),
+					room_id.clone(),
 					latest::ChatRoom {
-						room_id: request.room_id.clone(),
+						room_id,
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
@@ -1196,7 +1197,7 @@ impl ChatPlatform for MockPlatform {
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
 		}
-		Ok(latest::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
@@ -1828,14 +1829,14 @@ mod tests {
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
 		block_on(p.create_chat_room(
 			&mock_product(),
+			room_id.to_string(),
 			latest::HostChatCreateRoomRequest {
-				room_id: room_id.to_string(),
+				room_id_source: room_id.to_string(),
 				name: format!("{room_id} room"),
 				icon: "https://example.invalid/i.png".to_string(),
 			},
 		))
 		.expect("room registration succeeds")
-		.status
 	}
 
 	fn post_text(
@@ -1903,8 +1904,9 @@ mod tests {
 
 		let room = block_on(p.create_chat_room(
 			&product,
+			"lobby".to_string(),
 			latest::HostChatCreateRoomRequest {
-				room_id: "lobby".to_string(),
+				room_id_source: "lobby".to_string(),
 				name: "lobby room".to_string(),
 				icon: "https://example.invalid/i.png".to_string(),
 			},
