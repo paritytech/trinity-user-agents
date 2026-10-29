@@ -46,7 +46,7 @@ final class ProductBotFactory: @unchecked Sendable {
 
         let productId = resolved.id
         let reloadableRuntime = ReloadableChatRuntime(runtime: runtime) { [self] in
-            let latest = try await contentLoader.open(productId, policy: .attempts(3)).resolved
+            let latest = try await contentLoader.openWorker(productId)
 
             guard let runtime = makeRuntime(for: latest) else {
                 throw ProductBotFactoryError.noChatWorker(productId)

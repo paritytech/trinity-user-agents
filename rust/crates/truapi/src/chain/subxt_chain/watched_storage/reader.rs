@@ -4,7 +4,7 @@
 use core::future::ready;
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::stream::{StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 use subxt::{
 	ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig,
@@ -16,7 +16,7 @@ use super::{RawChangeStream, STORAGE_WATCH, all_keys_answered_or_err, group_valu
 use crate::{
 	chain::{
 		DecodableAtBlock, HashAndNumber, RawStorageChanges,
-		storage_watch::{StorageSnapshot, value_hash},
+		storage_watch::{StorageSnapshot, take_until_inclusive, value_hash},
 		subxt_chain::{failure, numbered},
 	},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
@@ -105,7 +105,7 @@ impl WatchedKeysReader {
 			.and_then(move |change_set| ready(finder.find_changed_keys(change_set)))
 			.try_filter_map(|changed| ready(Ok(changed)))
 			.and_then(move |changed| self.clone().report_changed_keys(legacy.clone(), changed));
-		Ok(end_after_first_failure(changes.boxed()))
+		Ok(stop_after_first_failure(changes.boxed()))
 	}
 
 	/// A `state_subscribeStorage` of every one of the reader's keys.
@@ -252,15 +252,9 @@ fn record_hashes(
 	}
 }
 
-/// `changes` up to and including the first failure.
-fn end_after_first_failure(changes: RawChangeStream) -> RawChangeStream {
-	stream::unfold(Some(changes), |changes| async move {
-		let mut changes = changes?;
-		let change = changes.next().await?;
-		let rest = change.is_ok().then_some(changes);
-		Some((change, rest))
-	})
-	.boxed()
+/// `changes` up to and including the first failure, then nothing.
+fn stop_after_first_failure(changes: RawChangeStream) -> RawChangeStream {
+	take_until_inclusive(changes, Result::is_err)
 }
 
 /// One notification's changes, with `System.LastRuntimeUpgrade` taken out.

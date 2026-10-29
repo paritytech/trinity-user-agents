@@ -746,7 +746,6 @@
     <string name="card_balance_will_be_available_soon">Available soon</string>
 
     <string name="asset_details_fund_button">Fund %1$s</string>
-    <string name="asset_details_fund_digital_dollar">Get %1$s</string>
     <string name="asset_details_transfer_button">Transfer</string>
     <string name="asset_details_actions_disabled">Actions will be available after you finish updating your balance</string>
     <string name="asset_details_backup_in_progress">Updating balance</string>
@@ -768,28 +767,6 @@
     <string name="send_transaction_failure_title">Payment failed</string>
     <string name="send_transaction_failure_description">Please review the details of your transaction and try to send it again</string>
 
-    <string name="fund_done">Done</string>
-    <string name="fund_fund_from">Fund from</string>
-    <string name="fund_description">Send %s on the %s to your wallet address below.</string>
-    <string name="fund_minimal_amount">Send %s or more</string>
-    <string name="fund_to">To</string>
-    <string name="fund_network">Network</string>
-    <string name="fund_copy_address">Copy address</string>
-    <string name="fund_rate" translatable="false">Rate</string>
-    <string name="fund_fee" translatable="false">Fee</string>
-    <string name="fund_funding_pending_title">Funding in progress</string>
-    <string name="fund_funding_complete_title">Funding complete</string>
-    <string name="fund_funding_failed_title">Funding incomplete</string>
-    <string name="fund_funding_pending">Pending</string>
-    <string name="fund_funding_completed">Complete</string>
-    <string name="fund_funding_incomplete">Incomplete</string>
-    <string name="fund_funding_warning">Don’t close the app until the process is complete, or you may lose funds.</string>
-    <string name="fund_funding_success">Funding complete, check your balance, spend dollars in the Polkadot app.</string>
-    <string name="fund_funding_failure">Error text</string>
-    <string name="fund_exit_confirm_title">Are you done funding?</string>
-    <string name="fund_exit_confirm_description">If you have pending funds, closing the screen may result in the loss of those funds</string>
-    <string name="fund_exit_confirm_CTA_dismiss">Back</string>
-    <string name="fund_exit_confirm_CTA_confirm">Done</string>
 
     <string name="settings_toolbar_title">Settings</string>
 

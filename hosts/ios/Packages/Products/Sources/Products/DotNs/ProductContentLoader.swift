@@ -1,23 +1,32 @@
 import AsyncExtensions
 import BackgroundExecution
 import Foundation
+import FoundationExt
 import SDKLogger
+import StructuredConcurrency
 
 public actor ProductContentLoader {
     public struct Environment: Sendable {
-        let pathProvider: ProductNetworkPathProviding
+        let pathProvider: NetworkPathProviding
         let backgroundExecutor: BackgroundExecuting
         let diagnostics: ProductLoadDiagnostics
+        let dateProvider: DateProviding
 
         public init(
-            pathProvider: ProductNetworkPathProviding,
+            pathProvider: NetworkPathProviding,
             backgroundExecutor: BackgroundExecuting,
-            diagnostics: ProductLoadDiagnostics = ProductLoadDiagnostics()
+            diagnostics: ProductLoadDiagnostics = ProductLoadDiagnostics(),
+            dateProvider: DateProviding = NowDateProvider()
         ) {
             self.pathProvider = pathProvider
             self.backgroundExecutor = backgroundExecutor
             self.diagnostics = diagnostics
+            self.dateProvider = dateProvider
         }
+    }
+
+    private enum Constants {
+        static let minimumAgeBeforeRemoval: TimeInterval = 10 * 60
     }
 
     public struct Timing: Sendable {
@@ -39,24 +48,18 @@ public actor ProductContentLoader {
         }
     }
 
-    private enum Constants {
-        static let maxBackoffDoublings = 16
-    }
-
     private let fetcher: ProductUpdateFetching
-    private let cache: ProductVersionCaching
+    private let cache: ProductContentCaching
     private let environment: Environment
     private let timing: Timing
     private let logger: SDKLoggerProtocol
-    private let updatesSubject = AsyncPassthroughSubject<ProductUpdate>()
+    private let updatesSubject = AsyncPassthroughSubject<ExecutableRelease>()
 
-    private var appliedVersions: [ProductId: ProductVersion] = [:]
-    private var pendingByProduct: [ProductId: ProductUpdate] = [:]
-    private var refreshTasks: [ProductId: Task<ProductUpdate?, Never>] = [:]
+    private var refreshTasks: [ProductId: Task<[ExecutableRelease], Never>] = [:]
 
     public init(
         fetcher: ProductUpdateFetching,
-        cache: ProductVersionCaching,
+        cache: ProductContentCaching,
         environment: Environment,
         timing: Timing = Timing(),
         logger: SDKLoggerProtocol
@@ -72,33 +75,53 @@ public actor ProductContentLoader {
 extension ProductContentLoader: ProductContentLoading {
     public func open(
         _ productId: ProductId,
+        kind: ExecutableKind,
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
-        if let cached = try? await cache.open(productId) {
-            appliedVersions[cached.version.productId] = cached.version
-            Task { _ = await self.refresh(productId) }
+        if let cached = await cachedContent(productId, kind: kind) {
+            scheduleRefresh(productId)
             return cached
         }
 
         try Task.checkCancellation()
 
-        let fetched = try await retrying(productId, policy: policy, onPhase: onPhase, diagnosing: true) { [fetcher] in
-            try await fetcher.fetch(productId, onPhase: onPhase)
-        }
-        await cache.apply(fetched.version)
-        appliedVersions[fetched.version.productId] = fetched.version
+        let (manifest, content) = try await retrying(
+            productId,
+            policy: policy,
+            onPhase: onPhase,
+            diagnosing: true
+        ) { [fetcher] in
+            onPhase(.resolving)
 
-        return ProductContent(
-            resolved: fetched.resolved,
-            contents: fetched.contents,
-            appContent: fetched.appContent,
-            version: fetched.version,
-            source: .network
-        )
+            let manifest = try await fetcher.fetchManifest(productId)
+
+            let archive = try await fetcher.stage(manifest.product.contentId(for: kind), onPhase: onPhase)
+
+            return (manifest, ProductContent(resolved: manifest.product, kind: kind, archive: archive))
+        }
+
+        await cache.adopt(manifest)
+        await cache.apply(manifest.release(of: content.contentId, archive: content.archive))
+
+        return content
     }
 
-    public func refresh(_ productId: ProductId) async -> ProductUpdate? {
+    public func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+        if let cached = try? await cache.manifest(productId) {
+            await stageWorkerIfMissing(of: cached)
+            scheduleRefresh(productId)
+            return cached.product
+        }
+
+        let manifest = try await fetcher.fetchManifest(productId)
+        await cache.adopt(manifest)
+        await stageWorkerIfMissing(of: manifest)
+
+        return manifest.product
+    }
+
+    public func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let key = productId.lowercased()
 
         if let running = refreshTasks[key] {
@@ -107,161 +130,200 @@ extension ProductContentLoader: ProductContentLoading {
 
         let task = Task { await performRefresh(productId) }
         refreshTasks[key] = task
-        let update = await task.value
+        let updates = await task.value
         refreshTasks[key] = nil
 
-        return update
+        return updates
     }
 
-    public func apply(_ update: ProductUpdate) async {
-        await cache.apply(update.latest.version)
-        appliedVersions[update.productId] = update.latest.version
-        pendingByProduct[update.productId] = nil
+    public func apply(_ release: ExecutableRelease) async {
+        await cache.apply(release)
     }
 
-    public func pendingUpdates() -> [ProductUpdate] {
-        Array(pendingByProduct.values)
+    public func removeSupersededContent(keeping pinnedHashes: Set<String>) async {
+        let cutoff = await environment.dateProvider.read().addingTimeInterval(-Constants.minimumAgeBeforeRemoval)
+        await cache.removeSupersededContent(keeping: pinnedHashes, modifiedBefore: cutoff)
     }
 
-    public func removeSupersededContent(keeping servedHashes: Set<String>) async {
-        let pendingHashes = pendingByProduct.values.flatMap(\.latest.version.contentHashes.values)
-        await cache.removeSupersededContent(keeping: servedHashes.union(pendingHashes))
-    }
-
-    public nonisolated func updates() -> AnyAsyncSequence<ProductUpdate> {
+    public nonisolated func updates() -> AnyAsyncSequence<ExecutableRelease> {
         updatesSubject.eraseToAnyAsyncSequence()
     }
 }
 
+private struct FetchedContent: Sendable {
+    let manifest: ProductManifest
+    let archives: [ProductId: DotNsResolvedContent]
+}
+
+private extension ProductManifest {
+    func release(of contentId: ProductId, archive: DotNsResolvedContent?) -> ExecutableRelease {
+        ExecutableRelease(
+            contentId: contentId,
+            archive: archive,
+            record: records[RecordKey(name: contentId, key: ProductManifestRecords.executableKey)]
+        )
+    }
+}
+
 private extension ProductContentLoader {
-    func performRefresh(_ productId: ProductId) async -> ProductUpdate? {
+    func cachedContent(_ productId: ProductId, kind: ExecutableKind) async -> ProductContent? {
+        guard
+            let manifest = try? await cache.manifest(productId),
+            let archive = await cache.appliedArchive(of: manifest.product.contentId(for: kind))
+        else {
+            return nil
+        }
+
+        return ProductContent(resolved: manifest.product, kind: kind, archive: archive)
+    }
+
+    func scheduleRefresh(_ productId: ProductId) {
+        Task { _ = await self.refresh(productId) }
+    }
+
+    func stageWorkerIfMissing(of manifest: ProductManifest) async {
+        guard
+            let worker = ProductWorkerSource.published(for: manifest.product),
+            await cache.appliedArchive(of: worker.contentId) == nil
+        else {
+            return
+        }
+
         do {
-            let fetched = try await retrying(productId, policy: timing.refreshPolicy) { [fetcher] in
-                try await fetcher.fetch(productId)
+            let archive = try await fetcher.stage(worker.contentId)
+            await cache.apply(manifest.release(of: worker.contentId, archive: archive))
+        } catch {
+            logger.error("Failed to stage the worker archive \(worker.contentId): \(error)")
+        }
+    }
+
+    func performRefresh(_ productId: ProductId) async -> [ExecutableRelease] {
+        guard let applied = try? await cache.manifest(productId) else { return [] }
+
+        let served = await servedContentIds(of: applied.product)
+
+        do {
+            let latest = try await retrying(productId, policy: timing.refreshPolicy) { [fetcher] in
+                try await Self.fetchLatest(productId, kinds: Array(served.keys), using: fetcher)
             }
 
-            return await publishIfChanged(fetched)
-        } catch DotNsContractError.contentHashNotFound {
-            await dropFromCache(productId)
-            return nil
+            return await commit(latest, served: Set(served.values))
         } catch {
             logger.error("Product refresh failed for \(productId): \(error)")
-            return nil
+            return []
         }
     }
 
-    func publishIfChanged(_ fetched: FetchedProductVersion) async -> ProductUpdate? {
-        let productId = fetched.version.productId
+    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductId] {
+        var served: [ExecutableKind: ProductId] = [:]
 
-        guard let applied = await appliedVersion(of: productId) else {
-            await cache.apply(fetched.version)
-            appliedVersions[productId] = fetched.version
-            return nil
+        for kind in ExecutableKind.allCases {
+            let contentId = resolved.contentId(for: kind)
+
+            if await cache.appliedArchive(of: contentId) != nil {
+                served[kind] = contentId
+            }
         }
 
-        guard fetched.version != applied, fetched.version != pendingByProduct[productId]?.latest.version else {
-            return nil
-        }
-
-        let update = ProductUpdate(previous: applied, latest: fetched)
-        pendingByProduct[productId] = update
-        updatesSubject.send(update)
-
-        return update
+        return served
     }
 
-    func appliedVersion(of productId: ProductId) async -> ProductVersion? {
-        if let applied = appliedVersions[productId] {
-            return applied
+    static func fetchLatest(
+        _ productId: ProductId,
+        kinds: [ExecutableKind],
+        using fetcher: ProductUpdateFetching
+    ) async throws -> FetchedContent {
+        let manifest = try await fetcher.fetchManifest(productId)
+        let contentIds = Set(kinds.map(manifest.product.contentId(for:)))
+
+        var archives: [ProductId: DotNsResolvedContent] = [:]
+
+        for contentId in contentIds {
+            do {
+                archives[contentId] = try await fetcher.stage(contentId)
+            } catch DotNsContractError.contentHashNotFound {
+                continue
+            }
         }
 
-        return try? await cache.open(productId).version
+        return FetchedContent(manifest: manifest, archives: archives)
     }
 
-    func dropFromCache(_ productId: ProductId) async {
-        guard let cached = try? await cache.open(productId) else { return }
+    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
+        await cache.adopt(latest.manifest)
 
-        await cache.invalidate(cached.version)
-        appliedVersions[cached.version.productId] = nil
-        pendingByProduct[cached.version.productId] = nil
+        var updates: [ExecutableRelease] = []
+
+        for contentId in served {
+            let release = latest.manifest.release(of: contentId, archive: latest.archives[contentId])
+
+            guard
+                let archive = release.archive,
+                await cache.appliedArchive(of: contentId)?.contentHash == archive.contentHash
+            else {
+                updates.append(release)
+                continue
+            }
+
+            await cache.apply(release)
+        }
+
+        for (contentId, archive) in latest.archives where !served.contains(contentId) {
+            await cache.apply(latest.manifest.release(of: contentId, archive: archive))
+        }
+
+        updates.forEach(updatesSubject.send)
+
+        return updates
     }
 
     func retrying<T: Sendable>(
         _ productId: ProductId,
         policy: ProductLoadPolicy,
-        onPhase: ProductLoadPhaseHandler = { _ in },
+        onPhase: @escaping ProductLoadPhaseHandler = { _ in },
         diagnosing: Bool = false,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let diagnostics = environment.diagnostics
-        var attempts = await ProductLoadAttempts(productId: productId, startedAt: diagnostics.dateProvider.read())
+        let diagnosis = diagnosing
+            ? await ProductLoadDiagnosis(productId: productId, diagnostics: environment.diagnostics)
+            : nil
 
-        while true {
-            do {
-                return try await environment.backgroundExecutor.execute(operation)
-            } catch {
-                try Task.checkCancellation()
-
-                guard ProductLoadErrorClass(error) == .transient else {
-                    if diagnosing { diagnostics.reportUnavailable(error) }
-                    throw error
-                }
-
-                guard try await isPathSatisfied() else {
+        let strategy = NetworkFetchRetryStrategy(
+            classifier: ProductLoadErrorClassifier(),
+            maxAttempts: policy.maxAttempts,
+            backoff: NetworkFetchRetryStrategy.Backoff(initial: timing.initialBackoff, max: timing.maxBackoff),
+            clock: timing.clock,
+            pathProvider: environment.pathProvider,
+            onEvent: { [logger] event in
+                switch event {
+                case .waitingForNetwork:
                     onPhase(.waitingForNetwork)
-                    try await waitForSatisfiedPath()
-                    await attempts.restart(at: diagnostics.dateProvider.read())
-                    continue
+                case .networkRestored:
+                    await diagnosis?.restart()
+                case let .attemptFailed(attempt, error):
+                    logger.warning("Product load attempt \(attempt) failed for \(productId): \(error)")
+                    await diagnosis?.recordFailure(error)
+                case let .willRetry(attempt):
+                    onPhase(.retrying(attempt: attempt))
+                case let .notRetryable(error):
+                    diagnosis?.reportUnavailable(error)
                 }
-
-                attempts.recordFailure()
-                logger.warning("Product load attempt \(attempts.failed) failed for \(productId): \(error)")
-
-                if diagnosing {
-                    await reportStallIfNeeded(&attempts, error: error)
-                }
-
-                guard policy.allowsRetry(afterFailedAttempts: attempts.failed) else {
-                    throw error
-                }
-
-                onPhase(.retrying(attempt: attempts.failed))
-                try await timing.clock.sleep(for: backoff(afterFailedAttempts: attempts.failed))
             }
+        )
+
+        return try await withRetry(strategy: strategy) { [backgroundExecutor = environment.backgroundExecutor] in
+            try await backgroundExecutor.execute(operation)
         }
-    }
-
-    func reportStallIfNeeded(_ attempts: inout ProductLoadAttempts, error: Error) async {
-        let diagnostics = environment.diagnostics
-        let now = await diagnostics.dateProvider.read()
-
-        guard attempts.claimStallReport(at: now, thresholds: diagnostics.thresholds) else { return }
-
-        diagnostics.reportStall(attempts, error: error, at: now)
-    }
-
-    func isPathSatisfied() async throws -> Bool {
-        try await environment.pathProvider.pathStream().first { _ in true } ?? true
-    }
-
-    func waitForSatisfiedPath() async throws {
-        _ = try await environment.pathProvider.pathStream().first { $0 }
-    }
-
-    func backoff(afterFailedAttempts failedAttempts: Int) -> Duration {
-        let doublings = min(failedAttempts - 1, Constants.maxBackoffDoublings)
-
-        return min(timing.initialBackoff * (1 << doublings), timing.maxBackoff)
     }
 }
 
 private extension ProductLoadPolicy {
-    func allowsRetry(afterFailedAttempts failedAttempts: Int) -> Bool {
+    var maxAttempts: Int? {
         switch self {
         case .untilCancelled:
-            true
+            nil
         case let .attempts(limit):
-            failedAttempts < limit
+            limit
         }
     }
 }

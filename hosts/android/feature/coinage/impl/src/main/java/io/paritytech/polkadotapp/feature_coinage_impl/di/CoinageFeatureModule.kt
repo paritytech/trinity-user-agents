@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRec
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ClaimReceivedCoinsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinAmountBreakdownUseCase
@@ -87,7 +88,6 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.externalPayment.use
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.externalPayment.usecase.UnloadRecyclerIntoExternalAssetUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.COINAGE_INSTALLATION_DOMAIN_ID
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CoinageInstallationRegistrationOracle
-import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.InstallationRegistrationSubmitter
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.RealCurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.RealInstallationRegistrationSubmitter

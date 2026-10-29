@@ -33,6 +33,7 @@ final class SPANativeRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(
         nativeApi: ProductsNativeApiProtocol,
@@ -63,6 +64,7 @@ final class SPANativeRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
         workerTask?.cancel()
         workerToken?.unlock()
 
@@ -92,6 +94,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
         guard let engine = jsEngine else { return }
 
         setupTask?.cancel()
+        reloadTask?.cancel()
         setupTask = Task { [weak self] in
             await self?.performSetup(engine: engine)
         }
@@ -104,7 +107,9 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
             return
         }
 
-        guard presenceRegistry?.applyPendingUpdate(of: productDomain) != true else { return }
+        if let servedContentId, presenceRegistry?.applyPendingUpdate(of: servedContentId) == true {
+            return
+        }
 
         serveAppliedBuild()
     }
@@ -112,7 +117,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
     func checkForNewBuild() {
         guard servedContent != nil else { return }
 
-        presenceRegistry?.requestRefresh(of: productDomain)
+        presenceRegistry?.requestRefresh(of: configuration.productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -167,7 +172,7 @@ private extension SPANativeRuntimeInteractor {
 
     func enableProduct() async throws -> ChatExtension.Id {
         let product = Product(
-            id: configuration.page.host.toDotDomain(),
+            id: configuration.productDomain,
             name: resolvedProduct?.displayName ?? configuration.page.host.name
         )
         let extensionId = product.extensionId
@@ -200,14 +205,19 @@ private extension SPANativeRuntimeInteractor {
     /// resources (leaked monitor/bridge) or deliver stale results.
     func performSetup(engine: JSEngineProtocol) async {
         do {
-            let domain = configuration.page.host.toDotDomain()
+            let domain = configuration.productDomain
 
             // Bytes come from the executable's own subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let content = try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler())
+            let content = try await contentLoader.open(
+                domain,
+                kind: configuration.executable,
+                policy: .untilCancelled,
+                onPhase: phaseHandler()
+            )
             resolvedProduct = content.resolved
 
-            let served = try content.served(for: configuration.executable)
+            let served = content.archive
             let contentURL = served.localURL
             let schemeHandler = makeSchemeHandler(
                 domain: domain,
@@ -277,15 +287,30 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
     }
 
     func serveAppliedBuild() {
-        Task { [weak self] in
-            await self?.performServeAppliedBuild()
+        let domain = configuration.productDomain
+        let kind = configuration.executable
+
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self, contentLoader] in
+            do {
+                let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
+
+                guard !Task.isCancelled else { return }
+
+                self?.serve(served)
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                self?.logger.error("SPA: Failed to serve the applied build: \(error)")
+                self?.presenter?.didFail(error: error)
+            }
         }
     }
 }
 
 private extension SPANativeRuntimeInteractor {
-    var productDomain: ProductId {
-        configuration.page.host.toDotDomain()
+    var servedContentId: ProductId? {
+        resolvedProduct?.contentId(for: configuration.executable)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {
@@ -295,26 +320,25 @@ private extension SPANativeRuntimeInteractor {
     }
 
     func registerPresence() {
-        guard presenceId == nil else { return }
+        guard presenceId == nil, let servedContentId else { return }
 
-        presenceId = presenceRegistry?.register(productId: productDomain, reloader: self)
+        presenceId = presenceRegistry?.register(
+            productId: configuration.productDomain,
+            contentId: servedContentId,
+            displayName: resolvedProduct?.displayName ?? configuration.page.host.name,
+            reloader: self
+        )
     }
 
-    func performServeAppliedBuild() async {
-        do {
-            let content = try await contentLoader.open(productDomain, policy: .untilCancelled)
-
-            let served = try content.served(for: configuration.executable)
-
-            if served != servedContent {
-                let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: served.localURL)
-                schemeHandlerProxy.setHandler(schemeHandler)
-                servedContent = served
-            }
-
-            presenter?.didRequestReload()
-        } catch {
-            logger.error("SPA: Failed to serve the applied build: \(error)")
+    func serve(_ served: DotNsResolvedContent) {
+        if served != servedContent {
+            schemeHandlerProxy.setHandler(makeSchemeHandler(
+                domain: configuration.productDomain,
+                contentURL: served.localURL
+            ))
+            servedContent = served
         }
+
+        presenter?.didRequestReload()
     }
 }

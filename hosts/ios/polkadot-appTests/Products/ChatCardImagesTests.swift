@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
@@ -44,6 +43,7 @@ struct ChatCardImagesTests {
         gateway: URL
     ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
+            contentLoader: StubProductContentLoader(),
             productFileProvider: NoScripts(),
             runtimeProvider: NoRuntime(),
             workers: { nil },
@@ -74,6 +74,8 @@ private struct NoWorkers: ProductWorkerManaging {
     func acquire(productId _: ProductId) async -> ProductWorkerLease {
         ProductWorkerLease(token: ProductWorkerToken {}, result: .failure(Unavailable()))
     }
+
+    func reload(productId _: ProductId) async {}
 }
 
 private func gameProduct() -> ResolvedProduct {
@@ -122,10 +124,6 @@ private final class RecordingResolver: DotNsResolverProtocol, @unchecked Sendabl
     func resolveToLocalURL(dotNsName: String) async throws -> URL {
         lock.withLock { names.append(dotNsName) }
         return root
-    }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

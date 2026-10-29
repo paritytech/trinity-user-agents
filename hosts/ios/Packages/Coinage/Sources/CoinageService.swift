@@ -102,6 +102,9 @@ public protocol CoinageServicing: Actor {
     /// Whether an allocation is waiting for that registration to complete.
     nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool>
 
+    /// The current installation once its on-chain registration has completed, as allocations get it.
+    nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding { get }
+
     /// See `TransferClaimServicing.transferCoinsFromSecretKeys`.
     func transferCoinsFromSecretKeys(
         secretKeys: [Data],
@@ -454,6 +457,10 @@ extension CoinageService: CoinageServicing {
 
     public nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool> {
         backedUpInstallation.subscribeAwaitingBackup()
+    }
+
+    public nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding {
+        backedUpInstallation
     }
 
     public func recoverSpentCoinsOnChain() async throws -> BigUInt {

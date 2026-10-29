@@ -851,19 +851,19 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
 	}
 }
 
-/// Reports every worker demand transition to the host's
-/// `workerDemandChanged(productId, transition)` callback.
-struct WasmWorkerDemand {
-	changed: SendWrapper<Function>,
+/// Forwards every worker transition request to the host's
+/// `requestWorkerTransition(productId, transition)` callback.
+struct WasmWorkerController {
+	request: SendWrapper<Function>,
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
-	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
+impl crate::host_logic::worker::WorkerController for WasmWorkerController {
+	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
 		let name = match transition {
 			WorkerTransition::Start => "Start",
 			WorkerTransition::Stop => "Stop",
 		};
-		let _ = self.changed.call2(
+		let _ = self.request.call2(
 			&JsValue::NULL,
 			&JsValue::from_str(product_id.as_str()),
 			&JsValue::from_str(name),
@@ -871,18 +871,18 @@ impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
 	}
 }
 
-/// Install the host's `workerDemandChanged` callback as `ledger`'s observer.
+/// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
 /// Required: a host that omits it would never learn that a worker is wanted.
-fn install_worker_demand_observer(
+fn install_worker_controller(
 	ledger: &crate::host_logic::worker::WorkerLedger,
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
-	let changed = get_function(callbacks, "workerDemandChanged")?;
+	let request = get_function(callbacks, "requestWorkerTransition")?;
 	assert!(
-		ledger.install_demand_observer(Arc::new(WasmWorkerDemand {
-			changed: SendWrapper::new(changed),
+		ledger.install_worker_controller(Arc::new(WasmWorkerController {
+			request: SendWrapper::new(request),
 		})),
-		"a freshly built runtime installs its worker demand observer once"
+		"a freshly built runtime installs its worker controller once"
 	);
 	Ok(())
 }
@@ -950,7 +950,7 @@ impl WasmPairingHostRuntime {
 		if let Some(scanner_platform) = scanner_platform {
 			runtime.set_scanner_platform(scanner_platform);
 		}
-		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 
@@ -1125,7 +1125,7 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `workerDemandChanged`
+	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
@@ -1288,7 +1288,7 @@ impl WasmSigningHostRuntime {
 		if let Some(scanner_platform) = scanner_platform {
 			runtime.set_scanner_platform(scanner_platform);
 		}
-		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 
@@ -1403,7 +1403,7 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `workerDemandChanged`
+	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
 	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
@@ -1575,7 +1575,7 @@ impl WasmProductRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			pairing.set_contacts_platform(contacts_platform);
 		}
-		install_worker_demand_observer(pairing.worker_ledger(), &callbacks)?;
+		install_worker_controller(pairing.worker_ledger(), &callbacks)?;
 		let core = pairing.product_runtime(product, frame_sink);
 		Ok(Self::from_parts(core, channel.dispose))
 	}

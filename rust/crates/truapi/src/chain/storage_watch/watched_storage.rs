@@ -5,7 +5,9 @@ use futures::stream::BoxStream;
 use subxt::{ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 
 use super::WatchedHead;
-use crate::{chain::HashAndNumber, chain_runtime::RuntimeFailure};
+use std::sync::Arc;
+
+use crate::{chain::HashAndNumber, chain_runtime::RuntimeFailure, time::Timer};
 
 /// A value read at one block, with the metadata of the runtime it was read
 /// under, which decodes it.
@@ -49,4 +51,7 @@ pub trait WatchedStorage: Send + Sync {
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
 	) -> Result<BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>, RuntimeFailure>;
+
+	/// The clock a watch waits on between attempts to start.
+	fn timer(&self) -> Arc<dyn Timer>;
 }

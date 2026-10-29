@@ -17,67 +17,53 @@ public enum ProductLoadPhase: Equatable, Sendable {
 public typealias ProductLoadPhaseHandler = @Sendable (ProductLoadPhase) -> Void
 
 public struct ProductContent: Equatable, Sendable {
-    public enum Source: Equatable, Sendable {
-        case cache
-        case network
-    }
-
     public let resolved: ResolvedProduct
-    public let appContent: DotNsResolvedContent
-    public let contents: [ProductId: DotNsResolvedContent]
-    public let version: ProductVersion
-    public let source: Source
+    public let kind: ExecutableKind
+    public let archive: DotNsResolvedContent
 
-    public init(
-        resolved: ResolvedProduct,
-        contents: [ProductId: DotNsResolvedContent],
-        appContent: DotNsResolvedContent,
-        version: ProductVersion,
-        source: Source
-    ) {
+    public init(resolved: ResolvedProduct, kind: ExecutableKind, archive: DotNsResolvedContent) {
         self.resolved = resolved
-        self.contents = contents
-        self.appContent = appContent
-        self.version = version
-        self.source = source
+        self.kind = kind
+        self.archive = archive
     }
 
-    public func content(for kind: ExecutableKind) -> DotNsResolvedContent? {
-        contents[resolved.contentId(for: kind)]
+    public var contentId: ProductId {
+        resolved.contentId(for: kind)
     }
 }
 
-public struct ProductUpdate: Equatable, Sendable {
-    public let previous: ProductVersion
-    public let latest: FetchedProductVersion
+/// A nil `archive` removes the applied one; `record` is nil for a legacy product.
+public struct ExecutableRelease: Equatable, Sendable {
+    public let contentId: ProductId
+    public let archive: DotNsResolvedContent?
+    public let record: ProductManifest.Record?
 
-    public init(previous: ProductVersion, latest: FetchedProductVersion) {
-        self.previous = previous
-        self.latest = latest
+    public init(contentId: ProductId, archive: DotNsResolvedContent?, record: ProductManifest.Record? = nil) {
+        self.contentId = contentId
+        self.archive = archive
+        self.record = record
     }
-
-    public var productId: ProductId { latest.version.productId }
 }
 
 public protocol ProductContentLoading: Sendable {
     func open(
         _ productId: ProductId,
+        kind: ExecutableKind,
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent
-    func refresh(_ productId: ProductId) async -> ProductUpdate?
-    func apply(_ update: ProductUpdate) async
-    func pendingUpdates() async -> [ProductUpdate]
-    func removeSupersededContent(keeping servedHashes: Set<String>) async
-    func updates() -> AnyAsyncSequence<ProductUpdate>
+    /// A failed worker download keeps the declared worker instead of falling back to legacy.
+    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct
+    /// Covers only applied executables; the rest are downloaded when first opened.
+    func refresh(_ productId: ProductId) async -> [ExecutableRelease]
+    func apply(_ release: ExecutableRelease) async
+    /// Applied archives are always kept; `pinnedHashes` adds pending and served ones.
+    func removeSupersededContent(keeping pinnedHashes: Set<String>) async
+    func updates() -> AnyAsyncSequence<ExecutableRelease>
 }
 
 public extension ProductContentLoading {
-    func open(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ProductContent {
-        try await open(productId, policy: policy, onPhase: { _ in })
+    func open(_ productId: ProductId, kind: ExecutableKind, policy: ProductLoadPolicy) async throws -> ProductContent {
+        try await open(productId, kind: kind, policy: policy, onPhase: { _ in })
     }
-}
-
-public protocol ProductNetworkPathProviding: Sendable {
-    func pathStream() -> AnyAsyncSequence<Bool>
 }

@@ -91,6 +91,7 @@ let package = Package(
                 "FoundationExt",
                 "BackgroundExecution",
                 "IssueMonitoring",
+                .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
                 .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "KeyDerivation", package: "KeyDerivation"),

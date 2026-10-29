@@ -230,9 +230,12 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, then calls
+`start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
 
 ### Durable transactions
 
@@ -257,7 +260,7 @@ presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
-records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be
@@ -303,8 +306,8 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
 bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or
-`Stop` the counts produce is reported on one channel, the host's
-`worker_demand_changed` callback, in the order the ledger produced it and one
+`Stop` the counts produce is requested through the host's
+`request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
 reference itself for an open render. The host runs the executable and the core
 keeps the count; on the web `@parity/truapi-host` pushes the wanted level to

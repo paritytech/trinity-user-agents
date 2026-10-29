@@ -62,15 +62,33 @@ final class ReloadableChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
     }
 
     func renderMessage(
+        roomId: String?,
         messageId: String,
         messageType: String,
         messageData: Data
-    ) async -> AsyncThrowingStream<String, Error> {
-        await currentRuntime().renderMessage(messageId: messageId, messageType: messageType, messageData: messageData)
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        await currentRuntime().renderMessage(
+            roomId: roomId,
+            messageId: messageId,
+            messageType: messageType,
+            messageData: messageData
+        )
     }
 
-    func dispatchEvent(roomId: String?, messageId: String, actionId: String, payload: String?) async {
-        await currentRuntime().dispatchEvent(roomId: roomId, messageId: messageId, actionId: actionId, payload: payload)
+    func dispatchEvent(
+        roomId: String?,
+        messageId: String,
+        messageType: String?,
+        actionId: String,
+        payload: String?
+    ) async {
+        await currentRuntime().dispatchEvent(
+            roomId: roomId,
+            messageId: messageId,
+            messageType: messageType,
+            actionId: actionId,
+            payload: payload
+        )
     }
 
     @MainActor

@@ -101,10 +101,6 @@ private extension SPAFlowStateProvider {
         storage: DotNsLocalStorage,
         hostProvider: ProductHostProviding
     ) -> ProductContentLoading {
-        guard let snapshotDefaults = UserDefaults(suiteName: DotNsRecordSnapshot.suiteName) else {
-            fatalError("Can't create user defaults for the dotNS record snapshot")
-        }
-
         let backgroundExecutor = ConnectionRetainingExecutor(provider: chainRegistry)
         let resolverFactory = ProductResolverFactory(screening: .core, logger: Logger.shared)
 
@@ -116,11 +112,12 @@ private extension SPAFlowStateProvider {
                 hostProvider: hostProvider,
                 resolverFactory: resolverFactory
             ),
-            cache: ProductVersionCache(
-                snapshot: DotNsRecordSnapshot(defaults: snapshotDefaults),
+            cache: ProductContentCache(
+                store: ProductManifestFileStore(),
                 storage: storage,
                 tldProvider: DotNsTldProviderFacade.shared,
-                resolverFactory: resolverFactory
+                resolverFactory: resolverFactory,
+                logger: Logger.shared
             ),
             environment: ProductContentLoader.Environment(
                 pathProvider: ProductNetworkPath(),

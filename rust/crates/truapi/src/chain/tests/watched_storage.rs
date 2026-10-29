@@ -154,7 +154,8 @@ fn each_finalized_head_reads_every_watched_key_in_one_call() {
 	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let changes = next_item_within_timeout(&received).unwrap();
 
-	assert_eq!((changes.at, changes.value), (at, vec![(0, Some(b"one".to_vec())), (1, None)]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"one".to_vec())), (1, None)]);
 	assert_eq!(method_count(&provider, "state_queryStorageAt"), 1);
 }
 
@@ -174,7 +175,8 @@ fn a_finalized_watch_does_not_read_at_best_heads() {
 	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let changes = next_item_within_timeout(&received).unwrap();
 
-	assert_eq!((changes.at, changes.value), (at, vec![(0, Some(b"finalized".to_vec()))]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"finalized".to_vec()))]);
 }
 
 #[test]
@@ -228,8 +230,10 @@ fn a_best_watch_reports_the_first_notification_whole_and_later_ones_as_they_come
 	push_storage_notification(&node, &provider, 6, &[(OTHER, Some(b"two"))]);
 	let later = next_item_within_timeout(&received).unwrap();
 
-	assert_eq!((first.at, first.value), (first_at, vec![(0, Some(b"one".to_vec())), (1, None)]));
-	assert_eq!((later.at, later.value), (later_at, vec![(1, Some(b"two".to_vec()))]));
+	assert_eq!(first.at, first_at);
+	assert_eq!(first.value, vec![(0, Some(b"one".to_vec())), (1, None)]);
+	assert_eq!(later.at, later_at);
+	assert_eq!(later.value, vec![(1, Some(b"two".to_vec()))]);
 	assert_eq!(method_count(&provider, "state_queryStorageAt"), 0);
 }
 
@@ -253,7 +257,8 @@ fn a_best_watch_drops_keys_a_block_wrote_with_the_value_they_already_had() {
 	);
 	let changes = next_item_within_timeout(&received).unwrap();
 
-	assert_eq!((changes.at, changes.value), (at, vec![(1, Some(b"three".to_vec()))]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
 }
 
 #[test]
@@ -310,7 +315,8 @@ fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
 	close_first_connection(&provider);
 	let changes = next_change_within_timeout(&received);
 
-	assert_eq!((changes.at, changes.value), (at, vec![(1, Some(b"three".to_vec()))]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
 }
 
 #[test]
@@ -336,7 +342,8 @@ fn a_best_watch_reports_a_change_again_after_its_read_failed() {
 		.unwrap();
 	let changes = next_change_within_timeout(&received);
 
-	assert_eq!((changes.at, changes.value), (at, vec![(1, Some(b"three".to_vec()))]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
 }
 
 #[test]
@@ -361,5 +368,6 @@ fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
 	let changes = next_change_within_timeout(&received);
 
 	let at = node.lock().unwrap().block(5);
-	assert_eq!((changes.at, changes.value), (at, vec![(0, Some(b"two".to_vec()))]));
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"two".to_vec()))]);
 }

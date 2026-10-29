@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
@@ -20,6 +21,8 @@ actor SPARustRuntime {
     private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
@@ -32,13 +35,15 @@ actor SPARustRuntime {
         configuration: SPAConfiguration,
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
         self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -72,7 +77,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
             executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
@@ -81,6 +92,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -124,10 +142,12 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         guard case .dotNs = configuration.contentSource, let servedContent else { return }
 
-        let content = try await contentLoader.open(configuration.page.host.toDotDomain(), policy: .untilCancelled)
+        let served = try await contentLoader.open(
+            configuration.productDomain,
+            kind: configuration.executable,
+            policy: .untilCancelled
+        ).archive
         try checkNotDisposed()
-
-        let served = try content.served(for: configuration.executable)
 
         guard served != servedContent else { return }
 
@@ -141,13 +161,12 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
 private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let content = try await contentLoader.open(domain, policy: .untilCancelled)
-
-        let served = try content.served(for: configuration.executable)
+        let served = try await contentLoader.open(domain, kind: configuration.executable, policy: .untilCancelled)
+            .archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 
@@ -156,7 +175,7 @@ private extension SPARustRuntime {
     }
 
     func serve(_ content: DotNsResolvedContent) async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,

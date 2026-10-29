@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKitExt
 
@@ -45,7 +46,8 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             configuration: environment.configuration,
             contentLoader: environment.contentLoader,
             schemeHandlerProxy: environment.schemeHandlerProxy,
-            logger: environment.rust.logger
+            logger: environment.rust.logger,
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }
 }

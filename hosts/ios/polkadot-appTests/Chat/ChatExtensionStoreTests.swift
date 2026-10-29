@@ -148,7 +148,7 @@ private extension ChatExtensionStoreTests {
         ProductBot(
             product: product,
             description: nil,
-            runtime: IdleChatRuntime(),
+            runtime: ReloadableChatRuntime(runtime: IdleChatRuntime()) { IdleChatRuntime() },
             resolveImage: WidgetImageResolver { _ in nil }
         )
     }

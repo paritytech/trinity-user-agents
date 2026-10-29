@@ -143,7 +143,7 @@ private extension DefaultProductWorkerFactory {
     /// worker, a name that cannot be read degrades to the legacy shape.
     func resolve(_ productId: ProductId) async -> ResolvedProduct {
         do {
-            return try await contentLoader.open(productId, policy: .attempts(3)).resolved
+            return try await contentLoader.openWorker(productId)
         } catch {
             logger.error("Worker resolve fell back to legacy for \(productId): \(error)")
             return .legacy(id: productId)

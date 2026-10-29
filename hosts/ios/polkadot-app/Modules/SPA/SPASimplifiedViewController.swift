@@ -50,6 +50,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
     override func loadView() {
         let webViewConfiguration = WKWebViewConfiguration()
 
+        webViewConfiguration.applicationNameForUserAgent = ProductUserAgent.applicationName
         webViewConfiguration.allowsInlineMediaPlayback = true
         webViewConfiguration.mediaTypesRequiringUserActionForPlayback = []
 
@@ -107,11 +108,6 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 private extension SPASimplifiedViewController {
     enum Constants {
         static let minimumLoadingDuration: TimeInterval = 0.5
-    }
-
-    var isEnteringScreen: Bool {
-        isMovingToParent || navigationController?.isMovingToParent == true
-            || isBeingPresented || navigationController?.isBeingPresented == true
     }
 
     func display(loadFailure content: ErrorContent) {

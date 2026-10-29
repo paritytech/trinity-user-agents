@@ -28,14 +28,21 @@ final class MockChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
     }
 
     func renderMessage(
+        roomId _: String?,
         messageId _: String,
         messageType _: String,
         messageData _: Data
-    ) async -> AsyncThrowingStream<String, Error> {
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
         AsyncThrowingStream { $0.finish() }
     }
 
-    func dispatchEvent(roomId _: String?, messageId _: String, actionId _: String, payload _: String?) async {}
+    func dispatchEvent(
+        roomId _: String?,
+        messageId _: String,
+        messageType _: String?,
+        actionId _: String,
+        payload _: String?
+    ) async {}
 
     @MainActor
     func attach(presentationView _: ControllerBackedProtocol) {

@@ -1,4 +1,3 @@
-import AsyncExtensions
 import ChainRegistry
 import Foundation
 import os
@@ -255,6 +254,14 @@ private final class LateTld: DotNsTldProviding {
 
     func refresh() {}
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {
@@ -274,10 +281,6 @@ private final class SlowArchives: DotNsResolverProtocol, @unchecked Sendable {
         if delay > .zero { try await Task.sleep(for: delay) }
 
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

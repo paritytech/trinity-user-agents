@@ -176,8 +176,8 @@ class ChatEngine @Inject constructor(
             .map { extension ->
                 val defaultMetadata = extension.defaultRoomMetadata ?: return@map null
 
-                val avatar = defaultMetadata.icon?.let(ChatAvatar::Url)
-                    ?: ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val letterAvatar = ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val avatar = defaultMetadata.icon?.let { ChatAvatar.Url(it, placeholder = letterAvatar) } ?: letterAvatar
 
                 ChatDisplay(defaultMetadata.name, avatar)
             }.requireNotNull()

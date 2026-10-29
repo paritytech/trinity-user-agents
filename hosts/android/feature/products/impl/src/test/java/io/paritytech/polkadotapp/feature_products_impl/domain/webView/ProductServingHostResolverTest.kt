@@ -26,6 +26,7 @@ class ProductServingHostResolverTest {
 
     private fun resolvedWith(appHost: String?, widgetHost: String?) = ResolvedProduct(
         product = Product(id = ProductId.fromStoredValue("coinflip.dot"), name = "Coinflip", icon = null),
+        description = null,
         executables = Executables(
             app = appHost?.let { ProductExecutable.App(ExecutableHost(it), SemVer.ZERO) },
             widget = widgetHost?.let {

@@ -59,7 +59,7 @@ private extension ProductBotChatListTests {
         ProductBot(
             product: Product(id: "dim2.paseo", name: "Jollity"),
             description: description,
-            runtime: IdleChatRuntime(),
+            runtime: ReloadableChatRuntime(runtime: IdleChatRuntime()) { IdleChatRuntime() },
             resolveImage: WidgetImageResolver { _ in nil }
         )
     }

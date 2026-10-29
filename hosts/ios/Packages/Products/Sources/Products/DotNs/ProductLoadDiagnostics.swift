@@ -58,6 +58,34 @@ struct ProductLoadAttempts {
     }
 }
 
+actor ProductLoadDiagnosis {
+    private let diagnostics: ProductLoadDiagnostics
+    private var attempts: ProductLoadAttempts
+
+    init(productId: ProductId, diagnostics: ProductLoadDiagnostics) async {
+        self.diagnostics = diagnostics
+        attempts = await ProductLoadAttempts(productId: productId, startedAt: diagnostics.dateProvider.read())
+    }
+
+    func restart() async {
+        await attempts.restart(at: diagnostics.dateProvider.read())
+    }
+
+    func recordFailure(_ error: Error) async {
+        attempts.recordFailure()
+
+        let now = await diagnostics.dateProvider.read()
+
+        guard attempts.claimStallReport(at: now, thresholds: diagnostics.thresholds) else { return }
+
+        diagnostics.reportStall(attempts, error: error, at: now)
+    }
+
+    nonisolated func reportUnavailable(_ error: Error) {
+        diagnostics.reportUnavailable(error)
+    }
+}
+
 extension ProductLoadDiagnostics {
     func reportStall(_ attempts: ProductLoadAttempts, error: Error, at date: Date) {
         var counters = Self.counters(for: error)

@@ -285,6 +285,18 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
+/// Screen a product-supplied chat icon with the rules `create_room` and
+/// `register_bot` apply.
+///
+/// Hosts call this wherever they take a room icon from a product instead of
+/// screening it themselves: the rules are the core's, and a host that guesses
+/// at them draws icons the core refused. An absent icon screens to the empty
+/// string.
+#[uniffi::export]
+pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
+}
+
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
