@@ -10,7 +10,7 @@ private let exportedCoreMarkerPrefixes = [
     "truapi.tracing.",
     "truapi.chain.",
     "truapi.core.",
-    "truapi.ws_bridge.",
+    "truapi.ws_bridge."
 ]
 
 extension LoggerProtocol {
