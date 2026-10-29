@@ -21,7 +21,6 @@
       .numg  { fill:#1f7a4d; font-size:34px; font-weight:700; }
       .numr  { fill:#c0392b; font-size:34px; font-weight:700; }
       .flow  { fill:none; stroke:#5a6472; stroke-width:1.8; }
-      .bypass{ fill:none; stroke:#c0392b; stroke-width:1.8; stroke-dasharray:6 4; }
       .build { fill:none; stroke:#5a6472; stroke-width:1.8; stroke-dasharray:5 4; }
       .elab  { fill:#6b7785; font-size:11px; }
     </style>
@@ -96,12 +95,12 @@
 
   <rect x="850" y="400" width="300" height="56" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="420" class="tb">host-originated lines</text>
-  <text x="864" y="440" class="sub">truapi.auth &#183; truapi.chain &#183; truapi.product</text>
+  <text x="864" y="440" class="sub">truapi.auth &#183; truapi.chain &#183; truapi.product &#183; truapi.payments</text>
   <text x="864" y="472" class="elab">severity preserved here, unlike core lines</text>
 
   <rect x="590" y="480" width="560" height="60" rx="6" fill="#fdf8ef" stroke="#b07415" stroke-width="1.6"/>
   <text x="604" y="506" class="tb">8 capture senders: 4 Android, 4 iOS</text>
-  <text x="604" y="527" class="sub">three signatures &#183; two unrelated iOS protocols &#183; every feature that wants telemetry writes its own</text>
+  <text x="604" y="527" class="sub">seven signatures &#183; four unrelated iOS protocols &#183; every feature that wants telemetry writes its own</text>
 
   <rect x="1180" y="290" width="260" height="50" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
   <text x="1194" y="320" class="tb">logs</text>
@@ -139,7 +138,7 @@
   <text x="88"   y="671" class="numl">of the allowlist</text>
   <text x="396"  y="662" class="numr">8</text>
   <text x="428"  y="654" class="numl">capture senders,</text>
-  <text x="428"  y="671" class="numl">three shapes between them</text>
+  <text x="428"  y="671" class="numl">seven shapes between them</text>
   <text x="736"  y="662" class="numr">0</text>
   <text x="768"  y="654" class="numl">tests compare the copies,</text>
   <text x="768"  y="671" class="numl">so drift is silent</text>
@@ -179,13 +178,13 @@
 
   <rect x="1180" y="792" width="260" height="70" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
   <text x="1194" y="821" class="tb">logs &#183; events &#183; metrics</text>
-  <text x="1194" y="845" class="sub">one sender per platform</text>
+  <text x="1194" y="845" class="sub">one rule, read from the core</text>
 
   <rect x="590" y="900" width="230" height="64" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
   <circle cx="806" cy="914" r="9" fill="#1f7a4d"/><text x="806" y="918" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
   <text x="604" y="921" class="mono" style="font-size:12px;font-weight:600">#[uniffi::export]</text>
   <text x="604" y="939" class="mono" style="font-size:12px;font-weight:600">core_markers()</text>
-  <text x="604" y="957" class="sub">the 20th such function</text>
+  <text x="604" y="957" class="sub">the 14th such function</text>
 
   <rect x="850" y="900" width="300" height="64" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="923" class="monob">uniffi-bindgen</text>
@@ -204,7 +203,7 @@
   <text x="56"   y="1028" class="numg">1</text>
   <text x="88"   y="1020" class="numl">exported table,</text>
   <text x="88"   y="1037" class="numl">zero hand-written copies</text>
-  <text x="396"  y="1028" class="numg">2</text>
+  <text x="396"  y="1028" class="numg">1</text>
   <text x="428"  y="1020" class="numl">capture senders,</text>
   <text x="428"  y="1037" class="numl">one shape per platform</text>
   <text x="736"  y="1028" class="numg">1</text>
@@ -214,6 +213,6 @@
   <text x="1114" y="1020" class="numl">severity survives, a core error is alertable,</text>
   <text x="1114" y="1037" class="numl">and marker 49 stays local by construction</text>
 
-  <text x="40" y="1104" class="sub">Verified against origin/main @ 5dfdb50ca &#183; 29 Oct 2026 &#183; most of what the TODAY panel shows landed in the preceding four days</text>
+  <text x="40" y="1104" class="sub">Verified against origin/main @ 5dfdb50ca &#183; 29 Oct 2026</text>
   <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>
 </svg>
