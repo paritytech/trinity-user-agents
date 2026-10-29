@@ -18,7 +18,7 @@ extension QRScannerViewProtocol {
 
 @MainActor
 protocol QRScannerWireframeProtocol {
-    func askOpenSettings(from view: QRScannerViewProtocol?)
+    func askOpenSettings(from view: QRScannerViewProtocol?, completion: ((ApplicationSettingsAlertResult) -> Void)?)
     /// The user has just declined camera access in the system prompt.
     func didDenyCameraAccess(from view: QRScannerViewProtocol?)
 }
