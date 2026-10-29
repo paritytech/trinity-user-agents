@@ -13,17 +13,17 @@ RFC is normative; this page explains how the code is split and why._
 ## Summary
 
 One Rust crate, [`trinity-stack`](../../rust/crates/trinity-stack), holds every rule a reader applies: parsing,
-validation, signatures, links, what a reader does with a newly fetched descriptor, when it fetches, and how it reads a
-stack's dotNS contracts. It does no I/O itself. It tells its caller what to fetch or read, and the caller answers. The
-host core and the `truapi-host` CLI link it directly, and `@parity/trinity-stack` ships it compiled to wasm for
-JavaScript, adding the I/O and publishing. Conformance vectors live with the crate, and every implementation runs them.
+validation, signatures, links, what a reader does with a newly fetched descriptor, when it fetches, and how a
+descriptor's `dotns` is checked against its chain. It does no I/O itself. It tells its caller what to fetch or read, and
+the caller answers. The host core and the `truapi-host` CLI link it directly, and `@parity/trinity-stack` ships it
+compiled to wasm for JavaScript, adding the I/O and publishing. Conformance vectors live with the crate, and every
+implementation runs them.
 
 A descriptor is never a live dependency. Every consumer, host, tool or app, ships a copy made at build time, the way a
 project ships polkadot-api descriptors, and runs from it. `trinity-stack add` and `trinity-stack update` write signed
-copies, and the dotNS contracts read from each stack's Asset Hub, into a JavaScript project, where the build imports
-them. A host bundles them the same way. At run time the reader refreshes those copies by a policy the consumer picks,
-from never to once per process to every so often, and never on every request. A refresh that fails leaves the consumer
-on the copy it has.
+copies into a JavaScript project, where the build imports them. A host bundles them the same way. At run time the reader
+refreshes those copies by a policy the consumer picks, from never to once per process to every so often, and never on
+every request. A refresh that fails leaves the consumer on the copy it has.
 
 It lands as a stack: the crate, then the package and the CLI commands on top of it. The host checks RFC 2 needs, the
 reserved values and the values a build pins, land with that RFC.
@@ -43,8 +43,8 @@ In:
 - Sign, render a model, track `sequence` across publishes, and encode links. Drawing a link's QR code is left to the
   consumer.
 - `truapi-host stack` commands around all of it, the vectors and a JSON Schema.
-- The stack reader that keeps those copies current, and reading a stack's dotNS contracts from its Asset Hub, for the
-  host core and JavaScript alike.
+- The stack reader that keeps those copies current, for the host core and JavaScript alike.
+- Checking a descriptor's `dotns` against the dotNS registry on its Asset Hub, for operators and tools.
 - For JavaScript projects: the `trinity-stack` CLI that writes a project's stack copies.
 
 Out:
@@ -97,40 +97,40 @@ It also reports a new generation, so the caller drops its chain caches, and whet
 
   ```rust
   let mut reader = StackReader::new(Refresh::MaxAge(3600));
-  reader.load(&pointer, build, build_dotns, stored)?; // the store only moves a stack forward
+  reader.load(&pointer, build, stored)?; // the store only moves a stack forward
   let read = reader.get(&pointer, now);  // { current: Option<CurrentStack>, fetch: Option<FetchRequest> }
   // the caller fetches read.fetch's url with its If-None-Match
   let refreshed = reader.fetched(&pointer, served, now)?; // Document { bytes, etag } | NotModified | Unreachable
   // refreshed: what accept decided, and the record to store when it changed
   reader.due(now);                       // stacks whose background refresh is due
-  reader.dotns(&pointer, now);           // { record, look_up }, answered with looked_up
   ```
 
   `get` returns no `current` for a stack the reader has no copy of, and under `"once"` until the stack's first fetch is
   answered; the caller then waits for the fetch. It hands out at most one fetch per stack until `fetched` answers it, so
-  a caller that shares the pending fetch never sends two. dotNS records follow the same schedule through `dotns` and
-  `looked_up`. The record to store is bytes the crate encodes (the document, when it was fetched, its `ETag` and the
-  dotNS record), so every caller keeps the same thing under `stack_id`.
+  a caller that shares the pending fetch never sends two. The record to store is bytes the crate encodes (the document,
+  when it was fetched and its `ETag`), so every caller keeps the same thing under `stack_id`.
 
-- **dotNS lookup.** `DotnsLookup` runs the three steps of the RFC as a sequence the caller answers:
+- **dotNS check.** `DotnsLookup` runs the RFC's three steps as a sequence the caller answers, and `dotns_drift` compares
+  what it found with the descriptor:
 
   ```rust
-  let mut lookup = DotnsLookup::new(generation, at)?;
-  let record = loop {
+  let mut lookup = DotnsLookup::new(&descriptor);
+  let found = loop {
       match lookup.next() {
           DotnsStep::Storage(key) => lookup.storage(read_storage(key)?.as_deref())?,
           DotnsStep::Calls(calls) => lookup.answer(&answer_each(calls)?)?, // each Returned(bytes) or Reverted
-          DotnsStep::Done(record) => break record,                         // Option<Dotns>, with generation and at
+          DotnsStep::Done(found) => break found, // key to address, None without a gateway
       }
   };
+  let drift = dotns_drift(&descriptor, found.as_ref()); // empty when `dotns` matches the chain
   ```
 
-  The caller only reads one storage key and makes contract calls, at block `at`. A call that reverts is an answer, which
+  The caller reads one storage key and makes contract calls, all at one block. A call that reverts is an answer, which
   the lookup uses to tell a dispatcher from a controller. A call that fails is the caller's error and never reaches the
-  lookup, so an unreachable node is never read as "no gateway". The 16 registry reads are one `Calls` step, so a caller
-  can batch them. The host core's `discover_pop_controller` becomes a caller of it, answering with `ReviveApi_call`, and
-  the package answers with `eth_call`. Nothing asynchronous crosses the wasm boundary: the package calls `next` and
-  `answer` and does the awaiting itself.
+  lookup, so an unreachable node is never read as "no gateway". The registry reads, one for each key in `DOTNS_KEYS` and
+  each other key `dotns` has, are one `Calls` step, so a caller can batch them. Readers never run it: they use `dotns`
+  as stated. An operator runs it before publishing, and a tool through `trinity-stack check`. Nothing asynchronous
+  crosses the wasm boundary: the package calls `next` and `answer` and does the awaiting itself.
 
 - **Specs.** A light spec carries the genesis state root, so `light_spec_genesis` rebuilds the genesis header from it
   (number 0, zero parent, empty extrinsics root, empty digest) and hashes it. The tests check it against the light specs
@@ -174,6 +174,7 @@ npx trinity-stack add <name> <link | url> [--key 0x..]
 npx trinity-stack update [<name>...]
 npx trinity-stack list
 npx trinity-stack remove <name>
+npx trinity-stack check <name | url | file>
 ```
 
 They keep one directory in the project, committed with it:
@@ -182,20 +183,19 @@ They keep one directory in the project, committed with it:
 .trinity/
   stacks.json             { "previewnet": "polkadotapp://stack?key=0x4d43…&url=…", … }, edited by add and remove
   previewnet.json         the signed descriptor, byte for byte as served
-  previewnet.dotns.json   the dotNS contracts read from previewnet's Asset Hub
   index.js, index.d.ts    generated: the stacks above, ready to import
 ```
 
 - **`add`** records the link, then does what `update` does for that stack.
 - **`update`** fetches each stack and runs `accept` with the committed copy as stored, so it refuses an unsigned stack,
-  an expired one and anything that would lower `sequence`, as `truapi-host stack bundle` does. It then reads the stack's
-  dotNS contracts (below) and regenerates the module. It exits 0 with nothing changed, 1 on an error and 2 when it wrote
-  something, so a scheduled CI job can open a pull request whenever a stack moved and leave it to review.
+  an expired one and anything that would lower `sequence`, as `truapi-host stack bundle` does. It then regenerates the
+  module. It exits 0 with nothing changed, 1 on an error and 2 when it wrote something, so a scheduled CI job can open a
+  pull request whenever a stack moved and leave it to review.
 - **The generated module** carries each stack as data, not as a file to load:
 
   ```ts
   export const stacks = {
-    previewnet: { pointer: { url, key }, document: "<the signed JSON, as text>", dotns: { … } },
+    previewnet: { pointer: { url, key }, document: "<the signed JSON, as text>" },
     …
   };
   ```
@@ -206,31 +206,19 @@ They keep one directory in the project, committed with it:
 
 - **Committed, not generated on install.** The module is small and changes only when `update` runs, so committing it
   keeps a build reproducible without network access, and puts every change to a stack in front of a reviewer. A registry
-  rewire, such as a devnet's registry moving to a new address, shows up as a diff.
+  rewire, such as a devnet's registry moving to a new address, shows up as a diff of the copy's `dotns`.
 
 `truapi-host stack bundle` stays for host builds that do not run Node. Both apply the same crate rules.
 
-### dotNS contracts in the build copy
+### Checking `dotns`
 
-The RFC leaves dotNS out of the descriptor, since the chain holds it. Without it in the build copy, though, a tool would
-make about 18 requests to Asset Hub on every run just to find the registrar. So `update` runs the crate's `DotnsLookup`
-at the latest finalized block and writes, next to the signed copy:
-
-```json
-{
-  "generation": "2026-10-26T22:19:25.356Z",
-  "at": { "number": 182044, "hash": "0x…" },
-  "dotns": { "dispatcher": "0x…", "protocolRegistry": "0x…", "addresses": { "registrar": "0x…", … } }
-}
-```
-
-- Every read is made at one block, `at`, so the storage read and the contract calls see the same state, and anyone, a
-  light client included, can check the record later against that block.
-- `dotns` is null for a stack whose Asset Hub has no dotNS gateway.
-- The record is not signed. It holds what a reader would read at run time from the RPC the signed descriptor names, so
-  it adds no trust the descriptor did not already give, and the block makes it auditable.
-- It belongs to one `generation`. A restart of the chains redeploys dotNS, so a record from another generation is never
-  used.
+A descriptor carries its stack's dotNS addresses in `dotns`, signed with the rest, so a project's copy has them and a
+reader makes no chain request to find the registrar. `trinity-stack check` reads them from the registry at Asset Hub's
+latest finalized block, over the Asset Hub RPC and the `eth-rpc` the descriptor names, and prints each key on which the
+two differ. It exits 0 when they match and 1 on drift or a failure, so an operator runs it before each publish and a
+git-kept stack, such as Polkadot's, runs it on a schedule to see the registry's owner rewire a key. `checkDotns` is the
+same check as a function, and `readDotns` returns the registry's addresses, for an operator that fills `dotns` from the
+chain.
 
 ### At run time: the stack reader
 
@@ -248,7 +236,7 @@ const { descriptor } = await reader.get(stacks.previewnet, {
   require: { chains: ["AssetHub", "Bulletin"], services: ["eth-rpc"] },
 });
 const ethRpc = service(descriptor, "eth-rpc");
-const dotns = await reader.dotns(stacks.previewnet);
+const storeFactory = descriptor.dotns?.storeFactory;
 reader.onChange((change) => {
   /* a new sequence or generation: reconnect, drop chain caches */
 });
@@ -279,29 +267,20 @@ never connects to a chain itself, so it leaves that check to the client, which a
   stack costs a `304` with no body. After a conditional fetch fails it fetches without the header once, since a browser
   cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
 - **The copy it starts from** is the store's when it has a higher `sequence` than the build's, or the same content, and
-  otherwise the build's, signed or not: the store can only move a stack forward from the build copy, never back. Of two
-  dotNS records of the descriptor's `generation`, it starts from the one read at the later block.
+  otherwise the build's, signed or not: the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
   starts from the last good copy. A service can keep everything in memory. A CLI needs none: it has the build copy, and
   a run lasts one process. The reader keeps one record per stack, under a key of its own in that store: the document,
-  when it was fetched, its `ETag` and the dotNS record.
+  when it was fetched and its `ETag`.
 - **`onChange`** reports each update with the new descriptor and whether the generation changed, so a long-running
   consumer reconnects without restarting.
 - **`require`** checks that the stack has the chains and services the project needs, and fails naming what is missing,
   so a tool that needs Bulletin fails at start on a stack without it, not at its first call. `chain(descriptor, role)`
   and `service(descriptor, kind)` return a `Chain` and a `Service`, never `undefined`, and throw the same way.
-- **`reader.dotns`** follows the descriptor in use: a record serves only a descriptor of its `generation`, so a new
-  generation, which means dotNS was redeployed, waits for a lookup. Otherwise it is read on the descriptor's schedule:
-  the build's record under `"never"`, a fresh read once per process under `"once"`, and a read behind the record under
-  `{ maxAgeMs }`. The reader answers `DotnsLookup`'s calls with the `eth-rpc` the descriptor names or a `transport` the
-  project passes, such as its light client. A lookup that fails leaves the record it has of the same generation in use,
-  and a stack with no dotNS gateway is asked again on the same schedule, because a restarted stack sets its gateway
-  after its chains start.
 - **A pointer with no build copy**, such as a link a user pastes, works under every policy: the reader fetches it on
   first use.
 
-`read`, `accept` and `readDotns` stay as the pieces the reader is built from, for a consumer that wants to manage
-fetching itself.
+`read` and `accept` stay as the pieces the reader is built from, for a consumer that wants to manage fetching itself.
 
 ### Who uses what
 
@@ -318,8 +297,8 @@ fetching itself.
 - **polkadot-pop-e2e and other test suites.** `"once"`, read at the start of the run. A suite that must not move during
   a run pins.
 - **Hosts.** `truapi-host stack bundle` in the build, as the hosts RFC describes. The core drives the crate's
-  `StackReader` with `{ maxAgeMs }` over its platform's HTTP and storage, starting from the bundled copy, and answers
-  `DotnsLookup` with `ReviveApi_call`. A host shows a stale or unreachable stack and keeps running on it.
+  `StackReader` with `{ maxAgeMs }` over its platform's HTTP and storage, starting from the bundled copy, and takes
+  dotNS addresses from `dotns`. A host shows a stale or unreachable stack and keeps running on it.
 
 ## CLI
 
@@ -350,8 +329,9 @@ generates, so they cannot drift. Each case names the expected verdict or rule co
 - **Links**: the RFC's example, other schemes, a missing or repeated `url`, bad URLs and keys.
 - **Refresh**: a policy, a clock and a sequence of fetch results in, and the reader's answers out: when it fetches,
   which copy it serves, what it stores and which changes it reports.
-- **dotNS**: the chain's answers to each step in, and the record or error out: a controller, a dispatcher behind
-  `TARGET()`, no gateway, unset keys, and a contract that answers neither call.
+- **dotNS**: a descriptor and the chain's answers to each step in, and the addresses and drift, or the error, out: a
+  controller, a dispatcher behind `TARGET()`, no gateway, a moved, missing or extra address, a key the crate does not
+  know, and a contract that answers neither call.
 
 The Rust tests and the package's bun tests both run the committed files. A reader outside this repository can run them
 too. `schema/trinity-stack.v1.schema.json` describes the shape; rules that span fields stay with the vectors.
@@ -364,10 +344,10 @@ too. `schema/trinity-stack.v1.schema.json` describes the shape; rules that span 
   build without signing.
 - **Light-spec building.** Appendix A of the RFC plans to build light specs from full specs. That needs a node, so it is
   not part of the CLI.
-- **dotNS without `eth-rpc`.** The package answers `DotnsLookup`'s calls with the `eth-rpc` a descriptor names. The host
-  core answers them with Asset Hub's `ReviveApi_call`, which every stack has. If the crate also encoded
-  `ReviveApi_call`'s arguments and decoded its result, which today live in truapi's `dotns_gateway`, the package could
-  answer through `state_call` on the Asset Hub RPC alone: no `eth-rpc`, and every read at block `at` by its hash.
+- **dotNS without `eth-rpc`.** The check answers `DotnsLookup`'s calls with the `eth-rpc` a descriptor names. If the
+  crate encoded Asset Hub's `ReviveApi_call` arguments and decoded its result, which today live in truapi's
+  `dotns_gateway`, the check could answer through `state_call` on the Asset Hub RPC alone, with every read at one block
+  by its hash.
 - **Where the generated module lives.** `.trinity/index.js` is imported by path. polkadot-api instead installs its
   descriptors as a package (`"@polkadot-api/descriptors": "file:.papi/descriptors"`), which saves deep relative imports
   in a monorepo. Generating a `package.json` in `.trinity/` would allow both.
