@@ -101,7 +101,7 @@ extension ProductMessageSource {
                 editedAt[id] = edit
             }
 
-            if let replyTo = message.replyTo, messages[replyTo] == nil,
+            if let replyTo = message.reply?.messageId, messages[replyTo] == nil,
                let quoted = message.replyPreviewMessage(chatId: chatId, extensionId: productId) {
                 replyPreviews[replyTo] = quoted
             }
@@ -158,18 +158,17 @@ extension ProductMessageSource {
 extension ChatMessage {
     /// The replied message as the room screen quotes it, when the window does not hold it.
     func replyPreviewMessage(chatId: Chat.Id, extensionId: ChatExtension.Id) -> Chat.LocalMessage? {
-        guard let replyTo, let replyPreview else {
+        guard let reply, let replyPreview = reply.preview else {
             return nil
         }
 
         return ChatMessage(
-            messageId: replyTo,
+            messageId: reply.messageId,
             origin: replyPreview.origin,
             timestamp: timestamp,
             body: replyPreview.body,
             status: .read,
-            replyTo: nil,
-            replyPreview: nil,
+            reply: nil,
             editedAt: nil,
             reactions: [],
             request: false
