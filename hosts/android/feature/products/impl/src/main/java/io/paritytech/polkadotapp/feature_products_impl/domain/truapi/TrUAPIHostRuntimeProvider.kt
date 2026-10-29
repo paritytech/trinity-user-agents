@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
@@ -78,6 +79,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
+    private val fundingBridge: AppFundingHostBridge,
+    private val bundledProducts: BundledProducts,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
@@ -128,9 +131,15 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers payments Unsupported.
+        // window where the host lists no contacts or answers payments or funding unsupported.
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
+        runtime.setFunding(fundingBridge)
+        // The core discovers the published providers; the host lists only the ones it ships itself.
+        bundledProducts.fundingProviders()
+            .takeIf { it.isNotEmpty() }
+            ?.let { providers -> runCatching { runtime.setFundingProviders(providers) } }
+            ?.logFailure("TrUAPI refused the bundled funding providers")
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(

@@ -61,7 +61,6 @@ class CoinageFocusTest {
                 coin("front") to target(centreX = 60f, lift = 40f, turn = 0f),
                 coin("edge") to target(centreX = 200f, lift = 0f, turn = (Math.PI / 2).toFloat())
             ),
-            spawnEdge = 0f,
             stagger = CoinageCoinField.Stagger.FROM_FRONT
         )
         repeat(600) { field.advance(1f / 60) }

@@ -5,7 +5,9 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.disable
 import io.paritytech.polkadotapp.common.utils.enable
@@ -13,18 +15,25 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingSheets
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.flow.Flow
@@ -33,17 +42,25 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+import kotlin.time.Clock
 
 @HiltViewModel
 class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
-    private val tokenAmountMapper: TokenAmountMapper
+    private val tokenAmountMapper: TokenAmountMapper,
+    private val paymentAssetBrandProvider: PaymentAssetBrandProvider,
+    private val fundingEntryPoints: FundingEntryPoints,
 ) : BaseViewModel() {
+    private companion object {
+        const val FUNDING_ACTIVITY_STOP_TIMEOUT = 5_000L
+    }
+
     private val fundInProgress = MutableStateFlow(false)
-    private val fundingSheetInProgress = MutableStateFlow(false)
+    private val fundingInProgress = MutableStateFlow(false)
 
     /**
      * Owned here rather than remembered in the card, so the spread grid outlives the holdings updating
@@ -114,17 +131,52 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    fun onGetCashClick() = launchUnit {
-        if (fundingSheetInProgress.value) return@launchUnit
-        fundingSheetInProgress.enable()
-        interactor.getFundingConfig()
-            .onSuccess { router.openSpaSheet(it.onrampUrl) }
-            .onFailure { showPresentationError(GetCashUnavailablePresentationError(it)) }
-        fundingSheetInProgress.disable()
+    val fundingActivity: StateFlow<FundingActivityUiState> = combine(
+        interactor.observeFundingActivity(),
+        paymentAssetBrandProvider.brand,
+        holdingsFlow.map { it.getOrNull()?.balance?.total }.onStart { emit(null) }
+    ) { activity, brand, balance ->
+        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity, currentBalance = balance)
     }
+        .stateIn(
+            scope = this,
+            started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),
+            initialValue = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null)
+        )
+
+    private val sheets = FundingSheets()
+
+    val fundingSheet: StateFlow<FundingSheet?> = sheets.shown
+        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
+
+    /** Top-ups in progress show first, so a second one is a deliberate choice rather than a paid-twice slip. */
+    fun onGetCashClick() {
+        if (fundingActivity.value.toppingUp.isEmpty()) {
+            openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
+        } else {
+            sheets.open(FundingSheet.TOPPING_UP)
+        }
+    }
+
+    fun onNewTopUpClick() {
+        sheets.close()
+        openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
+    }
+
+    fun onHistoryClick() = sheets.open(FundingSheet.HISTORY)
+
+    fun onSheetBack() = sheets.back()
+
+    fun onSheetDismiss() = sheets.close()
 
     fun onSendClick() {
         router.openSendPayment()
+    }
+
+    /** A session in flight opens where it stands; an ended one opens its detail. */
+    fun onFundingRowClick(id: String) = launchUnit {
+        sheets.close()
+        interactor.showFundingSession(id)
     }
 
     fun onAutoFundClick() = launchUnit {
@@ -182,6 +234,17 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             .onFailure { showPresentationError(ShareCoinageLogsFailedPresentationError(it)) }
     }
 
+    private fun openFunding(
+        direction: FundingDirection,
+        error: (Throwable) -> PresentationThrowable
+    ) = launchUnit {
+        if (fundingInProgress.value) return@launchUnit
+        fundingInProgress.enable()
+        interactor.openFunding(direction)
+            .onFailure { showPresentationError(error(it)) }
+        fundingInProgress.disable()
+    }
+
     private fun CoinageHoldingsInfo.toTokensState(asset: Chain.Asset) = CoinageUiState.TokensState(
         totalBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.total)),
         readyBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
@@ -207,7 +270,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             is BackupProgress.Deep.Completed,
             is BackupProgress.Deep.Syncing,
             is BackupProgress.Initial.Completed -> BalanceRestoreUiState.Restore(inProgress = isInProgress())
-            else -> BalanceRestoreUiState.SendCash
+            else -> BalanceRestoreUiState.SendCash(canGetCash = fundingEntryPoints.visible)
         }
     }
 }

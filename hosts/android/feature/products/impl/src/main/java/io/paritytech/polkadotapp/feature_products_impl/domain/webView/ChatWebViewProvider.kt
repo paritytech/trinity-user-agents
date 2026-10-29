@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +86,7 @@ class ChatWebViewProvider @AssistedInject constructor(
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest?): WebResourceResponse? {
                     return permissionClient.shouldInterceptRequest(view, request)
+                        ?: request?.let { config.bundledContent?.intercept(it) }
                         ?: request?.let { dotNsContentClient.shouldInterceptRequest(view, it) }
                 }
             }
@@ -120,4 +122,6 @@ class ChatWebViewProvider @AssistedInject constructor(
 data class ChatWebViewConfig(
     val productId: ProductId,
     val workerScript: WorkerScript,
+    /** Set for a worker the app ships, which is served from its own files instead of dotNS. */
+    val bundledContent: BundledProductContent?,
 )

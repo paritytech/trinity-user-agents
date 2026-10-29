@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import javax.inject.Inject
 
 /**
@@ -15,10 +16,12 @@ class RuntimeSelectingSpaHost @Inject constructor(
     private val native: NativeSpaHost,
     private val truapi: TrUAPISpaHost,
     private val runtimeSettings: ProductRuntimeSettings,
+    private val bundledProducts: BundledProducts,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
-        if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
+        // Only the TrUAPI runtime serves a product the app ships.
+        if (runtimeSettings.isTrUAPIRuntimeEnabled() || bundledProducts.appFor(initialUrl) != null) {
             truapi.createSession(initialUrl, underCard)
         } else {
             native.createSession(initialUrl)
