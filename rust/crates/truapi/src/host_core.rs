@@ -648,6 +648,7 @@ pub struct SigningHostRuntime {
 
 impl SigningHostRuntime {
 	/// The services this runtime serves products from.
+	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
