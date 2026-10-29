@@ -40,7 +40,6 @@ extension Chat.RoomPreview {
 extension Chat.RoomBadge {
     init(_ badge: ChatRoomBadge) {
         switch badge {
-        case .hidden: self = .none
         case let .unreadCount(count): self = .unreadCount(Int32(clamping: count))
         case let .image(icon): self = .image(icon)
         }
