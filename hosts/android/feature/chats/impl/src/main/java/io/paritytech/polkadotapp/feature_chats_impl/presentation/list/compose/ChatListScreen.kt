@@ -3,10 +3,12 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,8 +29,6 @@ import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButto
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
 import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlassButtonStyle
-import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.Add
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -37,6 +38,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListLoading
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.IdleSearchEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.SearchRevealContainer
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.icons.NewChat
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.rememberSearchRevealState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import kotlinx.collections.immutable.persistentListOf
@@ -115,15 +117,26 @@ private fun NewChatButton(
         val borderColor = LocalDockletPalette.current.glassStroke
         val border = remember(borderWidth, borderColor) { BorderStroke(borderWidth, borderColor) }
         PolkadotIconButton(
-            icon = NovaIcons.Add,
+            icon = NewChat,
             onClick = onClick,
             modifier = modifier,
             style = rememberDockletGlassButtonStyle(),
-            size = PolkadotIconButtonSize.medium(),
+            size = rememberNewChatButtonSize(),
             shape = PolkadotButtonShape.pill,
             border = border,
         )
     }
+}
+
+@Composable
+private fun rememberNewChatButtonSize(): PolkadotIconButtonSize {
+    val padding = PolkadotTheme.spacings.small
+    return remember(padding) { NewChatButtonSize(PaddingValues(padding)) }
+}
+
+@Immutable
+private data class NewChatButtonSize(override val padding: PaddingValues) : PolkadotIconButtonSize {
+    override val iconSize: Dp = NewChat.defaultWidth
 }
 
 @Preview(backgroundColor = 0xFF000000, showBackground = true)
