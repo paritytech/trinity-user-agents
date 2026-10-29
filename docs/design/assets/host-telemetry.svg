@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 1130" width="1480" height="1130" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="aGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5a6472"/>
+    </marker>
+    <marker id="aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+    <marker id="aGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f7a4d"/>
+    </marker>
+    <style>
+      .t     { fill:#1d2733; font-size:14px; }
+      .tb    { fill:#1d2733; font-size:14px; font-weight:600; }
+      .mono  { font-family:"SF Mono", Menlo, Consolas, monospace; fill:#1d2733; font-size:13px; }
+      .monob { font-family:"SF Mono", Menlo, Consolas, monospace; fill:#1d2733; font-size:13.5px; font-weight:600; }
+      .sub   { fill:#6b7785; font-size:11.5px; }
+      .lane  { fill:#6b7785; font-size:12px; font-weight:700; letter-spacing:1.4px; }
+      .ptitle{ fill:#1d2733; font-size:19px; font-weight:700; letter-spacing:2px; }
+      .numl  { fill:#6b7785; font-size:12px; }
+      .numg  { fill:#1f7a4d; font-size:34px; font-weight:700; }
+      .numr  { fill:#c0392b; font-size:34px; font-weight:700; }
+      .flow  { fill:none; stroke:#5a6472; stroke-width:1.8; }
+      .bypass{ fill:none; stroke:#c0392b; stroke-width:1.8; stroke-dasharray:6 4; }
+      .build { fill:none; stroke:#5a6472; stroke-width:1.8; stroke-dasharray:5 4; }
+      .elab  { fill:#6b7785; font-size:11px; }
+    </style>
+  </defs>
+
+  <rect width="1480" height="1130" fill="#f4f6f8"/>
+
+  <text x="40" y="46" class="t" style="font-size:25px;font-weight:700">Host telemetry: what leaves the device, and who decides</text>
+  <text x="40" y="72" class="sub" style="font-size:13.5px">Border style carries the meaning, not colour: solid green &#10003; = one rule, owned in one place &#183; solid amber = the same rule written out by hand, once per host</text>
+
+  <!-- ===================== PANEL A : TODAY ===================== -->
+  <rect x="24" y="104" width="1432" height="586" rx="10" fill="#ffffff" stroke="#dde3e9"/>
+  <text x="44" y="138" class="ptitle">TODAY</text>
+  <text x="134" y="138" class="sub" style="font-size:13px">one rule for what may leave the device, written out by hand once per host, and nothing compares the copies</text>
+
+  <text x="44"   y="168" class="lane">CORE &#183; RUST</text>
+  <text x="334"  y="168" class="lane">BOUNDARY</text>
+  <text x="594"  y="168" class="lane">HOST: PICKS A LEVEL</text>
+  <text x="854"  y="168" class="lane">HOST: EXPORT GATE</text>
+  <text x="1184" y="168" class="lane">SENTRY</text>
+
+  <rect x="40" y="180" width="260" height="132" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="286" cy="194" r="9" fill="#1f7a4d"/><text x="286" y="198" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="54" y="205" class="monob">warn! / info! macros</text>
+  <text x="54" y="228" class="sub">48 distinct truapi.* markers</text>
+  <text x="54" y="248" class="sub">45 of them in production</text>
+  <text x="54" y="276" class="sub">the core knows what each one</text>
+  <text x="54" y="294" class="sub">carries; nothing downstream does</text>
+
+  <rect x="330" y="211" width="230" height="70" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="546" cy="225" r="9" fill="#1f7a4d"/><text x="546" y="229" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="344" y="234" class="monob">HostSinkLayer</text>
+  <text x="344" y="253" class="sub">one filter, one cap,</text>
+  <text x="344" y="270" class="sub">owned by the core</text>
+
+  <rect x="330" y="290" width="230" height="56" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="344" y="313" class="mono" style="font-weight:600">on_core_log(marker, detail)</text>
+  <text x="344" y="332" class="sub">UniFFI callback &#183; two strings</text>
+
+  <rect x="590" y="220" width="230" height="60" rx="6" fill="#fdf8ef" stroke="#b07415" stroke-width="1.6"/>
+  <text x="604" y="243" class="monob">logCoreLine</text>
+  <text x="604" y="264" class="sub">Android &#183; allowlist copy 1 of 2</text>
+  <rect x="734" y="226" width="74" height="19" rx="9.5" fill="#b07415"/>
+  <text x="771" y="240" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">COPY 1</text>
+
+  <rect x="590" y="300" width="230" height="60" rx="6" fill="#fdf8ef" stroke="#b07415" stroke-width="1.6"/>
+  <text x="604" y="323" class="monob">logCoreLine</text>
+  <text x="604" y="344" class="sub">iOS &#183; allowlist copy 2 of 2</text>
+  <rect x="734" y="306" width="74" height="19" rx="9.5" fill="#b07415"/>
+  <text x="771" y="320" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700">COPY 2</text>
+
+  <text x="594" y="384" class="elab">not an export decision, it only picks a level,</text>
+  <text x="594" y="399" class="elab">and flattens every allowlisted marker to INFO</text>
+
+  <rect x="850" y="240" width="130" height="80" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="864" y="268" class="monob">Timber</text>
+  <text x="864" y="290" class="monob">SwiftyBeaver</text>
+  <text x="864" y="308" class="sub">producers, not gates</text>
+
+  <rect x="1000" y="205" width="150" height="62" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="1136" cy="219" r="9" fill="#1f7a4d"/><text x="1136" y="223" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="1014" y="228" class="monob">SentryLogTree</text>
+  <text x="1014" y="247" class="sub">tag truapi. + INFO+</text>
+  <text x="1014" y="261" class="sub">this is the real gate</text>
+
+
+  <rect x="1000" y="300" width="150" height="62" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="1136" cy="314" r="9" fill="#1f7a4d"/><text x="1136" y="318" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="1014" y="322" class="mono" style="font-size:12px;font-weight:600">HostLogSink</text>
+  <text x="1014" y="338" class="mono" style="font-size:12px;font-weight:600">Destination</text>
+  <text x="1014" y="355" class="sub">tag truapi. + INFO+</text>
+
+  <rect x="850" y="400" width="300" height="56" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="864" y="420" class="tb">host-originated lines</text>
+  <text x="864" y="440" class="sub">truapi.auth &#183; truapi.chain &#183; truapi.product</text>
+  <text x="864" y="472" class="elab">severity preserved here, unlike core lines</text>
+
+  <rect x="590" y="480" width="560" height="60" rx="6" fill="#fdf8ef" stroke="#b07415" stroke-width="1.6"/>
+  <text x="604" y="506" class="tb">8 capture senders: 4 Android, 4 iOS</text>
+  <text x="604" y="527" class="sub">three signatures &#183; two unrelated iOS protocols &#183; every feature that wants telemetry writes its own</text>
+
+  <rect x="1180" y="290" width="260" height="50" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="1194" y="320" class="tb">logs</text>
+  <rect x="1180" y="370" width="260" height="50" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="1194" y="400" class="tb">events</text>
+  <rect x="1180" y="450" width="260" height="50" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="1194" y="480" class="tb">metrics</text>
+
+  <path class="flow"   d="M300,246 H326" marker-end="url(#aGrey)"/>
+  <path class="flow"   d="M445,281 V286" marker-end="url(#aGrey)"/>
+
+  <path class="flow" d="M560,310 H575 V252 H586" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M560,326 H575 V330 H586" marker-end="url(#aGrey)"/>
+
+  <path class="flow" d="M820,250 H834 V262 H846" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M820,330 H834 V298 H846" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M980,262 H990 V236 H996" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M980,298 H990 V331 H996" marker-end="url(#aGrey)"/>
+
+  <path class="flow" d="M915,400 V324" marker-end="url(#aGrey)"/>
+
+  <path class="flow" d="M1150,236 H1250 V286" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M1150,331 H1165 V317 H1176" marker-end="url(#aGrey)"/>
+
+  <path class="flow" d="M1150,500 H1165 V395 H1176" marker-end="url(#aGrey)"/>
+  <path class="flow" d="M1150,520 H1165 V475 H1176" marker-end="url(#aGrey)"/>
+
+  <rect x="40" y="558" width="1400" height="46" rx="6" fill="#fbfcfd" stroke="#dde3e9"/>
+  <text x="56" y="578" class="sub" style="font-weight:700;letter-spacing:1px">TWO HOSTS TODAY, FOUR SOON</text>
+  <text x="56" y="596" class="sub">iOS and Android each carry a hand-written copy of this rule. Desktop and dot.li would make four copies, in three languages, with nothing comparing them.</text>
+
+  <line x1="40" y1="618" x2="1440" y2="618" stroke="#dde3e9"/>
+  <text x="56"   y="662" class="numr">2</text>
+  <text x="88"   y="654" class="numl">hand-written copies</text>
+  <text x="88"   y="671" class="numl">of the allowlist</text>
+  <text x="396"  y="662" class="numr">8</text>
+  <text x="428"  y="654" class="numl">capture senders,</text>
+  <text x="428"  y="671" class="numl">three shapes between them</text>
+  <text x="736"  y="662" class="numr">0</text>
+  <text x="768"  y="654" class="numl">tests compare the copies,</text>
+  <text x="768"  y="671" class="numl">so drift is silent</text>
+  <text x="1076" y="662" class="numr">&#10007;</text>
+  <text x="1114" y="654" class="numl">severity is lost, a core error and a core</text>
+  <text x="1114" y="671" class="numl">warning both arrive as info, so neither alerts</text>
+
+  <!-- ===================== PANEL B : PROPOSED ===================== -->
+  <rect x="24" y="714" width="1432" height="356" rx="10" fill="#ffffff" stroke="#dde3e9"/>
+  <text x="44" y="748" class="ptitle">PROPOSED</text>
+  <text x="200" y="748" class="sub" style="font-size:13px">one table in the core, reaching every host through the bindings that already exist</text>
+
+  <text x="44"   y="778" class="lane">CORE &#183; RUST</text>
+  <text x="334"  y="778" class="lane">BOUNDARY</text>
+  <text x="594"  y="778" class="lane">BINDINGS</text>
+  <text x="854"  y="778" class="lane">HOSTS</text>
+  <text x="1184" y="778" class="lane">SENTRY</text>
+
+  <rect x="40" y="792" width="260" height="70" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="286" cy="806" r="9" fill="#1f7a4d"/><text x="286" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="54" y="815" class="monob">markers.rs</text>
+  <text x="54" y="834" class="sub">one table: target &#183; carries &#183; class</text>
+  <text x="54" y="851" class="sub">Local | Export(Severity)</text>
+
+  <rect x="330" y="792" width="230" height="70" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="546" cy="806" r="9" fill="#1f7a4d"/><text x="546" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="344" y="815" class="monob">HostSinkLayer</text>
+  <text x="344" y="834" class="sub">exact match, not prefix</text>
+  <text x="344" y="851" class="sub">an unregistered target is refused</text>
+
+  <rect x="850" y="792" width="300" height="70" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="1136" cy="806" r="9" fill="#1f7a4d"/><text x="1136" y="810" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="864" y="815" class="monob">table[marker], exact match</text>
+  <text x="864" y="834" class="sub">coreMarkers() read once at startup</text>
+  <text x="864" y="851" class="sub">replaces both allowlists and both tag filters</text>
+  <text x="1012" y="888" class="elab">arrives with every other binding</text>
+
+  <rect x="1180" y="792" width="260" height="70" rx="6" fill="#eef2f6" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="1194" y="821" class="tb">logs &#183; events &#183; metrics</text>
+  <text x="1194" y="845" class="sub">one sender per platform</text>
+
+  <rect x="590" y="900" width="230" height="64" rx="6" fill="#f0f8f3" stroke="#1f7a4d" stroke-width="1.6"/>
+  <circle cx="806" cy="914" r="9" fill="#1f7a4d"/><text x="806" y="918" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
+  <text x="604" y="921" class="mono" style="font-size:12px;font-weight:600">#[uniffi::export]</text>
+  <text x="604" y="939" class="mono" style="font-size:12px;font-weight:600">core_markers()</text>
+  <text x="604" y="957" class="sub">the 20th such function</text>
+
+  <rect x="850" y="900" width="300" height="64" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
+  <text x="864" y="923" class="monob">uniffi-bindgen</text>
+  <text x="864" y="942" class="sub">truapi.swift &#183; generated/*.kt &#183; no new emitter</text>
+  <text x="864" y="958" class="sub">web host reads it from the TS surface instead</text>
+
+  <path class="flow"  d="M300,827 H326" stroke="#1f7a4d" marker-end="url(#aGreen)"/>
+  <path class="flow"  d="M560,827 H846" stroke="#1f7a4d" marker-end="url(#aGreen)"/>
+  <path class="flow"  d="M1150,827 H1176" marker-end="url(#aGrey)"/>
+  <path class="build" d="M170,862 V932 H586" marker-end="url(#aGrey)"/>
+  <text x="196" y="926" class="elab">exported</text>
+  <path class="build" d="M820,932 H846" marker-end="url(#aGrey)"/>
+  <path class="build" d="M1000,900 V868" marker-end="url(#aGrey)"/>
+
+  <line x1="40" y1="984" x2="1440" y2="984" stroke="#dde3e9"/>
+  <text x="56"   y="1028" class="numg">1</text>
+  <text x="88"   y="1020" class="numl">exported table,</text>
+  <text x="88"   y="1037" class="numl">zero hand-written copies</text>
+  <text x="396"  y="1028" class="numg">2</text>
+  <text x="428"  y="1020" class="numl">capture senders,</text>
+  <text x="428"  y="1037" class="numl">one shape per platform</text>
+  <text x="736"  y="1028" class="numg">1</text>
+  <text x="768"  y="1020" class="numl">gate, owned by the core</text>
+  <text x="768"  y="1037" class="numl">and read by every host</text>
+  <text x="1076" y="1028" class="numg">&#10003;</text>
+  <text x="1114" y="1020" class="numl">severity survives, a core error is alertable,</text>
+  <text x="1114" y="1037" class="numl">and marker 49 stays local by construction</text>
+
+  <text x="40" y="1104" class="sub">Verified against origin/main @ 5dfdb50ca &#183; 29 Oct 2026 &#183; most of what the TODAY panel shows landed in the preceding four days</text>
+  <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>
+</svg>
