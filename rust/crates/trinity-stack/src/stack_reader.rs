@@ -23,7 +23,7 @@ pub enum Refresh {
 
 /// A fetch for the caller to make and answer with [`StackReader::fetched`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 #[serde(rename_all = "camelCase")]
 pub struct FetchRequest {
 	/// The descriptor's URL.
@@ -50,7 +50,7 @@ pub enum Served<'a> {
 
 /// The copy of a stack a reader uses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct CurrentStack {
 	/// The descriptor.
 	#[serde(flatten)]
@@ -63,7 +63,7 @@ pub struct CurrentStack {
 
 /// What [`StackReader::get`] says.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct StackRead {
 	/// The copy to use. `None` means wait for the stack's fetch, which this call or an earlier
 	/// one handed out.
@@ -74,7 +74,7 @@ pub struct StackRead {
 
 /// What [`StackReader::fetched`] did with an answer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct Refreshed {
 	/// What `accept` decided, and the copy now in use.
 	pub accepted: Accepted,
@@ -87,7 +87,7 @@ pub struct Refreshed {
 
 /// What [`StackReader::dotns`] says.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 #[serde(rename_all = "camelCase")]
 pub struct DotnsRead {
 	/// The record to use. `None` means wait for the stack's lookup.
@@ -99,7 +99,7 @@ pub struct DotnsRead {
 
 /// What [`StackReader::looked_up`] did with a lookup's result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct DotnsLookedUp {
 	/// The record now in use, `None` when the reader has none for the descriptor in use.
 	pub record: Option<DotnsRecord>,

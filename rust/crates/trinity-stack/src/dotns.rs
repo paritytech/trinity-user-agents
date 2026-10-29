@@ -49,7 +49,7 @@ pub struct Dotns {
 
 /// What a reader keeps of a lookup. It serves only descriptors of its `generation`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 #[serde(deny_unknown_fields)]
 pub struct DotnsRecord {
 	/// The `generation` of the descriptor the lookup ran for.

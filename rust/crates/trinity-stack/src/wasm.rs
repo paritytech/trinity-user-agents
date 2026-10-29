@@ -203,6 +203,7 @@ fn record(record: Option<Ts<DotnsRecord>>) -> Result<Option<DotnsRecord>, JsValu
 
 /// What a lookup needs next, as JS sees it: hex where Rust has bytes.
 #[derive(Serialize, Tsify)]
+#[tsify(hashmap_as_object)]
 #[serde(rename_all = "camelCase")]
 pub enum LookupStep {
 	/// The 0x-prefixed Asset Hub storage key to read.
