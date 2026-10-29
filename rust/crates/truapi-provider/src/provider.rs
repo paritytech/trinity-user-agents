@@ -648,14 +648,21 @@ mod tests {
 		assert!(error.to_string().contains(&"ab".repeat(32)));
 	}
 
+	/// The genesis hashes of the bundled Paseo Next v2 network.
+	#[cfg(feature = "networks")]
+	fn paseo_next_v2() -> crate::NetworkChains {
+		let (_, chains) = EmbeddedChainProvider::builder()
+			.add_network("paseo-next-v2")
+			.expect("the network is bundled");
+		chains
+	}
+
 	/// An unregistered chain must not start the light client from the catalog,
 	/// including on a provider with nothing registered.
 	#[cfg(all(feature = "ws", feature = "networks"))]
 	#[test]
 	fn a_provider_without_the_catalog_does_not_resolve_from_it() {
-		let (_, catalog) = EmbeddedChainProvider::builder()
-			.add_network("paseo-next-v2")
-			.expect("the network is bundled");
+		let catalog = paseo_next_v2();
 		let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
 		let empty = EmbeddedChainProvider::builder().build();
 		let remote = EmbeddedChainProvider::builder()
@@ -679,9 +686,7 @@ mod tests {
 	#[cfg(feature = "networks")]
 	#[test]
 	fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
-		let (_, catalog) = EmbeddedChainProvider::builder()
-			.add_network("paseo-next-v2")
-			.expect("the network is bundled");
+		let catalog = paseo_next_v2();
 		let store = std::sync::Arc::new(MemoryStorageClient::default());
 		for genesis in [catalog.bulletin, catalog.relay] {
 			store
@@ -708,9 +713,7 @@ mod tests {
 	#[cfg(feature = "networks")]
 	#[test]
 	fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
-		let (_, catalog) = EmbeddedChainProvider::builder()
-			.add_network("paseo-next-v2")
-			.expect("the network is bundled");
+		let catalog = paseo_next_v2();
 		let store = std::sync::Arc::new(MemoryStorageClient::default());
 		store
 			.stored

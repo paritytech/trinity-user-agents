@@ -188,6 +188,7 @@ struct LightInner {
 }
 
 /// A chain the client is running and how many things hold it.
+#[derive(Default)]
 struct AddedChain {
 	/// The add this crate made on its own account, JSON-RPC disabled: a relay
 	/// behind a parachain, or a chain kept running. Removed here when the last
@@ -348,11 +349,7 @@ impl LightState {
 
 		// Counted only once the add succeeded, so a failed connect leaves no
 		// chain behind that `is_added` would report as running.
-		let entry = guard.added.entry(genesis_hash).or_insert(AddedChain {
-			implicit_id: None,
-			connection_ids: Vec::new(),
-			refcount: 0,
-		});
+		let entry = guard.added.entry(genesis_hash).or_default();
 		entry.connection_ids.push(success.chain_id);
 		entry.refcount += 1;
 		guard.connections += 1;
@@ -484,11 +481,7 @@ fn add_implicit(
 		})
 		.map_err(|err| ProviderError::AddChain { reason: err.to_string() })?;
 
-	let entry = guard.added.entry(genesis_hash).or_insert(AddedChain {
-		implicit_id: None,
-		connection_ids: Vec::new(),
-		refcount: 0,
-	});
+	let entry = guard.added.entry(genesis_hash).or_default();
 	entry.implicit_id = Some(success.chain_id);
 	entry.refcount += 1;
 	Ok(success.chain_id)
