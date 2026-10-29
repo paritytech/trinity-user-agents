@@ -29,14 +29,14 @@ extension Chat.ProductFeedMessage {
     /// The store resolves the reply against the messages of the room, so the content carries no quote yet.
     init(_ message: ChatMessage) {
         var body = message
-        body.replyTo = nil
+        body.reply = nil
 
         self.init(
             messageId: message.messageId,
             participantId: message.origin.participantId,
             timestamp: message.timestamp,
             content: body.nativeContent,
-            replyTo: message.replyTo
+            replyTo: message.reply?.messageId
         )
     }
 }
