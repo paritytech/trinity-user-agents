@@ -127,11 +127,13 @@ export function respond(
   };
 }
 
-/** Example Chat's own check of a response its host delivered. */
+/** Example Chat's own check of a response its host delivered, with the recipient's protocol key. */
 export function checkResponse(
   secrets: SenderSecrets,
   response: string,
-): { ok: true; topics: Topics } | { ok: false; reason: string } {
+):
+  | { ok: true; topics: Topics; protocolKey: string }
+  | { ok: false; reason: string } {
   const value = decode(response);
   if (
     value?.version !== RESPONSE ||
@@ -148,6 +150,6 @@ export function checkResponse(
   );
   return confirmation(shared, secrets.payload, value.protocolKey, topics) ===
     value.confirm
-    ? { ok: true, topics }
+    ? { ok: true, topics, protocolKey: value.protocolKey }
     : { ok: false, reason: "the confirmation does not check" };
 }

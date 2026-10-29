@@ -459,7 +459,10 @@ describe("a conversation the host starts", () => {
       send({ roomId });
     });
     const provider = new ChatV2Provider(PRODUCT, host, Date.now, {
-      start: { reference: () => "reference", blocked: () => null },
+      start: {
+        target: () => ({ contact: "reference" }),
+        blocked: () => null,
+      },
     });
     await settle();
     return provider.start!;

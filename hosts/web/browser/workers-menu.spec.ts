@@ -238,7 +238,7 @@ describe("workers in the menu", () => {
   );
 
   test(
-    "on a phone the menu drawer holds them, Escape closes it, and a test user tab runs no workers",
+    "on a phone the menu drawer holds them, Escape closes it, and a test user tab runs only the demo's chat worker",
     async () => {
       const { context, page, outside } = await open({
         width: 390,
@@ -259,19 +259,22 @@ describe("workers in the menu", () => {
         await setMenu(page, true, "product");
         expect(await page.inputValue("#worker-name")).toBe("myapp.paseo");
 
-        // A test user has no wallet session, so no workers or chat demo.
+        // A test user has no wallet session: none of the wallet's workers
+        // run, only the demo's own chat worker, which the host adds.
         await useInvitationDemo(page, "alice");
         await ready(page);
         await setMenu(page, true, "product");
-        expect(await status(page)).toBe(
-          "Sign in with a wallet to run workers.",
+        const row = page.locator(
+          '#worker-list [data-worker="contact-chat.paseo"]',
         );
-        expect(
-          await page
-            .locator('#chat-demo [data-action="demo-start"]')
-            .isDisabled(),
-        ).toBe(true);
-        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
+        await row.waitFor();
+        expect(await row.innerText()).toContain("added by this host");
+        expect(await page.locator("#worker-list [data-worker]").count()).toBe(
+          1,
+        );
+        expect(await page.locator("#worker-list").innerText()).not.toContain(
+          "myapp.paseo",
+        );
         expect(outside).toEqual([]);
       } finally {
         await context.close();

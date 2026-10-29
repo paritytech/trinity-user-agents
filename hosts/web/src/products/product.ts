@@ -8,6 +8,7 @@ import {
 } from "../chat/draft/identity-bridge.js";
 import type { FrameTap } from "./tap.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
+import { isTopicRelayHello } from "../chat/draft/topic-relay.js";
 import {
   readConsoleMessage,
   type WorkerConsoleEntry,
@@ -121,6 +122,12 @@ export interface OpenProductOptions {
    */
   onInvitationsPort?(port: MessagePort): void;
   /**
+   * Called with the port the frame hands over for the draft topic relay
+   * (`src/chat/draft/topic-relay.ts`). Heard as {@link onChatV2Port} is;
+   * without this the port is closed unanswered.
+   */
+  onTopicRelayPort?(port: MessagePort): void;
+  /**
    * Called with each console line the frame's worker shell forwards
    * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
    * this frame's and no other's.
@@ -158,6 +165,7 @@ export async function openProduct(
     onChatV2Port,
     onNovaIdentityPort,
     onInvitationsPort,
+    onTopicRelayPort,
     onConsole,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
@@ -233,6 +241,11 @@ export async function openProduct(
       else onInvitationsPort(event.ports[0]);
       return;
     }
+    if (isTopicRelayHello(data, event.ports)) {
+      if (onTopicRelayPort === undefined) event.ports[0].close();
+      else onTopicRelayPort(event.ports[0]);
+      return;
+    }
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
       return;
     if (data.state === "loading" || data.state === "error")
@@ -243,6 +256,7 @@ export async function openProduct(
     onChatV2Port ||
     onNovaIdentityPort ||
     onInvitationsPort ||
+    onTopicRelayPort ||
     onConsole
   )
     window.addEventListener("message", onWindowMessage);

@@ -287,7 +287,8 @@ const novaWorkerMode =
 const chatV2 = new ChatV2Host({
   media: (productId) => localChatDemo?.media(productId) ?? null,
   contactRooms: (productId) =>
-    novaWorkerMode?.isChatProduct(productId) ?? false,
+    (novaWorkerMode?.isChatProduct(productId) ?? false) ||
+    (devSession?.isContactChat(productId) ?? false),
   log: linesFor("workers"),
 });
 /** The host's own names for the people of a chat product's contact rooms. */
@@ -303,10 +304,13 @@ const productWorkers = new ProductWorkers({
       ? localChatDemo.resolve()
       : novaWorkerMode?.resolves(name)
         ? novaWorkerMode.resolve()
-        : resolveWorker(name, network),
+        : devSession?.resolvesWorker(name)
+          ? devSession.resolveWorker()
+          : resolveWorker(name, network),
   defaults: () => [
     ...(localChatDemo?.workerNames() ?? []),
     ...(novaWorkerMode?.workerNames() ?? []),
+    ...(devSession?.workerNames() ?? []),
   ],
   container: workerFrames,
   base: BASE,
@@ -332,6 +336,21 @@ const productWorkers = new ProductWorkers({
             novaWorkerMode.disconnect(productId),
         },
       }),
+  // Only the invitation demo serves these, to its Contact Chat worker.
+  invitations: {
+    connect: (productId, port) =>
+      devSession === null
+        ? port.close()
+        : devSession.requests.connect(productId, port),
+    disconnect: (productId) => devSession?.requests.disconnect(productId),
+  },
+  topicRelay: {
+    connect: (productId, port) =>
+      devSession === null
+        ? port.close()
+        : devSession.topics.connect(productId, port),
+    disconnect: (productId) => devSession?.topics.disconnect(productId),
+  },
 });
 /** The faces of Pocket's cards, drawn by the workers of the products behind them. */
 const pocketFaces = new PocketFaces({
@@ -361,19 +380,22 @@ const chatInbox = new ChatInbox({
   // with whom the user chose, through a reference only its identity bridge
   // resolves.
   chatV2Options: (productId) =>
-    novaWorkerMode === null || productId !== NOVA_WORKER_PRODUCT
+    devSession?.chatOptions(productId) ??
+    (novaWorkerMode === null || productId !== NOVA_WORKER_PRODUCT
       ? {}
       : {
           names: (account) => hostNames.name(account),
           onNamesChange: (listener) => hostNames.onChange(listener),
           start: {
-            reference: (account) => novaWorkerMode.startReference(account),
+            target: (account) => ({
+              contact: novaWorkerMode.startReference(account),
+            }),
             blocked: () =>
               novaWorkerMode.isChatProduct(productId)
                 ? null
                 : "The Nova chat worker is not connected yet.",
           },
-        },
+        }),
 });
 /** Which of Chat's tabs shows: the conversations or the Inbox. */
 let chatTab: ChatTab = "chats";
@@ -460,6 +482,7 @@ const devSession =
             ? undefined
             : tools.tap(productId, runtime.coreWireSchemaHash),
         showProduct: () => void navigation.selectDestination("browse"),
+        showChat: () => void navigation.selectDestination("chat"),
         pickContact: (asker): Promise<{ account: string } | null> =>
           hostContacts.choose(asker),
         log: linesFor("host"),
@@ -467,11 +490,11 @@ const devSession =
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
-// The demo's session starts no chat engine, so Chat is off rather than signed out.
+// The demo's session has no Nova chat: Chat shows its chat worker once it signs in.
 if (testUser !== null)
   chatScreen.setNoChat({
-    title: "Chat is off in the invitation demo",
-    body: "Sign in to an account in Account to chat. The Inbox still gets invitations.",
+    title: "Chat starts with the invitation demo",
+    body: "Contact Chat runs once the test user is signed in. Nova chat needs a wallet.",
   });
 /** The wallets built into the host from public test phrases. */
 const testAccounts = DEV_ACCOUNTS.map(devAccountWallet);
@@ -1300,6 +1323,13 @@ document.addEventListener(
 
 /** Give the Chat screen and everything else of the session the signed-in wallet's session, or none. */
 function syncChatSession(): void {
+  // A test user's session has its workers and their chat, and nothing of a wallet's.
+  if (testUser !== null) {
+    sessionMembers.syncProductsOnly(
+      lastAuthState.tag === "Connected" ? (devSession?.scope ?? null) : null,
+    );
+    return;
+  }
   const access = chainAccess;
   const wallet = walletSession.active;
   sessionMembers.sync(

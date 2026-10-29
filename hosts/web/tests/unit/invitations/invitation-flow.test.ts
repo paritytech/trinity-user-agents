@@ -29,6 +29,7 @@ import {
   sealTo,
   toHex,
   utf8,
+  x25519Pair,
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
@@ -392,7 +393,11 @@ for (const kind of ["inbox", "topic"] as const)
 
       // Bob's product made both conversation topics; Alice's product checks, then completes.
       const checked = setup.checkResponse(sent.secrets, made!.response);
-      expect(checked).toEqual({ ok: true, topics: made!.topics });
+      expect(checked).toEqual({
+        ok: true,
+        topics: made!.topics,
+        protocolKey: toHex(x25519Pair(fromHex(made!.protocolSecret)).public),
+      });
       const done = ok(
         await alice.call({ call: "complete", handle: sent.handle }),
       );

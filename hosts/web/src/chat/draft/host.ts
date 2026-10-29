@@ -1,5 +1,6 @@
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import type { CallErrorValue } from "@parity/truapi/scale";
+import type { CallErrorValue, HexString } from "@parity/truapi/scale";
+import type { ContactHandle } from "@parity/truapi";
 import { err, ok, type Result } from "neverthrow";
 import {
   CALL_ID_MAX_BYTES,
@@ -151,6 +152,30 @@ const CONTACT_STATES: readonly ChatRoomContact["state"][] = [
   "PeerLeft",
 ];
 const HELD_SIGNALS_MAX = 32;
+const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
+
+/** Who a declared contact names, in lower case, or null when it names no one this host reads. */
+function readContactPerson(
+  contact: ChatRoomContact | undefined,
+): { account: HexString } | { handle: ContactHandle } | null {
+  const value = contact as
+    | { account?: unknown; handle?: { bytes?: unknown } }
+    | undefined;
+  if (typeof value?.account === "string" && value.handle === undefined)
+    return BYTES32.test(value.account)
+      ? { account: value.account.toLowerCase() as HexString }
+      : null;
+  const bytes = value?.handle?.bytes;
+  if (value?.account === undefined && typeof bytes === "string")
+    return BYTES32.test(bytes)
+      ? {
+          handle: {
+            bytes: bytes.toLowerCase() as ContactHandle["bytes"],
+          },
+        }
+      : null;
+  return null;
+}
 
 const domain = <const E>(value: E): CallErrorValue<E> => ({
   tag: "Domain",
@@ -718,18 +743,14 @@ export class ChatV2Host {
           `this host serves ${FEATURE.contactRooms} only to the chat product`,
         ),
       );
-    if (
-      typeof contact?.account !== "string" ||
-      !/^0x[0-9a-fA-F]{64}$/.test(contact.account) ||
-      !CONTACT_STATES.includes(contact.state)
-    )
+    const person = readContactPerson(contact);
+    if (person === null || !CONTACT_STATES.includes(contact.state))
       return err(
-        unknown("the contact needs a 32-byte account and a known state"),
+        unknown(
+          "the contact needs a 32-byte account or contact handle and a known state",
+        ),
       );
-    room.contact = {
-      account: contact.account.toLowerCase() as ChatRoomContact["account"],
-      state: contact.state,
-    };
+    room.contact = { ...person, state: contact.state };
     this.emit({ type: "rooms", productId });
     return ok({});
   }
@@ -738,7 +759,21 @@ export class ChatV2Host {
   roomWith(productId: string, account: string): V2Room | undefined {
     const wanted = account.toLowerCase();
     return this.roomsOf(productId).find(
-      (room) => room.contact?.account === wanted,
+      (room) =>
+        room.contact !== undefined &&
+        "account" in room.contact &&
+        room.contact.account === wanted,
+    );
+  }
+
+  /** The room of `productId` whose contact is the person `handle` names, if it declared one. */
+  roomWithHandle(productId: string, handle: ContactHandle): V2Room | undefined {
+    const wanted = handle.bytes.toLowerCase();
+    return this.roomsOf(productId).find(
+      (room) =>
+        room.contact !== undefined &&
+        "handle" in room.contact &&
+        room.contact.handle.bytes === wanted,
     );
   }
 
