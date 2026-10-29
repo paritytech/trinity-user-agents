@@ -133,13 +133,11 @@ final class PocketCardScreenViewController: UIViewController {
 
     /// Follows a drag on the navigation bar by `distance` from where it started.
     func dragFace(by distance: CGFloat) {
-        if barDragStart == nil {
-            holdFace()
-            barDragStart = scrollView.contentOffset.y
-        }
-        guard let barDragStart else { return }
+        if barDragStart == nil { holdFace() }
+        let start = barDragStart ?? scrollView.contentOffset.y
+        barDragStart = start
 
-        let offset = min(max(barDragStart - distance, 0), PocketOpenedCardView.height)
+        let offset = min(max(start - distance, 0), PocketOpenedCardView.height)
         scrollView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
     }
 
@@ -285,10 +283,10 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
 
 extension PocketCardScreenViewController: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !isInFlight else { return false }
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !isInFlight, !userOwnsFace else { return false }
 
-        let velocity = pan.velocity(in: view)
-        return abs(velocity.y) > abs(velocity.x)
+        let travelled = pan.translation(in: view)
+        return abs(travelled.y) > abs(travelled.x)
     }
 }
 
@@ -327,6 +325,9 @@ private extension PocketCardScreenViewController {
     }
 
     @objc func followBarDrag(_ pan: UIPanGestureRecognizer) {
+        // A close can start mid-drag, and the card must fly from where it stopped.
+        guard !isInFlight else { return }
+
         switch pan.state {
         case .began,
              .changed:

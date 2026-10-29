@@ -32,6 +32,8 @@ struct PocketCardFaceDragTests {
         let window = try await presentCard(screen)
         let scrollView = try #require(screen.scrollView)
         let faceHeight = PocketOpenedCardView.height
+        let bar = try #require(screen.navigationController?.navigationBar)
+        #expect(bar.gestureRecognizers?.contains { $0.delegate === screen } == true)
         _ = screen.setFaceShown(false, animated: false)
         #expect(waitUntil(on: screen) { scrollView.contentOffset.y == faceHeight })
 
