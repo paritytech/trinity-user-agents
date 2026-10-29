@@ -25,19 +25,50 @@ stack.stale; // past validUntil
 store gets no rollback protection. Errors from a rule of the RFC carry a `code`, such as `bad-signature`, which
 `isTrinityStackError` recognises.
 
+## Running from build copies
+
+A project ships the stacks it uses, so it keeps working when a descriptor's server is down:
+
+```sh
+npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
+npx trinity-stack update   # exits 2 when it wrote something, so a scheduled job can open a pull request
+```
+
+They write `.trinity/`, committed with the project: each stack's signed copy, its dotNS contracts read at Asset Hub's
+latest finalized block, and an `index.js` that bundles them. At run time a reader serves those copies and refreshes them
+by the policy the project picks:
+
+```ts
+import { createStackReader, service } from "@parity/trinity-stack/reader";
+import { stacks } from "../.trinity/index.js";
+
+const reader = createStackReader({ bundled: stacks, refresh: "once" }); // "never" | "once" | { maxAgeMs }
+const { descriptor } = await reader.get(stacks.previewnet, {
+  require: { chains: ["AssetHub"], services: ["eth-rpc"] },
+});
+const ethRpc = service(descriptor, "eth-rpc");
+const dotns = await reader.dotns(stacks.previewnet); // undefined when the stack has no dotNS gateway
+reader.onChange(({ newGeneration }) => {
+  /* reconnect, and drop cached chain data on a new generation */
+});
+```
+
+It never fetches per request. A fetch that fails leaves the copy it has in use, and a `store` of the project's own lets
+a restart start from the last copy fetched. Every decision is the crate's `StackReader`, so the host core behaves the
+same way.
+
 ## Reading a stack's dotNS contracts
 
 ```ts
-import { resolveDotns } from "@parity/trinity-stack/dotns";
+import { readDotns } from "@parity/trinity-stack/dotns";
 
-const dotns = await resolveDotns(pointer, stack.descriptor, { store });
-dotns?.addresses.registrar; // dotns is undefined when the stack's Asset Hub has no dotNS gateway
+const record = await readDotns(stack.descriptor);
+record.dotns?.addresses.registrar; // dotns is undefined when the stack's Asset Hub has no dotNS gateway
 ```
 
-Descriptors leave dotNS out, so `resolveDotns` reads it from the stack's Asset Hub over the chain's RPC and `eth-rpc`,
-the way the RFC describes. With a store, it keeps the answer under the descriptor's `generation` and asks the chain
-again after `maxAgeMs`, an hour by default, falling back to the kept answer if that fails. A reader with its own client,
-such as a light client, passes a `transport`.
+Descriptors leave dotNS out, so `readDotns` reads it from the stack's Asset Hub, the way the RFC describes: the
+gateway's storage over the chain's RPC and the contracts over `eth-rpc`, all at the latest finalized block, which the
+record names. A reader with its own client, such as a light client, passes a `transport`.
 
 ## Publishing a stack
 

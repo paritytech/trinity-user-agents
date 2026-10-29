@@ -96,19 +96,21 @@ It also reports a new generation, so the caller drops its chain caches, and whet
   stack's current copy, and answers in steps the caller carries out:
 
   ```rust
-  let mut reader = StackReader::new(Policy::MaxAge(3600));
-  reader.load(&pointer, build_copy, stored)?; // each through accept; the newer one wins
-  let read = reader.get(&pointer, now);       // { stack: Option<Verified>, fetch: Option<FetchRequest> }
+  let mut reader = StackReader::new(Refresh::MaxAge(3600));
+  reader.load(&pointer, build, build_dotns, stored, now)?; // through accept; the store only moves forward
+  let read = reader.get(&pointer, now);  // { current: Option<CurrentStack>, fetch: Option<FetchRequest> }
   // the caller fetches read.fetch's url with its If-None-Match
-  let refreshed = reader.fetched(&pointer, response, now); // Document(bytes, etag) | NotModified | Unreachable
-  // refreshed: the record to store, the stack to use, and the change, if any
-  reader.due(now);                            // stacks whose background refresh is due
+  let refreshed = reader.fetched(&pointer, served, now)?; // Document { bytes, etag } | NotModified | Unreachable
+  // refreshed: what accept decided, and the record to store when it changed
+  reader.due(now);                       // stacks whose background refresh is due
+  reader.dotns(&pointer, now);           // { record, look_up }, answered with looked_up
   ```
 
-  `get` returns no `stack` only for a stack the reader has no copy of, and then the caller waits for the fetch. It hands
-  out at most one fetch per stack until `fetched` answers it, so a caller that shares the pending fetch never sends two.
-  The record to store is bytes the crate encodes (the document, when it was fetched and its `ETag`), so every caller
-  keeps the same thing under `stack_id`.
+  `get` returns no `current` for a stack the reader has no copy of, and under `"once"` until the stack's first fetch is
+  answered; the caller then waits for the fetch. It hands out at most one fetch per stack until `fetched` answers it, so
+  a caller that shares the pending fetch never sends two. dotNS records follow the same schedule through `dotns` and
+  `looked_up`. The record to store is bytes the crate encodes (the document, when it was fetched, its `ETag` and the
+  dotNS record), so every caller keeps the same thing under `stack_id`.
 
 - **dotNS lookup.** `DotnsLookup` runs the three steps of the RFC as a sequence the caller answers:
 
@@ -116,9 +118,9 @@ It also reports a new generation, so the caller drops its chain caches, and whet
   let mut lookup = DotnsLookup::new(generation, at);
   let record = loop {
       match lookup.next() {
-          Step::Storage(key) => lookup.storage(read_storage(key)?),
-          Step::Calls(calls) => lookup.answer(answer_each(calls)?), // each Returned(bytes) or Reverted
-          Step::Done(record) => break record,                      // Option<Dotns>, with generation and at
+          DotnsStep::Storage(key) => lookup.storage(read_storage(key)?.as_deref())?,
+          DotnsStep::Calls(calls) => lookup.answer(&answer_each(calls)?)?, // each Returned(bytes) or Reverted
+          DotnsStep::Done(record) => break record,                         // Option<Dotns>, with generation and at
       }
   };
   ```
@@ -233,7 +235,7 @@ at the latest finalized block and writes, next to the signed copy:
 ### At run time: the stack reader
 
 ```ts
-import { createStackReader } from "@parity/trinity-stack";
+import { createStackReader, service } from "@parity/trinity-stack/reader";
 import { stacks } from "../.trinity/index.js";
 
 const reader = createStackReader({
@@ -242,9 +244,10 @@ const reader = createStackReader({
   store, // optional, this project's own
 });
 
-const previewnet = await reader.get(stacks.previewnet, {
+const { descriptor } = await reader.get(stacks.previewnet, {
   require: { chains: ["AssetHub", "Bulletin"], services: ["eth-rpc"] },
 });
+const ethRpc = service(descriptor, "eth-rpc");
 const dotns = await reader.dotns(stacks.previewnet);
 reader.onChange((change) => {
   /* a new sequence or generation: reconnect, drop chain caches */
@@ -270,32 +273,32 @@ genesis hash, and a chain client that connects to a chain reporting another one 
 never connects to a chain itself, so it leaves that check to the client, which already reads the genesis hash.
 
 - **Every policy fetches at most once per stack at a time.** Callers that ask while a fetch is under way share it, and
-  nothing fetches per request. A server sees one request per process with `"once"`, and one per reader per `maxAgeMs`
-  otherwise.
+  nothing fetches per request. A server sees one request per process with `"once"`, one per reader per `maxAgeMs` with
+  `{ maxAgeMs }`, and none with `"never"` until the project asks.
 - **Refreshes are conditional.** The reader keeps the `ETag` it was served and sends `If-None-Match`, so an unchanged
   stack costs a `304` with no body.
 - **The copy it starts from** is the store's, if the project gave one and it holds a copy, otherwise the build's. Both
   go through `accept`, so the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
   starts from the last good copy. A service can keep everything in memory. A CLI needs none: it has the build copy, and
-  a run lasts one process. The reader keeps, per stack, the document, when it was fetched and its `ETag`, and per stack
-  the dotNS record, under keys of its own in that store.
-- **`onChange`** reports each update with the old and new descriptor and whether the generation changed, so a
-  long-running consumer reconnects without restarting.
-- **`require`** checks that the stack has the chains and services the project needs, fails naming what is missing, and
-  narrows the returned type, so `chain(previewnet, "AssetHub")` and `service(previewnet, "eth-rpc")` are a `Chain` and a
-  `Service`, not possibly `undefined`. A tool that needs Bulletin fails at start on a stack without it, not at its first
-  call.
-- **`reader.dotns`** follows the descriptor. Under `"never"` it returns the build's record. Otherwise the record holds
-  while the descriptor in use has the record's generation, and is read again when the descriptor is refreshed. A new
-  generation means dotNS was redeployed, so the reader reads it again through `DotnsLookup`, answering its calls with
-  the `eth-rpc` the descriptor names or a `transport` the project passes, such as its light client, and keeps the answer
-  as it keeps descriptors. A lookup that fails leaves the record it has of the same generation in use. A stack with no
-  dotNS gateway is asked again on the same schedule, because a restarted stack sets its gateway after its chains start.
+  a run lasts one process. The reader keeps one record per stack, under a key of its own in that store: the document,
+  when it was fetched, its `ETag` and the dotNS record.
+- **`onChange`** reports each update with the new descriptor and whether the generation changed, so a long-running
+  consumer reconnects without restarting.
+- **`require`** checks that the stack has the chains and services the project needs, and fails naming what is missing,
+  so a tool that needs Bulletin fails at start on a stack without it, not at its first call. `chain(descriptor, role)`
+  and `service(descriptor, kind)` return a `Chain` and a `Service`, never `undefined`, and throw the same way.
+- **`reader.dotns`** follows the descriptor in use: a record serves only a descriptor of its `generation`, so a new
+  generation, which means dotNS was redeployed, waits for a lookup. Otherwise it is read on the descriptor's schedule:
+  the build's record under `"never"`, a fresh read once per process under `"once"`, and a read behind the record under
+  `{ maxAgeMs }`. The reader answers `DotnsLookup`'s calls with the `eth-rpc` the descriptor names or a `transport` the
+  project passes, such as its light client. A lookup that fails leaves the record it has of the same generation in use,
+  and a stack with no dotNS gateway is asked again on the same schedule, because a restarted stack sets its gateway
+  after its chains start.
 - **A pointer with no build copy**, such as a link a user pastes, works under every policy: the reader fetches it on
   first use.
 
-`read`, `accept` and `resolveDotns` stay as the pieces the reader is built from, for a consumer that wants to manage
+`read`, `accept` and `readDotns` stay as the pieces the reader is built from, for a consumer that wants to manage
 fetching itself.
 
 ### Who uses what

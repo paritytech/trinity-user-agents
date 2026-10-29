@@ -2,6 +2,8 @@
 "@parity/trinity-stack": minor
 ---
 
-`resolveDotns(pointer, descriptor, { store })` from `@parity/trinity-stack/dotns` reads a stack's dotNS contracts from
-its Asset Hub, through the gateway's dispatcher and the protocol registry, and keeps them per `generation` for
-`maxAgeMs`. It returns undefined for a stack whose Asset Hub has no dotNS gateway.
+`npx trinity-stack add` and `update` write a project's stack copies to `.trinity/`: each stack's signed descriptor, its
+dotNS contracts and a module that bundles them. `createStackReader` from `@parity/trinity-stack/reader` runs from those
+copies and refreshes them by a `"never"`, `"once"` or `{ maxAgeMs }` policy, with `If-None-Match`, `onChange` and
+`require`. `readDotns` from `@parity/trinity-stack/dotns` reads a stack's dotNS contracts at Asset Hub's latest
+finalized block.

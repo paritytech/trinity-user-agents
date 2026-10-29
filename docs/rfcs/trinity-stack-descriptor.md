@@ -278,7 +278,7 @@ A reader finds the dotNS contracts in three steps:
 The addresses change when the stack redeploys dotNS, as a restart of the chains does, or when the registry's owner
 rewires a key. A reader MAY keep the addresses it read, in a build copy too, recorded with the descriptor's `generation`
 and the block it read them at. It MUST NOT use them with a descriptor of another `generation`, and SHOULD read them
-again when it refreshes the descriptor.
+again as often as it refreshes the descriptor.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
