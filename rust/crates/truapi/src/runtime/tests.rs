@@ -2866,6 +2866,8 @@ struct RecordingFundingPlatform {
 	announced: Mutex<Vec<String>>,
 	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
 	country: Option<String>,
+	in_progress: Mutex<Vec<bool>>,
+	history: Mutex<Vec<Vec<crate::host_logic::funding::FundingSessionSummary>>>,
 }
 
 impl RecordingFundingPlatform {
@@ -2876,6 +2878,8 @@ impl RecordingFundingPlatform {
 			announced: Mutex::new(Vec::new()),
 			framed: Mutex::new(Vec::new()),
 			country: None,
+			in_progress: Mutex::new(Vec::new()),
+			history: Mutex::new(Vec::new()),
 		})
 	}
 
@@ -2922,6 +2926,32 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		_status: truapi::latest::HostFundingStatusSubscribeItem,
 	) {
 		self.announced.lock().expect("announced mutex poisoned").push(intent);
+	}
+}
+
+impl crate::runtime::FundingFeed for RecordingFundingPlatform {
+	fn funding_session_changed(
+		&self,
+		_intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+		_session: Option<crate::host_logic::funding::FundingSession>,
+		_progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+	}
+
+	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>) {
+		self.history.lock().expect("history mutex poisoned").push(history);
+	}
+
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
+	}
+
+	fn funding_options_changed(
+		&self,
+		_intent: String,
+		_options: crate::host_logic::funding_providers::FundingOptions,
+	) {
 	}
 }
 
@@ -3175,7 +3205,7 @@ fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
 		));
 
 		assert!(opened.is_err(), "{outcome:?} opened a session");
-		assert_eq!(services.funding().sessions(), Vec::new(), "{outcome:?} left a session");
+		assert_eq!(services.funding().get("fs_failing"), None, "{outcome:?} left a session");
 	}
 }
 
@@ -3372,6 +3402,9 @@ fn watching_a_funding_session_needs_a_session() {
 struct GatedFundingPlatform {
 	answer:
 		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
+	/// Whether the host was told of a session, which it is once started.
+	told: AtomicBool,
+	options: Mutex<Vec<(String, crate::host_logic::funding_providers::FundingOptions)>>,
 }
 
 #[truapi::async_trait]
@@ -3392,6 +3425,99 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
+
+	fn funding_session_changed(
+		&self,
+		_intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+	) {
+		self.told.store(true, Ordering::Release);
+	}
+}
+
+impl crate::runtime::FundingFeed for GatedFundingPlatform {
+	fn funding_session_changed(
+		&self,
+		_intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+		_session: Option<crate::host_logic::funding::FundingSession>,
+		_progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+	}
+
+	fn funding_history(&self, _history: Vec<crate::host_logic::funding::FundingSessionSummary>) {}
+
+	fn funding_in_progress_changed(&self, _in_progress: bool) {}
+
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+		self.options.lock().expect("options mutex poisoned").push((intent, options));
+	}
+}
+
+// The overlay is handed its options before it shows, and again for each
+// selection the user makes while it is up; a selection after it closed
+// changes nothing.
+#[test]
+fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = Arc::new(GatedFundingPlatform {
+		answer: Mutex::new(Some(answered)),
+		told: AtomicBool::new(false),
+		options: Mutex::new(Vec::new()),
+	});
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				Some(20_000_000),
+			))
+		}
+	});
+	let pushes = || platform.options.lock().expect("options mutex poisoned").clone();
+	wait_until(|| !pushes().is_empty(), "options before the overlay");
+	let intent = pushes()[0].0.clone();
+	let card = |asset: &str| crate::host_logic::funding_providers::FundingSelection {
+		rail: v01::FundingRail::Card,
+		asset: Some(asset.to_string()),
+		network: None,
+		country: None,
+	};
+	services.select_funding_options(&intent, card("EUR"));
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	assert!(opening.join().expect("opening thread").is_err(), "dismissed");
+	services.select_funding_options(&intent, card("USD"));
+
+	let floor = crate::host_logic::funding_providers::FundingAmountLimits {
+		min: Some(crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT),
+		max: None,
+	};
+	assert_eq!(
+		pushes()
+			.into_iter()
+			.map(|(pushed, options)| {
+				let providers: Vec<_> =
+					options.candidates.into_iter().map(|candidate| candidate.provider_id).collect();
+				(pushed, providers, options.limits)
+			})
+			.collect::<Vec<_>>(),
+		vec![
+			(intent.clone(), vec!["ramp.dot".to_string()], floor.clone()),
+			(intent, vec!["ramp.dot".to_string()], floor),
+		]
+	);
 }
 
 // The request answers while the overlay is still up, and the product hears
@@ -3405,9 +3531,12 @@ fn a_funding_request_answers_before_the_overlay_closes() {
 	] {
 		let services = funding_services();
 		let (answer, answered) = futures::channel::oneshot::channel();
-		assert!(services.funding().install_platform(Arc::new(GatedFundingPlatform {
+		let platform = Arc::new(GatedFundingPlatform {
 			answer: Mutex::new(Some(answered)),
-		})));
+			told: AtomicBool::new(false),
+			options: Mutex::new(Vec::new()),
+		});
+		assert!(services.funding().install_platform(platform.clone()));
 		let host = funding_host(&services, "wallet.dot", true);
 
 		let intent = request_funding(&host).expect("request accepted");
@@ -3417,7 +3546,7 @@ fn a_funding_request_answers_before_the_overlay_closes() {
 		let last = if ends {
 			futures::executor::block_on(watch.next())
 		} else {
-			wait_until(|| services.funding().sessions().len() == 1, "session started");
+			wait_until(|| platform.told.load(Ordering::Acquire), "session started");
 			None
 		};
 
@@ -9065,10 +9194,11 @@ fn wait_for_stage(
 	None
 }
 
-// A host asks whether funding is in progress at launch, before funding
-// resumes; the answer comes from storage, not from the empty registry.
+// When funding resumes, the host hears of each session a provider still
+// works on, that one still does, and the history it can rebuild from, so it
+// keeps what it draws and its launch marker without asking.
 #[test]
-fn funding_in_progress_reads_storage_before_funding_resumes() {
+fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
 	let db = crate::store::open_memory_core_db();
 	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
@@ -9089,13 +9219,21 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 	);
 
 	let relaunched = funding_services_on(&db, test_spawner());
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(relaunched.funding().install_feed(host.clone()));
+	assert!(relaunched.install_funding_platform(host.clone()));
+	wait_until(
+		|| !host.history.lock().expect("history mutex poisoned").is_empty(),
+		"funding resumed",
+	);
 
 	assert_eq!(
 		(
-			relaunched.funding().in_progress(),
-			futures::executor::block_on(relaunched.funding_in_progress()),
+			host.announced.lock().expect("announced mutex poisoned").clone(),
+			host.in_progress.lock().expect("in-progress mutex poisoned").clone(),
+			host.history.lock().expect("history mutex poisoned").clone(),
 		),
-		(false, Ok(true))
+		(vec![intent], vec![true], vec![Vec::new()])
 	);
 }
 

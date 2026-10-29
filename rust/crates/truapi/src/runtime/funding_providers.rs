@@ -31,8 +31,9 @@ use crate::{
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
-			FundingAmountLimits, FundingCandidate, FundingCountry, FundingProviderEntry,
-			FundingProviderOrigin, LearnedSupport, LimitScope, amount_limits, country_support,
+			FUNDING_MIN_AMOUNT, FundingAmountLimits, FundingCandidate, FundingCountry,
+			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
+			LearnedSupport, LimitScope, amount_limits, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -70,6 +71,8 @@ pub struct FundingProviders {
 	/// order and none lands before the stored records are in; the flag
 	/// records whether they are.
 	learned_store: AsyncMutex<bool>,
+	/// What the user has picked in each open overlay, by session.
+	selections: Mutex<HashMap<String, FundingSelection>>,
 }
 
 impl FundingProviders {
@@ -219,6 +222,57 @@ impl RuntimeServices {
 	) -> Vec<FundingCandidate> {
 		self.refresh_funding_providers();
 		self.funding_providers().candidates(direction)
+	}
+
+	/// Record what the user picked in session `intent`'s overlay, and send
+	/// the host the options it leads to. A session whose overlay is not up
+	/// offers nothing to pick, so its selection is ignored.
+	pub fn select_funding_options(self: &Arc<Self>, intent: &str, selection: FundingSelection) {
+		if !self.funding().is_presenting(intent) {
+			return;
+		}
+		lock(&self.funding_providers().selections).insert(intent.to_string(), selection);
+		self.send_funding_options(intent);
+	}
+
+	/// Send the host what session `intent`'s overlay offers for the user's
+	/// selection so far. Nothing is sent for a session the core does not
+	/// hold.
+	pub(crate) fn send_funding_options(&self, intent: &str) {
+		let (Some(feed), Some(session)) = (self.funding().feed(), self.funding().get(intent))
+		else {
+			return;
+		};
+		let providers = self.funding_providers();
+		let selection = lock(&providers.selections).get(intent).cloned();
+		let options = FundingOptions {
+			candidates: providers.candidates(session.direction),
+			countries: selection
+				.as_ref()
+				.and_then(|selection| {
+					let asset = selection.asset.as_deref()?;
+					Some(providers.countries(session.direction, selection.rail, asset))
+				})
+				.unwrap_or_default(),
+			limits: selection
+				.map(|selection| {
+					providers.amount_limits(LimitScope {
+						direction: session.direction,
+						rail: selection.rail,
+						asset: selection.asset.as_deref().unwrap_or_default(),
+						network: selection.network.as_deref(),
+						country: selection.country.as_deref(),
+					})
+				})
+				.unwrap_or(FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None }),
+		};
+		feed.funding_options_changed(intent.to_string(), options);
+	}
+
+	/// Forget what the user picked in session `intent`'s overlay, once it
+	/// closes.
+	pub(crate) fn forget_funding_selection(&self, intent: &str) {
+		lock(&self.funding_providers().selections).remove(intent);
 	}
 
 	/// Read every host provider's manifest that is not already being read,
