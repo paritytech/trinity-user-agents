@@ -46,8 +46,6 @@ data class ChatRoomPolicy(
     sealed interface ListBadge {
         data object HostUnreadCount : ListBadge
 
-        data object Hidden : ListBadge
-
         /** Zero shows no badge. */
         data class Count(val count: Int) : ListBadge
 
@@ -94,7 +92,6 @@ data class ChatRoomPolicy(
 private fun ChatRoomBadgeModel?.toListBadge(): ChatRoomPolicy.ListBadge {
     return when (this) {
         null -> ChatRoomPolicy.ListBadge.HostUnreadCount
-        ChatRoomBadgeModel.Hidden -> ChatRoomPolicy.ListBadge.Hidden
         is ChatRoomBadgeModel.Count -> ChatRoomPolicy.ListBadge.Count(count.coerceAtLeast(0))
         is ChatRoomBadgeModel.Image -> ChatRoomPolicy.ListBadge.Image(icon)
     }

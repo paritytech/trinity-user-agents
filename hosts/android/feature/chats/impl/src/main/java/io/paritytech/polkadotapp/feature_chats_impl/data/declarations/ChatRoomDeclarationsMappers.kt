@@ -74,7 +74,6 @@ fun ChatRoomPreviewModel.toLocal(decoder: CustomContentDecoder) = ChatRoomPrevie
     timestamp = timestamp,
     badge = badge?.let {
         when (it) {
-            ChatRoomBadgeModel.Hidden -> ChatRoomBadgeLocal.Hidden
             is ChatRoomBadgeModel.Count -> ChatRoomBadgeLocal.UnreadCount(it.count)
             is ChatRoomBadgeModel.Image -> ChatRoomBadgeLocal.Image(it.icon)
         }
@@ -90,7 +89,7 @@ fun ChatRoomPreviewLocal.toDomain(decoder: CustomContentDecoder) = ChatRoomPrevi
     timestamp = timestamp,
     badge = badge?.let {
         when (it) {
-            ChatRoomBadgeLocal.Hidden -> ChatRoomBadgeModel.Hidden
+            ChatRoomBadgeLocal.Hidden -> ChatRoomBadgeModel.Count(0)
             is ChatRoomBadgeLocal.UnreadCount -> ChatRoomBadgeModel.Count(it.count)
             is ChatRoomBadgeLocal.Image -> ChatRoomBadgeModel.Image(it.icon)
         }
