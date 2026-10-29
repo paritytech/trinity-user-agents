@@ -210,11 +210,8 @@ async fn within_request_timeout<T>(
 	})
 }
 
-/// The process's light client for `network`, with every chain of that network
-/// from `truapi-provider`'s bundled catalog registered. Each
-/// `EmbeddedChainProvider` runs its own smoldot client, so every consumer shares
-/// this one to reuse one sync and one set of peers, and its chains keep running
-/// between the connections each use opens. Smoldot starts on the first connect.
+/// The process's light client for `network`, its chains kept running between
+/// uses. Shared, because each `EmbeddedChainProvider` runs its own smoldot.
 fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
 	static CLIENTS: Mutex<BTreeMap<&str, Arc<EmbeddedChainProvider>>> = Mutex::new(BTreeMap::new());
 
