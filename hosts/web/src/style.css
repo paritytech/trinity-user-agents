@@ -43,7 +43,9 @@
  */
 body {
   margin: 0;
-  height: 100dvh;
+  /* While a keyboard covers the page, only the visible part: keyboard-viewport.ts. */
+  margin-top: var(--app-top, 0px);
+  height: var(--app-height, 100dvh);
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);

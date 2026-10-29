@@ -236,7 +236,10 @@ search opens anything else. On a local dev server Chat also holds the [Inbox](#i
   The labels stay for screen readers. Apps shows the open count inside its glyph. It floats over the app, as in the app.
   Host screens and a product's frame end above it, the Pill included, so nothing of a product is under its glass: a
   product in a frame gets no inset it could use to keep clear by itself. The Pill opens the address card (see
-  [Developer tools](#developer-tools)); while the card shows, the other icons step back.
+  [Developer tools](#developer-tools)); while the card shows, the other icons step back. On a phone, a keyboard that
+  leaves the layout viewport at full height and only shrinks the visible area (iOS Safari) would cover the Docklet and
+  the card, so the page follows `visualViewport` (`src/app/keyboard-viewport.ts`) and fills only what shows; a browser
+  that resizes the layout itself, and a pinch-zoomed page, are left as they are.
 - **Apps.** Its count is the products open in this tab, in front or running behind. It opens the Apps shelf, as the
   app's TabBarShelfView draws it: the bar's glass grows upward, with a row of icons on the right (the Inbox, when the
   host offers it, the core's state for this network, and **Settings**, which opens the developer tools' Account tab),
@@ -1279,6 +1282,11 @@ URL looks no one up and Enter opens it; with the public development phrase, whos
 listed and choosing one says why; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks that a
 person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
 
+`browser/keyboard.spec.ts` gives the page a visual viewport it controls, as iOS Safari reports one, and checks that with
+a keyboard covering part of it the Docklet, the search card, its field and its suggestions stay above the keyboard; that
+a panned area is followed and a pinch zoom is not; and that a window whose layout already shrank, and the desktop tools,
+are as they were. A real keyboard is not proven by it.
+
 `browser/open-apps.spec.ts` checks the products open in a tab, with three names served from one synthetic archive on a
 fake Asset Hub and every socket closed: a tab starts in Chat; Browse shows its landing with no field of its own and
 loads nothing, the second time too; Browse apps opens Browse's product once; Minimize leaves the landing, with the
@@ -1378,8 +1386,8 @@ nothing else of it.
     Pocket card or a product's `navigateTo`. `session.ts`: the signed-in wallet, how a change closes and reopens
     products, and the order a session reaches everything that belongs to it.
   - `shell.ts`, `address.ts`, `address-recents.ts`, `recents.ts`, `search-card.ts`, `apps-shelf.ts`, `chrome.ts`,
-    `layout.ts`, `device-mode.ts`: the dock, the address bar and its grammar, the Pill's card, the Apps shelf, the
-    developer tools' zone and the phone browser mode.
+    `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`: the dock, the address bar and its grammar, the Pill's card,
+    the Apps shelf, the developer tools' zone, the phone browser mode and the area an on-screen keyboard leaves.
   - `callbacks.ts`, `prompt.ts`, `reviews.ts`: the host callbacks the core calls, and the prompts it asks through.
   - `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`, `product-chain.ts`,
     `versions.ts`: the Account and Product tabs' wallet controls and status rows, and the build's versions.
