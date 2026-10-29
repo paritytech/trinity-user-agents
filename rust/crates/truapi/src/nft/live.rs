@@ -416,8 +416,10 @@ impl LiveRun<'_> {
 		to: &NftPurseChequeDestination,
 	) -> NftPurseCheque {
 		let items = [ItemKey(item.0)].into_iter().collect();
-		self.purses
-			.create_cheque(&sender(), from, to, items)
+		let prepared = self.purses.prepare_cheque(&sender(), from, to, items).await;
+		prepared
+			.expect("the cheque is not refused")
+			.create()
 			.await
 			.expect("the cheque is made")
 	}
