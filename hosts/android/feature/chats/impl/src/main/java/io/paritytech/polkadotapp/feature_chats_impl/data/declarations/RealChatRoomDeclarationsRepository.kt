@@ -40,7 +40,7 @@ class RealChatRoomDeclarationsRepository @Inject constructor(
         dao.setConfig(chatId.toLocal(), config.encode())
 
     override suspend fun setMetadata(chatId: ChatId, metadata: ChatRoomMetadataModel) =
-        dao.setMetadata(chatId.toLocal(), metadata.description)
+        dao.setMetadata(chatId.toLocal(), metadata.description, metadata.placeholder)
 
     override suspend fun setPreview(chatId: ChatId, preview: ChatRoomPreviewModel) =
         dao.setPreview(chatId.toLocal(), preview.encode(contentDecoder()))

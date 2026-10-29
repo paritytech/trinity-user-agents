@@ -4,13 +4,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPre
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.toChatMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 
 /**
  * The row of a product room. The product of a room that keeps its messages gives the badge, the time and the newest
- * message or reaction, which the row draws as its last message.
+ * message or reaction, which the row draws as its last message. A pinned room goes with the pinned rooms, and an
+ * activity replaces the preview line.
  */
 internal fun ChatSummary.withRoomPolicy(policy: ChatRoomPolicy?): ChatSummary {
     if (policy == null) return this
@@ -21,11 +23,16 @@ internal fun ChatSummary.withRoomPolicy(policy: ChatRoomPolicy?): ChatSummary {
         ChatRoomPolicy.ListBadge.HostUnreadCount -> if (keepsMessages) ChatSummaryBadge.None else this.badge
         ChatRoomPolicy.ListBadge.Hidden -> ChatSummaryBadge.None
         is ChatRoomPolicy.ListBadge.Count -> unreadBadge(badge.count)
+        is ChatRoomPolicy.ListBadge.Image -> ChatSummaryBadge.Image(badge.icon)
     }
-    val listPreview = policy.listPreview ?: return copy(badge = productBadge, hasUnseenReaction = hasUnseenReaction && !keepsMessages)
-
-    return copy(
+    val productRow = copy(
         badge = productBadge,
+        order = if (policy.pinned) Order.PinToTop else order,
+        activity = policy.listActivity,
+    )
+    val listPreview = policy.listPreview ?: return productRow.copy(hasUnseenReaction = hasUnseenReaction && !keepsMessages)
+
+    return productRow.copy(
         hasUnseenReaction = listPreview.unseenReactions > 0,
         preview = previewMessage(listPreview, policy.listTimestamp)?.let { ChatPreview.Message(it) } ?: preview,
         timestamp = policy.listTimestamp ?: timestamp,

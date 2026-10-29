@@ -30,7 +30,22 @@ class ChatRoomPreviewLocal(
     val lastMessage: PreviewMessageLocal?,
     val lastReaction: PreviewReactionLocal?,
     val unseenReactions: Int,
+    val pinned: Boolean,
+    val activity: ChatRoomActivityLocal?,
 )
+
+/** The first stored layout of a preview. It has no [ChatRoomPreviewLocal.pinned] and no [ChatRoomPreviewLocal.activity]. */
+@Serializable
+class ChatRoomPreviewFirstLayoutLocal(
+    val timestamp: Long?,
+    val badge: ChatRoomBadgeLocal?,
+    val lastMessage: PreviewMessageLocal?,
+    val lastReaction: PreviewReactionLocal?,
+    val unseenReactions: Int,
+)
+
+@Serializable
+class ChatRoomActivityLocal(val text: String, val ongoing: Boolean)
 
 @Serializable
 sealed interface ChatRoomBadgeLocal {
@@ -41,6 +56,10 @@ sealed interface ChatRoomBadgeLocal {
     @Serializable
     @EnumIndex(1)
     class UnreadCount(val count: Int) : ChatRoomBadgeLocal
+
+    @Serializable
+    @EnumIndex(2)
+    class Image(val icon: String) : ChatRoomBadgeLocal
 }
 
 @Serializable

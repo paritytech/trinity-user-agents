@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPre
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 
 data class ChatSummary(
@@ -17,6 +18,8 @@ data class ChatSummary(
     val lastMessageSortOrder: Long?,
     val roomMetadata: RoomMetadata,
     val hasUnseenReaction: Boolean,
+    /** The line that the row shows in place of its preview line. Only a product room has one. */
+    val activity: ChatRoomActivityModel?,
     // TODO this is a workaround to efficiently get access to the custom renderer
     // Previously we have fetched renderers map separately but not it requires extra db access (read all rooms)
     // Ideally we should have a separate ChatPreview model for what DataProvider outputs and what ChatListInteractor constructs,
