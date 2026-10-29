@@ -12,6 +12,7 @@ import {
   decodeLink,
   encodeLink,
   fetchDescriptor,
+  open,
   parse,
   stackId,
 } from "./index.js";
@@ -102,25 +103,27 @@ export async function list(options: ProjectOptions = {}) {
 /**
  * Compares the dotNS addresses a descriptor states with its Asset Hub at the latest finalized
  * block. `target` is a stack name in stacks.json, whose committed copy is checked, else a link or
- * an http(s) URL, else a local file. Throws when the descriptor has no Asset Hub.
+ * an http(s) URL, whose document must pass the pointer's rules, else a local file. Throws when the
+ * descriptor has no Asset Hub.
  */
 export async function check(
   target: string,
   options: ProjectOptions = {},
 ): Promise<{ at: Block; drift: DotnsDrift[] }> {
   const stacks = await readStacks(options);
-  const url = urlOf(target);
-  let document: Uint8Array | undefined;
+  const pointer = pointerOf(target);
+  let descriptor: Descriptor;
   if (Object.hasOwn(stacks, target)) {
-    document = await read(fileOf(target), options);
+    const document = await read(fileOf(target), options);
     if (!document) throw new Error(`no committed copy of ${target}`);
-  } else if (url) {
-    document = await fetchDescriptor(url, options);
-    if (!document) throw new Error(`${url} is unreachable`);
+    descriptor = open(document, decodeLink(stacks[target])).descriptor;
+  } else if (pointer) {
+    const document = await fetchDescriptor(pointer.url, options);
+    if (!document) throw new Error(`${pointer.url} is unreachable`);
+    descriptor = open(document, pointer).descriptor;
   } else {
-    document = new Uint8Array(await readFile(target));
+    descriptor = parse(new Uint8Array(await readFile(target))).descriptor;
   }
-  const { descriptor } = parse(document);
   if (!descriptor.chains.some((chain) => chain.role === "AssetHub"))
     throw new Error(`${descriptor.id} has no AssetHub chain, so no dotNS`);
   return checkDotns(descriptor, {
@@ -130,12 +133,14 @@ export async function check(
   });
 }
 
-/** The descriptor URL `target` names as a link or an http(s) URL; undefined for anything else. */
-function urlOf(target: string): string | undefined {
+/** The pointer `target` names as a link or an http(s) URL; undefined for anything else. */
+function pointerOf(target: string): Pointer | undefined {
   if (!URL.canParse(target)) return undefined;
   const parsed = new URL(target);
-  if (parsed.searchParams.has("url")) return decodeLink(target).url;
-  return ["http:", "https:"].includes(parsed.protocol) ? target : undefined;
+  if (parsed.searchParams.has("url")) return decodeLink(target);
+  return ["http:", "https:"].includes(parsed.protocol)
+    ? { url: target }
+    : undefined;
 }
 
 /** Removes a stack and its copy. */

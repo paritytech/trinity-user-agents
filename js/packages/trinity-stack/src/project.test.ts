@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Fetch, encodeLink } from "./index.js";
+import { type Fetch, encodeLink, publicKey } from "./index.js";
 import {
   type ProjectOptions,
   add,
@@ -122,6 +122,13 @@ describe("trinity-stack add and update", () => {
     expect(await check("local", options())).toEqual({ at: AT, drift: [] });
     expect(await check(URL_, options())).toEqual({ at: AT, drift });
     expect(await check(link, options())).toEqual({ at: AT, drift });
+    const otherKey = encodeLink({
+      url: URL_,
+      key: publicKey(new Uint8Array(32).fill(9)),
+    });
+    await expect(check(otherKey, options())).rejects.toThrow(
+      "signature does not verify",
+    );
     const path = join(dir, "moved.json");
     await writeFile(path, served);
     expect(await check(path, options())).toEqual({ at: AT, drift });
