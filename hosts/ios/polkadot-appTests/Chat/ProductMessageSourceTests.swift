@@ -450,10 +450,12 @@ extension ProductMessageSourceTests {
     /// A reply whose quoted message is outside the window quotes the message that the product gave with it.
     @Test func aReplyQuotesTheMessageThatTheProductGaveWithIt() async {
         var reply = productMessage(5)
-        reply.replyTo = "m1"
-        reply.replyPreview = ChatReplyPreview(
-            origin: ChatMessageOrigin(participantId: "user"),
-            body: .text(text: "quoted")
+        reply.reply = ChatReply(
+            messageId: "m1",
+            preview: ChatReplyPreview(
+                origin: ChatMessageOrigin(participantId: "user"),
+                body: .text(text: "quoted")
+            )
         )
         let page = ProductChatMessagesQueryItem(messages: [reply], next: "5")
         let querying = ScriptedProductChatQuerying(page: { _ in page })
@@ -528,8 +530,7 @@ private func productMessage(
         timestamp: timestamp ?? UInt64(index) * 1_000,
         body: .text(text: "message \(index)"),
         status: status,
-        replyTo: nil,
-        replyPreview: nil,
+        reply: nil,
         editedAt: nil,
         reactions: [],
         request: false

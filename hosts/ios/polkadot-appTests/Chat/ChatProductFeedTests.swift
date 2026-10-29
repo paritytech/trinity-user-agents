@@ -488,8 +488,7 @@ private extension ChatProductFeedTests {
             timestamp: 1_700_000_000_000,
             body: body,
             status: .sent,
-            replyTo: replyTo,
-            replyPreview: nil,
+            reply: replyTo.map { ChatReply(messageId: $0, preview: nil) },
             editedAt: nil,
             reactions: [],
             request: false
