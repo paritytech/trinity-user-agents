@@ -3,6 +3,9 @@
 //! v0.2 lets a product describe a posted message in one line with `alt`. A
 //! v0.1 caller had no such text, so upgrading its request fills `alt` with
 //! `None` and the host keeps its own placeholder.
+//!
+//! v0.2 also lets the host make the room id. The `room_id` of a v0.1 room
+//! request becomes the source of the id, and a v0.1 answer carries no id.
 
 use crate::{
 	v01, v02,
@@ -10,9 +13,18 @@ use crate::{
 };
 
 truapi_macros::versioned_type! {
-	pub enum HostChatCreateRoomRequest { V1 => v01::HostChatCreateRoomRequest }
-	pub enum HostChatCreateRoomResponse { V1 => v01::HostChatCreateRoomResponse }
-	pub enum HostChatCreateRoomError { V1 => v01::HostChatCreateRoomError }
+	pub enum HostChatCreateRoomRequest {
+		V1 => v01::HostChatCreateRoomRequest,
+		V2 => v02::HostChatCreateRoomRequest,
+	}
+	pub enum HostChatCreateRoomResponse {
+		V1 => v01::HostChatCreateRoomResponse,
+		V2 => v02::HostChatCreateRoomResponse,
+	}
+	pub enum HostChatCreateRoomError {
+		V1 => v01::HostChatCreateRoomError,
+		V2 => v01::HostChatCreateRoomError,
+	}
 	pub enum HostChatRegisterBotRequest { V1 => v01::HostChatRegisterBotRequest }
 	pub enum HostChatRegisterBotResponse { V1 => v01::HostChatRegisterBotResponse }
 	pub enum HostChatRegisterBotError { V1 => v01::HostChatRegisterBotError }
@@ -60,6 +72,54 @@ truapi_macros::versioned_type! {
 	pub enum HostChatSetRoomConfigRequest { V1 => v01::HostChatSetRoomConfigRequest }
 	pub enum HostChatSetRoomConfigResponse { V1 }
 	pub enum HostChatSetRoomConfigError { V1 => v01::HostChatSetRoomConfigError }
+}
+
+impl IntoLatest for HostChatCreateRoomRequest {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(v01::HostChatCreateRoomRequest { room_id, name, icon }) => {
+				v02::HostChatCreateRoomRequest { room_id_source: room_id, name, icon }
+			},
+			Self::V2(latest) => latest,
+		}
+	}
+}
+
+// A v0.1 answer names no room. The dispatcher upgrades an answer only to
+// downgrade it again for the same caller, so the empty id never reaches a
+// product.
+impl IntoLatest for HostChatCreateRoomResponse {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(v01::HostChatCreateRoomResponse { status }) => {
+				v02::HostChatCreateRoomResponse { status, room_id: String::new() }
+			},
+			Self::V2(latest) => latest,
+		}
+	}
+}
+
+impl FromLatest for HostChatCreateRoomResponse {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		if target >= 2 {
+			return Self::V2(latest);
+		}
+		Self::V1(v01::HostChatCreateRoomResponse { status: latest.status })
+	}
+}
+
+impl IntoLatest for HostChatCreateRoomError {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(payload) | Self::V2(payload) => payload,
+		}
+	}
+}
+
+impl FromLatest for HostChatCreateRoomError {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		if target >= 2 { Self::V2(latest) } else { Self::V1(latest) }
+	}
 }
 
 impl IntoLatest for HostChatPostMessageRequest {
@@ -133,15 +193,26 @@ mod tests {
 		assert_eq!(HostChatPostMessageResponse::from_latest(response, 2).version(), 2);
 	}
 
-	// Products that use the first SDK create rooms, set footers and post messages
-	// in these shapes. They call the client that the host injects, so these
-	// methods keep their first wire.
+	// Products that use the first SDK set footers and post messages in these
+	// shapes. They call the client that the host injects, so these methods keep
+	// their first wire.
 	#[test]
-	fn a_room_its_footer_and_a_post_keep_the_first_wire() {
-		assert_eq!(HostChatCreateRoomRequest::LATEST, 1);
+	fn a_footer_and_a_post_keep_the_first_wire() {
 		assert_eq!(HostChatSetRoomFooterRequest::LATEST, 1);
 		assert_eq!(HostChatPostMessageRequest::LATEST, 2);
 
+		let footer = HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "room".into(),
+			footer: v01::ChatRoomFooter::TextInput,
+		});
+		// V1 envelope, the room id, then `TextInput` at index 0.
+		assert_eq!(hex::encode(footer.encode()), "0010726f6f6d00");
+	}
+
+	// A first-SDK product still decodes as a room request. Its own id is only
+	// the source of the room id, so the host never stores a room under it.
+	#[test]
+	fn a_v01_room_id_becomes_the_source_of_the_host_id() {
 		let room = HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
 			room_id: "room".into(),
 			name: "Room".into(),
@@ -150,12 +221,35 @@ mod tests {
 		// V1 envelope, the room id, the name, then the empty icon.
 		assert_eq!(hex::encode(room.encode()), "0010726f6f6d10526f6f6d00");
 
-		let footer = HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
-			room_id: "room".into(),
-			footer: v01::ChatRoomFooter::TextInput,
-		});
-		// V1 envelope, the room id, then `TextInput` at index 0.
-		assert_eq!(hex::encode(footer.encode()), "0010726f6f6d00");
+		assert_eq!(
+			room.into_latest(),
+			v02::HostChatCreateRoomRequest {
+				room_id_source: "room".into(),
+				name: "Room".into(),
+				icon: String::new(),
+			}
+		);
+	}
+
+	// A v0.1 caller has no field for the id, so only a v0.2 caller learns it
+	// from the answer.
+	#[test]
+	fn only_a_v02_room_answer_names_the_room_id() {
+		let latest = v02::HostChatCreateRoomResponse {
+			status: v01::ChatRoomRegistrationStatus::New,
+			room_id: "0x01".into(),
+		};
+
+		assert_eq!(
+			HostChatCreateRoomResponse::from_latest(latest.clone(), 1),
+			HostChatCreateRoomResponse::V1(v01::HostChatCreateRoomResponse {
+				status: v01::ChatRoomRegistrationStatus::New,
+			})
+		);
+		assert_eq!(
+			HostChatCreateRoomResponse::from_latest(latest.clone(), 2),
+			HostChatCreateRoomResponse::V2(latest)
+		);
 	}
 
 	// Fixture is `ChatRegisterBotV1_request` output from triangle-js-sdks
