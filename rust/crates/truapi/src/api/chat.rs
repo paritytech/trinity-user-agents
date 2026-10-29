@@ -392,7 +392,7 @@ pub trait Chat: Send + Sync {
 	///         timestamp: BigInt(Date.now()),
 	///         body: action.value.body,
 	///         status: "Sent",
-	///         replyTo: action.value.replyTo,
+	///         reply: action.value.replyTo ? { messageId: action.value.replyTo } : undefined,
 	///         reactions: [],
 	///         request: false,
 	///       },
