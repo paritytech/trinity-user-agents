@@ -2,4 +2,4 @@
 "@parity/truapi-provider": minor
 ---
 
-A provider with an `addRpcChain` registration connects only to the chains registered on it. `connect` with any other genesis hash fails as unknown instead of resolving it from the bundled catalog, so a host on remote nodes never starts the light client by accident. A provider with no remote node still resolves every bundled network from its genesis hash alone. A host that mixes the two calls `addNetwork` first and `addRpcChain` after it: `addNetwork` registers every chain of the network, and a later registration for a genesis replaces an earlier one, so the other order puts the remote chains back on the light client.
+`connect` on a provider with an `addRpcChain` registration fails for any chain not registered on it, instead of starting the light client for it from the bundled catalog. A provider without one still reaches every bundled network by genesis hash. To mix the two, call `addNetwork` before `addRpcChain`: `addNetwork` registers all four chains of the network, and a later registration replaces an earlier one.
