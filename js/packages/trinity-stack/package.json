@@ -15,6 +15,9 @@
   },
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "trinity-stack": "dist/cli.js"
+  },
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
