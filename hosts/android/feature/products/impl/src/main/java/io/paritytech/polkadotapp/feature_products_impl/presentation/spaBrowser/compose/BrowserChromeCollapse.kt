@@ -10,6 +10,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
@@ -29,6 +30,7 @@ import kotlin.math.roundToInt
 internal class BrowserChromeCollapse {
     private val animatedFraction = Animatable(0f)
     private val isTouching = MutableStateFlow(false)
+    private var targetFraction = 0f
 
     val fraction: Float get() = animatedFraction.value
 
@@ -36,14 +38,18 @@ internal class BrowserChromeCollapse {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             isTouching.value = true
-            do {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-            } while (event.changes.any { it.pressed })
-            isTouching.value = false
+            try {
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                } while (event.changes.any { it.pressed })
+            } finally {
+                isTouching.value = false
+            }
         }
     }
 
     suspend fun follow(webView: WebView, collapser: BrowserChromeCollapser) {
+        targetFraction = 0f
         animatedFraction.snapTo(0f)
 
         val scrollOffsets = callbackFlow {
@@ -52,30 +58,34 @@ internal class BrowserChromeCollapse {
         }.onStart { emit(webView.scrollY) }
 
         combine(scrollOffsets, isTouching, ::Pair).collectLatest { (scrollY, touching) ->
-            apply(collapser.update(BrowserChromeScrollSample(scrollY.toFloat(), isInteracting = true)))
+            applyUpdate(collapser.update(BrowserChromeScrollSample(scrollY.toFloat(), isInteracting = true)))
 
             // A fling keeps scrolling after the finger lifts, so the scroll is at rest only once it stops moving.
             if (!touching) {
                 delay(SCROLL_REST_MILLIS)
-                apply(collapser.update(BrowserChromeScrollSample(scrollY.toFloat(), isInteracting = false)))
+                applyUpdate(collapser.update(BrowserChromeScrollSample(scrollY.toFloat(), isInteracting = false)))
+                // A new touch can cancel a settle midway, and the collapser reports no change for the end it already chose.
+                if (animatedFraction.value != targetFraction) animatedFraction.animateTo(targetFraction, tween(SETTLE_MILLIS))
             }
         }
     }
 
-    private suspend fun apply(update: BrowserChromeCollapseUpdate?) {
-        when {
-            update == null -> Unit
-            update.animated -> animatedFraction.animateTo(update.fraction, tween(SETTLE_MILLIS))
-            else -> animatedFraction.snapTo(update.fraction)
+    private suspend fun applyUpdate(update: BrowserChromeCollapseUpdate?) {
+        if (update == null) return
+        targetFraction = update.fraction
+        if (update.animated) {
+            animatedFraction.animateTo(update.fraction, tween(SETTLE_MILLIS))
+        } else {
+            animatedFraction.snapTo(update.fraction)
         }
     }
 }
 
 @Composable
-internal fun rememberBrowserChromeCollapse(webView: WebView?, topPanelHeight: Int): BrowserChromeCollapse {
+internal fun rememberBrowserChromeCollapse(webView: WebView?, topPanelHeight: Int, reloadCount: Int): BrowserChromeCollapse {
     val collapse = remember { BrowserChromeCollapse() }
 
-    LaunchedEffect(webView, topPanelHeight) {
+    LaunchedEffect(webView, topPanelHeight, reloadCount) {
         webView?.let { collapse.follow(it, BrowserChromeCollapser(topPanelHeight.toFloat())) }
     }
 
@@ -93,6 +103,7 @@ internal fun Modifier.collapsedBy(fraction: () -> Float): Modifier = layout { me
                 scaleX = shown
                 scaleY = shown
                 alpha = shown
+                transformOrigin = TransformOrigin(0.5f, 0f)
             }
         }
     }

@@ -12,8 +12,7 @@ data class BrowserChromeCollapseUpdate(
 
 // Mirrors the iOS BrowserChromeCollapser, so the chrome above a product hides and returns the same way on both.
 class BrowserChromeCollapser(private val topPanelHeight: Float) {
-    var fraction: Float = 0f
-        private set
+    private var fraction = 0f
 
     private var previousOffsetToTop: Float? = null
 

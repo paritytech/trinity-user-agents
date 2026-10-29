@@ -30,7 +30,6 @@ class SpaBrowserViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        every { webView.canGoBack() } returns true
         every { productSessionController.activeTab } returns MutableStateFlow<BrowserSessionInfo?>(null)
         every { productSessionController.openTabs } returns MutableStateFlow(emptyList())
         every { productSessionController.webView } returns MutableStateFlow<WebView?>(webView)
@@ -45,14 +44,32 @@ class SpaBrowserViewModelTest {
     // Back steps through the page history first, which in a game runs many screens deep.
     @Test
     fun `minimize leaves at once and keeps the tab open, even when the page can go back`() {
+        // Given
+        every { webView.canGoBack() } returns true
         val model = viewModel()
 
+        // When
         model.onMinimizeClick()
 
+        // Then
         verify { router.leaveBrowser() }
         verify(exactly = 0) { webView.goBack() }
         verify(exactly = 0) { productSessionController.closeActiveTab() }
         verify(exactly = 0) { productSessionController.closeTab(any()) }
+    }
+
+    @Test
+    fun `back walks the page history before leaving`() {
+        // Given
+        every { webView.canGoBack() } returns true
+        val model = viewModel()
+
+        // When
+        model.onBackPressed()
+
+        // Then
+        verify { webView.goBack() }
+        verify(exactly = 0) { router.leaveBrowser() }
     }
 
     private fun viewModel() = SpaBrowserViewModel(

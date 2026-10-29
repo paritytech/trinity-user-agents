@@ -45,6 +45,41 @@ class BrowserChromeCollapserTest {
         assertEquals(update(0f, animated = false), update)
     }
 
+    @Test
+    fun `a sample that moves nothing returns no update, so the panel is not animated again to where it is`() {
+        // Given
+        collapser.scrollTo(0f)
+        collapser.scrollTo(100f)
+
+        // When
+        val updates = listOf(collapser.scrollTo(100f), collapser.restAt(100f))
+
+        // Then
+        assertEquals(listOf(null, null), updates)
+    }
+
+    @Test
+    fun `the first sample is only a baseline, so a page restored deep down opens with the panel shown`() {
+        // When
+        val updates = listOf(250f, 260f).map { collapser.scrollTo(it) }
+
+        // Then
+        assertEquals(listOf(null, update(0.1f, animated = false)), updates)
+    }
+
+    @Test
+    fun `a panel not yet measured never collapses`() {
+        // Given
+        val unmeasured = BrowserChromeCollapser(topPanelHeight = 0f)
+        unmeasured.scrollTo(0f)
+
+        // When
+        val updates = listOf(unmeasured.scrollTo(500f), unmeasured.restAt(500f))
+
+        // Then
+        assertEquals(listOf(null, null), updates)
+    }
+
     private fun BrowserChromeCollapser.scrollTo(offset: Float) =
         update(BrowserChromeScrollSample(offsetToTopEdge = offset, isInteracting = true))
 

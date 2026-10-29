@@ -68,7 +68,8 @@ internal fun SpaBrowserScreenInternal(
     onRefresh: () -> Unit,
 ) {
     var minimizePanelHeight by remember { mutableIntStateOf(0) }
-    val chromeCollapse = rememberBrowserChromeCollapse(webView, minimizePanelHeight)
+    var reloadCount by remember { mutableIntStateOf(0) }
+    val chromeCollapse = rememberBrowserChromeCollapse(webView, minimizePanelHeight, reloadCount)
 
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
@@ -97,7 +98,10 @@ internal fun SpaBrowserScreenInternal(
                     if (state.isDevServer) {
                         PolkadotIconButton(
                             icon = NovaIcons.Refreshing,
-                            onClick = onRefresh,
+                            onClick = {
+                                reloadCount++
+                                onRefresh()
+                            },
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(PolkadotTheme.spacings.mediumIncreased),
