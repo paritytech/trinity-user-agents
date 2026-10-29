@@ -39,7 +39,7 @@ use truapi::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
 		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
 		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
-		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary,
+		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatReply,
 		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge,
 		ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus,
 		ChatUserAction, CodeFormat, FundingDirection, GenericError, HostChatCreateRoomError,
@@ -854,21 +854,26 @@ pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFi
 		timestamp: message.timestamp,
 		body: validate_chat_message_body(message.body)?,
 		status: message.status,
-		reply_to: message
-			.reply_to
-			.map(|reply_to| normalize_chat_identifier("replyTo", &reply_to))
-			.transpose()?,
-		reply_preview: message
-			.reply_preview
-			.map(|preview| {
-				Ok::<_, ChatFieldError>(ChatReplyPreview {
-					origin: ChatMessageOrigin {
-						participant_id: normalize_chat_identifier(
-							"participantId",
-							&preview.origin.participant_id,
-						)?,
-					},
-					body: validate_chat_message_body(preview.body)?,
+		reply: message
+			.reply
+			.map(|reply| {
+				let preview = reply
+					.preview
+					.map(|preview| {
+						Ok::<_, ChatFieldError>(ChatReplyPreview {
+							origin: ChatMessageOrigin {
+								participant_id: normalize_chat_identifier(
+									"participantId",
+									&preview.origin.participant_id,
+								)?,
+							},
+							body: validate_chat_message_body(preview.body)?,
+						})
+					})
+					.transpose()?;
+				Ok::<_, ChatFieldError>(ChatReply {
+					message_id: normalize_chat_identifier("reply", &reply.message_id)?,
+					preview,
 				})
 			})
 			.transpose()?,
@@ -2813,8 +2818,7 @@ mod tests {
 			timestamp: 1,
 			body: ChatMessageBody::Text { text: "hi".to_string() },
 			status: truapi::latest::ChatMessageStatus::Sent,
-			reply_to: None,
-			reply_preview: None,
+			reply: None,
 			edited_at: None,
 			reactions: Vec::new(),
 			request: false,
@@ -3161,10 +3165,12 @@ mod tests {
 	#[test]
 	fn the_quote_of_a_reply_is_screened() {
 		let quoting = |participant_id: &str| ChatMessage {
-			reply_to: Some("m0".to_string()),
-			reply_preview: Some(ChatReplyPreview {
-				origin: ChatMessageOrigin { participant_id: participant_id.to_string() },
-				body: ChatMessageBody::Text { text: "earlier".to_string() },
+			reply: Some(ChatReply {
+				message_id: "m0".to_string(),
+				preview: Some(ChatReplyPreview {
+					origin: ChatMessageOrigin { participant_id: participant_id.to_string() },
+					body: ChatMessageBody::Text { text: "earlier".to_string() },
+				}),
 			}),
 			..text_message("m1")
 		};

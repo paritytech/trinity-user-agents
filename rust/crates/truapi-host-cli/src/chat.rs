@@ -35,7 +35,7 @@ use truapi::{
 	latest::{
 		ChatBotRegistrationStatus, ChatCallRecord, ChatContactEvent, ChatFeedUpdate, ChatMediaItem,
 		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin,
-		ChatMessageStatus, ChatReactionSummary, ChatResource, ChatRoom, ChatRoomBadge,
+		ChatMessageStatus, ChatReactionSummary, ChatReply, ChatResource, ChatRoom, ChatRoomBadge,
 		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview,
 		ChatRoomRegistrationStatus, ChatUserAction, GenericError, HostChatCreateRoomError,
 		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
@@ -363,8 +363,7 @@ impl CliChatHost {
 			timestamp: now_millis(),
 			body,
 			status: ChatMessageStatus::Sent,
-			reply_to,
-			reply_preview: None,
+			reply: reply_to.map(|message_id| ChatReply { message_id, preview: None }),
 			edited_at: None,
 			reactions: Vec::new(),
 			request: false,
@@ -376,7 +375,7 @@ impl CliChatHost {
 			"author": "person",
 			"variant": body_variant(&message.body),
 			"payload": hex::encode(message.body.encode()),
-			"replyTo": message.reply_to,
+			"replyTo": message.reply.as_ref().map(|reply| &reply.message_id),
 		});
 		let room = state.rooms.get_mut(room_id).expect("the room was just found");
 		room.messages.push(StoredMessage::new(message.clone()));
@@ -871,7 +870,7 @@ pub fn message_json(message: &ChatMessage) -> Value {
 		"timestamp": message.timestamp,
 		"body": body_json(&message.body),
 		"status": status_name(message.status),
-		"replyTo": message.reply_to,
+		"replyTo": message.reply.as_ref().map(|reply| &reply.message_id),
 		"editedAt": message.edited_at,
 		"reactions": message.reactions.iter().map(|reaction| json!({
 			"emoji": reaction.emoji,
@@ -1235,8 +1234,7 @@ mod tests {
 			timestamp: 1_767_225_600_000,
 			body: body(text),
 			status: ChatMessageStatus::Sent,
-			reply_to: None,
-			reply_preview: None,
+			reply: None,
 			edited_at: None,
 			reactions: Vec::new(),
 			request: false,
