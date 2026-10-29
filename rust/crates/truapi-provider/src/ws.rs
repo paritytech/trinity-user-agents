@@ -7,15 +7,13 @@
 //! stream, and the consumer recovers by connecting again.
 
 use core::{
+	net::SocketAddr,
 	pin::Pin,
 	sync::atomic::{AtomicBool, Ordering},
 	task::{Context, Poll},
 	time::Duration,
 };
-use std::{
-	net::SocketAddr,
-	sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use crate::platform::JsonRpcConnection;
 use futures::{
@@ -48,8 +46,9 @@ const REQUEST_BUFFER: usize = 1024;
 /// submission fetches those bodies to find its transaction.
 const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
-/// How long reaching one address may take, TCP and TLS each, matching the
-/// jsonrpsee default for the WebSocket handshake that follows.
+/// How long each step of reaching a node may take: resolving its host, then
+/// connecting and the TLS handshake at each address. It matches the jsonrpsee
+/// default for the WebSocket handshake that follows.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How many redirects the handshake follows, as jsonrpsee's own dial does.
@@ -87,15 +86,25 @@ impl From<String> for Unopened {
 	}
 }
 
+/// Open `url`, following redirects. Once a redirect has been followed, a
+/// failure names the URL it happened at, since the caller reports only the URL
+/// it asked for. A redirect target can carry credentials, so it is shown
+/// redacted.
 async fn open(mut url: Url) -> Result<Box<dyn JsonRpcConnection>, String> {
-	for _ in 0..=MAX_REDIRECTS {
+	for redirects in 0..=MAX_REDIRECTS {
 		match open_once(&url).await {
 			Ok(connection) => return Ok(connection),
-			Err(Unopened::Failed(reason)) => return Err(reason),
+			Err(Unopened::Failed(reason)) if redirects == 0 => return Err(reason),
+			Err(Unopened::Failed(reason)) => {
+				return Err(format!(
+					"after a redirect to {}: {reason}",
+					crate::error::redacted(&url)
+				));
+			},
 			Err(Unopened::Redirected(location)) => {
 				url = url
 					.join(&location)
-					.map_err(|err| format!("redirected to {location}: {err}"))?;
+					.map_err(|err| format!("redirected to a location that is not a URL: {err}"))?;
 			},
 		}
 	}
@@ -114,11 +123,12 @@ async fn open_once(url: &Url) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
 		.trim_start_matches('[')
 		.trim_end_matches(']');
 	let port = url.port_or_known_default().ok_or("the URL names no port".to_owned())?;
-	let server_name = match secure {
-		false => None,
-		true => Some(ServerName::try_from(host.to_owned()).map_err(|err| err.to_string())?),
-	};
-	let addresses = within_dial_timeout(tokio::net::lookup_host((host, port))).await?;
+	let server_name = secure
+		.then(|| ServerName::try_from(host.to_owned()))
+		.transpose()
+		.map_err(|err| err.to_string())?;
+	let addresses =
+		within_dial_timeout("resolving the host", tokio::net::lookup_host((host, port))).await?;
 	open_any(url, server_name.as_ref(), addresses).await
 }
 
@@ -128,7 +138,7 @@ async fn open_any(
 	server_name: Option<&ServerName<'static>>,
 	addresses: impl IntoIterator<Item = SocketAddr>,
 ) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
-	let mut failure = format!("{} resolves to no address", url.host_str().unwrap_or_default());
+	let mut failure = "the host resolves to no address".to_owned();
 	for address in addresses {
 		match open_at(url, server_name, address).await {
 			Err(Unopened::Failed(reason)) => {
@@ -147,7 +157,7 @@ async fn open_at(
 	server_name: Option<&ServerName<'static>>,
 	address: SocketAddr,
 ) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
-	let tcp = within_dial_timeout(TcpStream::connect(address)).await?;
+	let tcp = within_dial_timeout("connecting", TcpStream::connect(address)).await?;
 	if let Err(err) = tcp.set_nodelay(true) {
 		tracing::debug!("TCP_NODELAY not set: {err}");
 	}
@@ -157,15 +167,17 @@ async fn open_at(
 		return handshake(url, socket, last_read).await;
 	};
 	let tls = TlsConnector::from(crate::tls::client_config()).connect(server_name.clone(), socket);
-	handshake(url, within_dial_timeout(tls).await?, last_read).await
+	handshake(url, within_dial_timeout("the TLS handshake", tls).await?, last_read).await
 }
 
+/// `step` of a dial within [`DIAL_TIMEOUT`], its timeout naming the step.
 async fn within_dial_timeout<T>(
+	step: &str,
 	dial: impl Future<Output = std::io::Result<T>>,
 ) -> Result<T, String> {
 	match tokio::time::timeout(DIAL_TIMEOUT, dial).await {
 		Ok(dialed) => dialed.map_err(|err| err.to_string()),
-		Err(_elapsed) => Err(format!("no connection within {}s", DIAL_TIMEOUT.as_secs())),
+		Err(_elapsed) => Err(format!("{step} took longer than {}s", DIAL_TIMEOUT.as_secs())),
 	}
 }
 
@@ -654,7 +666,7 @@ mod tests {
 
 		async fn receive(&mut self) -> Result<ReceivedMessage, Self::Error> {
 			for _ in 0..10 {
-				tokio::time::sleep(READ_TIMEOUT / 2).await;
+				tokio::time::sleep(READ_TIMEOUT * 2 / 3).await;
 				self.last_read.touch();
 			}
 			Ok(ReceivedMessage::Text("block".to_owned()))
@@ -762,6 +774,36 @@ mod tests {
 
 		let opened = open(ws_url(redirect)).await;
 		assert!(opened.is_ok(), "{:?}", opened.err());
+	}
+
+	/// The caller reports the URL it asked for, so a failure past a redirect has
+	/// to name where it happened, and never the credentials a redirect carried.
+	#[tokio::test]
+	async fn a_failure_after_a_redirect_names_the_target_without_its_credentials() {
+		let refusing = refusing_address().await;
+		let redirect = raw_server(format!(
+			"HTTP/1.1 301 Moved Permanently\r\nLocation: ws://user:secret@{refusing}/\r\n\
+			 Content-Length: 0\r\n\r\n"
+		))
+		.await;
+
+		let Err(reason) = open(ws_url(redirect)).await else {
+			panic!("nothing listens at the redirect target");
+		};
+		assert!(reason.contains(&refusing.to_string()), "{reason}");
+		assert!(!reason.contains("secret"), "{reason}");
+	}
+
+	/// A dial that hangs says which step hung, so a dead resolver is not taken
+	/// for a firewall.
+	#[tokio::test(start_paused = true)]
+	async fn a_dial_timeout_names_the_step_that_hung() {
+		let hung = super::within_dial_timeout(
+			"resolving the host",
+			core::future::pending::<std::io::Result<()>>(),
+		)
+		.await;
+		assert_eq!(hung, Err("resolving the host took longer than 10s".to_owned()));
 	}
 
 	/// A URL that cannot be a WebSocket is refused before anything is dialed,
