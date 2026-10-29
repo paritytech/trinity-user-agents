@@ -22,6 +22,7 @@
     "@polkadot-labs/hdkd-helpers": "^0.0.27",
     "@scure/base": "^2.3.0",
     "@scure/sr25519": "1.0.0",
+    "neverthrow": "^8.2.0",
     "polkadot-api": "2.2.2"
   },
   "devDependencies": {

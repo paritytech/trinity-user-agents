@@ -10,6 +10,7 @@
 // Calls come in no order between them, so they find their session by intent.
 
 import type { FundingAssignment } from "@parity/truapi";
+import { ok } from "neverthrow";
 import { answerAsk } from "./quotes";
 import { describe, sleep, truapi } from "./host";
 import { loadSaved } from "./saved";
@@ -76,43 +77,40 @@ async function sessionOf(intent: string): Promise<Session | undefined> {
 
 async function serve(): Promise<void> {
   const client = await truapi();
-  client.fundingProvider.onQuote(({ ask }, send) => {
-    send(answerAsk(ask, Date.now()));
-  });
-  client.fundingProvider.onAssign(({ session }, send) => {
+  client.fundingProvider.onQuote(({ ask }) => ok(answerAsk(ask, Date.now())));
+  client.fundingProvider.onAssign(({ session }) => {
     start(session);
-    send(undefined);
+    return ok(undefined);
   });
-  client.fundingProvider.onCancel(({ intent }, send) => {
-    void sessionOf(intent)
+  client.fundingProvider.onCancel(({ intent }) =>
+    sessionOf(intent)
       .then(
         (session) =>
           session?.cancel() ?? {
             tag: "Refused" as const,
             value: { reason: "This session is not running here" },
           },
+        (error: unknown) => ({
+          tag: "Refused" as const,
+          value: { reason: `Answering the cancel failed: ${describe(error)}` },
+        }),
       )
-      .then(send, (error: unknown) =>
-        console.warn(
-          `[fundtest] ${intent}: answering the cancel failed: ${describe(error)}`,
-        ),
-      );
-  });
-  client.fundingProvider.onSettleCancel(({ intent, decision }, send) => {
-    void sessionOf(intent)
+      .then((answer) => ok(answer)),
+  );
+  client.fundingProvider.onSettleCancel(({ intent, decision }) =>
+    sessionOf(intent)
       .then((session) =>
         decision.tag === "Accepted"
           ? session?.cancelAccepted()
           : session?.cancelDeclined(),
       )
-      .then(
-        () => send(undefined),
-        (error: unknown) =>
-          console.warn(
-            `[fundtest] ${intent}: keeping the cancel decision failed: ${describe(error)}`,
-          ),
-      );
-  });
+      .catch((error: unknown) =>
+        console.warn(
+          `[fundtest] ${intent}: keeping the cancel decision failed: ${describe(error)}`,
+        ),
+      )
+      .then(() => ok(undefined)),
+  );
 }
 
 void serve().catch((error: unknown) =>
