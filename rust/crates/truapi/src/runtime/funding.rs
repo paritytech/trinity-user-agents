@@ -1697,7 +1697,8 @@ impl RuntimeServices {
 	/// be one of the host's providers serving its direction, on the quote the
 	/// user chose it by, which must be one the core offered for this session,
 	/// not yet expired and, when the session has an amount, pricing that
-	/// amount. Returns whether it was open and not yet assigned.
+	/// amount. Once assigned, the quotes still asked of other providers end.
+	/// Returns whether it was open and not yet assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
@@ -1737,9 +1738,15 @@ impl RuntimeServices {
 				});
 			}
 		}
-		registry
+		let assigned = registry
 			.select_provider(current_unix_millis(), intent, provider.as_str(), choice)
-			.await
+			.await?;
+		if assigned {
+			// The others' answers can no longer be used, so the quotes still
+			// asked of them stop and let their workers go.
+			self.funding_quotes().end_quotes(intent);
+		}
+		Ok(assigned)
 	}
 
 	/// Follow a session's top-ups, payment or refund to the end, then settle

@@ -528,7 +528,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
   is up before the first quote; a provider handed the session keeps its
-  worker after that. The manifest names no backend: a provider signs in to its own API
+  worker after that. A quote already asked keeps its provider's worker
+  until it is answered or times out, overlay closed or not, unless the
+  session is handed to another provider: then every quote still waiting
+  ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
   itself and keeps its tokens with the host.
   Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
   provider that does not answer within 10 seconds is unavailable. A provider's

@@ -20,8 +20,8 @@ use std::{
 use core::time::Duration;
 
 use futures::{
-	future::{self, Either},
-	stream::{self, BoxStream, StreamExt},
+	future::{self, AbortHandle, AbortRegistration, Either},
+	stream::{self, Abortable, BoxStream, StreamExt},
 };
 use parity_scale_codec::Encode;
 use truapi::latest::{
@@ -69,8 +69,10 @@ pub struct FundingQuotes {
 	/// priced, so a selection can only name one the host was shown.
 	offered: Mutex<HashMap<(String, String), Vec<FundingChoice>>>,
 	/// The latest list each session's host is shown, by a number that grows
-	/// with each new ask, so an older list stops asking again.
-	watching: Mutex<HashMap<String, u64>>,
+	/// with each new ask, so an older list stops asking again, and the handle
+	/// that ends it at once, with every quote it still waits on, once a
+	/// provider takes the session.
+	watching: Mutex<HashMap<String, (u64, AbortHandle)>>,
 	/// The number the next watched list takes.
 	next_watch: Mutex<u64>,
 	/// The country the host last detected, and when.
@@ -124,22 +126,33 @@ impl FundingQuotes {
 	}
 
 	/// Make a new list the one session `intent` watches, ending any older
-	/// one's asking again. Returns the list's number.
-	fn watch(&self, intent: &str) -> u64 {
+	/// one's asking again. Returns the list's number and what ends it.
+	fn watch(&self, intent: &str) -> (u64, AbortRegistration) {
 		let mut next = lock(&self.next_watch);
 		*next += 1;
-		lock(&self.watching).insert(intent.to_string(), *next);
-		*next
+		let (handle, registration) = AbortHandle::new_pair();
+		lock(&self.watching).insert(intent.to_string(), (*next, handle));
+		(*next, registration)
 	}
 
 	/// Whether list `watch` is still the one session `intent` watches.
 	fn is_watched(&self, intent: &str, watch: u64) -> bool {
-		lock(&self.watching).get(intent) == Some(&watch)
+		lock(&self.watching).get(intent).is_some_and(|(current, _)| *current == watch)
 	}
 
-	/// Stop asking again for session `intent`'s quotes.
+	/// Stop asking again for session `intent`'s quotes. A quote already
+	/// asked still holds its provider's worker until it is answered.
 	pub fn stop_watching(&self, intent: &str) {
 		lock(&self.watching).remove(intent);
+	}
+
+	/// End session `intent`'s list at once, with every quote it still waits
+	/// on, as once a provider has taken the session the others' answers
+	/// cannot be used and their workers are let go.
+	pub fn end_quotes(&self, intent: &str) {
+		if let Some((_, list)) = lock(&self.watching).remove(intent) {
+			list.abort();
+		}
 	}
 
 	/// `provider_id`'s answer to the same ask, when it came recently and, if
@@ -294,7 +307,7 @@ impl RuntimeServices {
 		deadline: Duration,
 		refresh: Duration,
 	) -> (u64, BoxStream<'static, FundingQuoteList>) {
-		let watch = self.funding_quotes().watch(intent);
+		let (watch, ended) = self.funding_quotes().watch(intent);
 		let current = {
 			let services = self.clone();
 			let intent = intent.to_string();
@@ -356,9 +369,8 @@ impl RuntimeServices {
 			}
 		})
 		.flatten()
-		.take_while(move |_| future::ready(still_current()))
-		.boxed();
-		(watch, lists)
+		.take_while(move |_| future::ready(still_current()));
+		(watch, Abortable::new(lists, ended).boxed())
 	}
 
 	/// Whether list `watch` of session `intent` is still wanted: the latest
