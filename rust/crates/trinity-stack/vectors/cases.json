@@ -1601,6 +1601,68 @@
       ]
     },
     {
+      "build": "refresh/42.json",
+      "buildDotns": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": null,
+        "generation": "2026-09-17T16:15:00Z"
+      },
+      "name": "an-explicit-refresh-reads-dotns-again",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-09-17T16:15:00Z"
+          }
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unchanged",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/42.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": "2026-09-17T16:15:00Z",
+            "record": "2026-09-17T16:15:00Z"
+          }
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-09-17T16:15:00Z"
+          }
+        }
+      ]
+    },
+    {
       "build": "refresh/42-without-asset-hub.json",
       "buildDotns": null,
       "name": "a-stack-without-an-asset-hub-has-no-dotns",

@@ -1040,6 +1040,20 @@ fn refresh_cases() -> Vec<Value> {
 				get(NOW + 1, Some(42), Value::Null),
 			],
 		),
+		json!({
+			"name": "an-explicit-refresh-reads-dotns-again",
+			"pointer": { "url": URL, "key": key() },
+			"refresh": "never",
+			"build": "refresh/42.json",
+			"buildDotns": record(base_generation.as_str().unwrap()),
+			"steps": [
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
+				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
+				fetched(Some("refresh/42.json"), None, NOW, outcome("unchanged", 42, true)),
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": base_generation } },
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
+			],
+		}),
 		case(
 			"a-stack-without-an-asset-hub-has-no-dotns",
 			json!("never"),

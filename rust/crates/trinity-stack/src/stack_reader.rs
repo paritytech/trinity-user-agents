@@ -178,6 +178,8 @@ struct Schedule {
 	pending: bool,
 	asked_at: Option<i64>,
 	answered: bool,
+	/// The caller asked for it outside the policy, through [`StackReader::refresh`].
+	requested: bool,
 }
 
 impl Schedule {
@@ -187,7 +189,7 @@ impl Schedule {
 			return false;
 		}
 		match refresh {
-			_ if !has_copy => true,
+			_ if !has_copy || self.requested => true,
 			Refresh::Never => false,
 			Refresh::Once => self.asked_at.is_none(),
 			Refresh::MaxAge(age) => {
@@ -207,6 +209,7 @@ impl Schedule {
 
 	fn ask(&mut self, now: i64) {
 		self.pending = true;
+		self.requested = false;
 		self.asked_at = Some(now);
 	}
 
@@ -304,9 +307,11 @@ impl StackReader {
 		StackRead { current, fetch }
 	}
 
-	/// A fetch of the stack whatever the policy, unless one is out already.
+	/// A fetch of the stack whatever the policy, unless one is out already. The next
+	/// [`StackReader::dotns`] reads the stack's dotNS contracts again too.
 	pub fn refresh(&mut self, pointer: &Pointer, now_unix_seconds: i64) -> Option<FetchRequest> {
 		let stack = self.stack(pointer);
+		stack.lookups.requested = true;
 		(!stack.fetches.pending).then(|| {
 			stack.fetches.ask(now_unix_seconds);
 			stack.request(pointer)
