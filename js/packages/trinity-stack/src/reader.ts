@@ -175,14 +175,10 @@ export function createStackReader(
   };
 
   /**
-   * Runs the lookup the reader handed out for `generation`. Resolves to the record now in use,
-   * undefined when the reader has moved to another generation meanwhile.
+   * Runs a lookup for `descriptor`. Resolves to the record now in use, undefined when the reader
+   * has moved to another generation meanwhile.
    */
-  const lookUp = (
-    pointer: Pointer,
-    descriptor: Descriptor,
-    generation: string,
-  ) => {
+  const lookUp = (pointer: Pointer, descriptor: Descriptor) => {
     const id = stackId(pointer);
     return track(
       lookups,
@@ -190,9 +186,6 @@ export function createStackReader(
       (async () => {
         let record;
         try {
-          // The descriptor in hand is for another generation when a fetch landed in between.
-          if (descriptor.generation !== generation)
-            return reader.lookedUp(pointer, undefined, now()).record;
           record = await readDotns(descriptor, {
             transport: options.transport?.(descriptor),
             fetch: options.fetch,
@@ -231,7 +224,7 @@ export function createStackReader(
         const { descriptor } = await api.get(stack);
         const read = reader.dotns(pointer, now());
         const looking = read?.lookUp
-          ? lookUp(pointer, descriptor, read.lookUp)
+          ? lookUp(pointer, descriptor)
           : lookups.get(stackId(pointer));
         const record = read?.record ?? (await looking);
         if (record) return record.dotns;
