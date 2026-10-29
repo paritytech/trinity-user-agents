@@ -40,13 +40,13 @@ use truapi::{
 		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
 		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
 		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary,
-		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomConfig, ChatRoomMetadata,
-		ChatRoomPreview, ChatUserAction, CodeFormat, FundingDirection, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomConfigRequest,
-		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge,
+		ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, ChatUserAction, CodeFormat,
+		FundingDirection, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
@@ -700,8 +700,8 @@ fn check_chat_count<T>(
 	Ok(())
 }
 
-/// Validate the name, description and icon of a room. The icon has the rules
-/// of the icon of `create_room`.
+/// Validate the name, description, icon and empty-room text of a room. The icon
+/// has the rules of the icon of `create_room`.
 pub fn validate_chat_room_metadata(
 	metadata: ChatRoomMetadata,
 ) -> Result<ChatRoomMetadata, ChatFieldError> {
@@ -712,6 +712,10 @@ pub fn validate_chat_room_metadata(
 			.map(|description| validate_chat_description("description", &description))
 			.transpose()?,
 		icon: metadata.icon.map(|icon| validate_chat_icon("icon", &icon)).transpose()?,
+		placeholder: metadata
+			.placeholder
+			.map(|placeholder| validate_chat_description("placeholder", &placeholder))
+			.transpose()?,
 	})
 }
 
@@ -732,8 +736,34 @@ pub fn validate_chat_room_preview(
 				})
 			})
 			.transpose()?,
+		badge: preview.badge.map(validate_chat_room_badge).transpose()?,
+		activity: preview
+			.activity
+			.map(|activity| {
+				let text = validate_chat_name("activity", &activity.text)?;
+				if text.is_empty() {
+					return Err(ChatFieldError::Empty { field: "activity" });
+				}
+				Ok(ChatRoomActivity { text, ..activity })
+			})
+			.transpose()?,
 		..preview
 	})
+}
+
+/// An image badge has the rules of the icon of `create_room`, and it needs an
+/// image.
+fn validate_chat_room_badge(badge: ChatRoomBadge) -> Result<ChatRoomBadge, ChatFieldError> {
+	match badge {
+		ChatRoomBadge::Image { icon } => {
+			let icon = validate_chat_icon("badge", &icon)?;
+			if icon.is_empty() {
+				return Err(ChatFieldError::Empty { field: "badge" });
+			}
+			Ok(ChatRoomBadge::Image { icon })
+		},
+		badge => Ok(badge),
+	}
 }
 
 /// Validate what a message says.
@@ -2975,6 +3005,7 @@ mod tests {
 			name: "Support".to_string(),
 			description: Some("x".repeat(description)),
 			icon: None,
+			placeholder: None,
 		};
 		assert!(validate_chat_room_metadata(metadata(CHAT_DESCRIPTION_MAX_BYTES)).is_ok());
 		assert_eq!(
@@ -3003,6 +3034,65 @@ mod tests {
 			Err(ChatFieldError::RejectedScheme { field: "icon" })
 		);
 
+		// The empty-room text is bounded as a description is.
+		let placeholder =
+			|text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
+		assert!(
+			validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES)))
+				.is_ok()
+		);
+		assert_eq!(
+			validate_chat_room_metadata(placeholder("x".repeat(CHAT_DESCRIPTION_MAX_BYTES + 1))),
+			Err(ChatFieldError::TooLong {
+				field: "placeholder",
+				limit: CHAT_DESCRIPTION_MAX_BYTES
+			})
+		);
+
+		// An image badge has the rules of an icon and needs an image. An
+		// activity line is display text that says something.
+		let bare = ChatRoomPreview {
+			timestamp: None,
+			badge: None,
+			last_message: None,
+			last_reaction: None,
+			unseen_reactions: 0,
+			pinned: true,
+			activity: None,
+		};
+		let badge = |icon: &str| ChatRoomPreview {
+			badge: Some(ChatRoomBadge::Image { icon: icon.to_string() }),
+			..bare.clone()
+		};
+		assert_eq!(
+			validate_chat_room_preview(badge(" https://icons.example/live.png ")),
+			Ok(badge("https://icons.example/live.png"))
+		);
+		assert_eq!(
+			validate_chat_room_preview(badge("")),
+			Err(ChatFieldError::Empty { field: "badge" })
+		);
+		assert_eq!(
+			validate_chat_room_preview(badge("javascript:alert(1)")),
+			Err(ChatFieldError::RejectedScheme { field: "badge" })
+		);
+		let activity = |text: &str| ChatRoomPreview {
+			activity: Some(ChatRoomActivity { text: text.to_string(), ongoing: true }),
+			..bare.clone()
+		};
+		assert_eq!(
+			validate_chat_room_preview(activity("Ben is typing")),
+			Ok(activity("Ben is typing"))
+		);
+		assert_eq!(
+			validate_chat_room_preview(activity(" ")),
+			Err(ChatFieldError::Empty { field: "activity" })
+		);
+		assert_eq!(
+			validate_chat_room_preview(activity("Ben\u{202e} is typing")),
+			Err(ChatFieldError::UnsafeCharacter { field: "activity" })
+		);
+
 		// The preview carries messages, screened as a page message is.
 		let preview = |message: ChatMessage| ChatRoomPreview {
 			timestamp: None,
@@ -3015,6 +3105,8 @@ mod tests {
 				removed: false,
 			}),
 			unseen_reactions: 1,
+			pinned: false,
+			activity: None,
 		};
 		assert!(validate_chat_room_preview(preview(text_message("m1"))).is_ok());
 		assert_eq!(
@@ -3158,6 +3250,7 @@ mod tests {
 						name: "Support".to_string(),
 						description: None,
 						icon: None,
+						placeholder: None,
 					},
 				},
 			)),
@@ -3174,6 +3267,8 @@ mod tests {
 						last_message: None,
 						last_reaction: None,
 						unseen_reactions: 0,
+						pinned: false,
+						activity: None,
 					},
 				},
 			)),
