@@ -20,6 +20,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         let roomId: String
         let name: String
         let icon: Chat.RoomIconChange
+        let placeholder: String?
     }
 
     private(set) var roomMetadata: [RoomMetadataCall] = []
@@ -56,9 +57,9 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         roomPreviews.append((roomId, preview))
     }
 
-    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange) async throws {
+    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange, placeholder: String?) async throws {
         try requireRoom(roomId)
-        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, icon: icon))
+        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, icon: icon, placeholder: placeholder))
     }
 
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {

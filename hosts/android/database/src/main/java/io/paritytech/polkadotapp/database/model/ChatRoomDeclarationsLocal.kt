@@ -16,6 +16,8 @@ class ChatRoomDeclarationsLocal(
     val config: ByteArray?,
     @ColumnInfo(defaultValue = "0") val configGeneration: Long,
     val description: String?,
+    /** The text that the room screen shows while the room has no messages. */
+    val placeholder: String?,
     val preview: ByteArray?,
     val features: ByteArray?,
     val contact: ByteArray?,

@@ -18,8 +18,9 @@ protocol ProductChatMessaging: Sendable {
     func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws
     /// Chat Extension v2 `delete_room`.
     func deleteRoom(roomId: String) async throws
-    /// Chat Extension v2 `set_room_metadata`: the name and the icon of the room. The native chat draws no description.
-    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange) async throws
+    /// Chat Extension v2 `set_room_metadata`: the name, the icon and the placeholder of the room. The native chat
+    /// draws no description.
+    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange, placeholder: String?) async throws
     /// What the product declared for a room. The core reads the configuration before each feed update.
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
     /// Chat Extension v2 `set_room_config`.
@@ -97,9 +98,9 @@ extension BoundProductChatMessaging {
         try await context.deleteRoom(for: bot, roomId: roomId)
     }
 
-    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange) async throws {
+    func setRoomMetadata(roomId: String, name: String, icon: Chat.RoomIconChange, placeholder: String?) async throws {
         let (context, bot) = try requireMessaging()
-        try await context.setRoomMetadata(for: bot, roomId: roomId, name: name, icon: icon)
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: name, icon: icon, placeholder: placeholder)
     }
 
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {

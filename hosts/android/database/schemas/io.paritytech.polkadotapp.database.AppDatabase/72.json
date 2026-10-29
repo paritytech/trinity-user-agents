@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 72,
-    "identityHash": "129d68c75a293b46a74800a27178e7f7",
+    "identityHash": "2e7da85ff43a7d5776c1d88d25eac587",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -3069,7 +3069,7 @@
       },
       {
         "tableName": "chat_room_declarations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` BLOB NOT NULL, `config` BLOB, `configGeneration` INTEGER NOT NULL DEFAULT 0, `description` TEXT, `preview` BLOB, `features` BLOB, `contact` BLOB, PRIMARY KEY(`chatId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` BLOB NOT NULL, `config` BLOB, `configGeneration` INTEGER NOT NULL DEFAULT 0, `description` TEXT, `placeholder` TEXT, `preview` BLOB, `features` BLOB, `contact` BLOB, PRIMARY KEY(`chatId`))",
         "fields": [
           {
             "fieldPath": "chatId",
@@ -3092,6 +3092,11 @@
           {
             "fieldPath": "description",
             "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "placeholder",
+            "columnName": "placeholder",
             "affinity": "TEXT"
           },
           {
@@ -3120,7 +3125,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '129d68c75a293b46a74800a27178e7f7')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2e7da85ff43a7d5776c1d88d25eac587')"
     ]
   }
 }
