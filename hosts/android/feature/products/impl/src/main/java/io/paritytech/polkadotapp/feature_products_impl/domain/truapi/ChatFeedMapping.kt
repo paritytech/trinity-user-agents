@@ -61,11 +61,11 @@ fun CoreChatMessage.toModel(productId: ProductId) = ProductRoomMessage(
     timestamp = timestamp.toLong(),
     content = body.toMessageContent(request, productId),
     status = status.toModel(),
-    replyTo = replyTo,
+    replyTo = reply?.messageId,
     editedAt = editedAt?.toLong(),
     reactions = reactions.map { ProductReactionSummaryModel(it.emoji, it.count.toInt(), it.reactedByUser) },
     request = request,
-    replyPreview = replyPreview?.let { ProductReplyPreviewModel(it.origin.participantId, it.body.toContent(productId)) },
+    replyPreview = reply?.preview?.let { ProductReplyPreviewModel(it.origin.participantId, it.body.toContent(productId)) },
 )
 
 fun ChatFeedUpdate.toModel(productId: ProductId): ProductFeedUpdateModel = when (this) {

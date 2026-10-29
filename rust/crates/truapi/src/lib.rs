@@ -103,7 +103,7 @@ pub mod latest {
 		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
 		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatMessageStatus,
 		ChatPageAnchor, ChatPaymentRecord, ChatPreviewReaction, ChatReaction, ChatReactionDetail,
-		ChatReactionSummary, ChatReplyPreview, ChatResource, ChatRichText, ChatRoom,
+		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText, ChatRoom,
 		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata,
 		ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
 		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
