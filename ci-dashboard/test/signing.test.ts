@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
@@ -140,10 +142,10 @@ describe("stage", () => {
   test("counts the thresholds passed", () => {
     expect(stage(30)).toBe(0);
     expect(stage(29)).toBe(1);
-    expect(stage(7)).toBe(1);
-    expect(stage(6)).toBe(2);
-    expect(stage(2)).toBe(2);
-    expect(stage(1)).toBe(3);
+    expect(stage(14)).toBe(1);
+    expect(stage(13)).toBe(2);
+    expect(stage(7)).toBe(2);
+    expect(stage(6)).toBe(3);
     expect(stage(-1)).toBe(3);
   });
 });
@@ -156,14 +158,14 @@ describe("summary", () => {
 
   test("marks each item by how close it is", () => {
     const table = summary(
-      [item("a", 20), item("b", 3), item("c", 1), item("d", -2)],
+      [item("a", 20), item("b", 10), item("c", 1), item("d", -2)],
       now,
     );
     expect(table).toContain(
       "| ⚠️ | profile | match AppStore a | expires in 20 days (2026-11-14) |",
     );
     expect(table).toContain(
-      "| 🚨 | profile | match AppStore b | expires in 3 days (2026-10-28) |",
+      "| 🚨 | profile | match AppStore b | expires in 10 days (2026-11-04) |",
     );
     expect(table).toContain(
       "| ❌ | profile | match AppStore c | expires in 1 day (2026-10-26) |",
@@ -171,5 +173,57 @@ describe("summary", () => {
     expect(table).toContain(
       "| ❌ | profile | match AppStore d | expired on 2026-10-23 |",
     );
+  });
+});
+
+// validate-signing-credentials.yml runs this script on a shared Mac with the
+// fetched certificates and profiles, and nothing else exercises it there.
+describe("run-signing", () => {
+  const script = join(import.meta.dir, "../src/run-signing.ts");
+  const pem = join(import.meta.dir, "fixtures/certificates.pem");
+
+  async function run(profiles: [string, Date][]) {
+    const dir = await mkdtemp(join(tmpdir(), "ci-dashboard-profiles-"));
+    for (const [uuid, expires] of profiles) {
+      await writeFile(
+        join(dir, `${uuid}.mobileprovision`),
+        profile(
+          `match AppStore io.parity.polkadotapp ${uuid}`,
+          uuid,
+          "2026-01-01T00:00:00Z",
+          expires.toISOString(),
+        ),
+      );
+    }
+    const result = Bun.spawnSync([process.execPath, script, pem, dir], {
+      env: {
+        PATH: process.env.PATH ?? "",
+        SIGNING_APP_IDENTIFIERS: "io.parity.polkadotapp",
+      },
+    });
+    return {
+      code: result.exitCode,
+      out: result.stdout.toString() + result.stderr.toString(),
+    };
+  }
+
+  const fromToday = (days: number) => new Date(Date.now() + days * 86_400_000);
+
+  test("passes and lists each item while all have a week or more", async () => {
+    const { code, out } = await run([["fine", fromToday(60)]]);
+    expect(code).toBe(0);
+    expect(out).toContain("Apple Distribution: Example (TEAM123456)");
+    expect(out).toContain("match AppStore io.parity.polkadotapp fine");
+  });
+
+  test("fails while an item has under a week left", async () => {
+    const { code, out } = await run([["soon", fromToday(5)]]);
+    expect(code).toBe(1);
+    expect(out).toContain("::error::match AppStore io.parity.polkadotapp soon");
+  });
+
+  test("fails when it finds no profiles", async () => {
+    const { code } = await run([]);
+    expect(code).not.toBe(0);
   });
 });

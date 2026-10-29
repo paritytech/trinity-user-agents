@@ -2,10 +2,11 @@ import { X509Certificate } from "node:crypto";
 
 /**
  * Days left under which an item is flagged, in order: a warning under 30 and
- * under 7, and under the last, 1 day or less, the run fails. The dashboard's
- * server posts the failure to Matrix, as for any watched workflow.
+ * under 14, and under the last the run fails, leaving a week to renew before
+ * a release breaks. The dashboard's server posts the failure to Matrix, as
+ * for any watched workflow.
  */
-export const EXPIRY_THRESHOLDS = [30, 7, 2];
+export const EXPIRY_THRESHOLDS = [30, 14, 7];
 
 const DAY_MS = 86_400_000;
 

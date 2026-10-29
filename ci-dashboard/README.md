@@ -31,7 +31,7 @@ The page shows:
 | Each day, 06:37 UTC | `smoke.sh` runs after the nightlies: the CLI install command from the docs installs and runs the stable version, each npm package installs and imports, and the fixed Android nightly link serves the newest build. A failure is posted. |
 
 `validate-signing-credentials.yml` lists the days left on each iOS certificate and profile in its job summary, warns
-under 30 days, and fails with 1 day or less left, so its failure is posted like any watched workflow's. While it fails,
+under 30 days, and fails with under 7 days left, so its failure is posted like any watched workflow's. While it fails,
 Home shows a red banner linking to the run.
 
 Check state is kept in `STATE_DIR`, so a restart neither forgets an outage nor posts it twice. Posts go out one at a

@@ -5,7 +5,7 @@
 //
 // SIGNING_APP_IDENTIFIERS, comma-separated, limits the profiles to those apps.
 // Adds a table to the job summary, a warning for each item under 30 days, and
-// exits non-zero while anything has 1 day or less. It reads only public
+// exits non-zero while anything has under 7 days. It reads only public
 // certificates and profiles, never a private key. Missing profile directories
 // are skipped, so it runs locally on a folder of .mobileprovision files and
 // any PEM.
@@ -71,6 +71,6 @@ for (const item of items) {
 }
 const urgent = items.filter((item) => daysLeft(item, now) < fail);
 if (urgent.length > 0) {
-  console.error(`${urgent.length} item(s) with 1 day or less left.`);
+  console.error(`${urgent.length} item(s) with under ${fail} days left.`);
   process.exitCode = 1;
 }
