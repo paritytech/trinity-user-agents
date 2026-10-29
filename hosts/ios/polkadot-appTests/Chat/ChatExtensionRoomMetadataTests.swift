@@ -51,13 +51,33 @@ struct ChatExtensionRoomMetadataTests {
         let context = makeContext()
         _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
 
-        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Finals", icon: change)
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Finals", icon: change, placeholder: nil)
 
         #expect(try await storedRoom()?.roomMetadata == Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: "Finals",
             icon: storedIcon
         ))
+    }
+
+    /// Each `set_room_metadata` replaces the placeholder of the room, so a nil placeholder removes it.
+    @Test
+    func metadataReplacesThePlaceholder() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: nil)
+
+        try await context.setRoomMetadata(
+            for: bot,
+            roomId: roomId,
+            name: "Jollity",
+            icon: .keep,
+            placeholder: "No games yet"
+        )
+        #expect(try await storedDeclarations()?.placeholder == "No games yet")
+
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Jollity", icon: .keep, placeholder: nil)
+        #expect(try await storedDeclarations()?.placeholder == nil)
+        #expect(try await storedRoom()?.roomMetadata?.name == "Jollity")
     }
 
     /// A save of the chat model never deletes what the product declared for its room.
@@ -156,7 +176,9 @@ private extension ChatExtensionRoomMetadataTests {
             timestamp: nil,
             badge: .unreadCount(2),
             lastMessage: nil,
-            unseenReaction: false
+            unseenReaction: false,
+            pinned: false,
+            activity: nil
         ))
         try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
             ChatRoomDeclarationUpdateMapper<Chat.RoomPreviewUpdate>()

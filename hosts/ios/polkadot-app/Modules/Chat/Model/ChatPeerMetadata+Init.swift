@@ -43,17 +43,30 @@ extension Chat.LocalModel {
     func chatMetadata(using registry: ChatExtensionsRegistering) -> ChatMetadata {
         let peerMetadata = peerMetadata(using: registry)
 
-        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created, roomPolicy: roomPolicy)
+        return ChatMetadata(
+            chatId: chatId,
+            peerMetadata: peerMetadata,
+            state: .created,
+            roomPolicy: roomPolicy,
+            roomPlaceholder: roomDeclarations?.placeholder
+        )
     }
 }
 
 private extension Chat.RoomMetadata {
     /// Only an inline image can be drawn as it is, so an `https` room icon leaves the bot's in place.
     var inlineIcon: Chat.PeerMetadata.Icon? {
-        guard let icon, icon.hasPrefix("data:"), let payloadStart = icon.range(of: ";base64,") else {
+        icon?.inlineImageData.map { .image($0) }
+    }
+}
+
+extension String {
+    /// The bytes of an inline `data:` image with a base64 payload. Nil for other text, for example an `https` URL.
+    var inlineImageData: Data? {
+        guard hasPrefix("data:"), let payloadStart = range(of: ";base64,") else {
             return nil
         }
 
-        return Data(base64Encoded: String(icon[payloadStart.upperBound...])).map { .image($0) }
+        return Data(base64Encoded: String(self[payloadStart.upperBound...]))
     }
 }

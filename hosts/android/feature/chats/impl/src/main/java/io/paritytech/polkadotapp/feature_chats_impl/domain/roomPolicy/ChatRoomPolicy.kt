@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
@@ -16,8 +17,14 @@ data class ChatRoomPolicy(
     val listBadge: ListBadge,
     /** Milliseconds since the Unix epoch. Null uses the last message. */
     val listTimestamp: Long?,
+    /** The chat list shows the room with the pinned rooms. */
+    val pinned: Boolean,
+    /** The line that the row shows in place of its preview line. */
+    val listActivity: ChatRoomActivityModel?,
     val reportsSeen: Boolean,
     val description: String?,
+    /** The text that the room screen shows while the room has no messages. */
+    val placeholder: String?,
     /** Changes at each configuration that the product sets. */
     val configGeneration: Long,
 ) {
@@ -43,6 +50,8 @@ data class ChatRoomPolicy(
 
         /** Zero shows no badge. */
         data class Count(val count: Int) : ListBadge
+
+        data class Image(val icon: String) : ListBadge
     }
 
     companion object {
@@ -52,8 +61,11 @@ data class ChatRoomPolicy(
             listPreview = null,
             listBadge = ListBadge.HostUnreadCount,
             listTimestamp = null,
+            pinned = false,
+            listActivity = null,
             reportsSeen = false,
             description = null,
+            placeholder = null,
             configGeneration = 0,
         )
 
@@ -68,8 +80,11 @@ data class ChatRoomPolicy(
                 listPreview = preview?.let { ListPreview(it.lastMessage, it.lastReaction, it.unseenReactions) },
                 listBadge = preview?.badge.toListBadge(),
                 listTimestamp = preview?.timestamp?.takeIf { it > 0 },
+                pinned = preview?.pinned == true,
+                listActivity = preview?.activity,
                 reportsSeen = config.reportSeen,
                 description = declarations.metadata.description,
+                placeholder = declarations.metadata.placeholder,
                 configGeneration = declarations.configGeneration,
             )
         }
@@ -81,5 +96,6 @@ private fun ChatRoomBadgeModel?.toListBadge(): ChatRoomPolicy.ListBadge {
         null -> ChatRoomPolicy.ListBadge.HostUnreadCount
         ChatRoomBadgeModel.Hidden -> ChatRoomPolicy.ListBadge.Hidden
         is ChatRoomBadgeModel.Count -> ChatRoomPolicy.ListBadge.Count(count.coerceAtLeast(0))
+        is ChatRoomBadgeModel.Image -> ChatRoomPolicy.ListBadge.Image(icon)
     }
 }

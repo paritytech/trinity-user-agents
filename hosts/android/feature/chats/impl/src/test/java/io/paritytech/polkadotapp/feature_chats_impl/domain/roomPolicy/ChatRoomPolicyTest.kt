@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -96,9 +97,30 @@ class ChatRoomPolicyTest {
     }
 
     @Test
+    fun `the preview pins the room, badges it with an image and gives its activity`() {
+        val activity = ChatRoomActivityModel("Ben is typing", ongoing = true)
+        val policy = ChatRoomPolicy.from(
+            declarations(preview = preview(badge = ChatRoomBadgeModel.Image(BADGE_ICON), pinned = true, activity = activity)),
+        )
+
+        assertEquals(Triple(ListBadge.Image(BADGE_ICON), true, activity), Triple(policy.listBadge, policy.pinned, policy.listActivity))
+    }
+
+    @Test
+    fun `the metadata gives the empty-room text`() {
+        val policy = ChatRoomPolicy.from(declarations(placeholder = "No games yet. Start one with /play"))
+
+        assertEquals("No games yet. Start one with /play", policy.placeholder)
+    }
+
+    @Test
     fun `the metadata gives the description`() {
         val policy = ChatRoomPolicy.from(declarations(description = "Weather for your city"))
 
         assertEquals("Weather for your city", policy.description)
+    }
+
+    private companion object {
+        const val BADGE_ICON = "https://example.invalid/badge.png"
     }
 }
