@@ -65,7 +65,8 @@ export type StackReader = {
 
 /**
  * A reader over the copies `bundled` holds, typically the `stacks` of the module
- * `trinity-stack update` generates. It never fetches per request: `refresh` says when it does.
+ * `trinity-stack update` generates, and any `Bundled` a call passes. It never fetches per
+ * request: `refresh` says when it does.
  */
 export function createStackReader(
   options: {
@@ -100,13 +101,15 @@ export function createStackReader(
   const listeners = new Set<(change: StackChange) => void>();
   const storeKey = (id: string) => `${id}#reader`;
 
-  /** Starts the stack from its build copy and stored record, once. */
-  const load = (pointer: Pointer): Promise<void> => {
+  /** Starts the stack from its build copy and stored record, once; a start that failed runs again. */
+  const load = (stack: Pointer | Bundled): Promise<void> => {
+    const pointer = pointerOf(stack);
     const id = stackId(pointer);
     let started = loads.get(id);
     if (!started) {
+      const build =
+        bundled.get(id) ?? ("document" in stack ? stack : undefined);
       const loading = (async () => {
-        const build = bundled.get(id);
         reader.load(
           pointer,
           build && new TextEncoder().encode(build.document),
@@ -116,6 +119,7 @@ export function createStackReader(
       })();
       started = { pointer, loading };
       loads.set(id, started);
+      loading.catch(() => loads.delete(id));
     }
     return started.loading;
   };
@@ -208,7 +212,7 @@ export function createStackReader(
   const api: StackReader = {
     async get(stack, getOptions = {}) {
       const pointer = pointerOf(stack);
-      await load(pointer);
+      await load(stack);
       const read = reader.get(pointer, now());
       const fetching = read.fetch
         ? fetchStack(pointer, read.fetch)
@@ -237,7 +241,7 @@ export function createStackReader(
     },
     async refresh(stack) {
       const pointer = pointerOf(stack);
-      await load(pointer);
+      await load(stack);
       const request = reader.refresh(pointer, now());
       return request
         ? fetchStack(pointer, request)

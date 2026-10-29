@@ -215,6 +215,27 @@ describe("createStackReader", () => {
     expect(requests.length).toBe(0);
   });
 
+  test("a stack passed to get runs from its own copy, and a store that failed is asked again", async () => {
+    const { fetch, requests } = down();
+    let failing = true;
+    const reader = createStackReader({
+      refresh: "never",
+      fetch,
+      store: {
+        get: async () => {
+          if (!failing) return undefined;
+          failing = false;
+          throw new Error("store is closing");
+        },
+        set: () => {},
+      },
+    });
+    const build = await bundle(await at(100));
+    await expect(reader.get(build)).rejects.toThrow("store is closing");
+    expect((await reader.get(build)).descriptor.sequence).toBe(100);
+    expect(requests.length).toBe(0);
+  });
+
   test("a stack it holds no copy of is fetched, and fails when it cannot be", async () => {
     const reader = createStackReader({ refresh: "never", fetch: down().fetch });
     await expect(reader.get(pointer)).rejects.toMatchObject({
