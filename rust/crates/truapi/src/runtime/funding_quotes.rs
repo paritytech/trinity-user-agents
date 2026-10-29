@@ -434,17 +434,17 @@ impl RuntimeServices {
 	}
 }
 
-/// A reference on a provider's worker while the core asks it for a quote,
-/// released when dropped, so a quote stream dropped while it waits leaves
-/// none behind.
-struct WorkerHold<'a> {
+/// A reference on a provider's worker while the core needs it, such as for a
+/// quote or while a session's overlay is up, released when dropped, so a
+/// quote stream dropped while it waits leaves none behind.
+pub(crate) struct WorkerHold<'a> {
 	services: &'a RuntimeServices,
 	provider: Option<ProductId>,
 }
 
 impl<'a> WorkerHold<'a> {
 	/// Hold `provider_id`'s worker, so the host runs it to answer.
-	fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
+	pub(crate) fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
 		let provider = provider_id.parse::<ProductId>().ok();
 		if let Some(provider) = &provider {
 			services.worker_ledger.acquire(provider);

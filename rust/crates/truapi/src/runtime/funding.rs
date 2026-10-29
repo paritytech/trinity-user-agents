@@ -987,9 +987,10 @@ impl FundingRegistry {
 		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
 	}
 
-	/// Every assigned open session holds its provider's worker. Only the
-	/// reconciler changes the holds, so they are taken and let go in the
-	/// order it derives them; a worker that starts and calls back changes the
+	/// Every assigned open session holds its provider's worker. The
+	/// reconciler keeps the holds current, and an overlay closing takes them
+	/// before it lets its own go; each session's hold is taken and let go
+	/// once, under the lock. A worker that starts and calls back changes the
 	/// sessions, which the next pass picks up.
 	fn hold_workers(&self, services: &RuntimeServices) {
 		let assigned: HashMap<String, String> = self
@@ -2020,7 +2021,19 @@ impl RuntimeServices {
 		};
 		self.refresh_funding_providers();
 		self.send_funding_options(&session.intent);
+		// Every provider's worker starts as the overlay opens, so it is up by
+		// the time the first quote is asked of it.
+		let warm: Vec<_> = self
+			.funding_providers()
+			.quote_targets()
+			.iter()
+			.map(|provider_id| super::funding_quotes::WorkerHold::acquire(&self, provider_id))
+			.collect();
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		// A provider handed the session while the overlay was up keeps its
+		// worker: its hold for the session is taken before the overlay's go.
+		registry.hold_workers(&self);
+		drop(warm);
 		self.forget_funding_selection(&session.intent);
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
