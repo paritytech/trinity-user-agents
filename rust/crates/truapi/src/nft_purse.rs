@@ -232,6 +232,12 @@ pub fn test_purses(db: Db) -> NftPurses {
 /// [`test_purses`] whose statement store is `statements`.
 #[cfg(test)]
 pub fn test_purses_watching(db: Db, statements: Arc<ScriptedStatements>) -> NftPurses {
+	test_purses_over(db, statements)
+}
+
+/// [`test_purses`] over any statement store, such as a live one.
+#[cfg(test)]
+pub fn test_purses_over(db: Db, statements: Arc<dyn StatementStoreApi>) -> NftPurses {
 	let ledger = crate::nft::test_ledger(db.clone());
 	let encrypted = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
 	let static_secret = Arc::new(FixedStaticSecret(TEST_STATIC_SECRET));

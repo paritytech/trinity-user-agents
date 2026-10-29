@@ -317,23 +317,35 @@ mod tests {
 	use serde_json::json;
 
 	use futures::executor::{block_on, block_on_stream};
-	use truapi::latest::RemoteStatementStoreSubscribeRequest;
-
+	use parity_scale_codec::Encode;
+	use subxt::utils::H256;
 	use subxt_rpcs::RpcClient;
+	use truapi::{latest::RemoteStatementStoreSubscribeRequest, v01};
 
 	use super::{
 		StatementStoreRpc, TopicFilterKind, is_no_allowance_rejection, start_statement_watch_over,
+		submit_sso,
 	};
 	use crate::{
-		chain::tokio_spawner,
+		chain::{ExtrinsicService, FixedExtensionVersions, tokio_spawner},
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
-		host_logic::statement_store::{
-			MAX_MATCH_ALL_TOPICS, StatementStoreApi, StatementWatchError, hex_topic,
+		host_logic::{
+			product_account::{derive_lite_person_ring_vrf_entropy, derive_sr25519_hard_path},
+			statement_store::{
+				MAX_MATCH_ALL_TOPICS, StatementBatches, StatementField, StatementStoreApi,
+				StatementWatchError, hex_topic, sign_statement_fields, validated_topic_filter,
+			},
+			x25519_seal::{SealedBox, X25519PrivateKey},
 		},
 		host_rpc_client::HostRpcClient,
-		platform::JsonRpcConnection,
+		nft_purse::{TEST_STATIC_SECRET, test_purses_over},
+		platform::{JsonRpcConnection, ProductId},
+		runtime::statement_allowance::{self as alloc, collection::PersonhoodCollection},
+		store::open_temporary_core_db,
 		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
 	};
+
+	const LITE_PEOPLE: PersonhoodCollection = PersonhoodCollection::LitePeople;
 
 	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
 
@@ -570,6 +582,32 @@ mod tests {
 		assert_eq!(platform.chain_connects.lock().unwrap().len(), 0);
 	}
 
+	/// A connection to the live People chain, from `TRUAPI_LIVE_PEOPLE_WS` and
+	/// `TRUAPI_LIVE_PEOPLE_GENESIS`, or Paseo People Next.
+	struct LivePeopleChain {
+		provider: Arc<truapi_provider::EmbeddedChainProvider>,
+		genesis: [u8; 32],
+		host_client: HostRpcClient,
+	}
+
+	async fn connect_live_people_chain() -> LivePeopleChain {
+		let url = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
+			.unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".into());
+		let genesis = std::env::var("TRUAPI_LIVE_PEOPLE_GENESIS").unwrap_or_else(|_| {
+			"4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48".into()
+		});
+		let genesis: [u8; 32] = hex::decode(genesis).unwrap().try_into().unwrap();
+		let source = truapi_provider::ChainSource::rpc_node(url.parse().unwrap());
+		let provider = Arc::new(
+			truapi_provider::EmbeddedChainProvider::builder().chain(genesis, source).build(),
+		);
+		let connection = truapi_provider::platform::ChainProvider::connect(&*provider, genesis)
+			.await
+			.unwrap();
+		let host_client = HostRpcClient::new(Arc::from(connection), tokio_spawner());
+		LivePeopleChain { provider, genesis, host_client }
+	}
+
 	/// The live People chain answers a watch of a topic nobody uses with one
 	/// empty batch, which is what tells an inbox it caught up. Run with
 	/// `cargo test -p truapi --lib live_statement_watch -- --ignored`;
@@ -578,28 +616,161 @@ mod tests {
 	#[tokio::test(flavor = "multi_thread")]
 	#[ignore = "needs the live Paseo People Next chain"]
 	async fn live_statement_watch_of_an_unused_topic_starts_with_one_empty_batch() {
-		let url = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
-			.unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".into());
-		let genesis = std::env::var("TRUAPI_LIVE_PEOPLE_GENESIS").unwrap_or_else(|_| {
-			"4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48".into()
-		});
-		let genesis: [u8; 32] = hex::decode(genesis).unwrap().try_into().unwrap();
-		let source = truapi_provider::ChainSource::rpc_node(url.parse().unwrap());
-		let provider =
-			truapi_provider::EmbeddedChainProvider::builder().chain(genesis, source).build();
-		let connection = truapi_provider::platform::ChainProvider::connect(&provider, genesis)
-			.await
-			.unwrap();
-		let host_client = HostRpcClient::new(Arc::from(connection), tokio_spawner());
-		let rpc_client = RpcClient::new(host_client);
+		let chain = connect_live_people_chain().await;
+		let rpc_client = RpcClient::new(chain.host_client);
 		let topic: [u8; 32] = rand::random();
 
 		let mut batches =
 			start_statement_watch_over(&rpc_client, TopicFilterKind::MatchAll, &[topic])
 				.await
 				.unwrap();
-		let first = tokio::time::timeout(core::time::Duration::from_secs(30), batches.next()).await;
+		let first = tokio::time::timeout(LIVE_WAIT, batches.next()).await;
 
 		assert_eq!(first.unwrap().map(Result::unwrap), Some(vec![]));
+	}
+
+	/// How long a live test waits for the chain to answer.
+	const LIVE_WAIT: core::time::Duration = core::time::Duration::from_secs(60);
+
+	/// The live statement store, watched as the host watches it.
+	struct LiveStatements(RpcClient);
+
+	#[async_trait]
+	impl StatementStoreApi for LiveStatements {
+		async fn start_statement_watch(
+			&self,
+			filter: RemoteStatementStoreSubscribeRequest,
+		) -> Result<StatementBatches, StatementWatchError> {
+			let (kind, topics) = validated_topic_filter(filter).unwrap();
+			start_statement_watch_over(&self.0, kind, &topics).await
+		}
+	}
+
+	/// The sr25519 key the live tests sign statements with, derived from the
+	/// person behind `entropy` so every run reuses one statement-store slot.
+	fn live_statement_signer(entropy: &[u8]) -> schnorrkel::Keypair {
+		derive_sr25519_hard_path(entropy, &["truapi-live-test", "statement-store"]).unwrap()
+	}
+
+	/// Gives `signer` a statement allowance for this period through the People
+	/// Lite ring of the person behind `entropy`, unless it already has one.
+	async fn allocate_live_statement_allowance(
+		chain: &LivePeopleChain,
+		entropy: &[u8],
+		signer: &schnorrkel::Keypair,
+	) {
+		let rpc = alloc::rpc::RpcClient::new(RpcClient::new(chain.host_client.clone()));
+		let metadata = alloc::fetch_metadata(&rpc).await.unwrap();
+		let network_suffix = alloc::slot::read_network_suffix(&rpc).await.unwrap();
+		let suffix = String::from_utf8(network_suffix.clone()).unwrap();
+		let entropy = derive_lite_person_ring_vrf_entropy(entropy, &suffix);
+		let candidates = [alloc::CollectionCandidate { collection: LITE_PEOPLE, entropy }];
+		let person = alloc::FixedPersonhoodSigner::new(&candidates).await.unwrap();
+		let target = signer.public.to_bytes();
+		let period = alloc::slot::current_period(current_unix_secs());
+		let memberships =
+			alloc::find_including_rings(&rpc, &metadata, &person, &[LITE_PEOPLE], u32::MAX)
+				.await
+				.unwrap();
+		let scan = alloc::CollectionScanParams {
+			network_suffix: &network_suffix,
+			period,
+			target: &target,
+			reuse_existing: true,
+		};
+		let scans = alloc::scan_collections(&rpc, &metadata, &person, &[LITE_PEOPLE], scan)
+			.await
+			.unwrap();
+		let versions = Arc::new(FixedExtensionVersions::one_chain(H256(chain.genesis), 1));
+		let extrinsics =
+			ExtrinsicService::from_provider(chain.provider.clone(), tokio_spawner(), versions);
+		let target_chain =
+			alloc::ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(chain.genesis) };
+		let registration = alloc::PooledRegistrationParams {
+			target: &target,
+			period,
+			network_suffix: &network_suffix,
+			reuse_existing: true,
+			allow_eviction: false,
+			protected: &[],
+		};
+		alloc::register_statement_account_pooled(
+			&rpc,
+			&metadata,
+			target_chain,
+			&person,
+			&scans,
+			&memberships,
+			registration,
+		)
+		.await
+		.unwrap();
+	}
+
+	/// The statement a sender publishes to put `cheque` under `topic`: the
+	/// envelope sealed to the static receive key, signed by `signer`.
+	fn signed_inbox_statement(
+		signer: &schnorrkel::Keypair,
+		topic: v01::StatementTopic,
+		cheque: &v01::NftPurseCheque,
+	) -> Vec<u8> {
+		let plaintext = (0u8, topic, cheque).encode();
+		let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
+		let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
+		let expiry = (current_unix_secs() + 3600) << 32;
+		let fields = vec![
+			StatementField::Expiry(expiry),
+			StatementField::Channel(rand::random()),
+			StatementField::Topic1(topic.0),
+			StatementField::Data(sealed.to_bytes()),
+		];
+		let signed =
+			sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields);
+		signed.unwrap().encode()
+	}
+
+	fn current_unix_secs() -> u64 {
+		let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+		now.unwrap().as_secs()
+	}
+
+	/// A cheque a real sender publishes on the live People chain reaches a
+	/// product listening to its inbox. Needs a person in a People Lite ring:
+	/// `TRUAPI_LIVE_PERSON_MNEMONIC` names one, and the test skips without it.
+	/// The first run in a period takes one of the person's statement-store
+	/// slots; later runs reuse it. Run with
+	/// `cargo test -p truapi --lib live_payment_inbox -- --ignored`.
+	#[tokio::test(flavor = "multi_thread")]
+	#[ignore = "needs the live Paseo People Next chain and a person's mnemonic"]
+	async fn live_payment_inbox_receives_a_published_cheque() {
+		let Ok(mnemonic) = std::env::var("TRUAPI_LIVE_PERSON_MNEMONIC") else {
+			eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
+			return;
+		};
+		let entropy = bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy();
+		let chain = connect_live_people_chain().await;
+		let signer = live_statement_signer(&entropy);
+		allocate_live_statement_allowance(&chain, &entropy, &signer).await;
+		let rpc_client = RpcClient::new(chain.host_client.clone());
+		let (_dir, db) = open_temporary_core_db();
+		let purses = test_purses_over(db, Arc::new(LiveStatements(rpc_client.clone())));
+		let product = ProductId::for_test("tickets.dot");
+		let inbox = purses.start_payment_inbox_listen(rand::random(), &product, rand::random());
+		let mut listen = inbox.await.unwrap();
+		let backlog = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
+		assert_eq!(backlog.unwrap().map(Result::unwrap), Some(vec![]));
+		let cheque = v01::NftPurseCheque {
+			version: 0,
+			id: v01::NftPurseChequeId(rand::random()),
+			recipient: v01::NftPurseChequeRecipient::Static,
+			items: vec![v01::NftPurseItemKey(rand::random())],
+			encrypted_secrets: vec![0x55; 4],
+		};
+		let statement = signed_inbox_statement(&signer, listen.channel, &cheque);
+
+		submit_sso(&rpc_client, statement, "live payment").await.unwrap();
+
+		let arrived = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
+		assert_eq!(arrived.unwrap().map(Result::unwrap), Some(vec![cheque]));
 	}
 }
