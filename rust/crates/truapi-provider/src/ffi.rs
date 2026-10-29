@@ -292,7 +292,9 @@ impl ChainProvider {
 	/// Fails when the provider was built through [`new`](Self::new), which has
 	/// nowhere to keep blobs. A chain that never warms up looks exactly like
 	/// one with nothing stored yet, so the missing store is reported rather
-	/// than swallowed: build with [`with_storage`](Self::with_storage).
+	/// than swallowed: build with [`with_storage`](Self::with_storage). It also
+	/// fails for a genesis outside the bundled catalog, which `connect` refuses
+	/// too.
 	///
 	/// Call it before `connect`, and never from a listener callback. `connect`
 	/// blocks its calling thread, so a store awaited underneath it would

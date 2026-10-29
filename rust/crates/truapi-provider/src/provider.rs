@@ -221,7 +221,7 @@ impl EmbeddedChainProvider {
 	#[cfg(feature = "smoldot")]
 	fn serves(&self, genesis_hash: [u8; 32]) -> bool {
 		#[cfg(feature = "networks")]
-		if self.catalog_network(genesis_hash).is_some() {
+		if self.catalog && crate::networks::catalog_service(genesis_hash).is_some() {
 			return true;
 		}
 		self.chains.contains_key(&genesis_hash)
@@ -398,12 +398,13 @@ impl EmbeddedChainProvider {
 	/// Fails when a read is needed and the provider was built without storage.
 	/// A chain that silently never resumes is indistinguishable from one that
 	/// has nothing stored yet, so missing configuration is reported rather than
-	/// swallowed. A chain that is already running, or already holds a blob,
-	/// answers without consulting storage at all, and so does one this provider
-	/// cannot connect to, which has nothing to load.
+	/// swallowed. For the same reason a chain this provider cannot connect to
+	/// fails as unknown, as [`connect`](crate::platform::ChainProvider::connect)
+	/// would. A chain that is already running, or already holds a blob, answers
+	/// without consulting storage at all.
 	pub async fn load_database(&self, genesis_hash: [u8; 32]) -> Result<bool, ProviderError> {
 		if !self.serves(genesis_hash) {
-			return Ok(false);
+			return Err(ProviderError::UnknownGenesis { genesis: genesis_hash });
 		}
 		// A parachain is only as cold as the relay under it, and the relay is
 		// the one that warp syncs, so it is seeded first.
@@ -678,11 +679,12 @@ mod tests {
 		}
 	}
 
-	/// A chain `connect` would refuse has nothing to load. Reading its stored
-	/// blob, or its relay's, would hold megabytes nothing can ever consume.
+	/// A chain `connect` would refuse is refused here too, rather than answered
+	/// as if nothing were stored for it. Reading its stored blob, or its relay's,
+	/// would hold megabytes nothing can ever consume.
 	#[cfg(feature = "networks")]
 	#[test]
-	fn load_database_reads_nothing_for_a_chain_the_provider_cannot_connect_to() {
+	fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {
 		let (_, catalog) = EmbeddedChainProvider::builder()
 			.add_network("paseo-next-v2")
 			.expect("the network is bundled");
@@ -696,11 +698,37 @@ mod tests {
 		}
 		let provider = EmbeddedChainProvider::builder().storage(store.clone()).build();
 
+		let Err(error) = futures::executor::block_on(provider.load_database(catalog.bulletin))
+		else {
+			panic!("a chain the provider cannot connect to has nothing to load");
+		};
 		assert!(
-			!futures::executor::block_on(provider.load_database(catalog.bulletin))
-				.expect("nothing is read")
+			matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.bulletin),
+			"{error}"
 		);
 		assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
+	}
+
+	/// The native bindings register nothing and reach every chain through the
+	/// catalog, so a catalog chain they never registered still loads.
+	#[cfg(feature = "networks")]
+	#[test]
+	fn load_database_reads_a_catalog_chain_on_a_provider_with_the_catalog() {
+		let (_, catalog) = EmbeddedChainProvider::builder()
+			.add_network("paseo-next-v2")
+			.expect("the network is bundled");
+		let store = std::sync::Arc::new(MemoryStorageClient::default());
+		store
+			.stored
+			.lock()
+			.expect("test store")
+			.insert(catalog.relay, "stored-blob".to_owned());
+		let provider = EmbeddedChainProvider::builder().catalog().storage(store.clone()).build();
+
+		assert!(
+			futures::executor::block_on(provider.load_database(catalog.relay))
+				.expect("the store answers")
+		);
 	}
 
 	/// A blob registered for a relay reaches it even when the relay is never

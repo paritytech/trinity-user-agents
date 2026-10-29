@@ -354,6 +354,10 @@ impl ChainProviderHandle {
 			)
 			.await
 			{
+				futures::future::Either::Left((
+					Err(error @ crate::ProviderError::UnknownGenesis { .. }),
+					_,
+				)) => return Err(error.into()),
 				futures::future::Either::Left((Err(error), _)) => {
 					tracing::warn!(
 						reason = %error,
@@ -388,7 +392,8 @@ impl ChainProviderHandle {
 	/// chain resumes from it. Resolves with whether a blob is now in hand.
 	///
 	/// Call this before connecting. The store is read at most once per chain,
-	/// because only the first add of a chain consumes a blob.
+	/// because only the first add of a chain consumes a blob. Rejects for a
+	/// chain this provider cannot connect to, as `connect` does.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = loadDatabase)]
 	pub async fn load_database(&self, genesis_hash: &str) -> Result<bool, JsError> {
