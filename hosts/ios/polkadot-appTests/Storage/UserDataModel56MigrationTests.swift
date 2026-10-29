@@ -5,8 +5,8 @@ import Testing
 @testable import polkadot_app
 
 /// `UserDataModel56` adds the declarations of a product room to `CDChatRoomMetadata`: the configuration and its
-/// generation, the badge and the chat-list preview. A lightweight migration keeps every room and gives the new
-/// attributes their defaults.
+/// generation, the badge, the chat-list preview and the placeholder. A lightweight migration keeps every room and
+/// gives the new attributes their defaults.
 final class UserDataModel56MigrationTests {
     private let directory = URL.temporaryDirectory.appending(path: "model56-\(UUID().uuidString)")
     private let roomChatId = Chat.Id.chatExtension("product.dot", roomId: "lobby")
@@ -32,6 +32,11 @@ final class UserDataModel56MigrationTests {
         #expect(room["badgeKind"] as? Int16 == 0)
         #expect(room["config"] is NSNull)
         #expect(room["previewMessage"] is NSNull)
+        #expect(room["badgeIcon"] is NSNull)
+        #expect(room["previewPinned"] as? Bool == false)
+        #expect(room["previewActivityText"] is NSNull)
+        #expect(room["previewActivityOngoing"] as? Bool == false)
+        #expect(room["placeholder"] is NSNull)
 
         let message = try readFirst("CDChatMessage", from: storeURL)
         #expect(message["messageId"] as? String == "m1")
@@ -45,7 +50,14 @@ final class UserDataModel56MigrationTests {
 
         let facade = UserDataStorageTestFacade()
         let config = Chat.RoomConfig(productSource: true, reactionDetails: false, reportSeen: true)
-        let preview = Chat.RoomPreview(timestamp: 42, badge: .unreadCount(3), lastMessage: nil, unseenReaction: true)
+        let preview = Chat.RoomPreview(
+            timestamp: 42,
+            badge: .image("https://example.com/badge.png"),
+            lastMessage: nil,
+            unseenReaction: true,
+            pinned: true,
+            activity: Chat.RoomActivity(text: "Ben is typing", ongoing: true)
+        )
         let chat = Chat.LocalModel.newChatWithRoom(
             extensionId: "product.dot",
             roomId: "lobby",
@@ -56,6 +68,10 @@ final class UserDataModel56MigrationTests {
             .asyncExecute()
         try await save(Chat.RoomConfigUpdate(chatId: roomChatId, config: config), in: facade)
         try await save(Chat.RoomPreviewUpdate(chatId: roomChatId, preview: preview), in: facade)
+        try await save(
+            Chat.RoomNameUpdate(chatId: roomChatId, name: "Lobby", icon: .keep, placeholder: "No games yet"),
+            in: facade
+        )
 
         let stored = try await facade.createRepository(mapper: AnyCoreDataMapper(ChatRoomDeclarationsMapper()))
             .fetchAllOperation(with: RepositoryFetchOptions())
@@ -63,7 +79,12 @@ final class UserDataModel56MigrationTests {
             .first { $0.chatId == self.roomChatId.rawRepresentation }?
             .declarations
 
-        #expect(stored == Chat.RoomDeclarations(config: config, configGeneration: 1, preview: preview))
+        #expect(stored == Chat.RoomDeclarations(
+            config: config,
+            configGeneration: 1,
+            preview: preview,
+            placeholder: "No games yet"
+        ))
     }
 }
 

@@ -22,6 +22,14 @@ struct UnreadMessageCountProductRoomTests {
         #expect(try await service().totalUnreadBadgeMessageCount() == 2)
     }
 
+    /// An image badge counts nothing, and it takes the place of the rows of its room.
+    @Test func aRoomWithAnImageBadgeCountsNothing() async throws {
+        try await createRoom("image", badge: .image("https://example.com/badge.png"))
+        _ = try await fixture.surface.sendMessage(.text("hello"), roomId: "image")
+
+        #expect(try await service().totalUnreadBadgeMessageCount() == 0)
+    }
+
     @Test func theStreamFollowsTheBadgeOfAProductRoom() async throws {
         try await createRoom("dm-1", badge: .unreadCount(1))
         let counts = service().totalUnreadBadgeMessageCountStream()
@@ -57,7 +65,14 @@ private extension UnreadMessageCountProductRoomTests {
     }
 
     func preview(_ badge: Chat.RoomBadge) -> Chat.RoomPreview {
-        Chat.RoomPreview(timestamp: nil, badge: badge, lastMessage: nil, unseenReaction: false)
+        Chat.RoomPreview(
+            timestamp: nil,
+            badge: badge,
+            lastMessage: nil,
+            unseenReaction: false,
+            pinned: false,
+            activity: nil
+        )
     }
 
     func createRoom(_ roomId: String, badge: Chat.RoomBadge) async throws {

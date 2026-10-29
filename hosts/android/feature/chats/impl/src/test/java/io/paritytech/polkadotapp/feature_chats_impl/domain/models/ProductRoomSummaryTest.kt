@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
@@ -28,6 +29,7 @@ class ProductRoomSummaryTest {
         lastMessageSortOrder = null,
         roomMetadata = RoomMetadata(name = null, icon = null),
         hasUnseenReaction = true,
+        activity = null,
         customPreviewRenderer = null,
     )
     private val productStore = ChatRoomPolicy.Defaults.copy(messageStore = ChatRoomPolicy.MessageStore.PRODUCT)
@@ -99,6 +101,25 @@ class ProductRoomSummaryTest {
         val preview = (summary.withRoomPolicy(policy).preview as ChatPreview.Message).message
 
         assertEquals("m1", (preview.content as ChatMessage.Content.ReactionRemoved).messageId)
+    }
+
+    // The product pins its room above the rooms that it does not pin, also when those have newer messages.
+    @Test
+    fun `a pinned room shows above a newer room that is not pinned`() {
+        val newer = summary.copy(chatId = ChatId.forExtensionRoom("ProductBot_weather", "paris"), timestamp = 20L, lastMessageSortOrder = 9)
+        val pinned = summary.withRoomPolicy(productStore.copy(pinned = true))
+
+        assertEquals(listOf(pinned.chatId, newer.chatId), chatListOrder(listOf(newer, pinned), emptyMap()).map { it.chatId })
+    }
+
+    @Test
+    fun `an image badge replaces the count and the activity goes to the row`() {
+        val activity = ChatRoomActivityModel("Ben is typing", ongoing = true)
+        val policy = productStore.copy(listBadge = ChatRoomPolicy.ListBadge.Image("https://example.invalid/badge.png"), listActivity = activity)
+
+        val row = summary.withRoomPolicy(policy)
+
+        assertEquals(ChatSummaryBadge.Image("https://example.invalid/badge.png") to activity, row.badge to row.activity)
     }
 
     private fun message(id: String, participant: String, text: String) = ProductRoomMessage(
