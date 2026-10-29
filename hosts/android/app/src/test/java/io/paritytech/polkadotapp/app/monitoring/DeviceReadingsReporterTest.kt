@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.monitoring
 
 import io.paritytech.polkadotapp.app.telemetry.HostTelemetryEnabledProvider
+import io.sentry.metrics.MetricsUnit
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -18,8 +19,35 @@ class DeviceReadingsReporterTest {
         batteryLevelPercent = 81,
         charging = true,
     )
-    private val sentKeys = mutableListOf<String>()
-    private val metrics = SentryMetricsCapture { key, _, _ -> sentKeys += key }
+    private val sentGauges = mutableListOf<Triple<String, Double, String?>>()
+    private val metrics = SentryMetricsCapture { key, value, unit -> sentGauges += Triple(key, value, unit) }
+
+    @Test
+    fun `sends every reading under its own key with its unit`() {
+        // Given
+        val reporter = DeviceReadingsReporter(HostTelemetryEnabledProvider { true }, metrics)
+
+        // When
+        reporter.report(readings)
+
+        // Then
+        assertEquals(
+            listOf(
+                Triple("device.cpu.cores", 8.0, null),
+                Triple("device.memory.total", 5_678_900_000.0, MetricsUnit.Information.BYTE),
+                Triple("device.storage.total", 123_456_700_000.0, MetricsUnit.Information.BYTE),
+                Triple("device.cpu.process_usage", 12.5, MetricsUnit.Fraction.PERCENT),
+                Triple("device.memory.available", 1_234_500_000.0, MetricsUnit.Information.BYTE),
+                Triple("device.memory.process", 210_400_000.0, MetricsUnit.Information.BYTE),
+                Triple("device.storage.free", 12_345_600_000.0, MetricsUnit.Information.BYTE),
+                Triple("device.thermal.state.android", 1.0, null),
+                Triple("device.thermal.headroom", 0.4f.toDouble(), null),
+                Triple("device.battery.level", 81.0, MetricsUnit.Fraction.PERCENT),
+                Triple("device.battery.charging", 1.0, null),
+            ),
+            sentGauges,
+        )
+    }
 
     @Test
     fun `totals that cannot change while the process runs go out once across reports`() {
@@ -45,7 +73,7 @@ class DeviceReadingsReporterTest {
                 "device.battery.level" to 2,
                 "device.battery.charging" to 2,
             ),
-            sentKeys.groupingBy { it }.eachCount(),
+            sentGauges.groupingBy { it.first }.eachCount(),
         )
     }
 
@@ -58,6 +86,6 @@ class DeviceReadingsReporterTest {
         reporter.report(readings)
 
         // Then
-        assertEquals(emptyList<String>(), sentKeys)
+        assertEquals(emptyList<Triple<String, Double, String?>>(), sentGauges)
     }
 }

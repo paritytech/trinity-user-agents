@@ -33,21 +33,25 @@ internal class DeviceReadingsInitializer @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val batteryService: BatteryService,
     private val reporter: DeviceReadingsReporter,
+    private val telemetryEnabledProvider: HostTelemetryEnabledProvider,
 ) : AppInitializer {
-    private val activityManager = context.getSystemService(ActivityManager::class.java)
-    private val powerManager = context.getSystemService(PowerManager::class.java)
+    private val activityManager by lazy { context.getSystemService(ActivityManager::class.java) }
+    private val powerManager by lazy { context.getSystemService(PowerManager::class.java) }
     private val coreCount = Runtime.getRuntime().availableProcessors()
 
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
+        if (!telemetryEnabledProvider.isEnabled()) return@runCatching
+
         scope.launch(Dispatchers.Default) {
             ProcessLifecycleOwner.get().repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var previousCpu: CpuSample? = null
                 while (isActive) {
                     runCancellableCatching {
                         val cpu = CpuSample.now()
-                        val readings = read(previousCpu?.let { cpu.usagePercentSince(it, coreCount) })
-                        Timber.tag(DEVICE_READINGS_LOG_TAG).i("Device readings: %s", readings.toLogLine())
+                        val onlineCores = Runtime.getRuntime().availableProcessors()
+                        val readings = read(previousCpu?.let { cpu.usagePercentSince(it, onlineCores) })
+                        Timber.tag(LOG_TAG).i("Device readings: %s", readings.toLogLine())
                         reporter.report(readings)
                         previousCpu = cpu
                     }.logFailure("Device readings tick failed")
@@ -83,6 +87,7 @@ internal class DeviceReadingsInitializer @Inject constructor(
     }
 
     private companion object {
+        const val LOG_TAG = "DeviceReadings"
         val REPORT_INTERVAL = 1.minutes
     }
 }

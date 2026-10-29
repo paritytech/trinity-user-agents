@@ -10,6 +10,11 @@ public protocol DeviceReadingsMonitoring {
     func start()
 }
 
+/// Takes no readings, for builds without reporting support.
+struct NoopDeviceReadingsMonitor: DeviceReadingsMonitoring {
+    func start() {}
+}
+
 struct DeviceReadings {
     let processCPUUsagePercent: Double?
     let coreCount: Int
@@ -214,14 +219,12 @@ private extension timeval {
         func sendSentryGauges() {
             guard SentrySDK.isEnabled else { return }
 
-            if let storageTotalBytes {
-                Self.launchTotalsSent.withLock { sent in
-                    guard !sent else { return }
+            Self.launchTotalsSent.withLock { sent in
+                guard !sent else { return }
 
-                    gauge("device.memory.total", memoryTotalBytes, unit: .byte)
-                    gauge("device.storage.total", storageTotalBytes, unit: .byte)
-                    sent = true
-                }
+                gauge("device.memory.total", memoryTotalBytes, unit: .byte)
+                gauge("device.storage.total", storageTotalBytes, unit: .byte)
+                sent = true
             }
             gauge("device.cpu.process_usage", processCPUUsagePercent, unit: .percent)
             gauge("device.cpu.cores", Double(coreCount))

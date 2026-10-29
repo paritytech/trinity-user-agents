@@ -48,16 +48,18 @@ public enum IssueMonitoringFactory {
     }
 
     /// Writes a line of device readings to the given log once a minute in the foreground, and sends them
-    /// as gauges when this build links reporting support.
+    /// as gauges. Builds without reporting support receive a monitor that takes no readings.
     ///
     /// Memory and storage totals do not change while the app runs, so their gauges go out once per launch.
     public static func createDeviceReadingsMonitor(log: @escaping (String) -> Void) -> DeviceReadingsMonitoring {
-        DeviceReadingsMonitor { readings in
-            log("Device readings: \(readings.logLine)")
-            #if SENTRY_ENABLED
+        #if SENTRY_ENABLED
+            DeviceReadingsMonitor { readings in
+                log("Device readings: \(readings.logLine)")
                 readings.sendSentryGauges()
-            #endif
-        }
+            }
+        #else
+            NoopDeviceReadingsMonitor()
+        #endif
     }
 
     /// Reports through the SDK `IssueMonitoringServiceProtocol.setup()` started; a no-op until then and in Release.

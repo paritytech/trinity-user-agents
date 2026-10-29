@@ -5,58 +5,40 @@ import org.junit.Test
 import java.util.Locale
 
 class DeviceReadingsTest {
+    private val fullReadings = DeviceReadings(
+        processCpuUsagePercent = 12.46,
+        coreCount = 8,
+        memoryTotalBytes = 5_678_900_000,
+        memoryAvailableBytes = 1_234_500_000,
+        processMemoryBytes = 210_400_000,
+        storageFreeBytes = 12_345_600_000,
+        storageTotalBytes = 123_456_700_000,
+        thermalStatus = 1,
+        thermalHeadroom = 0.437f,
+        batteryLevelPercent = 81,
+        charging = true,
+    )
+    private val fullLogLine =
+        "cpu=12.5% cores=8 memory=1234/5678MB process=210MB storage=12345/123456MB thermal=1 " +
+            "headroom=0.44 battery=81% charging=true"
+
     @Test
     fun `log line carries every reading with its unit`() {
-        val readings = DeviceReadings(
-            processCpuUsagePercent = 12.46,
-            coreCount = 8,
-            memoryTotalBytes = 5_678_900_000,
-            memoryAvailableBytes = 1_234_500_000,
-            processMemoryBytes = 210_400_000,
-            storageFreeBytes = 12_345_600_000,
-            storageTotalBytes = 123_456_700_000,
-            thermalStatus = 1,
-            thermalHeadroom = 0.437f,
-            batteryLevelPercent = 81,
-            charging = true,
-        )
-
-        assertEquals(
-            "cpu=12.5% cores=8 memory=1234/5678MB process=210MB storage=12345/123456MB thermal=1 " +
-                "headroom=0.44 battery=81% charging=true",
-            readings.toLogLine(),
-        )
+        assertEquals(fullLogLine, fullReadings.toLogLine())
     }
 
     @Test
     fun `log line writes decimals with a dot whatever the phone language`() {
-        val readings = DeviceReadings(
-            processCpuUsagePercent = 12.46,
-            coreCount = 8,
-            memoryTotalBytes = 5_678_900_000,
-            memoryAvailableBytes = 1_234_500_000,
-            processMemoryBytes = 210_400_000,
-            storageFreeBytes = 12_345_600_000,
-            storageTotalBytes = 123_456_700_000,
-            thermalStatus = 1,
-            thermalHeadroom = 0.437f,
-            batteryLevelPercent = 81,
-            charging = true,
-        )
         val phoneLocale = Locale.getDefault()
         Locale.setDefault(Locale.GERMANY)
 
         val line = try {
-            readings.toLogLine()
+            fullReadings.toLogLine()
         } finally {
             Locale.setDefault(phoneLocale)
         }
 
-        assertEquals(
-            "cpu=12.5% cores=8 memory=1234/5678MB process=210MB storage=12345/123456MB thermal=1 " +
-                "headroom=0.44 battery=81% charging=true",
-            line,
-        )
+        assertEquals(fullLogLine, line)
     }
 
     @Test
