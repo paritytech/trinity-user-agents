@@ -412,7 +412,7 @@ mod tests {
 	const BEST: HashAndNumber = HashAndNumber { hash: H256([0x0b; 32]), number: 2_138_800 };
 	const DESTINATION: ItemKey = ItemKey([0x08; 32]);
 	const INSTANCE: u64 = 330;
-	const NOW: u64 = 1_700_000_000_000;
+	const NOW: u64 = 1_700_000_000;
 	/// The genesis the scripted node's chain is configured with.
 	const GENESIS: H256 = H256([0xab; 32]);
 

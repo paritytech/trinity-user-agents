@@ -34,8 +34,8 @@ pub use keys::{
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{
-	OperationKey, StartOperationError, TransferDestinations, TransferProgress, TransferRequest,
-	TransferState,
+	OperationKey, StartOperationError, TransferProgress, TransferRequest, TransferState,
+	TransferType,
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use reclaim::ReclaimRequest;
