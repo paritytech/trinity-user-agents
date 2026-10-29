@@ -9929,6 +9929,68 @@ fn dropping_a_quote_stream_mid_ask_releases_the_worker_and_the_ask() {
 	);
 }
 
+// A quote already asked keeps its provider's worker until it is answered,
+// even once the host stops asking again; it ends at once when the session is
+// handed to another provider, since its answer can no longer be used.
+#[test]
+fn quotes_in_flight_keep_their_workers_until_another_provider_takes_the_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
+		product_id: provider_id.to_string(),
+		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+	};
+	services
+		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	let other = ProductId::for_test("other.dot");
+	let watch = || {
+		let (_, mut lists) = services.watch_funding_quotes_within(
+			&intent,
+			card_ask(None),
+			Duration::from_secs(60),
+			Duration::from_secs(60),
+		);
+		// One list per provider's pending row, then both are asked.
+		for _ in 0..2 {
+			assert!(futures::executor::block_on(lists.next()).is_some(), "pending list");
+		}
+		assert!(futures::FutureExt::now_or_never(lists.next()).is_none(), "unanswered");
+		lists
+	};
+
+	let stopped = watch();
+	services.funding_quotes().stop_watching(&intent);
+	let after_stop = services.worker_ledger.count(&other);
+	drop(stopped);
+	let mut taken = watch();
+	let before_taken = services.worker_ledger.count(&other);
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+
+	// The list ends, and the host's loop lets it go, as it does on any end.
+	let ended = futures::executor::block_on(taken.next()).is_none();
+	drop(taken);
+
+	assert_eq!(
+		(after_stop, before_taken, ended, services.worker_ledger.count(&other)),
+		(1, 1, true, 0)
+	);
+}
+
 // A manifest can lag behind its provider, so every provider is asked
 // whatever its routes say, and what the answers show is kept: a provider that
 // quotes a rail it never declared becomes a candidate for it, one that refuses
