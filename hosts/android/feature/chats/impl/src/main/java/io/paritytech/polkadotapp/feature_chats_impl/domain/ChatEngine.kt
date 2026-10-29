@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
@@ -802,8 +803,12 @@ class ChatEngine @Inject constructor(
         override suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit> =
             productRoomDeclarer.setConfig(extensionId, chatId, config)
 
-        override suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit> =
-            productRoomDeclarer.setMetadata(extensionId, chatId, name, metadata)
+        override suspend fun setRoomMetadata(
+            chatId: ChatId,
+            name: String,
+            iconChange: RoomIconChange?,
+            metadata: ChatRoomMetadataModel,
+        ): Result<Unit> = productRoomDeclarer.setMetadata(extensionId, chatId, name, iconChange, metadata)
 
         override suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit> =
             productRoomDeclarer.setPreview(extensionId, chatId, preview)

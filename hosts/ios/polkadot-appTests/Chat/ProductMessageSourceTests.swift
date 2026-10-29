@@ -378,6 +378,19 @@ struct ProductMessageSourceTests {
         #expect(querying.actionRequests.isEmpty)
     }
 
+    /// A message that the product deletes while the room is open leaves the window and the cached page.
+    @Test func aDeleteInAnOpenRoomLeavesTheCachedPageToo() async {
+        let cache = ProductMessageCache()
+        let history = ProductRoomHistory(count: 3)
+        let source = makeSource(ScriptedProductChatQuerying(page: history.answer), cache: cache)
+        await open(source)
+
+        await source.apply(roomId: roomId, update: .deleted(messageId: "m1"))
+
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m2"])
+        #expect(await cache.entry(productId: productId, roomId: roomId)?.messages.map(\.messageId) == ["m0", "m2"])
+    }
+
     @Test func aFeedUpdateForAnotherRoomIsIgnored() async {
         let source = makeSource(ScriptedProductChatQuerying())
         await open(source)
@@ -386,6 +399,18 @@ struct ProductMessageSourceTests {
         await source.apply(roomId: roomId, update: .new(productMessage(2)))
 
         #expect(await source.snapshot.messages.map(\.messageId) == ["m2"])
+    }
+
+    /// A deleted message leaves the window. A message that the window does not hold changes nothing.
+    @Test func aDeleteTakesTheMessageOutOfTheWindow() async {
+        let history = ProductRoomHistory(count: 5)
+        let source = makeSource(ScriptedProductChatQuerying(page: history.answer))
+        await open(source)
+
+        await source.apply(.deleted(messageId: "m2"))
+        await source.apply(.deleted(messageId: "gone"))
+
+        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m1", "m3", "m4"])
     }
 }
 

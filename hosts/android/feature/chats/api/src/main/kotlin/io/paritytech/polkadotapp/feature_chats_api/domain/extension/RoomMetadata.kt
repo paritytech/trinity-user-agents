@@ -5,6 +5,9 @@ class RoomMetadata(
     val icon: String?,
 )
 
+/** A new icon for a room. A null [icon] removes the icon of the room. */
+data class RoomIconChange(val icon: String?)
+
 class DefaultRoomMetadata(
     val name: String,
     val icon: String?,

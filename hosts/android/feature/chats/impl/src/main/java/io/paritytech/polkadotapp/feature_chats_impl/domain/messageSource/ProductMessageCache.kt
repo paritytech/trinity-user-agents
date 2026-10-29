@@ -105,5 +105,7 @@ internal fun ProductRoomCacheEntry.applying(update: ProductFeedUpdateModel, mess
             copy(messages = modify(update.messageId) { it.adjustReaction(update.emoji, update.participantId, placed = false) })
 
         is ProductFeedUpdateModel.StatusChanged -> copy(messages = modify(update.messageId) { it.copy(status = update.status) })
+
+        is ProductFeedUpdateModel.Deleted -> copy(messages = messages.filterNot { it.messageId == update.messageId })
     }
 }

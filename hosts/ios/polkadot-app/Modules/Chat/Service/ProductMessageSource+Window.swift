@@ -45,6 +45,17 @@ extension ProductMessageSource {
         messages[messageId] = message
     }
 
+    /// Takes a message out of the window. A message that the window does not hold changes nothing.
+    func remove(_ messageId: String) {
+        guard messages.removeValue(forKey: messageId) != nil else {
+            return
+        }
+
+        for index in pages.indices {
+            pages[index].ids.removeAll { $0 == messageId }
+        }
+    }
+
     func restore(from entry: ProductRoomCacheEntry) {
         for message in entry.messages {
             messages[message.messageId] = message
