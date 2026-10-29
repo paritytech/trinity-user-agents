@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -107,7 +108,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
@@ -135,7 +136,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         /**
@@ -188,7 +189,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * ([TrUAPIHostRuntimeProvider.sessionState]); an execution only logs it.
          */
         override fun authStateChanged(state: AuthState) {
-            Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
+            Timber.tag("truapi.auth").i("%s: %s", callingProductId.value, state.marker())
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
@@ -422,6 +423,23 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
+
+// Info lines leave the device; everything else stays on it.
+internal fun logCoreLine(marker: String, detail: String) {
+    val exported = EXPORTED_CORE_MARKER_PREFIXES.any { prefix -> marker.startsWith(prefix) }
+    val priority = if (exported) Log.INFO else Log.DEBUG
+    Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+// An allowlist rather than the inverse: a marker the core adds later stays local until someone says
+// what it carries. `truapi.native.*` is what stays behind, because those lines carry notification
+// bodies, URLs and permission requests. The iOS host keeps the same list in `logCoreLine`.
+private val EXPORTED_CORE_MARKER_PREFIXES = listOf(
+    "truapi.tracing.",
+    "truapi.chain.",
+    "truapi.core.",
+    "truapi.ws_bridge.",
+)
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"

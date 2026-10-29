@@ -9,7 +9,9 @@ import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.database.AppDatabase
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
+import io.paritytech.polkadotapp.database.dao.ChatAcceptanceDao
 import io.paritytech.polkadotapp.database.dao.ChatDraftDao
+import io.paritytech.polkadotapp.database.dao.ChatIdentitySigningConsentDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
@@ -158,6 +160,15 @@ class DbModule {
     @Provides
     @Singleton
     fun provideChatRequestDao(appDatabase: AppDatabase): ChatRequestDao = appDatabase.chatRequestDao()
+
+    @Provides
+    @Singleton
+    fun provideChatAcceptanceDao(appDatabase: AppDatabase): ChatAcceptanceDao = appDatabase.chatAcceptanceDao()
+
+    @Provides
+    @Singleton
+    fun provideChatIdentitySigningConsentDao(appDatabase: AppDatabase): ChatIdentitySigningConsentDao =
+        appDatabase.chatIdentitySigningConsentDao()
 
     @Provides
     @Singleton
