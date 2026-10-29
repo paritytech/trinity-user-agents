@@ -118,10 +118,16 @@ pub enum DotnsAnswer {
 }
 
 /// What a [`DotnsLookup`] needs next.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
+#[serde(rename_all = "camelCase")]
 pub enum DotnsStep {
 	/// The value at this Asset Hub storage key; answer with [`DotnsLookup::storage`].
-	Storage([u8; 32]),
+	Storage(
+		#[serde(serialize_with = "hex_string")]
+		#[cfg_attr(feature = "js", tsify(type = "string"))]
+		[u8; 32],
+	),
 	/// These calls' answers, in order; answer with [`DotnsLookup::answer`]. They do not depend
 	/// on each other, so a caller can batch them.
 	Calls(Vec<DotnsCall>),
@@ -137,7 +143,7 @@ pub enum DotnsStep {
 /// # fn read_storage(_: [u8; 32]) -> Option<Vec<u8>> { None }
 /// # fn call(_: &trinity_stack::DotnsCall) -> DotnsAnswer { DotnsAnswer::Reverted }
 /// let at = Block { number: 182_044, hash: format!("0x{}", "ab".repeat(32)) };
-/// let mut lookup = DotnsLookup::new("2026-10-26T22:19:25Z".into(), at);
+/// let mut lookup = DotnsLookup::new("2026-10-26T22:19:25Z".into(), at)?;
 /// let record = loop {
 ///     match lookup.next() {
 ///         DotnsStep::Storage(key) => lookup.storage(read_storage(key).as_deref())?,
@@ -166,8 +172,10 @@ enum State {
 
 impl DotnsLookup {
 	/// A lookup for a descriptor of `generation`, whose every read the caller makes at `at`.
-	pub fn new(generation: String, at: Block) -> Self {
-		Self { generation, at, state: State::Gateway }
+	/// Fails when `at`'s hash is not lowercase 0x-prefixed hex, which no record may carry.
+	pub fn new(generation: String, at: Block) -> Result<Self, Error> {
+		format::hex_bytes::<32>("at.hash", &at.hash)?;
+		Ok(Self { generation, at, state: State::Gateway })
 	}
 
 	/// What the lookup needs next.
@@ -209,7 +217,8 @@ impl DotnsLookup {
 	}
 
 	/// Takes the answers to [`DotnsStep::Calls`], in the order they were asked. Fails when a
-	/// contract answers in a way no dotNS deployment does; the lookup is then over.
+	/// contract answers in a way no dotNS deployment does, and then stays on this step, so a
+	/// caller drops the lookup.
 	pub fn answer(&mut self, answers: &[DotnsAnswer]) -> Result<(), Error> {
 		let DotnsStep::Calls(calls) = self.next() else {
 			return Err(Error::LookupStep("call answers where none were asked".into()));
@@ -301,7 +310,7 @@ mod tests {
 	#[test]
 	fn answering_the_wrong_step_is_refused_and_changes_nothing() {
 		let at = Block { number: 1, hash: format!("0x{}", "00".repeat(32)) };
-		let mut lookup = DotnsLookup::new("g".into(), at);
+		let mut lookup = DotnsLookup::new("g".into(), at).unwrap();
 		assert_eq!(lookup.answer(&[]).map_err(|error| error.code()), Err("lookup-step"));
 		lookup.storage(Some(&[0xd1; 20])).unwrap();
 		assert_eq!(lookup.storage(None).map_err(|error| error.code()), Err("lookup-step"));

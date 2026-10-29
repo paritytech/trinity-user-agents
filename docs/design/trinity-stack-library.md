@@ -97,7 +97,7 @@ It also reports a new generation, so the caller drops its chain caches, and whet
 
   ```rust
   let mut reader = StackReader::new(Refresh::MaxAge(3600));
-  reader.load(&pointer, build, build_dotns, stored, now)?; // through accept; the store only moves forward
+  reader.load(&pointer, build, build_dotns, stored)?; // the store only moves a stack forward
   let read = reader.get(&pointer, now);  // { current: Option<CurrentStack>, fetch: Option<FetchRequest> }
   // the caller fetches read.fetch's url with its If-None-Match
   let refreshed = reader.fetched(&pointer, served, now)?; // Document { bytes, etag } | NotModified | Unreachable
@@ -115,7 +115,7 @@ It also reports a new generation, so the caller drops its chain caches, and whet
 - **dotNS lookup.** `DotnsLookup` runs the three steps of the RFC as a sequence the caller answers:
 
   ```rust
-  let mut lookup = DotnsLookup::new(generation, at);
+  let mut lookup = DotnsLookup::new(generation, at)?;
   let record = loop {
       match lookup.next() {
           DotnsStep::Storage(key) => lookup.storage(read_storage(key)?.as_deref())?,
@@ -197,7 +197,7 @@ They keep one directory in the project, committed with it:
   export const stacks = {
     previewnet: { pointer: { url, key }, document: "<the signed JSON, as text>", dotns: { … } },
     …
-  } as const;
+  };
   ```
 
   The document stays the exact text that was signed. Importing it as JSON and serialising it again would change the

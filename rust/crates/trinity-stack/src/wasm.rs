@@ -2,10 +2,10 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, Block, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsCall,
-	DotnsLookedUp, DotnsRead, DotnsRecord, DotnsStep, Error, FetchRequest, Fetched, Pointer,
-	PublishState, Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified,
-	accept as accept_fetched, format, open as open_bytes,
+	Accepted, Block, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsLookedUp,
+	DotnsRead, DotnsRecord, DotnsStep, Error, FetchRequest, Fetched, Pointer, PublishState,
+	Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified, accept as accept_fetched,
+	format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -201,19 +201,6 @@ fn record(record: Option<Ts<DotnsRecord>>) -> Result<Option<DotnsRecord>, JsValu
 		.map_err(|_| type_error("a dotNS record needs generation, at and dotns"))
 }
 
-/// What a lookup needs next, as JS sees it: hex where Rust has bytes.
-#[derive(Serialize, Tsify)]
-#[tsify(hashmap_as_object)]
-#[serde(rename_all = "camelCase")]
-pub enum LookupStep {
-	/// The 0x-prefixed Asset Hub storage key to read.
-	Storage(String),
-	/// The calls to make, answered in order.
-	Calls(Vec<DotnsCall>),
-	/// The lookup's record.
-	Done(DotnsRecord),
-}
-
 /// [`crate::DotnsLookup`] for JS.
 #[wasm_bindgen(js_name = DotnsLookup)]
 pub struct JsDotnsLookup(crate::DotnsLookup);
@@ -224,16 +211,12 @@ impl JsDotnsLookup {
 	#[wasm_bindgen(constructor)]
 	pub fn new(generation: String, at: Ts<Block>) -> Result<JsDotnsLookup, JsValue> {
 		let at = at.to_rust().map_err(|_| type_error("a block needs number and hash"))?;
-		Ok(Self(crate::DotnsLookup::new(generation, at)))
+		Ok(Self(crate::DotnsLookup::new(generation, at).map_err(to_js_error)?))
 	}
 
 	/// What the lookup needs next.
-	pub fn next(&self) -> Result<Ts<LookupStep>, JsValue> {
-		to_js(&match self.0.next() {
-			DotnsStep::Storage(key) => LookupStep::Storage(format::to_hex(&key)),
-			DotnsStep::Calls(calls) => LookupStep::Calls(calls),
-			DotnsStep::Done(record) => LookupStep::Done(record),
-		})
+	pub fn next(&self) -> Result<Ts<DotnsStep>, JsValue> {
+		to_js(&self.0.next())
 	}
 
 	/// Takes the hex value at the storage key, undefined when it is unset.
@@ -273,8 +256,14 @@ impl JsStackReader {
 		let refresh = match (refresh, max_age_seconds) {
 			("never", None) => Refresh::Never,
 			("once", None) => Refresh::Once,
-			("maxAge", Some(seconds)) if seconds >= 0.0 => Refresh::MaxAge(seconds as u64),
-			_ => return Err(type_error("refresh is never, once, or maxAge with maxAgeSeconds")),
+			("maxAge", Some(seconds)) if seconds.is_finite() && seconds >= 1.0 => {
+				Refresh::MaxAge(seconds as u64)
+			},
+			_ => {
+				return Err(type_error(
+					"refresh is never, once, or maxAge with a finite maxAgeSeconds of at least 1",
+				));
+			},
 		};
 		Ok(Self(crate::StackReader::new(refresh)))
 	}
@@ -286,7 +275,6 @@ impl JsStackReader {
 		build: Option<Vec<u8>>,
 		build_dotns: Option<Ts<DotnsRecord>>,
 		stored: Option<Vec<u8>>,
-		now_unix_seconds: f64,
 	) -> Result<(), JsValue> {
 		self.0
 			.load(
@@ -294,7 +282,6 @@ impl JsStackReader {
 				build.as_deref(),
 				record(build_dotns)?,
 				stored.as_deref(),
-				now_unix_seconds as i64,
 			)
 			.map_err(to_js_error)
 	}

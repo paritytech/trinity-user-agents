@@ -128,7 +128,7 @@ fn optional_bytes<S: Serializer>(
 /// # let (build, stored, now) = (None, None, 0);
 /// let pointer = Pointer::new("https://stack.example/.well-known/trinity-stack.json", None)?;
 /// let mut reader = StackReader::new(Refresh::MaxAge(3600));
-/// reader.load(&pointer, build, None, stored, now)?;
+/// reader.load(&pointer, build, None, stored)?;
 /// let read = reader.get(&pointer, now);
 /// if let Some(request) = &read.fetch {
 ///     let served = fetch(request);
@@ -201,7 +201,11 @@ impl Schedule {
 			Refresh::Never => false,
 			Refresh::Once => self.asked_at.is_none(),
 			Refresh::MaxAge(age) => {
-				read_at.max(self.asked_at).is_none_or(|last| now - last >= age as i64)
+				// A read time ahead of the clock was kept under a skewed one, so it says nothing.
+				let read_at = read_at.filter(|read_at| *read_at <= now);
+				read_at.max(self.asked_at).is_none_or(|last| {
+					now.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
+				})
 			},
 		}
 	}
@@ -238,7 +242,6 @@ impl StackReader {
 		build: Option<&[u8]>,
 		build_dotns: Option<DotnsRecord>,
 		stored: Option<&[u8]>,
-		now_unix_seconds: i64,
 	) -> Result<(), Error> {
 		let build = build
 			.map(|bytes| {
@@ -262,15 +265,14 @@ impl StackReader {
 				etag: kept.etag.clone(),
 			})
 		});
+		// By `sequence` even when unsigned, where `accept` would take an older copy.
 		let held = match (build, stored_copy) {
 			(Some(build), Some(stored)) => {
-				let fetched = Fetched::Document(&stored.document);
-				match accept(pointer, Some(&build.document), fetched, now_unix_seconds) {
-					Ok(Accepted { status: Status::Updated | Status::Unchanged, .. }) => {
-						Some(stored)
-					},
-					_ => Some(build),
-				}
+				let (built, kept) =
+					(build.stack.descriptor.sequence, stored.stack.descriptor.sequence);
+				let newer =
+					kept > built || (kept == built && stored.stack.same_content(&build.stack));
+				Some(if newer { stored } else { build })
 			},
 			(build, stored) => build.or(stored),
 		};
@@ -367,6 +369,9 @@ impl StackReader {
 				held.fetched_at = Some(now_unix_seconds);
 				held.etag = etag.or(held.etag.take());
 			},
+			// A browser cannot send `If-None-Match` cross-origin to a server whose CORS does not
+			// allow it, so a conditional fetch that failed is followed by a plain one.
+			(Status::Unreachable, Some(held)) if held.etag.is_some() => held.etag = None,
 			_ => return Ok(Refreshed { accepted, record: None }),
 		}
 		Ok(Refreshed { accepted, record: stack.kept() })
@@ -396,17 +401,18 @@ impl StackReader {
 
 	/// Takes the result of the stack's lookup, `None` when it failed. A failed lookup, or one
 	/// for a `generation` the reader has since moved past, leaves the record in use as it was.
+	/// Fails when the record breaks a rule, which also counts as a failed lookup.
 	pub fn looked_up(
 		&mut self,
 		pointer: &Pointer,
 		record: Option<DotnsRecord>,
 		now_unix_seconds: i64,
 	) -> Result<DotnsLookedUp, Error> {
+		let stack = self.stack(pointer);
+		stack.lookups.answer();
 		if let Some(record) = &record {
 			record.check()?;
 		}
-		let stack = self.stack(pointer);
-		stack.lookups.answer();
 		let generation = stack.held.as_ref().map(|held| &held.stack.descriptor.generation);
 		let fresh = record.filter(|record| Some(&record.generation) == generation);
 		let stored = fresh.map(|record| {

@@ -749,6 +749,9 @@ const CONTROLLER: [u8; 20] = [0xc0; 20];
 const REGISTRY: [u8; 20] = [0xee; 20];
 const REGISTRAR: [u8; 20] = [0xaa; 20];
 const RESOLVER: [u8; 20] = [0xbb; 20];
+/// `twox128("DotnsGateway") ++ twox128("DispatcherAddress")`.
+const DISPATCHER_ADDRESS_KEY: &str =
+	"0x57ca9018d648b40a8286a471e82c3808f31ce5ec278db3dff6304333f0019302";
 const PROTOCOL_REGISTRY: &str = "0x7656419f";
 const TARGET: &str = "0xcc1f2afa";
 
@@ -994,6 +997,55 @@ fn refresh_cases() -> Vec<Value> {
 			],
 		),
 		case(
+			"a-failed-conditional-fetch-is-followed-by-a-plain-one",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(
+					Some("refresh/42.json"),
+					Some("\"a\""),
+					NOW,
+					outcome("unchanged", 42, true),
+				),
+				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
+				fetched(None, None, NOW + 3_600, outcome("unreachable", 42, true)),
+				get(NOW + 7_200, Some(42), fetch(None)),
+			],
+		),
+		case(
+			"a-fetch-time-ahead-of-the-clock-is-due",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW + 86_400, Some(42), fetch(None)),
+				fetched(
+					Some("refresh/42.json"),
+					None,
+					NOW + 86_400,
+					outcome("unchanged", 42, true),
+				),
+				json!({ "restart": NOW, "build": "refresh/42.json", "buildDotns": null }),
+				get(NOW, Some(42), fetch(None)),
+				get(NOW + 1, Some(42), Value::Null),
+			],
+		),
+		json!({
+			"name": "an-unsigned-store-never-moves-back-past-its-build-copy",
+			"pointer": { "url": URL, "key": null },
+			"refresh": "never",
+			"build": "refresh/42.json",
+			"buildDotns": null,
+			"steps": [
+				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				{ "restart": NOW, "build": "refresh/44.json", "buildDotns": null },
+				get(NOW, Some(44), Value::Null),
+				{ "restart": NOW, "build": "refresh/42.json", "buildDotns": null },
+				get(NOW, Some(43), Value::Null),
+			],
+		}),
+		case(
 			"without-a-copy-every-policy-waits-and-asks-again",
 			json!("never"),
 			None,
@@ -1121,7 +1173,7 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let dotns: Vec<Value> = dotns_cases()
 		.into_iter()
 		.map(|(name, storage, calls, expect)| {
-			json!({ "name": name, "generation": GENERATION, "at": at(), "storage": storage, "calls": calls, "expect": expect })
+			json!({ "name": name, "generation": GENERATION, "at": at(), "storageKey": DISPATCHER_ADDRESS_KEY, "storage": storage, "calls": calls, "expect": expect })
 		})
 		.collect();
 	for (path, bytes) in refresh_documents() {
@@ -1286,15 +1338,15 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 	let record = |value: &Value| {
 		(!value.is_null()).then(|| serde_json::from_value::<DotnsRecord>(value.clone()).unwrap())
 	};
-	let start = |build: &Value, build_dotns: &Value, stored: Option<&[u8]>, now: i64| {
+	let start = |build: &Value, build_dotns: &Value, stored: Option<&[u8]>| {
 		let mut reader = StackReader::new(refresh);
 		reader
-			.load(&pointer, file(build).as_deref(), record(build_dotns), stored, now)
+			.load(&pointer, file(build).as_deref(), record(build_dotns), stored)
 			.unwrap();
 		reader
 	};
 	let mut stored: Option<Vec<u8>> = None;
-	let mut reader = start(&case["build"], &case["buildDotns"], None, NOW);
+	let mut reader = start(&case["build"], &case["buildDotns"], None);
 	let fetch_of = |request: Option<FetchRequest>| {
 		request.map_or(Value::Null, |request| json!({ "ifNoneMatch": request.if_none_match }))
 	};
@@ -1330,7 +1382,7 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 				},
 			}
 		} else if step.get("restart").is_some() {
-			reader = start(&step["build"], &step["buildDotns"], stored.as_deref(), at("restart"));
+			reader = start(&step["build"], &step["buildDotns"], stored.as_deref());
 			continue;
 		} else if step.get("dotns").is_some() {
 			let read = reader.dotns(&pointer, at("dotns")).unwrap();
@@ -1353,12 +1405,15 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 fn look_up(case: &Value) -> Result<Value, trinity_stack::Error> {
 	let bytes = |value: &Value| hex::decode(&value.as_str().unwrap()[2..]).unwrap();
 	let at = serde_json::from_value(case["at"].clone()).unwrap();
-	let mut lookup = DotnsLookup::new(case["generation"].as_str().unwrap().into(), at);
+	let mut lookup = DotnsLookup::new(case["generation"].as_str().unwrap().into(), at)?;
 	loop {
 		match lookup.next() {
-			DotnsStep::Storage(_) => lookup.storage(
-				Some(&case["storage"]).filter(|value| !value.is_null()).map(bytes).as_deref(),
-			)?,
+			DotnsStep::Storage(key) => {
+				assert_eq!(json!(hex(&key)), case["storageKey"], "{}: storage key", case["name"]);
+				lookup.storage(
+					Some(&case["storage"]).filter(|value| !value.is_null()).map(bytes).as_deref(),
+				)?
+			},
 			DotnsStep::Calls(calls) => {
 				let answers: Vec<DotnsAnswer> = calls
 					.iter()
