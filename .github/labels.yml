@@ -66,8 +66,7 @@ labels:
     addedBy: issue-areas, humans
     previously: [rfc]
 
-  # needs: what is blocking the work. On issues and pull requests alike; on a
-  # pull request, label-gate.yml holds the merge while one is on.
+  # needs: what is blocking the work. On issues and pull requests alike.
   - name: "needs:decision"
     color: "b60205"
     description: "Blocked on a human decision, not on work"

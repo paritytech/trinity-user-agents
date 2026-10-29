@@ -18,7 +18,7 @@ description: Label pull requests and issues in this repository, and add, rename 
 ## While it is open
 
 - Keep one `status:` label, named for who acts next: `status:waiting-on-author` after requesting changes, `status:ready-to-merge` once approved, `status:blocked` when something else has to land first, with a comment saying what.
-- Add a `needs:` label when work is blocked on something other than code: `needs:spec`, `needs:decision` or `needs:UI`. On a pull request, a `needs:` label or `status:blocked` fails `Label gate`, so remove it once resolved.
+- Add a `needs:` label when work is blocked on something other than code: `needs:spec`, `needs:decision` or `needs:UI`. Remove it once resolved.
 
 ## Filing an issue
 

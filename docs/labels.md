@@ -57,7 +57,7 @@ What is blocking the work, on an issue or a pull request.
 | `needs:decision` | Waiting on a decision, not on work |
 | `needs:UI` | Cannot be built until the UI design exists |
 
-On a pull request, any `needs:` label fails the `Label gate` check, so it cannot merge while one is on. Removing the label clears the check.
+On a pull request, a `needs:` label says what it is waiting on. It does not affect CI.
 
 ### When a pull request needs a spec
 
@@ -78,7 +78,7 @@ One at a time on a pull request, named for who has to act next.
 | `status:ready-to-merge` | Approved, and waiting only to be queued. |
 | `status:blocked` | Cannot move until something else lands. Say what in a comment. |
 
-`status:blocked` fails the `Label gate` check, like a `needs:` label. A draft carries no status, and converting a pull request back to draft removes `status:waiting-on-review`.
+A draft carries no status, and converting a pull request back to draft removes `status:waiting-on-review`.
 
 ## size
 
@@ -135,4 +135,3 @@ A workflow that keys on a label name changes in the same pull request as the lab
 - `enhancement`, `feature request` and `proposal`: replaced by the Feature issue type once issues move to types.
 - `R2 blocker` and `R3+`: a target date, a field, or labels.
 - `host-work`: an area for both hosts, or retired.
-- Making `Label gate` a required check on main, so it holds a merge rather than only reporting.
