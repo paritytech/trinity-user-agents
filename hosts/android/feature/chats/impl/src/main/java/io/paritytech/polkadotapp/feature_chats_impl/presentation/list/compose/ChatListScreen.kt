@@ -15,8 +15,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -27,11 +29,11 @@ import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonS
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
-import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlassButtonStyle
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.ChatListViewModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListContent
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListHeader
@@ -42,6 +44,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.rememberSearchRevealState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import kotlinx.collections.immutable.persistentListOf
+
+private const val ShineTopLeftAlpha = 0.9f
+private const val ShineBottomRightAlpha = 0.6f
 
 @Composable
 fun ChatListScreen() {
@@ -68,7 +73,7 @@ private fun ChatListScreenInternal(
     val revealState = rememberSearchRevealState()
     val density = LocalDensity.current
     var newChatButtonHeight by remember { mutableStateOf(0.dp) }
-    val newChatButtonOffset = PolkadotTheme.spacings.mediumIncreased
+    val newChatButtonBottomOffset = PolkadotTheme.spacings.mediumIncreased
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -86,7 +91,7 @@ private fun ChatListScreenInternal(
                                 state = loadingState.data,
                                 onChatClick = onChatClick,
                                 onNewRequestsClick = onNewRequestsClick,
-                                bottomClearance = newChatButtonHeight + newChatButtonOffset,
+                                bottomClearance = newChatButtonHeight + newChatButtonBottomOffset,
                             )
                         },
                     )
@@ -99,8 +104,9 @@ private fun ChatListScreenInternal(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .windowInsetsPadding(LocalAppNavigationBarInsets.current)
-                    .padding(newChatButtonOffset)
-                    .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } },
+                    .padding(end = PolkadotTheme.spacings.large, bottom = newChatButtonBottomOffset)
+                    .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } }
+                    .testTag(ChatTestTags.NEW_CHAT_BUTTON),
                 onClick = onAddContactClick,
             )
         }
@@ -114,8 +120,17 @@ private fun NewChatButton(
 ) {
     DockletGlassTheme {
         val borderWidth = PolkadotTheme.borders.default
-        val borderColor = LocalDockletPalette.current.glassStroke
-        val border = remember(borderWidth, borderColor) { BorderStroke(borderWidth, borderColor) }
+        val shine = PolkadotTheme.colors.fg.primary
+        val border = remember(borderWidth, shine) {
+            BorderStroke(
+                width = borderWidth,
+                brush = Brush.linearGradient(
+                    0f to shine.copy(alpha = ShineTopLeftAlpha),
+                    0.5f to shine.copy(alpha = 0f),
+                    1f to shine.copy(alpha = ShineBottomRightAlpha),
+                ),
+            )
+        }
         PolkadotIconButton(
             icon = NewChat,
             onClick = onClick,

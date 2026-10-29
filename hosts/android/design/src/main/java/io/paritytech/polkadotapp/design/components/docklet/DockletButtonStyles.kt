@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonColors
@@ -20,8 +21,10 @@ fun rememberDockletFieldButtonStyle(): PolkadotButtonStyle =
     rememberDockletFillButtonStyle(LocalDockletPalette.current.fieldFill)
 
 @Composable
-fun rememberDockletGlassButtonStyle(): PolkadotButtonStyle =
-    rememberDockletFillButtonStyle(LocalDockletPalette.current.glassFill)
+fun rememberDockletGlassButtonStyle(): PolkadotButtonStyle {
+    val fill = LocalDockletPalette.current.glassFill.compositeOver(PolkadotTheme.colors.bg.surface.main)
+    return rememberDockletFillButtonStyle(fill)
+}
 
 @Composable
 private fun rememberDockletFillButtonStyle(fill: Color): PolkadotButtonStyle {
