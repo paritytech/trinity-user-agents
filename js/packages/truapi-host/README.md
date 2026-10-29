@@ -278,7 +278,10 @@ A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
 account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
 The core re-checks every account returned. It caches what it resolves, so call
 `notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
-contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+contacts from both. To draw a handle a product holds, a host mints the handles
+of the people it knows with `contactHandles(accounts)` and indexes them; the
+core caches none of these, so naming someone never makes them resolvable. See
+the contacts RFC (`docs/rfcs/contacts-api.md`).
 
 `scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
 follows are on `ScannerPlatform` in the generated callbacks. The mock test host
@@ -339,6 +342,7 @@ transition below reports the resulting `AuthState` the same way.
 | `activateExternalSession(blob)` | Install a session the host holds itself, without writing it to core storage. |
 | `notifySessionStoreChanged()`   | Tell the core the persisted blob may have changed; it re-reads it.           |
 | `notifyContactsChanged()`       | Tell the core a contact was removed or blocked; it drops cached handles.     |
+| `contactHandles(accounts)`      | Mint the session's contact handles for 32-byte accounts, in order; no cache. |
 | `disconnectSession()`           | Log out: clears the session and notifies the peer.                           |
 | `resetSessionState()`           | Drop the local session without notifying the peer.                           |
 

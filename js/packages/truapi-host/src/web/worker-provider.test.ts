@@ -870,6 +870,82 @@ describe("createWebWorkerPairingHostRuntime", () => {
     runtime.dispose();
   });
 
+  it("mints contact handles over one packed request, in the order asked", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readyRuntime(worker);
+    const alice = new Uint8Array(32).fill(0xa1);
+    const bob = new Uint8Array(32).fill(0xb0);
+
+    const pending = runtime.contactHandles([alice, bob]);
+    const msg = lastMessageOfKind(worker, "contactHandles");
+    expect(msg.accounts).toEqual(new Uint8Array([...alice, ...bob]));
+    worker.emit({
+      kind: "contactHandlesResponse",
+      requestId: msg.requestId,
+      ok: true,
+      handles: new Uint8Array([
+        ...new Uint8Array(32).fill(1),
+        ...new Uint8Array(32).fill(2),
+      ]),
+    });
+    expect(await pending).toEqual([
+      new Uint8Array(32).fill(1),
+      new Uint8Array(32).fill(2),
+    ]);
+
+    const signedOut = runtime.contactHandles([alice]);
+    worker.emit({
+      kind: "contactHandlesResponse",
+      requestId: lastMessageOfKind(worker, "contactHandles").requestId,
+      ok: true,
+      handles: undefined,
+    });
+    expect(await signedOut).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("refuses contact accounts that are not 32 bytes before asking the core", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readyRuntime(worker);
+    const sent = worker.messages.length;
+    await expect(runtime.contactHandles([new Uint8Array(31)])).rejects.toThrow(
+      "32 bytes",
+    );
+    expect(worker.messages.length).toBe(sent);
+    runtime.dispose();
+  });
+
+  it("rejects a contact handle request the core failed, short-answered or never answered", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readyRuntime(worker);
+    const account = new Uint8Array(32).fill(7);
+
+    const failed = runtime.contactHandles([account]);
+    worker.emit({
+      kind: "contactHandlesResponse",
+      requestId: lastMessageOfKind(worker, "contactHandles").requestId,
+      ok: false,
+      error: "this core does not mint contact handles",
+    });
+    await expect(failed).rejects.toThrow("does not mint");
+
+    const short = runtime.contactHandles([account, account]);
+    worker.emit({
+      kind: "contactHandlesResponse",
+      requestId: lastMessageOfKind(worker, "contactHandles").requestId,
+      ok: true,
+      handles: new Uint8Array(32),
+    });
+    await expect(short).rejects.toThrow("1 handles for 2 accounts");
+
+    // A runtime disposed mid-request must not leave its caller waiting, or
+    // hand back an answer meant for the session it closed.
+    const abandoned = runtime.contactHandles([account]);
+    runtime.dispose();
+    await expect(abandoned).rejects.toThrow();
+    await expect(runtime.contactHandles([account])).rejects.toThrow("disposed");
+  });
+
   it("worker fault terminates the worker and runs the full teardown", async () => {
     const worker = new FakeWorker();
     let subscriptionDisposes = 0;

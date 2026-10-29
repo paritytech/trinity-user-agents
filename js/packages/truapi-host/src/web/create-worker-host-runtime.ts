@@ -70,6 +70,19 @@ export interface WorkerPairingHostRuntime {
    */
   notifyContactsChanged(): void;
   /**
+   * The handles this user knows `accounts` by under the current session, in
+   * order: the ones `contacts.pick` gives a product for the same people.
+   * Undefined without a session. Rejects when an account is not 32 bytes, the
+   * core cannot mint, or the runtime is disposed before the core answers.
+   *
+   * Host only, for naming people the host already knows. It writes no cache,
+   * so a handle resolves in a transaction only while the host's contacts
+   * lookup still answers for its account.
+   */
+  contactHandles(
+    accounts: readonly Uint8Array[],
+  ): Promise<Uint8Array[] | undefined>;
+  /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
    * routing. Rejects when the runtime has been disposed or the worker faulted,
@@ -252,6 +265,13 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingContactHandles: Map<
+    number,
+    {
+      resolve: (handles: Uint8Array | undefined) => void;
+      reject: (error: Error) => void;
+    }
+  >;
   pendingDeviceStatementKeys: Map<
     number,
     {
@@ -295,6 +315,7 @@ let nextDisconnectRequestId = 0;
 let nextPermissionAuthorizationRequestId = 0;
 let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
+let nextContactHandlesRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
@@ -842,6 +863,19 @@ function handleSessionChatIdentityKeyResponse(
   );
 }
 
+function handleContactHandlesResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; handles: Uint8Array | undefined }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingContactHandles,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.handles } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceStatementKeyResponse(
   state: RuntimeState,
   msg:
@@ -888,6 +922,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingPermissionAuthorizationStatusBatches, error);
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingSessionChatIdentityKeys, error);
+  rejectAll(state.pendingContactHandles, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
@@ -1066,6 +1101,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingPermissionAuthorizationStatusBatches: new Map(),
       pendingSetPermissionAuthorizationStatuses: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
+      pendingContactHandles: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
@@ -1134,6 +1170,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "sessionChatIdentityKeyResponse":
           handleSessionChatIdentityKeyResponse(state, msg);
+          break;
+        case "contactHandlesResponse":
+          handleContactHandlesResponse(state, msg);
           break;
         case "deviceStatementKeyResponse":
           handleDeviceStatementKeyResponse(state, msg);
@@ -1467,6 +1506,34 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
     },
     notifyContactsChanged(): void {
       postUnlessDisposed(state, { kind: "notifyContactsChanged" });
+    },
+    async contactHandles(
+      accounts: readonly Uint8Array[],
+    ): Promise<Uint8Array[] | undefined> {
+      if (accounts.some((account) => account.length !== 32))
+        throw new Error("contact accounts are 32 bytes each");
+      if (state.disposed) throw new Error("worker host runtime is disposed");
+      const packed = new Uint8Array(accounts.length * 32);
+      accounts.forEach((account, index) => packed.set(account, index * 32));
+      const handles = await sendWorkerRequest<Uint8Array | undefined>(
+        state,
+        state.pendingContactHandles,
+        () => ++nextContactHandlesRequestId,
+        undefined,
+        (requestId) => ({
+          kind: "contactHandles",
+          requestId,
+          accounts: packed,
+        }),
+      );
+      if (handles === undefined) return undefined;
+      if (handles.length !== packed.length)
+        throw new Error(
+          `the core answered ${handles.length / 32} handles for ${accounts.length} accounts`,
+        );
+      return accounts.map((_, index) =>
+        handles.slice(index * 32, index * 32 + 32),
+      );
     },
     acquireWorker(productId: string): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });

@@ -206,8 +206,11 @@ each product connection. Role-specific operations live only on the matching hand
 `activate_external_session`, and `reset_session_state` on the pairing handle,
 `activate_local_session` on the signing handle. Both handles expose
 `clear_product_state` to revoke one product's capability material without
-touching the session or other products, and `notify_contacts_changed` to drop
-the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
+touching the session or other products, `notify_contacts_changed` to drop
+the contact handles the core cached once a contact is removed or blocked, and
+`contact_handles` to mint the handles `contacts.pick` gives for the people the
+host knows, without caching them (served to the web host through WASM; the
+native host runtime does not expose it yet). Calling the wrong operation is
 a compile error, not a runtime `Unavailable`.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read

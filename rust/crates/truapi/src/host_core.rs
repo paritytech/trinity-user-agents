@@ -356,6 +356,20 @@ impl PairingHostRuntime {
 		self.services.contact_handles.clear();
 	}
 
+	/// The handles this user knows `accounts` by, in order, under the current
+	/// session: the ones `contacts.pick` gives every product for the same
+	/// people.
+	///
+	/// Host only, so the host can name people it already knows. Writes no
+	/// cache: a handle minted here resolves in a transaction only while the
+	/// host's [`ContactsPlatform::contacts`] still answers for its account.
+	/// `None` without a session, or without the root entropy source handles
+	/// are keyed on.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.contact_handles"))]
+	pub fn contact_handles(&self, accounts: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+		mint_contact_handles(self.pairing_host.as_ref(), accounts)
+	}
+
 	/// Build a product-facing runtime from this pairing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -896,6 +910,20 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
 		self.services.contact_handles.clear();
+	}
+
+	/// The handles this user knows `accounts` by, in order, under the current
+	/// session: the ones `contacts.pick` gives every product for the same
+	/// people.
+	///
+	/// Host only, so the host can name people it already knows. Writes no
+	/// cache: a handle minted here resolves in a transaction only while the
+	/// host's [`ContactsPlatform::contacts`] still answers for its account.
+	/// `None` without a session, or without the root entropy source handles
+	/// are keyed on.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.contact_handles"))]
+	pub fn contact_handles(&self, accounts: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+		mint_contact_handles(self.signing_host.as_ref(), accounts)
 	}
 
 	/// Install the host's [`DevicePairingObserver`], told whenever a device
@@ -2116,6 +2144,21 @@ impl Transport for SinkTransport {
 	}
 }
 
+/// Mint the handles `accounts` are known by under `authority`'s current
+/// session, deriving the handle key once.
+fn mint_contact_handles(
+	authority: &dyn ProductAuthority,
+	accounts: &[[u8; 32]],
+) -> Option<Vec<[u8; 32]>> {
+	let session = authority.current_session()?;
+	let handle_key = authority
+		.contacts_handle_key(&session)
+		.inspect_err(|error| warn!("no contact handle key for the current session: {error}"))
+		.ok()?;
+	let handles = crate::runtime::contacts::ContactHandles::from_handle_key(handle_key);
+	Some(accounts.iter().map(|account| handles.mint(account)).collect())
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -2154,6 +2197,13 @@ mod tests {
 	}
 
 	fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
+		let runtime = signing_runtime(platform);
+		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
+			.expect("activation succeeds");
+		runtime
+	}
+
+	fn signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
 		use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 		let config = SigningHostConfig::new(
@@ -2171,10 +2221,7 @@ mod tests {
 			"testnet".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime = SigningHostRuntime::new(platform, config, test_spawner());
-		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
-			.expect("activation succeeds");
-		runtime
+		SigningHostRuntime::new(platform, config, test_spawner())
 	}
 
 	/// Install `session` once the boot reconcile has reported the empty
@@ -4054,5 +4101,210 @@ mod tests {
 			"a signing role with no Asset Hub refuses without touching the chain"
 		);
 		assert!(unconfigured.connects.is_empty(), "and does not dial any chain at all");
+	}
+
+	/// A host's contact list, and the person its picker answers with.
+	struct ListedContacts {
+		listed: Mutex<Vec<[u8; 32]>>,
+		pick: [u8; 32],
+	}
+
+	impl ListedContacts {
+		fn new(listed: Vec<[u8; 32]>, pick: [u8; 32]) -> Arc<Self> {
+			Arc::new(Self { listed: Mutex::new(listed), pick })
+		}
+	}
+
+	#[crate::platform::async_trait]
+	impl ContactsPlatform for ListedContacts {
+		async fn contacts(
+			&self,
+			lookup: &crate::platform::HostContactLookup,
+		) -> Result<crate::platform::HostContactMatches, v01::GenericError> {
+			let listed = self.listed.lock().expect("listed mutex poisoned");
+			Ok(crate::platform::HostContactMatches {
+				accounts: lookup
+					.handles
+					.iter()
+					.map(|handle| {
+						listed.iter().copied().find(|account| {
+							&crate::runtime::contacts::contact_handle(&lookup.handle_key, account) ==
+								handle
+						})
+					})
+					.collect(),
+			})
+		}
+
+		async fn pick_contact(
+			&self,
+			_product: &ProductContext,
+		) -> Result<crate::platform::HostContactPick, v01::GenericError> {
+			Ok(crate::platform::HostContactPick::Picked { account: self.pick })
+		}
+	}
+
+	const PICKED: [u8; 32] = [0x51; 32];
+	const LISTED: [u8; 32] = [0x52; 32];
+	const STRANGER: [u8; 32] = [0x53; 32];
+
+	/// The handle `contacts.pick` gives `admin`'s product.
+	fn picked_handle(admin: &HostAdmin) -> [u8; 32] {
+		let truapi::versioned::contacts::HostContactsPickResponse::V1(response) =
+			futures::executor::block_on(truapi::api::Contacts::pick(
+				admin.product_runtime.as_ref(),
+				&CallContext::default(),
+				truapi::versioned::contacts::HostContactsPickRequest::V1(
+					v01::HostContactsPickRequest {},
+				),
+			))
+			.expect("the picker opens");
+		let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+			panic!("the picker answers with a person");
+		};
+		handle.bytes
+	}
+
+	/// What a transaction from `admin`'s product that names `handle` signs in its place.
+	fn resolve_in_transaction(
+		admin: &HostAdmin,
+		handle: [u8; 32],
+	) -> Result<Vec<u8>, crate::runtime::ContactResolutionError> {
+		futures::executor::block_on(
+			admin.product_runtime.substitute_declared_contacts(
+				handle.to_vec(),
+				&[v01::ContactHandle { bytes: handle }],
+			),
+		)
+	}
+
+	fn admin_for(product_id: &str, admin: impl Fn(ProductContext) -> HostAdmin) -> HostAdmin {
+		admin(product_context(&ProductId::for_test(product_id)))
+	}
+
+	fn contact_signing_runtime(contacts: Arc<ListedContacts>) -> SigningHostRuntime {
+		let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+		assert!(runtime.set_contacts_platform(contacts));
+		runtime
+	}
+
+	fn contact_pairing_runtime(
+		contacts: Arc<ListedContacts>,
+		session: Option<crate::host_logic::session::SessionInfo>,
+	) -> PairingHostRuntime {
+		let platform = Arc::new(StubPlatform::default());
+		let (config, _) = runtime_config("voting.dot");
+		let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+		assert!(runtime.set_contacts_platform(contacts));
+		if let Some(session) = session {
+			install_session_after_boot(&runtime, &platform, session);
+		}
+		runtime
+	}
+
+	fn assert_mints_what_the_picker_gives(
+		role: &str,
+		mint: impl Fn(&[[u8; 32]]) -> Option<Vec<[u8; 32]>>,
+		admin: impl Fn(ProductContext) -> HostAdmin,
+	) {
+		let voting = picked_handle(&admin_for("voting.dot", &admin));
+		let chat = picked_handle(&admin_for("chat.dot", &admin));
+		let minted = mint(&[LISTED, PICKED]).expect("a session mints");
+		assert_eq!(
+			(chat, minted[1], mint(&[PICKED, LISTED]).map(|handles| handles[1])),
+			(voting, voting, Some(minted[0])),
+			"{role}: one person has one handle in every product and in the host, \
+			 returned in the order asked"
+		);
+		assert_ne!(minted[0], minted[1], "{role}: two people have two handles");
+	}
+
+	#[test]
+	fn host_minted_handles_are_the_ones_contacts_pick_gives_every_product() {
+		let signing = contact_signing_runtime(ListedContacts::new(vec![PICKED, LISTED], PICKED));
+		let pairing = contact_pairing_runtime(
+			ListedContacts::new(vec![PICKED, LISTED], PICKED),
+			Some(crate::test_support::session_info()),
+		);
+		assert_mints_what_the_picker_gives(
+			"signing",
+			|accounts| signing.contact_handles(accounts),
+			|product| signing.product_admin(product),
+		);
+		assert_mints_what_the_picker_gives(
+			"pairing",
+			|accounts| pairing.contact_handles(accounts),
+			|product| pairing.product_admin(product),
+		);
+
+		let source = crate::test_support::session_info()
+			.root_entropy_source
+			.expect("the test session carries an entropy source");
+		assert_eq!(
+			pairing.contact_handles(&[PICKED]),
+			Some(vec![crate::runtime::contacts::contact_handle(
+				&crate::runtime::contacts::handle_key_from_root_source(&source),
+				&PICKED,
+			)]),
+			"keyed on the session's root entropy source, as the picker's are"
+		);
+	}
+
+	#[test]
+	fn contact_handles_need_a_session_with_its_root_source() {
+		let contacts = || ListedContacts::new(vec![PICKED], PICKED);
+		let signed_out = signing_runtime(Arc::new(StubPlatform::default()));
+		let unpaired = contact_pairing_runtime(contacts(), None);
+		let without_source = contact_pairing_runtime(
+			contacts(),
+			Some(crate::host_logic::session::SessionInfo {
+				root_entropy_source: None,
+				..crate::test_support::session_info()
+			}),
+		);
+		let signed_in = contact_signing_runtime(contacts());
+		assert_eq!(
+			(
+				signed_out.contact_handles(&[PICKED]),
+				unpaired.contact_handles(&[PICKED]),
+				without_source.contact_handles(&[PICKED]),
+				signed_in.contact_handles(&[]),
+			),
+			(None, None, None, Some(vec![])),
+		);
+	}
+
+	#[test]
+	fn another_users_session_knows_the_same_person_by_another_handle() {
+		let alice = activated_signing_runtime(Arc::new(StubPlatform::default()));
+		let bob = signing_runtime(Arc::new(StubPlatform::default()));
+		futures::executor::block_on(bob.activate_local_session(vec![0xcd; 32]))
+			.expect("activation succeeds");
+		let alice_handle = alice.contact_handles(&[PICKED]).expect("a session mints");
+		assert_ne!(Some(alice_handle), bob.contact_handles(&[PICKED]));
+	}
+
+	#[test]
+	fn a_minted_handle_resolves_only_while_the_host_lists_the_person() {
+		// Minting is naming, not permission: a transaction gets the account
+		// only from the host's lookup or from what the picker cached. A mint
+		// that cached its answer would let anyone the host can name, such as
+		// a stranger who wrote first, be paid through their handle.
+		let contacts = ListedContacts::new(vec![LISTED], PICKED);
+		let runtime = contact_signing_runtime(contacts.clone());
+		let admin = admin_for("voting.dot", |product| runtime.product_admin(product));
+		let minted = runtime.contact_handles(&[STRANGER, LISTED]).expect("a session mints");
+		assert_eq!(
+			(resolve_in_transaction(&admin, minted[0]), resolve_in_transaction(&admin, minted[1])),
+			(Err(crate::runtime::ContactResolutionError::UnknownContact), Ok(LISTED.to_vec())),
+		);
+
+		contacts.listed.lock().expect("listed mutex poisoned").clear();
+		runtime.notify_contacts_changed();
+		assert_eq!(
+			(resolve_in_transaction(&admin, minted[1]), runtime.contact_handles(&[LISTED])),
+			(Err(crate::runtime::ContactResolutionError::UnknownContact), Some(vec![minted[1]])),
+			"a removed contact still has a handle to name them by, and resolves to no one"
+		);
 	}
 }
