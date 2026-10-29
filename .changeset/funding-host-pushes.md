@@ -9,4 +9,5 @@ reports with the new `select_funding_options`, with the limits on each declared 
 overlay shows, after each selection and after each quote list. `funding_history` and `funding_in_progress_changed`
 arrive each time funding resumes, the latter again whenever it changes. `funding_session`, `funding_sessions`,
 `funding_history()`, `funding_in_progress()`, `funding_candidates`, `funding_countries`, `funding_amount_limits` and
-`detected_funding_country` are removed from the runtime.
+`detected_funding_country` are removed from the runtime. Every funding provider's worker starts as the overlay opens, so
+the first quotes do not wait on a cold start.
