@@ -69,6 +69,8 @@ private struct FeedWriter {
             try removeReaction(from: messageId, participantId: participantId, emoji: emoji)
         case let .statusChanged(messageId, status):
             try changeStatus(of: messageId, to: status)
+        case let .deleted(messageId):
+            try delete(messageId)
         }
     }
 }
@@ -149,6 +151,31 @@ private extension FeedWriter {
         if let text = newContent.editableText {
             try saveEditRow(for: current.messageId, text: text, editedAt: editedAt)
         }
+    }
+
+    /// Removes a message of the product with its edit row, its reactions and its unread mark. When the chat list
+    /// shows the message, it shows the newest message that is left.
+    func delete(_ messageId: String) throws {
+        let entity = try requireLiveMessage(messageId)
+
+        let current = try mapper.transform(entity: entity)
+        guard current.origin == productOrigin else {
+            throw Chat.ProductFeedError.notOwner
+        }
+
+        let removed = [entity] + ((entity.relatedMessages as? Set<CDChatMessage>) ?? [])
+        let removedIds = Set(removed.compactMap(\.messageId))
+
+        let unreadMarks = (chat.unreadMessages as? Set<CDChatUnreadMessage>) ?? []
+        for unread in unreadMarks where removedIds.contains(unread.messageId ?? "") {
+            context.delete(unread)
+        }
+
+        if chat.lastDisplayMessage == entity {
+            chat.lastDisplayMessage = try newestListedMessage(excluding: removedIds)
+        }
+
+        removed.forEach(context.delete)
     }
 
     /// One edit row for each message, which each edit replaces. A product that streams an answer edits a
@@ -235,6 +262,21 @@ private extension FeedWriter {
 
         let found = try context.fetch(request)
         return found.first { $0.messageId == candidates[0] } ?? found.first
+    }
+
+    /// The newest message of the room that the chat list can show.
+    func newestListedMessage(excluding excludedIds: Set<String>) throws -> CDChatMessage? {
+        let request: NSFetchRequest<CDChatMessage> = CDChatMessage.fetchRequest()
+        request.predicate = .messages(in: chat)
+        request.sortDescriptors = [
+            NSSortDescriptor(key: #keyPath(CDChatMessage.order), ascending: false),
+            NSSortDescriptor(key: #keyPath(CDChatMessage.timestamp), ascending: false)
+        ]
+
+        return try context.fetch(request).first { message in
+            let contentType = Chat.LocalMessage.Content.ContentType(rawValue: UInt8(clamping: message.contentType))
+            return !excludedIds.contains(message.messageId ?? "") && contentType?.isExcludedFromChatList == false
+        }
     }
 
     func requireLiveMessage(_ productMessageId: String) throws -> CDChatMessage {

@@ -87,7 +87,7 @@ private extension ChatRoomDeletionTests {
         icon: String? = nil
     ) async throws -> Chat.LocalMessage {
         _ = try await context.createRoom(for: bot, roomId: roomId, name: "Room", icon: icon)
-        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Room")
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Room", icon: .keep)
         try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
         try await context.setRoomPreview(for: bot, roomId: roomId, preview: Chat.RoomPreview(
             timestamp: nil,

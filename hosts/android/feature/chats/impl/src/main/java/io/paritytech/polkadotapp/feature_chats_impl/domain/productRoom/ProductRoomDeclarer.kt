@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom
 
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
@@ -31,11 +33,20 @@ class ProductRoomDeclarer @Inject constructor(
         declarationsWriter.setConfig(chatId, config)
     }
 
-    suspend fun setMetadata(extensionId: ChatExtensionId, chatId: ChatId, name: String, metadata: ChatRoomMetadataModel) =
-        declare(extensionId, chatId) {
+    suspend fun setMetadata(
+        extensionId: ChatExtensionId,
+        chatId: ChatId,
+        name: String,
+        iconChange: RoomIconChange?,
+        metadata: ChatRoomMetadataModel,
+    ) = declare(extensionId, chatId) {
+        if (iconChange == null) {
             chatRoomRepository.renameRoom(chatId, name)
-            declarationsWriter.setMetadata(chatId, metadata)
+        } else {
+            chatRoomRepository.updateRoomMetadata(chatId, RoomMetadata(name, iconChange.icon))
         }
+        declarationsWriter.setMetadata(chatId, metadata)
+    }
 
     suspend fun setPreview(extensionId: ChatExtensionId, chatId: ChatId, preview: ChatRoomPreviewModel) =
         declare(extensionId, chatId) { declarationsWriter.setPreview(chatId, preview) }

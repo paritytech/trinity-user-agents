@@ -3,7 +3,10 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.slot
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -14,6 +17,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDe
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -92,10 +96,33 @@ class ProductRoomDeclarerTest {
         withRoomExisting(true)
         val metadata = ChatRoomMetadataModel(description = "Play")
 
-        declarer.setMetadata(extensionId, room, "Lobby", metadata)
+        declarer.setMetadata(extensionId, room, "Lobby", null, metadata)
 
         coVerify { chatRoomRepository.renameRoom(room, "Lobby") }
+        coVerify(exactly = 0) { chatRoomRepository.updateRoomMetadata(any(), any()) }
         coVerify { declarationsWriter.setMetadata(room, metadata) }
+    }
+
+    @Test
+    fun `an icon change replaces the icon of the room with the name`() = runBlocking<Unit> {
+        withRoomExisting(true)
+        val stored = slot<RoomMetadata>()
+        coEvery { chatRoomRepository.updateRoomMetadata(room, capture(stored)) } returns Unit
+
+        declarer.setMetadata(extensionId, room, "Lobby", RoomIconChange("https://example.invalid/icon.png"), EMPTY_METADATA)
+
+        assertEquals("Lobby" to "https://example.invalid/icon.png", stored.captured.name to stored.captured.icon)
+    }
+
+    @Test
+    fun `an icon change without an icon removes the icon of the room`() = runBlocking<Unit> {
+        withRoomExisting(true)
+        val stored = slot<RoomMetadata>()
+        coEvery { chatRoomRepository.updateRoomMetadata(room, capture(stored)) } returns Unit
+
+        declarer.setMetadata(extensionId, room, "Lobby", RoomIconChange(null), EMPTY_METADATA)
+
+        assertEquals("Lobby" to null, stored.captured.name to stored.captured.icon)
     }
 
     private fun withRoomExisting(exists: Boolean) {
@@ -111,6 +138,7 @@ class ProductRoomDeclarerTest {
     }
 
     private companion object {
+        val EMPTY_METADATA = ChatRoomMetadataModel(description = null)
         val EMPTY_PREVIEW = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = null, lastReaction = null, unseenReactions = 0)
     }
 }
