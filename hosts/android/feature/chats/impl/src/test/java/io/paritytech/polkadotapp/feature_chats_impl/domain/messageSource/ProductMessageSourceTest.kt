@@ -383,7 +383,7 @@ class ProductMessageSourceTest {
         assertEquals(listOf("m0", "m2"), cache.entry(productRoom)?.messages?.map { it.messageId })
     }
 
-    // The window drops the message only once the product has deleted it, so a refusal leaves it where it was.
+    // The window removes the message only after the product deletes it. A refusal keeps the message in its place.
     @Test
     fun `a deletion that the product refuses keeps the message and shows the reason`() = runBlocking<Unit> {
         val querying = ScriptedProductChatQuerying(
