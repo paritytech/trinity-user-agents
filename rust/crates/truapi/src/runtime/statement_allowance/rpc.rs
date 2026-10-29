@@ -411,7 +411,8 @@ mod tests {
 	use serde_json::{Value, json};
 
 	use super::{
-		ExtrinsicStatus, HostRpcClient, RpcClient, extrinsic_status, testing::ScriptedRpc,
+		ExtrinsicStatus, HostRpcClient, RpcClient, RpcError, StatementAllowanceError,
+		extrinsic_status, testing::ScriptedRpc,
 	};
 
 	/// What a status notification, as the pool sends it, means for the submission.
@@ -463,6 +464,28 @@ mod tests {
 				ExtrinsicStatus::Pending,
 				ExtrinsicStatus::Pending,
 			],
+		);
+	}
+
+	/// A rejection the pool sends as a bare string ends the submission there,
+	/// rather than being taken for progress until the subscription or the
+	/// submit timeout runs out.
+	#[test]
+	fn a_dropped_submission_fails_at_once() {
+		let scripted = ScriptedRpc::new([]);
+		scripted.script_subscription([r#""ready""#, r#""dropped""#]);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+
+		let Err(error) = futures::executor::block_on(rpc.submit_and_watch(&[0x01])) else {
+			panic!("the pool dropped the transaction");
+		};
+		assert!(
+			matches!(
+				&error,
+				StatementAllowanceError::Rpc(RpcError::ExtrinsicRejected { status })
+					if status == "dropped"
+			),
+			"{error}"
 		);
 	}
 
