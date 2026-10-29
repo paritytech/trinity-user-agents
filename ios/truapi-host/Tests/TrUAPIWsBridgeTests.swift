@@ -279,7 +279,7 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
 }
 
 // Conforms to `ChatHostBridge` so a new requirement there fails this job.
-// Every member is written out, also the members with a default.
+// This stub writes each member, also the members that have a default.
 final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,

@@ -30,7 +30,8 @@ pub enum NativeChatFeedRejection {
 	/// `New` names a message the room holds already.
 	#[error("the room holds this message already")]
 	DuplicateMessage,
-	/// The update edits a message the product did not write.
+	/// The update edits, replaces or deletes a message that the product did
+	/// not write.
 	#[error("the product did not write this message")]
 	NotOwner,
 	/// Any other refusal.

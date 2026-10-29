@@ -1473,9 +1473,10 @@ export interface ChatPlatform {
   ): Promise<void>;
 
   /**
-   * Replace the name and description of a room. If a Rust host does not
-   * implement this method, it ignores the metadata. The room keeps the name
-   * and icon of `create_chat_room`.
+   * Replace the name, description, icon and empty-room text of a room. An
+   * icon of ``undefined`` keeps the icon, and an empty icon removes it. If a Rust
+   * host does not implement this method, it ignores the metadata. The room
+   * keeps the name and icon of `create_chat_room`.
    */
   setChatRoomMetadata?(
     product: ProductContext,
@@ -1505,7 +1506,8 @@ export interface ChatPlatform {
    * it the host applies the change only to an open room screen and the chat
    * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
    * and, for an edit, a replacement or a deletion of a message the product
-   * did not write, `NotOwner`.
+   * did not write, `NotOwner`. A web host can answer only `Unknown`: the
+   * web bridge turns each error that a web callback throws into `Unknown`.
    */
   updateChatFeed?(
     product: ProductContext,
