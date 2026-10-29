@@ -804,8 +804,7 @@ fn list_json(room: &RoomRecord) -> Value {
 			json!({ "type": "UnreadCount", "count": count })
 		},
 		Some(ChatRoomBadge::Image { icon }) => json!({ "type": "Image", "icon": icon }),
-		// Matched by shape, not by name: an unread count of 0 and the
-		// variant that hides the badge both show nothing.
+		// An unread count of 0 shows nothing.
 		Some(_) => Value::Null,
 		// A room the product keeps shows no badge it did not set.
 		None if !room.host_store() => Value::Null,
@@ -1167,7 +1166,6 @@ impl ChatPlatform for CliChatHost {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use parity_scale_codec::Decode;
 	use std::fs::read_to_string;
 	use truapi::{
 		latest::{
@@ -1568,21 +1566,6 @@ mod tests {
 		);
 		assert_eq!(list["unseenReactions"], 2);
 
-		// The variant that hides the badge, by its wire index rather than
-		// its name.
-		let hidden = ChatRoomBadge::decode(&mut &[0u8][..]).expect("variant 0 hides the badge");
-		let list = preview(ChatRoomPreview {
-			timestamp: None,
-			badge: Some(hidden),
-			last_message: None,
-			last_reaction: None,
-			unseen_reactions: 0,
-			pinned: false,
-			activity: None,
-		});
-		assert_eq!(list["badge"], Value::Null);
-		assert_eq!(list["text"], "newest");
-		assert_eq!((list["pinned"].clone(), list["activity"].clone()), (json!(false), Value::Null));
 		let list = preview(ChatRoomPreview {
 			timestamp: None,
 			badge: Some(ChatRoomBadge::UnreadCount { count: 0 }),
@@ -1593,6 +1576,8 @@ mod tests {
 			activity: None,
 		});
 		assert_eq!(list["badge"], Value::Null, "a count of 0 shows nothing");
+		assert_eq!(list["text"], "newest");
+		assert_eq!((list["pinned"].clone(), list["activity"].clone()), (json!(false), Value::Null));
 		let list = preview(ChatRoomPreview {
 			timestamp: None,
 			badge: Some(ChatRoomBadge::Image {
