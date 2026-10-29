@@ -1820,8 +1820,9 @@ answer.
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
 the limits and timeouts. The connection sends a ping after the keepalive
-interval without an outgoing request, and is treated as dead if nothing arrives
-within the read timeout. The response stream ends when the socket closes or
+interval without an outgoing request, and is treated as dead if no byte arrives
+within the read timeout, so a large message that is still arriving keeps it
+open. The response stream ends when the socket closes or
 dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
@@ -1830,8 +1831,8 @@ With `light-client`, the embedded smoldot light client syncs the chains from the
 specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
 cannot be combined with the `HOST_CLI_*_WS` overrides or
 `HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
-and keeps one idle connection per chain, since smoldot stops a chain when its
-last connection closes. A chain's first request waits for it to sync. A PGAS
+and keeps each chain running after its last connection closes, so a chain syncs
+once per process. A chain's first request waits for it to sync. A PGAS
 claim on Asset Hub, such as `pgas-check --submit`, is dropped: smoldot validates a
 transaction before broadcasting it, and the proof Asset Hub's nodes return for
 that validation is missing entries the validation reads.

@@ -35,6 +35,9 @@ pub struct EmbeddedChainProviderBuilder {
 	/// The peer connections the browser light client opens.
 	#[cfg(feature = "smoldot")]
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Set by [`keep_chains_running`](Self::keep_chains_running).
+	#[cfg(feature = "smoldot")]
+	keep_chains_running: bool,
 }
 
 impl core::fmt::Debug for EmbeddedChainProviderBuilder {
@@ -46,7 +49,8 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("relays", &self.relays)
 			.field("seeded_databases", &self.seeded_databases)
 			.field("storage", &self.storage.is_some())
-			.field("connection_types", &self.connection_types);
+			.field("connection_types", &self.connection_types)
+			.field("keep_chains_running", &self.keep_chains_running);
 		builder.finish()
 	}
 }
@@ -111,6 +115,16 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Keep each light-client chain running from its first connect until the
+	/// provider is dropped, rather than stopping it once its last connection
+	/// closes. A host that connects once per use then keeps the chain's sync and
+	/// peers between uses, and never gets back what a chain it connected costs.
+	#[cfg(feature = "smoldot")]
+	pub fn keep_chains_running(mut self) -> Self {
+		self.keep_chains_running = true;
+		self
+	}
+
 	/// Build the provider. Light-client resources start lazily on the first
 	/// light-client connect.
 	pub fn build(self) -> EmbeddedChainProvider {
@@ -125,7 +139,7 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
-			light: crate::light::LightState::new(self.connection_types),
+			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
 		}
 	}
 }

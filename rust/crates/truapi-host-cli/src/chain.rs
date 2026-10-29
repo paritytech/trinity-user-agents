@@ -5,7 +5,7 @@
 //! connection's response stream ends, the core's chain runtime connects again.
 
 use std::{
-	collections::{BTreeMap, HashMap, hash_map::Entry},
+	collections::BTreeMap,
 	sync::{Arc, Mutex, PoisonError},
 	time::Duration,
 };
@@ -65,7 +65,7 @@ pub struct CliChainProvider {
 enum Backend {
 	/// Each routed chain registered as its endpoint's RPC node.
 	Rpc(Box<EmbeddedChainProvider>),
-	/// The process's light client for the network; see [`LightClient`].
+	/// The process's light client for the network; see [`light_client`].
 	LightClient,
 }
 
@@ -175,7 +175,7 @@ impl ChainProvider for CliChainProvider {
 		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
 		match &self.backend {
 			Backend::Rpc(provider) => provider.connect(chain).await,
-			Backend::LightClient => LightClient::shared(self.network.id)?.connect(chain).await,
+			Backend::LightClient => light_client(self.network.id)?.connect(chain).await,
 		}
 	}
 }
@@ -214,43 +214,22 @@ async fn within_request_timeout<T>(
 	})
 }
 
-/// The process's light client for one network. Each `EmbeddedChainProvider`
-/// runs its own smoldot client, so every consumer shares this one to reuse one
-/// sync and one set of peers.
-struct LightClient {
-	provider: EmbeddedChainProvider,
-	/// One idle connection per chain for the life of the process. smoldot stops
-	/// a chain once its last connection closes, and consumers connect once per
-	/// use, so without it a chain would start again with no peers.
-	kept_open: tokio::sync::Mutex<HashMap<[u8; 32], Box<dyn JsonRpcConnection>>>,
-}
+/// The process's light client for `network`, with every chain of that network
+/// from `truapi-provider`'s bundled catalog registered. Each
+/// `EmbeddedChainProvider` runs its own smoldot client, so every consumer shares
+/// this one to reuse one sync and one set of peers, and its chains keep running
+/// between the connections each use opens. Smoldot starts on the first connect.
+fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
+	static CLIENTS: Mutex<BTreeMap<&str, Arc<EmbeddedChainProvider>>> = Mutex::new(BTreeMap::new());
 
-impl LightClient {
-	/// The light client for `network`, with every chain of that network from
-	/// `truapi-provider`'s bundled catalog registered. Smoldot starts on the
-	/// first connect.
-	fn shared(network: &'static str) -> Result<Arc<Self>, ProviderError> {
-		static CLIENTS: Mutex<BTreeMap<&str, Arc<LightClient>>> = Mutex::new(BTreeMap::new());
-
-		let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
-		if let Some(client) = clients.get(network) {
-			return Ok(Arc::clone(client));
-		}
-		let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
-		let client = Arc::new(Self { provider: builder.build(), kept_open: Default::default() });
-		clients.insert(network, Arc::clone(&client));
-		Ok(client)
+	let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
+	if let Some(client) = clients.get(network) {
+		return Ok(Arc::clone(client));
 	}
-
-	async fn connect(
-		&self,
-		genesis_hash: [u8; 32],
-	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		if let Entry::Vacant(slot) = self.kept_open.lock().await.entry(genesis_hash) {
-			slot.insert(self.provider.connect(genesis_hash).await?);
-		}
-		self.provider.connect(genesis_hash).await
-	}
+	let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
+	let client = Arc::new(builder.keep_chains_running().build());
+	clients.insert(network, Arc::clone(&client));
+	Ok(client)
 }
 
 #[cfg(test)]
@@ -412,8 +391,8 @@ mod tests {
 
 		drop(provider.connect(network.people_genesis).await.expect("add People"));
 
-		let light = LightClient::shared(network.id).expect("the default network is bundled");
-		assert!(light.provider.is_connected(network.people_genesis));
+		let light = light_client(network.id).expect("the default network is bundled");
+		assert!(light.is_connected(network.people_genesis));
 	}
 
 	/// Every role the host says it serves has to route to that role's own chain

@@ -6,7 +6,10 @@
 //! over the browser's `WebSocket`. Each connect adds the chain again: smoldot
 //! deduplicates identical chains internally while giving every add its own
 //! [`ChainId`], request queue, and response stream, which yields natural
-//! per-connection isolation.
+//! per-connection isolation. smoldot stops a chain once its last add is
+//! removed, so a provider built with
+//! [`keep_chains_running`](crate::EmbeddedChainProviderBuilder::keep_chains_running)
+//! also adds each chain once on its own account and never removes it.
 //!
 //! Readiness: a connection holds back the requests it is sent until smoldot
 //! first reports the chain as synced, then forwards them in the order they
@@ -187,10 +190,11 @@ struct LightInner {
 
 /// A chain the client is running and how many things hold it.
 struct AddedChain {
-	/// Set for a relay this crate added behind a parachain, which no connection
-	/// owns and so must be removed here when the last holder goes. A chain that
-	/// only ever had connections leaves this `None`: each connection removes the
-	/// chain it added itself.
+	/// Set for a chain this crate added on its own account, with JSON-RPC
+	/// disabled: a relay behind a parachain, or any chain the client keeps
+	/// running. No connection owns it, so it is removed here when the last holder
+	/// goes. A chain that only ever had connections leaves this `None`: each
+	/// connection removes the chain it added itself.
 	implicit_id: Option<ChainId>,
 	/// The ids smoldot gave each live connection to this chain. Any of them,
 	/// like `implicit_id`, reports the lifecycle of the chain.
@@ -203,11 +207,17 @@ pub struct LightState {
 	inner: OnceLock<Arc<Mutex<LightInner>>>,
 	/// Handed to [`new_platform`] when the client starts.
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Whether a chain keeps running after its last connection closes; see
+	/// [`keep_running`].
+	keep_running: bool,
 }
 
 impl LightState {
-	pub fn new(connection_types: crate::connection_types::ConnectionTypes) -> Self {
-		LightState { inner: OnceLock::new(), connection_types }
+	pub fn new(
+		connection_types: crate::connection_types::ConnectionTypes,
+		keep_running: bool,
+	) -> Self {
+		LightState { inner: OnceLock::new(), connection_types, keep_running }
 	}
 
 	fn inner(&self) -> &Arc<Mutex<LightInner>> {
@@ -293,6 +303,21 @@ impl LightState {
 			None => None,
 			Some((genesis, relay_source)) => Some(add_relay(&mut guard, *genesis, relay_source)?),
 		};
+
+		if self.keep_running &&
+			let Err(error) = keep_running(
+				&mut guard,
+				genesis_hash,
+				&specification,
+				database_content.as_deref(),
+				*statement_protocol,
+				relay.as_ref(),
+			) {
+			if let Some(genesis) = relay_genesis {
+				release_chain(&mut guard, genesis);
+			}
+			return Err(error);
+		}
 
 		let added = guard
 			.client
@@ -396,20 +421,78 @@ fn add_relay(
 		return Err(ProviderError::UnknownRelay { relay: relay_genesis });
 	};
 
-	let specification = dialable_spec(specification);
+	add_implicit(
+		guard,
+		relay_genesis,
+		&dialable_spec(specification),
+		database_content.as_deref(),
+		*statement_protocol,
+		None,
+	)
+}
+
+/// Hold `genesis_hash` for the life of the client, so a host that connects
+/// once per use keeps the chain's sync and peers between uses. smoldot stops a
+/// chain once nothing that added it remains, so the client adds it once more on
+/// its own account and never releases that reference. A parachain's hold also
+/// takes one on its relay.
+///
+/// `specification` is already [`dialable_spec`]. Does nothing for a chain the
+/// client already holds, a kept relay included.
+fn keep_running(
+	guard: &mut LightInner,
+	genesis_hash: [u8; 32],
+	specification: &str,
+	database_content: Option<&str>,
+	statement_protocol: bool,
+	relay: Option<&([u8; 32], ChainSource)>,
+) -> Result<(), ProviderError> {
+	if guard.added.get(&genesis_hash).is_some_and(|chain| chain.implicit_id.is_some()) {
+		return Ok(());
+	}
+	let relay_id = match relay {
+		None => None,
+		Some((genesis, relay_source)) => Some(add_relay(guard, *genesis, relay_source)?),
+	};
+	let held = add_implicit(
+		guard,
+		genesis_hash,
+		specification,
+		database_content,
+		statement_protocol,
+		relay_id,
+	);
+	if held.is_err() &&
+		let Some((genesis, _)) = relay
+	{
+		release_chain(guard, *genesis);
+	}
+	held.map(drop)
+}
+
+/// Add `genesis_hash` on the client's own account, with JSON-RPC disabled, and
+/// take one reference on it for the caller.
+fn add_implicit(
+	guard: &mut LightInner,
+	genesis_hash: [u8; 32],
+	specification: &str,
+	database_content: Option<&str>,
+	statement_protocol: bool,
+	relay: Option<ChainId>,
+) -> Result<ChainId, ProviderError> {
 	let success = guard
 		.client
 		.add_chain(AddChainConfig {
 			user_data: (),
-			specification: specification.as_ref(),
-			database_content: database_content.as_deref().unwrap_or(""),
-			potential_relay_chains: core::iter::empty(),
+			specification,
+			database_content: database_content.unwrap_or(""),
+			potential_relay_chains: relay.into_iter(),
 			json_rpc: AddChainConfigJsonRpc::Disabled,
 			statement_protocol_config: statement_protocol.then(statement_protocol_config),
 		})
 		.map_err(|err| ProviderError::AddChain { reason: err.to_string() })?;
 
-	let entry = guard.added.entry(relay_genesis).or_insert(AddedChain {
+	let entry = guard.added.entry(genesis_hash).or_insert(AddedChain {
 		implicit_id: None,
 		connection_ids: Vec::new(),
 		refcount: 0,
@@ -785,6 +868,34 @@ mod tests {
 		assert!(!provider.is_connected(RELAY_GENESIS));
 		second.close();
 		assert!(!provider.is_connected(RELAY_GENESIS), "close is idempotent");
+	}
+
+	/// A host that connects once per use would otherwise start the chain again,
+	/// with no peers, on every use. A parachain stays up with the relay it syncs
+	/// through, and both keep reporting their state.
+	#[test]
+	fn a_kept_chain_outlives_its_connections() {
+		let provider = EmbeddedChainProvider::builder()
+			.chain(RELAY_GENESIS, ChainSource::light_client(RELAY_SPEC).build())
+			.parachain(
+				PARACHAIN_GENESIS,
+				ChainSource::light_client(PARACHAIN_SPEC).build(),
+				RELAY_GENESIS,
+			)
+			.keep_chains_running()
+			.build();
+
+		for _ in 0..2 {
+			block_on(provider.connect(PARACHAIN_GENESIS))
+				.expect("parachain connects")
+				.close();
+		}
+
+		for genesis in [PARACHAIN_GENESIS, RELAY_GENESIS] {
+			assert!(provider.is_connected(genesis));
+			let mut lifecycle = provider.lifecycle(genesis).expect("the kept chain is running");
+			block_on(lifecycle.next()).expect("the kept chain reports its state");
+		}
 	}
 
 	/// The ceiling is there for a consumer that never closes what it opens, so
