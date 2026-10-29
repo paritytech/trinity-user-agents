@@ -16,9 +16,9 @@ use super::{
 	versioning::version,
 };
 use crate::host_logic::statement_store::{
-	MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, TopicFilterKind, decode_signed_statement,
-	parse_new_statements_result, sign_statement_fields, signed_statement_to_scale,
-	statement_fields_from_v01, statement_proof_to_v01, unsigned_statement_signing_payload,
+	decode_signed_statement, parse_new_statements_result, sign_statement_fields,
+	signed_statement_to_scale, statement_fields_from_v01, statement_proof_to_v01,
+	unsigned_statement_signing_payload, validated_topic_filter,
 };
 
 use crate::platform::{
@@ -155,32 +155,6 @@ impl StatementStore for ProductRuntimeHost {
 	}
 }
 
-fn statement_store_topic_filter(
-	request: latest::RemoteStatementStoreSubscribeRequest,
-) -> Result<(TopicFilterKind, Vec<[u8; 32]>), String> {
-	match request {
-		latest::RemoteStatementStoreSubscribeRequest::MatchAll(topics) => {
-			if topics.len() > MAX_MATCH_ALL_TOPICS {
-				return Err(format!(
-					"MatchAll has {} topics, maximum is {}",
-					topics.len(),
-					MAX_MATCH_ALL_TOPICS
-				));
-			}
-			Ok((TopicFilterKind::MatchAll, topics))
-		},
-		latest::RemoteStatementStoreSubscribeRequest::MatchAny(topics) => {
-			if topics.len() > MAX_MATCH_ANY_TOPICS {
-				let topic_count = topics.len();
-				return Err(format!(
-					"MatchAny has {topic_count} topics, maximum is {MAX_MATCH_ANY_TOPICS}"
-				));
-			}
-			Ok((TopicFilterKind::MatchAny, topics))
-		},
-	}
-}
-
 #[instrument(skip_all, fields(runtime.method = "statement_store.subscription_stream"))]
 fn statement_store_subscription_stream(
 	subscription: RpcSubscription<Value>,
@@ -250,7 +224,7 @@ impl ProductRuntimeHost {
 		Subscription<latest::RemoteStatementStoreSubscribeItem, CallError<latest::GenericError>>,
 		CallError<latest::GenericError>,
 	> {
-		let (kind, topics) = statement_store_topic_filter(request)
+		let (kind, topics) = validated_topic_filter(request)
 			.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 		let statement_store = self.statement_store_rpc();
 		let rpc_client = statement_store.client("statement-store").await.map_err(|reason| {
@@ -424,9 +398,12 @@ mod tests {
 		*,
 	};
 	use crate::{
-		host_logic::product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
-			index_bytes,
+		host_logic::{
+			product_account::{
+				SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
+				index_bytes,
+			},
+			statement_store::{MAX_MATCH_ANY_TOPICS, TopicFilterKind},
 		},
 		platform::{CoreStorageKey, ProductContext},
 		test_support::{

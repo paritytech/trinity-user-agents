@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
+use futures::StreamExt as _;
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -21,14 +22,17 @@ use subxt_rpcs::{
 };
 use thiserror::Error;
 use tracing::warn;
+use truapi::latest::RemoteStatementStoreSubscribeRequest;
 
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
-		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
-		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
+		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
+		StatementStoreApi, StatementWatchError, TopicFilterKind, UNSUBSCRIBE_STATEMENT_METHOD,
+		backlog_then_live_batches, hex_topic, parse_new_statements_result, validated_topic_filter,
 	},
 	host_rpc_client::HostRpcClient,
+	stream_extensions::StreamExtensions as _,
 	subscription::Spawner,
 };
 
@@ -145,6 +149,39 @@ impl StatementStoreRpc {
 			.map(Arc::from)
 			.map_err(|error| StatementStoreRpcClientError::Connect { label, error })
 	}
+}
+
+#[async_trait::async_trait]
+impl StatementStoreApi for StatementStoreRpc {
+	async fn start_statement_watch(
+		&self,
+		filter: RemoteStatementStoreSubscribeRequest,
+	) -> Result<StatementBatches, StatementWatchError> {
+		let (kind, topics) =
+			validated_topic_filter(filter).map_err(StatementWatchError::NotStarted)?;
+		let rpc_client = self
+			.client("statement-watch")
+			.await
+			.map_err(|error| StatementWatchError::NotStarted(error.to_string()))?;
+		let subscription = subscribe(&rpc_client, kind, &topics)
+			.await
+			.map_err(|error| StatementWatchError::NotStarted(rpc_error_message(error)))?;
+		let subscription_id = subscription.subscription_id().unwrap_or_default().to_string();
+		let pages = subscription
+			.map(move |notification| parse_statement_page(&subscription_id, notification));
+		Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
+	}
+}
+
+/// The page a statement subscription notification carries.
+fn parse_statement_page(
+	subscription_id: &str,
+	notification: Result<Value, subxt_rpcs::Error>,
+) -> Result<NewStatements, StatementWatchError> {
+	let value = notification
+		.map_err(|error| StatementWatchError::Subscription(rpc_error_message(error)))?;
+	parse_new_statements_result(subscription_id.to_string(), &value)
+		.map_err(StatementWatchError::MalformedPage)
 }
 
 /// Subscribe to statements matching the requested topic filter.
@@ -266,11 +303,17 @@ mod tests {
 	};
 	use serde_json::json;
 
+	use futures::executor::{block_on, block_on_stream};
+	use truapi::latest::RemoteStatementStoreSubscribeRequest;
+
 	use super::{StatementStoreRpc, is_no_allowance_rejection};
 	use crate::{
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+		host_logic::statement_store::{
+			MAX_MATCH_ALL_TOPICS, StatementStoreApi, StatementWatchError, hex_topic,
+		},
 		platform::JsonRpcConnection,
-		test_support::{StubPlatform, test_spawner},
+		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
 	};
 
 	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -433,5 +476,75 @@ mod tests {
 		assert!(!is_no_allowance_rejection(
 			r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
 		));
+	}
+
+	/// A statement store whose subscription connection answers with `frames`.
+	fn watching_statement_store(frames: Vec<String>) -> (StatementStoreRpc, Arc<StubPlatform>) {
+		let platform = Arc::new(StubPlatform { rpc_responses: frames, ..Default::default() });
+		let chain = PeopleChain::new(vec![Upstream::Drops]);
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			ChainRuntime::new(chain, test_spawner()),
+			PEOPLE_GENESIS,
+			test_spawner(),
+		);
+		(statement_store, platform)
+	}
+
+	/// The watch subscribes with the filter it is given, and hands over the
+	/// stored statements as one batch before each new page.
+	#[test]
+	fn a_statement_watch_subscribes_with_its_filter_and_batches_the_backlog() {
+		let (statement_store, platform) = watching_statement_store(vec![
+			subscribe_ack_frame("truapi:1", "watch"),
+			statement_page_frame("watch", vec![vec![1]], Some(1)),
+			statement_page_frame("watch", vec![vec![2]], Some(0)),
+			statement_page_frame("watch", vec![vec![3]], None),
+		]);
+		let filter = RemoteStatementStoreSubscribeRequest::MatchAll(vec![[7; 32]]);
+
+		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
+		let batches = block_on_stream(batches).take(2).map(Result::unwrap).collect::<Vec<_>>();
+
+		assert_eq!(batches, vec![vec![vec![1], vec![2]], vec![vec![3]]]);
+		let request: serde_json::Value =
+			serde_json::from_str(&platform.sent_rpc.lock().unwrap()[0]).unwrap();
+		assert_eq!(request["params"][0], json!({ "matchAll": [hex_topic(&[7; 32])] }));
+	}
+
+	/// A page the node garbled is a failure the reader sees, not a page that
+	/// silently never arrived.
+	#[test]
+	fn a_malformed_page_ends_the_statement_watch_with_an_error() {
+		let malformed = json!({
+			"jsonrpc": "2.0",
+			"method": "statement_subscribeStatement",
+			"params": { "subscription": "watch", "result": { "event": "somethingElse" } },
+		});
+		let (statement_store, _platform) = watching_statement_store(vec![
+			subscribe_ack_frame("truapi:1", "watch"),
+			malformed.to_string(),
+			statement_page_frame("watch", vec![vec![1]], Some(0)),
+		]);
+		let filter = RemoteStatementStoreSubscribeRequest::MatchAny(vec![[7; 32]]);
+
+		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
+		let mut batches = block_on_stream(batches);
+
+		assert!(matches!(batches.next(), Some(Err(StatementWatchError::MalformedPage(_)))));
+		assert!(batches.next().is_none());
+	}
+
+	/// A filter the RPC would refuse fails before any connection opens.
+	#[test]
+	fn a_statement_watch_with_too_many_topics_does_not_start() {
+		let (statement_store, platform) = watching_statement_store(vec![]);
+		let topics = vec![[7; 32]; MAX_MATCH_ALL_TOPICS + 1];
+		let filter = RemoteStatementStoreSubscribeRequest::MatchAll(topics);
+
+		let started = block_on(statement_store.start_statement_watch(filter));
+
+		assert!(matches!(started, Err(StatementWatchError::NotStarted(_))));
+		assert_eq!(platform.chain_connects.lock().unwrap().len(), 0);
 	}
 }

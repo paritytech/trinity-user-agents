@@ -11,11 +11,12 @@ use thiserror::Error;
 
 mod rpc;
 mod statement;
+mod statement_watch;
 
 pub use rpc::{
 	MAX_MATCH_ALL_TOPICS, MAX_MATCH_ANY_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD,
 	SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind, UNSUBSCRIBE_STATEMENT_METHOD,
-	parse_new_statements_result,
+	parse_new_statements_result, validated_topic_filter,
 };
 pub use statement::{
 	StatementField, StatementProof, StatementSigningPayloadError, VerifiedStatementData,
@@ -24,6 +25,9 @@ pub use statement::{
 	signed_statement_to_scale, statement_expiry_elapsed, statement_fields_from_v01,
 	statement_proof_to_v01, statement_public_key_from_secret, statement_signing_payload,
 	unsigned_statement_signing_payload, validate_unsigned_statement_signing_payload,
+};
+pub use statement_watch::{
+	StatementBatches, StatementStoreApi, StatementWatchError, backlog_then_live_batches,
 };
 
 /// Error while parsing statement-store JSON-RPC or SCALE statement payloads.
