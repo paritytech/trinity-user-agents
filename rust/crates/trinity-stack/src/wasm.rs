@@ -189,15 +189,14 @@ pub fn decode_dotns_record(bytes: &[u8]) -> Result<Ts<DotnsRecord>, JsValue> {
 /// A dotNS record as a project commits it.
 #[wasm_bindgen(js_name = encodeDotnsRecord)]
 pub fn encode_dotns_record(record: Ts<DotnsRecord>) -> Result<Vec<u8>, JsValue> {
-	let record = self::record(Some(record))?.expect("a record was given");
+	let record = self::record(record)?;
 	record.check().map_err(to_js_error)?;
 	Ok(record.to_json())
 }
 
-fn record(record: Option<Ts<DotnsRecord>>) -> Result<Option<DotnsRecord>, JsValue> {
+fn record(record: Ts<DotnsRecord>) -> Result<DotnsRecord, JsValue> {
 	record
-		.map(|record| record.to_rust())
-		.transpose()
+		.to_rust()
 		.map_err(|_| type_error("a dotNS record needs generation, at and dotns"))
 }
 
@@ -280,7 +279,7 @@ impl JsStackReader {
 			.load(
 				&self::pointer(&pointer)?,
 				build.as_deref(),
-				record(build_dotns)?,
+				build_dotns.map(record).transpose()?,
 				stored.as_deref(),
 			)
 			.map_err(to_js_error)
@@ -356,7 +355,11 @@ impl JsStackReader {
 	) -> Result<Ts<DotnsLookedUp>, JsValue> {
 		let looked_up = self
 			.0
-			.looked_up(&self::pointer(&pointer)?, self::record(record)?, now_unix_seconds as i64)
+			.looked_up(
+				&self::pointer(&pointer)?,
+				record.map(self::record).transpose()?,
+				now_unix_seconds as i64,
+			)
 			.map_err(to_js_error)?;
 		to_js(&looked_up)
 	}

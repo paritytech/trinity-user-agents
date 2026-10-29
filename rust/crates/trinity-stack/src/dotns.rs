@@ -2,7 +2,7 @@
 //! caller makes every read; [`DotnsLookup`] says which and judges the answers.
 
 use crate::{Block, Error, format};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// The protocol registry's address keys, as dotNS's `DotnsConstants` names them.
@@ -63,8 +63,10 @@ pub struct DotnsRecord {
 impl DotnsRecord {
 	/// Reads a record as [`DotnsRecord::to_json`] wrote it, checking every address.
 	pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
-		let record: Self =
-			serde_json::from_slice(bytes).map_err(|error| Error::Malformed(error.to_string()))?;
+		// Through `Value`, which the crate links anyway, rather than a typed slice parser.
+		let record = serde_json::from_slice::<serde_json::Value>(bytes)
+			.and_then(Self::deserialize)
+			.map_err(|error| Error::Malformed(error.to_string()))?;
 		record.check()?;
 		Ok(record)
 	}
@@ -94,17 +96,13 @@ impl DotnsRecord {
 #[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct DotnsCall {
 	/// The contract.
-	#[serde(serialize_with = "hex_string")]
+	#[serde(serialize_with = "format::serialize_hex")]
 	#[cfg_attr(feature = "js", tsify(type = "string"))]
 	pub to: [u8; 20],
 	/// The calldata.
-	#[serde(serialize_with = "hex_string")]
+	#[serde(serialize_with = "format::serialize_hex")]
 	#[cfg_attr(feature = "js", tsify(type = "string"))]
 	pub input: Vec<u8>,
-}
-
-fn hex_string<S: Serializer>(bytes: impl AsRef<[u8]>, serializer: S) -> Result<S::Ok, S::Error> {
-	serializer.serialize_str(&format::to_hex(bytes.as_ref()))
 }
 
 /// How a contract answered a [`DotnsCall`]. A call that could not be made is no answer: the
@@ -124,7 +122,7 @@ pub enum DotnsAnswer {
 pub enum DotnsStep {
 	/// The value at this Asset Hub storage key; answer with [`DotnsLookup::storage`].
 	Storage(
-		#[serde(serialize_with = "hex_string")]
+		#[serde(serialize_with = "format::serialize_hex")]
 		#[cfg_attr(feature = "js", tsify(type = "string"))]
 		[u8; 32],
 	),
@@ -231,9 +229,10 @@ impl DotnsLookup {
 			)));
 		}
 		self.state = match (&self.state, &answers[0]) {
-			(State::ProtocolRegistry { dispatcher }, DotnsAnswer::Returned(data)) => {
-				State::Addresses { dispatcher: *dispatcher, registry: address(data, &calls[0])? }
-			},
+			(
+				State::ProtocolRegistry { dispatcher } | State::TargetRegistry { dispatcher, .. },
+				DotnsAnswer::Returned(data),
+			) => State::Addresses { dispatcher: *dispatcher, registry: address(data, &calls[0])? },
 			(State::ProtocolRegistry { dispatcher }, DotnsAnswer::Reverted) => {
 				State::Target { dispatcher: *dispatcher }
 			},
@@ -243,9 +242,6 @@ impl DotnsLookup {
 			},
 			(State::Target { dispatcher }, DotnsAnswer::Reverted) => {
 				return Err(Error::UnknownDispatcher(format::to_hex(dispatcher)));
-			},
-			(State::TargetRegistry { dispatcher, .. }, DotnsAnswer::Returned(data)) => {
-				State::Addresses { dispatcher: *dispatcher, registry: address(data, &calls[0])? }
 			},
 			(State::Addresses { dispatcher, registry }, _) => {
 				let mut addresses = BTreeMap::new();
