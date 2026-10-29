@@ -278,8 +278,8 @@ never connects to a chain itself, so it leaves that check to the client, which a
 - **Refreshes are conditional.** The reader keeps the `ETag` it was served and sends `If-None-Match`, so an unchanged
   stack costs a `304` with no body. After a conditional fetch fails it fetches without the header once, since a browser
   cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
-- **The copy it starts from** is the store's, if the project gave one and it holds a copy, otherwise the build's. Both
-  go through `accept`, so the store can only move a stack forward from the build copy, never back.
+- **The copy it starts from** is the store's when it has a higher `sequence` than the build's, or the same content, and
+  otherwise the build's, signed or not: the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
   starts from the last good copy. A service can keep everything in memory. A CLI needs none: it has the build copy, and
   a run lasts one process. The reader keeps one record per stack, under a key of its own in that store: the document,

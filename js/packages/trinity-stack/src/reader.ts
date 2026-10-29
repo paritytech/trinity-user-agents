@@ -50,8 +50,9 @@ export type StackReader = {
     options?: { require?: Requirements },
   ): Promise<CurrentStack>;
   /**
-   * The stack's dotNS contracts for the descriptor in use, undefined when its Asset Hub has no
-   * gateway. A lookup that fails leaves the record of the same `generation` in use.
+   * The stack's dotNS contracts for the descriptor in use, undefined when it has no Asset Hub or
+   * its Asset Hub has no gateway. A lookup that fails leaves the record of the same `generation`
+   * in use.
    */
   dotns(stack: Pointer | Bundled): Promise<Dotns | undefined>;
   /** Fetches the stack now, whatever the policy, and returns the copy it then uses. */
