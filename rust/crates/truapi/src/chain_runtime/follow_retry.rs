@@ -18,10 +18,9 @@ use crate::time::{Timer, retry_on};
 
 const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
 
-const PARSE_ERROR: i32 = -32700;
-const INVALID_REQUEST: i32 = -32600;
-const METHOD_NOT_FOUND: i32 = -32601;
-const INVALID_PARAMS: i32 = -32602;
+/// The `error.data` dotli answers a follow with while it waits to redial a
+/// halted chain, which it documents as worth asking again.
+const CHAIN_HALTED: &str = "dotli:chain-halted";
 
 /// Pauses before each new follow after a refusal. dotli lets the first redial
 /// of a halted chain through at once, then waits one second and doubles the
@@ -38,12 +37,15 @@ pub const REFUSED_FOLLOW_PAUSES: [Duration; 5] = [
 /// Why a follow sent through [`FollowRetryingRpcClient`] ended for good.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FollowEnd {
-	/// The provider still refused it after every pause.
+	/// The provider said the chain halted, and still did after every pause.
 	Refused,
-	/// The provider cannot serve the request at all.
-	Unservable,
+	/// The provider refused it for a reason other than a halt, which asking
+	/// again cannot change.
+	Rejected,
 	/// The transport failed, or the follow failed after it started.
 	Dropped,
+	/// The core ended it because a read on it got no answer in time.
+	Stalled,
 }
 
 /// [`RuntimeCallClient`] that asks again when the provider refuses a chainHead
@@ -53,9 +55,9 @@ pub enum FollowEnd {
 /// that backend fails with it. A provider can refuse a follow and accept one
 /// moments later, as a host does while it waits to redial a halted chain.
 /// Asking again turns the refusal into a slower re-follow, so calls waiting on
-/// the follow keep waiting. A transport failure is not retried, nor is an
-/// error saying the request itself is wrong, and a refusal that outlasts every
-/// pause reaches Subxt, which ends the follow.
+/// the follow keep waiting. Only a refusal saying the chain halted is asked
+/// again. Any other refusal and a transport failure reach Subxt at once, as
+/// does a halt that outlasts every pause, and Subxt ends the follow.
 ///
 /// Subxt reports any end as a dropped subscription, so this client records the
 /// cause in [`Self::follow_end`] before the failure reaches Subxt.
@@ -95,10 +97,11 @@ impl FollowRetryingRpcClient {
 	}
 }
 
-/// Whether `error` is one of JSON-RPC's standard errors for a request that is
-/// itself wrong, which no later attempt can change.
-fn rejects_the_request(error: &UserError) -> bool {
-	matches!(error.code, PARSE_ERROR | INVALID_REQUEST | METHOD_NOT_FOUND | INVALID_PARAMS)
+/// Whether `refusal` says the chain halted, so a later follow can be accepted.
+fn says_chain_halted(refusal: &UserError) -> bool {
+	refusal.data.as_deref().is_some_and(|data| {
+		serde_json::from_str::<&str>(data.get()).is_ok_and(|data| data == CHAIN_HALTED)
+	})
 }
 
 impl RpcClientT for FollowRetryingRpcClient {
@@ -130,14 +133,14 @@ impl RpcClientT for FollowRetryingRpcClient {
 						Ok(subscription) => {
 							return ControlFlow::Break(Ok(self.recording_failures(subscription)));
 						},
-						Err(RpcError::User(refusal)) if !rejects_the_request(&refusal) => {
+						Err(RpcError::User(refusal)) if says_chain_halted(&refusal) => {
 							match pause {
 								Some(pause) => return ControlFlow::Continue((pause, refusal)),
 								None => (FollowEnd::Refused, RpcError::User(refusal)),
 							}
 						},
 						Err(RpcError::User(rejection)) => {
-							(FollowEnd::Unservable, RpcError::User(rejection))
+							(FollowEnd::Rejected, RpcError::User(rejection))
 						},
 						Err(error) => (FollowEnd::Dropped, error),
 					};
@@ -156,32 +159,18 @@ impl RpcClientT for FollowRetryingRpcClient {
 #[cfg(test)]
 mod tests {
 	use core::time::Duration;
-	use std::{sync::Arc, thread};
+	use std::thread;
 
 	use futures::executor::block_on;
 	use subxt::error::{BackendError, OnlineClientAtBlockError, RpcError as SubxtRpcError};
 
-	use super::{METHOD_NOT_FOUND, REFUSED_FOLLOW_PAUSES};
+	use super::REFUSED_FOLLOW_PAUSES;
 	use crate::{
 		chain_runtime::ChainRuntime,
-		test_support::{ScriptedChainHead, ScriptedProvider, follow_count, wait_until},
-		time::ManualTimer,
+		test_support::{FollowRefusal, ScriptedChainHead, follow_count, wait_until},
 	};
 
 	const GENESIS: [u8; 32] = [0xbb; 32];
-
-	/// A node refusing `refused_follows` follows with `refusal_code`, on a
-	/// runtime whose clock moves only when the test advances it.
-	fn serve(
-		refused_follows: usize,
-		refusal_code: i32,
-	) -> (Arc<ScriptedProvider>, ChainRuntime, Arc<ManualTimer>) {
-		let timer = Arc::new(ManualTimer::default());
-		let (provider, chain) =
-			ScriptedChainHead { refused_follows, refusal_code, ..ScriptedChainHead::default() }
-				.serve();
-		(provider, chain.with_timer(timer.clone()), timer)
-	}
 
 	/// Select the current block on its own thread, so the test can move the
 	/// clock while the read waits on the follow.
@@ -203,7 +192,8 @@ mod tests {
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_call_waiting_on_a_refused_follow_succeeds_on_the_next_one() {
-		let (provider, chain, timer) = serve(1, -32000);
+		let (provider, chain, timer) =
+			ScriptedChainHead { refused_follows: 1, ..ScriptedChainHead::default() }.serve();
 		let read = select_current_block(&chain);
 
 		wait_until(|| timer.sleeps() == 1, "the first pause starts");
@@ -220,7 +210,9 @@ mod tests {
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_refused_follow_is_asked_again_after_each_pause_until_they_run_out() {
-		let (provider, chain, timer) = serve(usize::MAX, -32000);
+		let (provider, chain, timer) =
+			ScriptedChainHead { refused_follows: usize::MAX, ..ScriptedChainHead::default() }
+				.serve();
 		let read = select_current_block(&chain);
 
 		let schedule = [1, 2, 4, 8, 16].map(Duration::from_secs);
@@ -243,12 +235,18 @@ mod tests {
 		assert_eq!((follow_count(&provider), timer.sleeps()), (schedule.len() + 1, schedule.len()));
 	}
 
-	/// A provider that does not serve chainHead at all will never accept a
-	/// follow, so waiting out the pauses would only delay every core call.
+	/// Only a halt is worth waiting out. A host refusing for any other reason,
+	/// even with the internal-error code dotli also uses for a halt, would only
+	/// hold every core call through the pauses before failing it anyway.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
-	fn a_follow_the_provider_cannot_serve_is_not_asked_again() {
-		let (provider, chain, timer) = serve(usize::MAX, METHOD_NOT_FOUND);
+	fn a_refusal_that_does_not_say_the_chain_halted_is_not_asked_again() {
+		let (provider, chain, timer) = ScriptedChainHead {
+			refused_follows: usize::MAX,
+			refusal: FollowRefusal::Error(-32603),
+			..ScriptedChainHead::default()
+		}
+		.serve();
 
 		select_current_block(&chain).join().unwrap().expect_err("no follow is accepted");
 

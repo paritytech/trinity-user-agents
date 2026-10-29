@@ -24,6 +24,7 @@ use crate::{
 	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
 	test_support::test_spawner,
+	time::ManualTimer,
 };
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
@@ -197,27 +198,36 @@ pub fn wait_for_sent(
 	provider.sent.lock().unwrap().clone()
 }
 
+/// How a scripted node refuses a follow.
+#[derive(Clone, Copy)]
+pub enum FollowRefusal {
+	/// dotli's answer while it waits to redial a halted chain.
+	ChainHalted,
+	/// A JSON-RPC error with this code that says nothing of a halt.
+	Error(i32),
+}
+
 /// A chainHead node serving the bulletin fixture, as scripted.
 #[derive(Clone, Copy)]
 pub struct ScriptedChainHead {
-	/// How many follows it refuses before accepting one, as dotli refuses a
-	/// follow while a halted chain waits to be redialed.
+	/// How many follows it refuses before accepting one.
 	pub refused_follows: usize,
-	/// JSON-RPC error code of each refusal.
-	pub refusal_code: i32,
+	/// The answer to each refused follow.
+	pub refusal: FollowRefusal,
 	/// Whether it ever finishes a runtime call it started.
 	pub finishes_calls: bool,
 }
 
 impl Default for ScriptedChainHead {
 	fn default() -> Self {
-		Self { refused_follows: 0, refusal_code: -32000, finishes_calls: true }
+		Self { refused_follows: 0, refusal: FollowRefusal::ChainHalted, finishes_calls: true }
 	}
 }
 
 impl ScriptedChainHead {
-	/// The node, and a core-scope runtime over it.
-	pub fn serve(self) -> (Arc<ScriptedProvider>, ChainRuntime) {
+	/// The node, a core-scope runtime over it, and the clock that runtime
+	/// waits on, which moves only when the test advances it.
+	pub fn serve(self) -> (Arc<ScriptedProvider>, ChainRuntime, Arc<ManualTimer>) {
 		let header = SubstrateHeader::<H256> {
 			parent_hash: H256::zero(),
 			number: 1,
@@ -245,14 +255,17 @@ impl ScriptedChainHead {
 				"chainHead_v1_follow"
 					if follows.fetch_add(1, Ordering::SeqCst) < self.refused_follows =>
 				{
-					vec![
-						json!({
-							"jsonrpc": "2.0",
-							"id": request["id"],
-							"error": {"code": self.refusal_code, "message": "chain halted"}
-						})
-						.to_string(),
-					]
+					let error = match self.refusal {
+						FollowRefusal::ChainHalted => json!({
+							"code": -32603,
+							"message": "Chain transport halted",
+							"data": "dotli:chain-halted"
+						}),
+						FollowRefusal::Error(code) => {
+							json!({"code": code, "message": "follow refused"})
+						},
+					};
+					vec![json!({"jsonrpc": "2.0", "id": request["id"], "error": error}).to_string()]
 				},
 				"chainHead_v1_follow" => vec![
 					reply(json!("follow")),
@@ -286,8 +299,9 @@ impl ScriptedChainHead {
 				_ => vec![reply(Value::Null)],
 			}
 		}));
-		let chain = ChainRuntime::new(provider.clone(), test_spawner());
-		(provider, chain)
+		let timer = Arc::new(ManualTimer::default());
+		let chain = ChainRuntime::new(provider.clone(), test_spawner()).with_timer(timer.clone());
+		(provider, chain, timer)
 	}
 }
 

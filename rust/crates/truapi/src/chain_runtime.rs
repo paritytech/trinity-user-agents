@@ -161,12 +161,21 @@ pub struct SubxtConnection {
 	pub client: OnlineClient<SubstrateConfig>,
 	/// Why the backend's follow ended, once it has.
 	follow_end: Arc<OnceLock<FollowEnd>>,
+	/// Stops the backend's driver, which ends its follow.
+	driver: AbortHandle,
 }
 
 impl SubxtConnection {
 	/// Why the backend's follow ended for good, or `None` while it lives.
 	fn follow_end(&self) -> Option<FollowEnd> {
 		self.follow_end.get().copied()
+	}
+
+	/// End a follow that stopped answering. The node drops the operations
+	/// started on it, and the next caller builds the client on a new follow.
+	fn end_stalled_follow(&self) {
+		let _ = self.follow_end.set(FollowEnd::Stalled);
+		self.driver.abort();
 	}
 }
 
@@ -939,19 +948,16 @@ impl ChainRuntime {
 	/// the cheap client handle.
 	///
 	/// Core scope only. The Subxt backend spawns a driver task holding a
-	/// `HostRpcClient` handle that nothing aborts, so a connection carrying one
-	/// never reaches a zero handle count and `release_scope` cannot close its
-	/// socket. The product-facing capability uses `remote_chain_*` instead,
-	/// which goes through `connection.methods` and spawns no such task.
+	/// `HostRpcClient` handle that only a stalled read aborts, so a connection
+	/// carrying one never reaches a zero handle count and `release_scope`
+	/// cannot close its socket. The product-facing capability uses
+	/// `remote_chain_*` instead, which goes through `connection.methods` and
+	/// spawns no such task.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.online_client"))]
 	pub async fn online_client(
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClient<SubstrateConfig>, RuntimeFailure> {
-		debug_assert!(
-			matches!(self.scope, ConnectionScope::Core),
-			"the Subxt backend's driver task defeats release_scope on a product scope",
-		);
 		Ok(self.subxt_connection(genesis_hash).await?.client)
 	}
 
@@ -983,6 +989,10 @@ impl ChainRuntime {
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<SubxtConnection, RuntimeFailure> {
+		debug_assert!(
+			matches!(self.scope, ConnectionScope::Core),
+			"the Subxt backend's driver task defeats release_scope on a product scope",
+		);
 		let connection = self.connection_for("subxt_connection", genesis_hash).await?;
 		connection.subxt_connection().await
 	}
@@ -1355,8 +1365,10 @@ impl ChainConnection {
 			self.timer.clone(),
 		);
 		let follow_end = rpc.follow_end();
-		let (backend, mut driver) =
+		let (backend, driver) =
 			ChainHeadBackend::<SubstrateConfig>::builder().build(RpcClient::new(rpc));
+		let (driver_handle, driver_registration) = AbortHandle::new_pair();
+		let mut driver = Abortable::new(driver, driver_registration);
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
@@ -1380,7 +1392,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow_end })
+		Ok(SubxtConnection { client, follow_end, driver: driver_handle })
 	}
 
 	/// The config every Subxt client on this connection is built with. It

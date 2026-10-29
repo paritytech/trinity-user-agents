@@ -2,18 +2,20 @@
 //! runtime metadata.
 
 use core::time::Duration;
+use std::sync::OnceLock;
 
 use derive_more::Display;
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	client::OnlineClientAtBlock, config::SubstrateConfig, error::OnlineClientAtBlockError,
 };
+use tracing::instrument;
 
-use super::{ChainRuntime, ConnectionScope, RuntimeFailure, follow_retry::FollowEnd};
+use super::{ChainRuntime, RuntimeFailure, follow_retry::FollowEnd};
 
-/// How long reading the current block may take: longer than the pauses
-/// between refused follows add up to, so a follow accepted at the last
-/// attempt still serves the read.
+/// How long reading the current block may take, connecting included: longer
+/// than the pauses between refused follows add up to, so a follow accepted at
+/// the last attempt still serves the read.
 const CURRENT_BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Why [`ChainRuntime::current_block`] could not read the chain.
@@ -29,7 +31,7 @@ pub enum CurrentBlockError {
 	#[display("{_0}")]
 	Unavailable(String),
 	/// The node answered with nothing this host can use, or its provider
-	/// cannot follow the chain at all.
+	/// refused the follow for a reason other than a halt.
 	#[display("{_0}")]
 	Failed(String),
 }
@@ -39,46 +41,70 @@ impl ChainRuntime {
 	///
 	/// Core scope only, for the same reason as [`Self::online_client`].
 	///
-	/// The read has a deadline because a runtime call Subxt started on a
+	/// The read has a deadline because a provider can hold the connection
+	/// open without completing it, and a runtime call Subxt started on a
 	/// follow that then stopped waits for an answer the next follow never
-	/// sends, and nothing else ends that wait.
+	/// sends. A read that misses the deadline on an open follow ends that
+	/// follow, so the node drops what was started on it and the next call
+	/// asks a new one.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.current_block"))]
 	pub async fn current_block(
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
-		debug_assert!(
-			matches!(self.scope, ConnectionScope::Core),
-			"the Subxt backend's driver task defeats release_scope on a product scope",
-		);
-		let connection = self
-			.subxt_connection(genesis_hash)
-			.await
-			.map_err(CurrentBlockError::NoConnection)?;
-		let read = connection.client.at_current_block().fuse();
+		let connected = OnceLock::new();
+		let read = async {
+			let connection = self
+				.subxt_connection(genesis_hash)
+				.await
+				.map_err(CurrentBlockError::NoConnection)?;
+			let _ = connected.set(connection.clone());
+			connection
+				.client
+				.at_current_block()
+				.await
+				.map_err(|error| classify(connection.follow_end(), &error))
+		}
+		.fuse();
 		let deadline = self.timer.sleep(CURRENT_BLOCK_TIMEOUT).fuse();
 		pin_mut!(read, deadline);
 		futures::select! {
-			result = read => result.map_err(|error| classify(connection.follow_end(), &error)),
-			() = deadline => Err(CurrentBlockError::Unavailable(format!(
-				"the node gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
-			))),
+			result = read => result,
+			() = deadline => {
+				if let Some(connection) = connected.get() {
+					connection.end_stalled_follow();
+				}
+				Err(CurrentBlockError::Unavailable(format!(
+					"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
+				)))
+			},
 		}
 	}
 }
 
 /// Sort a failure to select the current block by whether a later call can get
-/// past it. Subxt reports every follow end as a dropped subscription, so the
-/// recorded cause decides.
+/// past it. An answer this host cannot use fails every time. A failure to ask
+/// is worth asking again only when the follow ended for a reason that can
+/// pass, which only the recorded cause tells, since Subxt reports every end as
+/// a dropped subscription.
 fn classify(follow_end: Option<FollowEnd>, error: &OnlineClientAtBlockError) -> CurrentBlockError {
-	let reason = error.to_string();
-	match follow_end {
-		Some(FollowEnd::Unservable) => CurrentBlockError::Failed(reason),
-		Some(FollowEnd::Refused | FollowEnd::Dropped) => CurrentBlockError::Unavailable(reason),
+	let retryable = match error {
 		// A follow that moved on no longer holds the block it reported.
-		None if matches!(error, OnlineClientAtBlockError::BlockHeaderNotFound { .. }) => {
-			CurrentBlockError::Unavailable(reason)
+		OnlineClientAtBlockError::BlockHeaderNotFound { .. } => true,
+		OnlineClientAtBlockError::CannotGetCurrentBlock { .. } |
+		OnlineClientAtBlockError::CannotGetBlockHash { .. } |
+		OnlineClientAtBlockError::CannotGetBlockHeader { .. } |
+		OnlineClientAtBlockError::CannotGetSpecVersion { .. } |
+		OnlineClientAtBlockError::CannotGetMetadata { .. } => {
+			matches!(follow_end, Some(FollowEnd::Refused | FollowEnd::Dropped | FollowEnd::Stalled))
 		},
-		None => CurrentBlockError::Failed(reason),
+		_ => false,
+	};
+	let reason = error.to_string();
+	if retryable {
+		CurrentBlockError::Unavailable(reason)
+	} else {
+		CurrentBlockError::Failed(reason)
 	}
 }
 
@@ -87,34 +113,40 @@ mod tests {
 	use std::{sync::Arc, thread};
 
 	use async_trait::async_trait;
-	use futures::executor::block_on;
+	use futures::{executor::block_on, future};
 	use subxt::error::{BackendError, Hex, RpcError as SubxtRpcError};
 
 	use super::*;
 	use crate::{
 		chain_runtime::{RuntimeChainProvider, follow_retry::REFUSED_FOLLOW_PAUSES},
 		platform::JsonRpcConnection,
-		test_support::{ScriptedChainHead, test_spawner, wait_for_sent, wait_until},
+		test_support::{
+			FollowRefusal, ScriptedChainHead, follow_count, test_spawner, wait_for_sent, wait_until,
+		},
 		time::ManualTimer,
 	};
 
 	const GENESIS: [u8; 32] = [0xbb; 32];
 
-	/// Read the current block on its own thread over `node`, with a clock that
-	/// moves only when the test advances it.
+	/// Read the current block on its own thread, so the test can move the
+	/// clock while the read waits.
 	fn read_current_block(
-		node: ScriptedChainHead,
-	) -> (thread::JoinHandle<Result<(), CurrentBlockError>>, Arc<ManualTimer>) {
-		let timer = Arc::new(ManualTimer::default());
-		let (_provider, chain) = node.serve();
-		let chain = chain.with_timer(timer.clone());
-		let read = thread::spawn(move || block_on(chain.current_block(&GENESIS)).map(drop));
-		(read, timer)
+		chain: &ChainRuntime,
+	) -> thread::JoinHandle<Result<(), CurrentBlockError>> {
+		let chain = chain.clone();
+		thread::spawn(move || block_on(chain.current_block(&GENESIS)).map(drop))
 	}
 
-	/// Subxt reports every follow end alike, so the recorded cause alone
-	/// tells a halted chain, worth asking again, from a provider that can
-	/// never follow it, and a halt is retryable whichever read it interrupts.
+	fn no_answer() -> CurrentBlockError {
+		CurrentBlockError::Unavailable(format!(
+			"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
+		))
+	}
+
+	/// A product retries on `Unavailable`, so it must mean a later call can
+	/// get past the failure: the follow ended for a reason that can pass, and
+	/// the node was not the problem. An answer this host cannot use fails
+	/// every time, whatever happened to the follow meanwhile.
 	#[test]
 	fn a_failure_is_retryable_only_when_a_later_call_can_get_past_it() {
 		let dropped = || OnlineClientAtBlockError::CannotGetCurrentBlock {
@@ -124,13 +156,13 @@ mod tests {
 			|error: &OnlineClientAtBlockError| CurrentBlockError::Unavailable(error.to_string());
 		let failed =
 			|error: &OnlineClientAtBlockError| CurrentBlockError::Failed(error.to_string());
-		let metadata_fetch = OnlineClientAtBlockError::CannotGetMetadata {
+		let metadata_fetch = || OnlineClientAtBlockError::CannotGetMetadata {
 			block_hash: Hex::from([1; 32]),
 			reason: "subscription dropped".to_string(),
 		};
 		let stale_block =
 			OnlineClientAtBlockError::BlockHeaderNotFound { block_hash: Hex::from([1; 32]) };
-		let unusable = OnlineClientAtBlockError::UnsupportedMetadataVersion {
+		let unusable = || OnlineClientAtBlockError::UnsupportedMetadataVersion {
 			block_hash: Hex::from([1; 32]),
 			version: 13,
 		};
@@ -138,10 +170,14 @@ mod tests {
 		let cases = [
 			(Some(FollowEnd::Refused), dropped()),
 			(Some(FollowEnd::Dropped), dropped()),
-			(Some(FollowEnd::Unservable), dropped()),
-			(Some(FollowEnd::Refused), metadata_fetch),
+			(Some(FollowEnd::Stalled), dropped()),
+			(Some(FollowEnd::Rejected), dropped()),
+			(None, dropped()),
+			(Some(FollowEnd::Refused), metadata_fetch()),
+			(None, metadata_fetch()),
 			(None, stale_block),
-			(None, unusable),
+			(None, unusable()),
+			(Some(FollowEnd::Dropped), unusable()),
 		];
 		let classified: Vec<_> =
 			cases.iter().map(|(follow_end, error)| classify(*follow_end, error)).collect();
@@ -151,10 +187,14 @@ mod tests {
 			vec![
 				unavailable(&cases[0].1),
 				unavailable(&cases[1].1),
-				failed(&cases[2].1),
-				unavailable(&cases[3].1),
-				unavailable(&cases[4].1),
-				failed(&cases[5].1),
+				unavailable(&cases[2].1),
+				failed(&cases[3].1),
+				failed(&cases[4].1),
+				unavailable(&cases[5].1),
+				failed(&cases[6].1),
+				unavailable(&cases[7].1),
+				failed(&cases[8].1),
+				failed(&cases[9].1),
 			]
 		);
 	}
@@ -164,10 +204,10 @@ mod tests {
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_follow_refused_until_the_pauses_run_out_is_unavailable() {
-		let (read, timer) = read_current_block(ScriptedChainHead {
-			refused_follows: usize::MAX,
-			..ScriptedChainHead::default()
-		});
+		let (_provider, chain, timer) =
+			ScriptedChainHead { refused_follows: usize::MAX, ..ScriptedChainHead::default() }
+				.serve();
+		let read = read_current_block(&chain);
 
 		// The first sleep is the read's deadline, and each later one a pause.
 		for (attempt, pause) in REFUSED_FOLLOW_PAUSES.into_iter().enumerate() {
@@ -179,43 +219,81 @@ mod tests {
 		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
 	}
 
-	/// A provider that cannot serve the follow at all will never be able to,
-	/// so asking again would only repeat the failure.
+	/// A host that refuses the follow for any reason but a halt, such as a
+	/// chain it does not serve, will refuse it again, so the product must not
+	/// be told to retry.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
-	fn a_follow_the_provider_cannot_serve_is_failed() {
-		let (read, _timer) = read_current_block(ScriptedChainHead {
+	fn a_follow_refused_for_another_reason_is_failed() {
+		let (_provider, chain, _timer) = ScriptedChainHead {
 			refused_follows: usize::MAX,
-			refusal_code: -32601,
+			refusal: FollowRefusal::Error(-32001),
 			..ScriptedChainHead::default()
-		});
+		}
+		.serve();
 
-		let error = read.join().unwrap().expect_err("no follow is accepted");
+		let error = read_current_block(&chain).join().unwrap().expect_err("no follow is accepted");
+
 		assert!(matches!(error, CurrentBlockError::Failed(_)), "{error:?}");
 	}
 
 	/// Subxt keeps waiting on a runtime call whose follow stopped, and so does
-	/// a node that never answers one. Only the deadline ends that wait.
+	/// a node that never answers one. Only the deadline ends that wait, and
+	/// it ends the follow too: otherwise every later call would wait out the
+	/// same deadline on the same stuck follow, and each would leave another
+	/// operation open on the node.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
-	fn a_runtime_call_that_never_finishes_is_unavailable_at_the_deadline() {
-		let timer = Arc::new(ManualTimer::default());
-		let (provider, chain) =
+	fn a_read_that_misses_the_deadline_ends_its_follow() {
+		let (provider, chain, timer) =
 			ScriptedChainHead { finishes_calls: false, ..ScriptedChainHead::default() }.serve();
-		let chain = chain.with_timer(timer.clone());
-		let read = thread::spawn(move || block_on(chain.current_block(&GENESIS)).map(drop));
+		let calls_started = |count: usize| {
+			move |sent: &[String]| {
+				sent.iter().filter(|request| request.contains("chainHead_v1_call")).count() == count
+			}
+		};
 
+		let first = read_current_block(&chain);
+		wait_for_sent(&provider, calls_started(1));
+		timer.advance(CURRENT_BLOCK_TIMEOUT);
+		assert_eq!(first.join().unwrap(), Err(no_answer()));
 		wait_for_sent(&provider, |sent| {
-			sent.iter().any(|request| request.contains("chainHead_v1_call"))
+			sent.iter().any(|request| request.contains("chainHead_v1_unfollow"))
 		});
+
+		let second = read_current_block(&chain);
+		wait_for_sent(&provider, calls_started(2));
+		assert_eq!(follow_count(&provider), 2);
+		timer.advance(CURRENT_BLOCK_TIMEOUT);
+		assert_eq!(second.join().unwrap(), Err(no_answer()));
+	}
+
+	/// A provider can hold a connection open without completing it, as while
+	/// it redials a halted chain, and the deadline covers that wait too.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_connection_that_never_opens_is_unavailable_at_the_deadline() {
+		struct NeverConnects;
+
+		#[async_trait]
+		impl RuntimeChainProvider for NeverConnects {
+			async fn connect(
+				&self,
+				_genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				future::pending().await
+			}
+		}
+
+		let timer = Arc::new(ManualTimer::default());
+		let chain =
+			ChainRuntime::new(Arc::new(NeverConnects), test_spawner()).with_timer(timer.clone());
+		let read = read_current_block(&chain);
+
+		wait_until(|| timer.sleeps() == 1, "the deadline starts");
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
 
-		assert_eq!(
-			read.join().unwrap(),
-			Err(CurrentBlockError::Unavailable(format!(
-				"the node gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
-			)))
-		);
+		assert_eq!(read.join().unwrap(), Err(no_answer()));
 	}
 
 	/// A chain the host cannot connect to, such as one it serves no provider

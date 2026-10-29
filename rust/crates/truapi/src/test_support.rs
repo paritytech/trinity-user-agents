@@ -54,8 +54,8 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 mod scripted_chain;
 
 pub use scripted_chain::{
-	ScriptedChainHead, ScriptedProvider, extract_id, follow_count, later_notification_sender,
-	notification_sender, wait_for_sent,
+	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, follow_count,
+	later_notification_sender, notification_sender, wait_for_sent,
 };
 
 /// Block until `condition` holds, failing with `message` after two seconds.
