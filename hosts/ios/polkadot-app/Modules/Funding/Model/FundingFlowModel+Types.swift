@@ -1,0 +1,17 @@
+import TrUAPIHost
+
+extension FundingFlowModel {
+    enum Screen: Hashable {
+        case summary
+        case fees
+        case country
+        case providers
+        case network
+        case token
+        case deposit
+        case progress
+        case cancelConfirm
+    }
+
+    struct Context {
+}
