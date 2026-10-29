@@ -68,7 +68,8 @@ Shared off-chain message bus used by SSO pairing and chat. End-to-end encrypted,
 - Bidirectional session: `SyncPeerChannelSignaling` (`feature/device-sync`) driving a `CommunicationSession`.
 - Topic discovery + encrypted payload: `ChatRequestTransport.submitChatRequest` (three topics: day-keyed, full, session-specific).
 - Slot management: `RealStatementStoreSlotAllocator.allocate` with LRU eviction.
-- Unlinkable one-shot statement: chat requests — allocated lazily per request at first delivery (`ChatRequestDeliveryService`), renewed into each new period from a fresh account by `ChatRequestRenewalWorker`; falls back to the identity account only when no notification slot is free.
+- Unlinkable one-shot statement: chat requests and acceptances (chat-spec RFC-0005) — allocated lazily per request at first delivery (`ChatRequestDeliveryService`, `ChatAcceptanceDeliveryService`), renewed into each new period from a fresh account by `ChatRequestRenewalWorker` (`OneShotDeliveryRenewer`); signed by the identity account only when no notification slot is free and the user allowed it for that chat (`IdentitySigningGate`).
+- One-shot request on a session topic: `OneShotSessionRequestPublisher` — the acceptance goes out on the identity route without running the session; the receiving session withholds its response through `IncomingRequestResponsePolicy`.
 
 ## Where new things live
 
