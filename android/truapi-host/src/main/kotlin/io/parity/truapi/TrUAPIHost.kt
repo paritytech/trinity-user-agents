@@ -432,9 +432,11 @@ interface HostBridge {
  */
 interface ChatHostBridge {
     /**
-     * Create or resolve a native product Chat room. The core has bounded and
-     * normalized these arguments and screened the icon scheme; escaping them
-     * for the surface that renders them is still the host's job.
+     * Create or resolve a native product Chat room. `roomId` is the id that the
+     * core derived for the room, and every later call names the room with it.
+     * The core has bounded and normalized these arguments and screened the icon
+     * scheme; escaping them for the surface that renders them is still the
+     * host's job.
      */
     @Throws(HostRejection::class)
     suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus

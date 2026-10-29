@@ -1350,17 +1350,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     chat: {
-      async createChatRoom(_product, request) {
+      async createChatRoom(_product, roomId) {
         if (faults.chatError) throw new Error(faults.chatError);
-        if (chatRooms.has(request.roomId)) return { status: "Exists" };
-        chatRooms.set(request.roomId, {
-          roomId: request.roomId,
+        if (chatRooms.has(roomId)) return "Exists";
+        chatRooms.set(roomId, {
+          roomId,
           // A product that creates a room hosts it; a product reaching a room
           // as a bot registers the bot instead.
           participatingAs: "RoomHost",
         });
         publishChatRooms();
-        return { status: "New" };
+        return "New";
       },
       async registerChatBot(_product, request) {
         if (faults.chatError) throw new Error(faults.chatError);
