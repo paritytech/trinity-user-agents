@@ -6,25 +6,37 @@ import Products
 import SwiftUI
 import Individuality
 
+/// The AlarmKit calls a game reminder makes, so the reminder can be exercised without the system alarm store.
+@available(iOS 26.1, *)
+protocol GameAlarmManaging {
+    var isAuthorized: Bool { get }
+    func alarmIds() throws -> [UUID]
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws
+    func cancel(id: UUID) throws
+}
+
 @available(iOS 26.1, *)
 final class AlarmKitGameReminder: GameStartReminderServicing {
-    private let alarmManger: AlarmManager
+    private let alarmManger: GameAlarmManaging
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
+    private let diagnostics: GameReminderDiagnostics
     private let taskLock = NSLock()
     private var lastTask: Task<Void, Never>?
 
     init(
-        alarmManger: AlarmManager,
+        alarmManger: GameAlarmManaging,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
-        logger: LoggerProtocol = Logger.shared
+        logger: LoggerProtocol = Logger.shared,
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.alarmManger = alarmManger
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
+        self.diagnostics = diagnostics
     }
 
     func scheduleReminder(gameDate: Date, productId: ProductId) {
@@ -56,13 +68,15 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     }
 
     private func performScheduleReminder(gameDate fireDate: Date, productId: ProductId) async {
-        guard alarmManger.authorizationState == .authorized else {
+        guard alarmManger.isAuthorized else {
             logger.debug("Not authorized, skipping schedule")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .notAuthorized)
             return
         }
 
         guard fireDate > Date() else {
             logger.debug("Fire date is in the past, skipping")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             performCancelReminder(alarmId: nil)
             return
         }
@@ -88,8 +102,10 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
+            diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .alarm)
         } catch {
             logger.error("Failed to schedule AlarmKit alarm: \(error)")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
         }
     }
 
@@ -114,8 +130,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func isAlarmScheduled(id: UUID) -> Bool {
         do {
-            let alarms = try alarmManger.alarms
-            return alarms.contains { $0.id == id }
+            return try alarmManger.alarmIds().contains(id)
         } catch {
             logger.error("Failed to fetch scheduled alarms: \(error)")
             return false
@@ -127,6 +142,25 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         at date: Date,
         productId: ProductId
     ) async throws {
+        let playIntent = GameAlarmPlayIntent()
+        playIntent.alarmID = newAlarmId.uuidString
+        playIntent.productId = productId
+
+        try await alarmManger.scheduleGameAlarm(id: newAlarmId, at: date, playIntent: playIntent)
+    }
+}
+
+@available(iOS 26.1, *)
+extension AlarmManager: GameAlarmManaging {
+    var isAuthorized: Bool {
+        authorizationState == .authorized
+    }
+
+    func alarmIds() throws -> [UUID] {
+        try alarms.map(\.id)
+    }
+
+    func scheduleGameAlarm(id: UUID, at date: Date, playIntent: GameAlarmPlayIntent) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
                 alert: .init(
@@ -143,12 +177,8 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
             tintColor: Color.accentColor
         )
 
-        let playIntent = GameAlarmPlayIntent()
-        playIntent.alarmID = newAlarmId.uuidString
-        playIntent.productId = productId
-
-        _ = try await alarmManger.schedule(
-            id: newAlarmId,
+        _ = try await schedule(
+            id: id,
             configuration: AlarmManager.AlarmConfiguration(
                 countdownDuration: nil,
                 schedule: .fixed(date),
