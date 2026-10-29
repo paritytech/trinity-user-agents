@@ -82,10 +82,12 @@ fn message() -> v01::ChatMessage {
 			}],
 		},
 		status: v01::ChatMessageStatus::Sent,
-		reply_to: Some("m0".into()),
-		reply_preview: Some(v01::ChatReplyPreview {
-			origin: v01::ChatMessageOrigin { participant_id: "user".into() },
-			body: v01::ChatMessageBody::Text { text: "yo".into() },
+		reply: Some(v01::ChatReply {
+			message_id: "m0".into(),
+			preview: Some(v01::ChatReplyPreview {
+				origin: v01::ChatMessageOrigin { participant_id: "user".into() },
+				body: v01::ChatMessageBody::Text { text: "yo".into() },
+			}),
 		}),
 		edited_at: None,
 		reactions: vec![v01::ChatReactionSummary {
@@ -109,8 +111,7 @@ fn call() -> v01::ChatMessage {
 			closed: Some(v01::ChatCallClose { at: 1_700_000_060_000, by_user: false }),
 		}),
 		status: v01::ChatMessageStatus::Delivered,
-		reply_to: None,
-		reply_preview: None,
+		reply: None,
 		edited_at: None,
 		reactions: Vec::new(),
 		request: false,
@@ -127,8 +128,7 @@ fn custom() -> v01::ChatMessage {
 			alt: Some("A poll".into()),
 		},
 		status: v01::ChatMessageStatus::Sent,
-		reply_to: None,
-		reply_preview: None,
+		reply: None,
 		edited_at: None,
 		reactions: Vec::new(),
 		request: false,
