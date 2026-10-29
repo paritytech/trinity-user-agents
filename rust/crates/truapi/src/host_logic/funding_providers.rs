@@ -418,8 +418,9 @@ pub struct FundingOptions {
 	/// The amounts the selection takes across every provider. The minimum
 	/// is never below [`FUNDING_MIN_AMOUNT`].
 	pub limits: FundingAmountLimits,
-	/// For a crypto selection with an asset, the amounts each network a
-	/// candidate's route declares for it takes, for the network picker.
+	/// For a crypto selection, the amounts each network a candidate's route
+	/// declares takes, for the network picker: for the picked asset, or the
+	/// widest range across the network's assets before one is picked.
 	pub networks: Vec<FundingNetworkLimits>,
 }
 
