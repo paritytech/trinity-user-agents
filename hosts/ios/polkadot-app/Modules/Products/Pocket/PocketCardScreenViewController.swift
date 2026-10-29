@@ -8,8 +8,8 @@ import UIKit
 /// filling the space below.
 ///
 /// The card keeps drawing up here, so it stays live for as long as it is open.
-/// The user moves the face by dragging it, or the navigation bar once it is
-/// away. A drag on the product stays the product's, which may draw with it.
+/// The user moves the face by dragging it or the navigation bar. A drag on
+/// the product stays the product's, which may draw with it.
 ///
 /// The product is sized to the screen the card leaves it, so a page built to
 /// fit its viewport keeps its bottom edge in view. It is resized only when the
@@ -133,7 +133,13 @@ final class PocketCardScreenViewController: UIViewController {
 
     /// Follows a drag on the navigation bar by `distance` from where it started.
     func dragFace(by distance: CGFloat) {
-        if barDragStart == nil { holdFace() }
+        // A close can start mid-drag, and the card must fly from where it stopped.
+        guard !isInFlight else { return }
+
+        if barDragStart == nil {
+            holdFace()
+            scrollView.isScrollEnabled = false
+        }
         let start = barDragStart ?? scrollView.contentOffset.y
         barDragStart = start
 
@@ -144,6 +150,10 @@ final class PocketCardScreenViewController: UIViewController {
     func releaseFace() {
         barDragStart = nil
         userOwnsFace = false
+        scrollView.isScrollEnabled = true
+
+        guard !isInFlight else { return }
+
         moveFace(shown: scrollView.contentOffset.y < PocketOpenedCardView.height / 2, animated: true)
     }
 
@@ -285,8 +295,8 @@ extension PocketCardScreenViewController: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !isInFlight, !userOwnsFace else { return false }
 
-        let travelled = pan.translation(in: view)
-        return abs(travelled.y) > abs(travelled.x)
+        let velocity = pan.velocity(in: view)
+        return abs(velocity.y) > abs(velocity.x)
     }
 }
 
@@ -314,7 +324,7 @@ private extension PocketCardScreenViewController {
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = false
 
-        // A page that fits the screen stays put, as it does on Android.
+        // The page does not rubber-band, as on Android.
         product.pageScrollView.bounces = false
     }
 
@@ -325,9 +335,6 @@ private extension PocketCardScreenViewController {
     }
 
     @objc func followBarDrag(_ pan: UIPanGestureRecognizer) {
-        // A close can start mid-drag, and the card must fly from where it stopped.
-        guard !isInFlight else { return }
-
         switch pan.state {
         case .began,
              .changed:
@@ -455,10 +462,7 @@ final class FaceScrollView: UIScrollView {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
         guard gestureRecognizer === panGestureRecognizer else { return true }
 
-        // The pan begins only once the finger has travelled, so it started that far back.
-        let now = panGestureRecognizer.location(in: self)
-        let travelled = panGestureRecognizer.translation(in: self)
-        return movesFace(from: CGPoint(x: now.x - travelled.x, y: now.y - travelled.y))
+        return movesFace(from: panGestureRecognizer.location(in: self))
     }
 
     /// Whether a drag starting at `point`, in this view's coordinates, is on the face.

@@ -26,6 +26,7 @@ struct PocketCardFaceDragTests {
 
     /// Once the face is hidden the page offers no way to bring it back, so the
     /// navigation bar does. Let go before halfway, the face goes back where it was.
+    /// The face cannot be dragged at the same time, and can be again after.
     @Test
     func aDragOnTheBarBringsAHiddenFaceBack() async throws {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
@@ -39,7 +40,9 @@ struct PocketCardFaceDragTests {
 
         screen.dragFace(by: faceHeight * 0.4)
         #expect(screen.setFaceShown(false, animated: false) == .userMoving)
+        #expect(!scrollView.isScrollEnabled)
         screen.releaseFace()
+        #expect(scrollView.isScrollEnabled)
         #expect(waitUntil(on: screen) { scrollView.contentOffset.y == faceHeight })
 
         screen.dragFace(by: faceHeight * 0.6)
