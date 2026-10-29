@@ -103,12 +103,11 @@ extension Chat.RoomDeclarations {
 
 // MARK: - Stored forms
 
-/// The stored kinds of a badge: 0 host count, 1 none, 2 count, 3 image.
+/// The stored kinds of a badge: 0 host count, 2 count, 3 image.
 private extension Chat.RoomBadge {
     var storedKind: Int16 {
         switch self {
         case .hostDefault: 0
-        case .none: 1
         case .unreadCount: 2
         case .image: 3
         }
@@ -125,7 +124,6 @@ private extension Chat.RoomBadge {
     /// An image badge without its icon reads as the host count.
     init(kind: Int16, count: Int32, icon: String?) {
         switch (kind, icon) {
-        case (1, _): self = .none
         case (2, _): self = .unreadCount(count)
         case let (3, .some(icon)): self = .image(icon)
         default: self = .hostDefault

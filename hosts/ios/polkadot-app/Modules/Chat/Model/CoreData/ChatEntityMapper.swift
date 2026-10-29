@@ -72,8 +72,7 @@ extension ChatModelMapper: CoreDataMapperProtocol {
             let unreadCount =
                 switch preview.badge {
                 case .hostDefault: Self.nonReactionUnreadCount(for: entity)
-                case .none,
-                     .image: 0
+                case .image: 0
                 case let .unreadCount(count): Int(max(count, 0))
                 }
 
