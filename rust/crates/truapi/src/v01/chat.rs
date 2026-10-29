@@ -414,6 +414,9 @@ pub struct ChatRoomMetadata {
 	/// An icon that replaces the icon of `create_room`, with the same rules.
 	/// An empty string removes the icon. `None` keeps the current icon.
 	pub icon: Option<String>,
+	/// The text that the room shows while it has no messages. `None` shows
+	/// nothing.
+	pub placeholder: Option<String>,
 }
 
 /// The badge the chat list shows on a room.
@@ -426,6 +429,11 @@ pub enum ChatRoomBadge {
 	UnreadCount {
 		/// The number the host shows.
 		count: u32,
+	},
+	/// An image, with the rules of the icon of `create_room`.
+	Image {
+		/// The image the host shows.
+		icon: String,
 	},
 }
 
@@ -463,6 +471,22 @@ pub struct ChatRoomPreview {
 	/// The number of reactions of the contact of the room that the user did
 	/// not see yet.
 	pub unseen_reactions: u32,
+	/// The chat list shows the room above the rooms that are not pinned.
+	/// Pinned rooms keep the order of `timestamp` among themselves.
+	pub pinned: bool,
+	/// A line that replaces the preview line, for example "Ben is typing".
+	/// `None` shows the preview line of the newest message.
+	pub activity: Option<ChatRoomActivity>,
+}
+
+/// A line that the chat list shows for a room in place of its newest message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomActivity {
+	/// The text of the line.
+	pub text: String,
+	/// The activity continues, so the host animates the line.
+	pub ongoing: bool,
 }
 
 /// The parts of a room the product serves itself. A field at its default

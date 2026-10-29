@@ -2005,7 +2005,12 @@ fn room_request(room_id: &str) -> truapi::latest::HostChatCreateRoomRequest {
 }
 
 fn room_metadata() -> truapi::latest::ChatRoomMetadata {
-	truapi::latest::ChatRoomMetadata { name: "Support".to_string(), description: None, icon: None }
+	truapi::latest::ChatRoomMetadata {
+		name: "Support".to_string(),
+		description: None,
+		icon: None,
+		placeholder: None,
+	}
 }
 
 fn room_config() -> truapi::latest::ChatRoomConfig {
@@ -2019,6 +2024,8 @@ fn room_preview() -> truapi::latest::ChatRoomPreview {
 		last_message: None,
 		last_reaction: None,
 		unseen_reactions: 0,
+		pinned: false,
+		activity: None,
 	}
 }
 
