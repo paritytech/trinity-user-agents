@@ -86,9 +86,6 @@ data class ChatPreviewReactionModel(
 )
 
 sealed interface ChatRoomBadgeModel {
-    /** The host shows no badge. */
-    data object Hidden : ChatRoomBadgeModel
-
     /** Zero shows no badge. */
     data class Count(val count: Int) : ChatRoomBadgeModel
 

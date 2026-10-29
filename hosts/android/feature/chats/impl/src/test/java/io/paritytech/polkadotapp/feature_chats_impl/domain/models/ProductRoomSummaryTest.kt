@@ -43,7 +43,6 @@ class ProductRoomSummaryTest {
     fun `a product count replaces the host count, and a room that the product keeps counts nothing itself`() {
         assertEquals(ChatSummaryBadge.Unread(7), summary.withRoomPolicy(productStore.copy(listBadge = ChatRoomPolicy.ListBadge.Count(7))).badge)
         assertEquals(ChatSummaryBadge.None, summary.withRoomPolicy(productStore.copy(listBadge = ChatRoomPolicy.ListBadge.Count(0))).badge)
-        assertEquals(ChatSummaryBadge.None, summary.withRoomPolicy(productStore.copy(listBadge = ChatRoomPolicy.ListBadge.Hidden)).badge)
 
         val hostCount = summary.withRoomPolicy(productStore)
         assertEquals(ChatSummaryBadge.None, hostCount.badge)
