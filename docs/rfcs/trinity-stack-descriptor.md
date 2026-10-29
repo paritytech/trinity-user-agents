@@ -150,7 +150,7 @@ type Descriptor = {
   services: Service[];
   assets?: Asset[]; // Assets readers treat specially, such as the one a wallet pays in.
   contracts?: Record<string, string>; // Asset Hub contracts readers need that the chains do not point to, by name.
-  dotns?: Record<string, string>; // dotNS contract addresses by protocol registry key, e.g. "storeFactory". See below.
+  dotns?: Record<string, string>; // dotNS contract addresses by protocol registry key, as dotNS's DotnsConstants names them, e.g. "storeFactory". See below.
   coinage?: { chain: string; instance: number }; // Chain role and instance of the Coinage pallet, the on-chain payment system.
 };
 
@@ -212,9 +212,9 @@ schemes.
 - `tld` MUST be one lowercase DNS label: `a-z`, `0-9` and `-`, not starting or ending in `-`. Readers then compare TLDs
   by their bytes, so `DOT` or `.dot` cannot pass as `dot`.
 - Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, block hashes, SHA-256 digests and keys are 32 bytes,
-  signatures 64 bytes, and `contracts` and `dotns` addresses are 20-byte Asset Hub contract addresses. A `dotns` key is
-  1 to 32 ASCII letters and digits, because the protocol registry keys an address by a `bytes32`, and its address MUST
-  NOT be the zero address, which the registry returns for a key it leaves unset.
+  signatures 64 bytes, and `contracts` and `dotns` addresses are 20-byte Asset Hub contract addresses.
+- A `dotns` key MUST be 1 to 32 ASCII letters and digits, the form of the registry's `bytes32("…")` keys, and its
+  address MUST NOT be the zero address, which the registry returns for a key it leaves unset.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
   rules as a pointer.
 - URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
@@ -265,11 +265,11 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 | TURN servers and their short-lived credentials      | the `turn` service, when needed      |
 
 dotNS contract addresses are the exception: Asset Hub holds them, and a descriptor still carries them in `dotns`. A
-reader would otherwise find them with a storage read (`DotnsGateway.DispatcherAddress`) and up to 19 contract calls to
-the dotNS protocol registry, through a service the stack runs, for addresses that change only when the stack deploys
-dotNS under other ones or the registry's owner rewires a key. A stack that deploys dotNS with the same factory key, as
-previewnet does, gets the same addresses after a restart of its chains. A reader SHOULD use `dotns` as stated rather
-than read the addresses from the chain.
+reader would otherwise find them with a storage read (`DotnsGateway.DispatcherAddress`) and up to 19 contract calls
+through Asset Hub's RPC, for addresses that change only when the stack moves to a dotNS deployment at other addresses or
+the registry's owner rewires a key. Previewnet boots dotNS from the dotNS release's genesis, so its addresses stay the
+same across restarts until it moves to a release with other ones. A reader SHOULD use `dotns` as stated rather than read
+the addresses from the chain.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
@@ -478,8 +478,8 @@ tools may use it or their own.
 - **TURN.** A descriptor never carries a TURN secret. Readers ask the `turn` service for short-lived credentials, which
   it issues against an access token from the DUB.
 - **Availability.** A reader keeps its last verified copy while the descriptor is unreachable.
-- **dotNS.** `dotns` is signed with the rest of the descriptor, so a reader trusts the addresses as far as the stack's
-  key and never as far as an RPC's answer.
+- **dotNS.** `dotns` comes with the rest of the descriptor, so a reader trusts the addresses as far as the descriptor
+  itself: the stack's key, or for an unsigned stack its host. It never takes them from an RPC's answer.
 
 ## Alternatives Considered
 
@@ -498,8 +498,8 @@ Designs that were considered and not chosen, each with the reason:
 - **Descriptors in dotNS text records.** A reader would need one stack connected before it could read another's
   descriptor, and the records are wiped with the testnet that holds them.
 - **Every reader reading dotNS from the chain.** No copy could drift from the chain, but every host, tool and app would
-  depend on Asset Hub's RPC and `eth-rpc` to start, make the same 18 to 20 reads for the same answer, and take the
-  addresses from unsigned RPC answers.
+  depend on Asset Hub's RPC to start, and make the same 18 to 20 reads for the same answer. A reader on plain RPC, not a
+  light client, would also take the addresses from answers nothing verifies.
 
 ## Future Directions
 
@@ -532,7 +532,7 @@ in. The engine already knows each field:
 | `services[]` `turn` and `stun`   | the `ice` entry of `/api/network`: `turn` is the DUB behind its `credentialsUrl`, and `stun` is its `stun:` server, served by the eturnal TURN relay PPN runs next to the DUB |
 | `services[]` `faucet`            | the deployment's configuration                                                                                                                                                |
 | `assets`, `contracts`, `coinage` | the network file, for stacks that set them up at genesis                                                                                                                      |
-| `dotns`                          | the dotNS release's address list the engine already fetches (`bin/dotns-addresses.json`)                                                                                      |
+| `dotns`                          | the dotNS release's `deployments/expected.json` the engine already fetches, each contract name mapped to its `DotnsConstants` registry key                                    |
 | `tld`                            | the network file's `genesisConfig.networkSuffix`                                                                                                                              |
 | `generation`                     | the spawn record in `/api/provenance`                                                                                                                                         |
 | `expiresAt`                      | the spawner instance's lifetime, for spawner forks                                                                                                                            |
@@ -540,7 +540,7 @@ in. The engine already knows each field:
 
 A stack that no single piece of software runs, such as paseo-next-v2 or Polkadot, can keep its descriptor in a git
 repository. CI checks each change against the live chains, signs on merge, and a scheduled job opens a pull request with
-new genesis hashes and specs after a wipe.
+new genesis hashes and specs after a wipe. Its `dotns` comes from the dotNS deployment the stack runs, by hand.
 
 ### Appendix B: changes per tool
 
