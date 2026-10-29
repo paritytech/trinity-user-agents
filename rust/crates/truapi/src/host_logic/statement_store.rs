@@ -26,9 +26,7 @@ pub use statement::{
 	statement_proof_to_v01, statement_public_key_from_secret, statement_signing_payload,
 	unsigned_statement_signing_payload, validate_unsigned_statement_signing_payload,
 };
-pub use statement_watch::{
-	StatementBatches, StatementStoreApi, StatementWatchError, backlog_then_live_batches,
-};
+pub use statement_watch::{StatementBatches, StatementStoreApi, StatementWatchError, TopicFilter};
 
 /// Error while parsing statement-store JSON-RPC or SCALE statement payloads.
 #[derive(Debug, Error, PartialEq, Eq)]

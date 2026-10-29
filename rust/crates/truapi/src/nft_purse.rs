@@ -7,6 +7,8 @@
 mod cheque;
 mod dao;
 mod deposit;
+#[cfg(test)]
+mod live;
 mod operation;
 mod payment;
 mod receive_key;
@@ -252,7 +254,7 @@ pub struct ScriptedStatements {
 	/// What each watch yields.
 	pub batches: std::sync::Mutex<Vec<Vec<Vec<u8>>>>,
 	/// The filters watched, in order.
-	pub watched: std::sync::Mutex<Vec<truapi::latest::RemoteStatementStoreSubscribeRequest>>,
+	pub watched: std::sync::Mutex<Vec<crate::host_logic::statement_store::TopicFilter>>,
 }
 
 #[cfg(test)]
@@ -260,7 +262,7 @@ pub struct ScriptedStatements {
 impl StatementStoreApi for ScriptedStatements {
 	async fn start_statement_watch(
 		&self,
-		filter: truapi::latest::RemoteStatementStoreSubscribeRequest,
+		filter: crate::host_logic::statement_store::TopicFilter,
 	) -> Result<
 		crate::host_logic::statement_store::StatementBatches,
 		crate::host_logic::statement_store::StatementWatchError,

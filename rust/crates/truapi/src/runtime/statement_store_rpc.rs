@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
-use futures::StreamExt as _;
+use futures::stream::{self, BoxStream, Stream, StreamExt};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -22,19 +22,25 @@ use subxt_rpcs::{
 };
 use thiserror::Error;
 use tracing::warn;
-use truapi::latest::RemoteStatementStoreSubscribeRequest;
 
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
 		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
-		StatementStoreApi, StatementWatchError, TopicFilterKind, UNSUBSCRIBE_STATEMENT_METHOD,
-		backlog_then_live_batches, hex_topic, parse_new_statements_result, validated_topic_filter,
+		StatementStoreApi, StatementWatchError, TopicFilter, TopicFilterKind,
+		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic, parse_new_statements_result,
+		validated_topic_filter,
 	},
 	host_rpc_client::HostRpcClient,
 	stream_extensions::StreamExtensions as _,
 	subscription::Spawner,
 };
+
+#[cfg(test)]
+mod live_people;
+
+#[cfg(test)]
+pub use live_people::{LIVE_WAIT, LivePeopleStatements};
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
 const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
@@ -155,7 +161,7 @@ impl StatementStoreRpc {
 impl StatementStoreApi for StatementStoreRpc {
 	async fn start_statement_watch(
 		&self,
-		filter: RemoteStatementStoreSubscribeRequest,
+		filter: TopicFilter,
 	) -> Result<StatementBatches, StatementWatchError> {
 		let (kind, topics) =
 			validated_topic_filter(filter).map_err(StatementWatchError::NotStarted)?;
@@ -184,6 +190,72 @@ async fn start_statement_watch_over(
 	let pages =
 		subscription.map(move |notification| parse_statement_page(&subscription_id, notification));
 	Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
+}
+
+/// Joins every page up to and including the first with `remaining == Some(0)`
+/// into one batch, then passes each later page on as its own batch. An `Err`
+/// passes on as it is.
+fn backlog_then_live_batches<E: Send + 'static>(
+	pages: impl Stream<Item = Result<NewStatements, E>> + Send + 'static,
+) -> BoxStream<'static, Result<Vec<Vec<u8>>, E>> {
+	let state = SubscriptionState::CollectingInitial(Vec::new());
+	let batching = BatchedPages { pages: pages.boxed(), state };
+	stream::unfold(batching, BatchedPages::next_batch).boxed()
+}
+
+/// Where a subscription is in delivering its statements.
+enum SubscriptionState {
+	/// Collecting the statements already stored, joined so far.
+	CollectingInitial(Vec<Vec<u8>>),
+	/// The stored statements are delivered; each page is new statements.
+	WatchingUpdates,
+}
+
+/// A subscription's pages, and where it is in delivering them.
+struct BatchedPages<E> {
+	pages: BoxStream<'static, Result<NewStatements, E>>,
+	state: SubscriptionState,
+}
+
+/// The state after one page, and the batch that page completed, if any.
+struct PageOutcome<E> {
+	state: SubscriptionState,
+	batch: Option<Result<Vec<Vec<u8>>, E>>,
+}
+
+impl<E> BatchedPages<E> {
+	/// The next batch, with the pages that yield the ones after it, or `None`
+	/// once the pages end.
+	async fn next_batch(mut self) -> Option<(Result<Vec<Vec<u8>>, E>, Self)> {
+		loop {
+			let page = self.pages.next().await?;
+			let state = core::mem::replace(&mut self.state, SubscriptionState::WatchingUpdates);
+			let outcome = take_page(state, page);
+			self.state = outcome.state;
+			if let Some(batch) = outcome.batch {
+				return Some((batch, self));
+			}
+		}
+	}
+}
+
+/// Adds `page` to the initial statements while they are being collected, and
+/// makes a batch of them once `page` completes them, or of `page` alone after
+/// that.
+fn take_page<E>(state: SubscriptionState, page: Result<NewStatements, E>) -> PageOutcome<E> {
+	let page = match page {
+		Ok(page) => page,
+		Err(error) => return PageOutcome { state, batch: Some(Err(error)) },
+	};
+	let SubscriptionState::CollectingInitial(mut initial) = state else {
+		let batch = Some(Ok(page.statements));
+		return PageOutcome { state: SubscriptionState::WatchingUpdates, batch };
+	};
+	initial.extend(page.statements);
+	if page.remaining == Some(0) {
+		return PageOutcome { state: SubscriptionState::WatchingUpdates, batch: Some(Ok(initial)) };
+	}
+	PageOutcome { state: SubscriptionState::CollectingInitial(initial), batch: None }
 }
 
 /// The page a statement subscription notification carries.
@@ -317,35 +389,17 @@ mod tests {
 	use serde_json::json;
 
 	use futures::executor::{block_on, block_on_stream};
-	use parity_scale_codec::Encode;
-	use subxt::utils::H256;
-	use subxt_rpcs::RpcClient;
-	use truapi::{latest::RemoteStatementStoreSubscribeRequest, v01};
 
-	use super::{
-		StatementStoreRpc, TopicFilterKind, is_no_allowance_rejection, start_statement_watch_over,
-		submit_sso,
-	};
+	use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection};
 	use crate::{
-		chain::{ExtrinsicService, FixedExtensionVersions, tokio_spawner},
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
-		host_logic::{
-			product_account::{derive_lite_person_ring_vrf_entropy, derive_sr25519_hard_path},
-			statement_store::{
-				MAX_MATCH_ALL_TOPICS, StatementBatches, StatementField, StatementStoreApi,
-				StatementWatchError, hex_topic, sign_statement_fields, validated_topic_filter,
-			},
-			x25519_seal::{SealedBox, X25519PrivateKey},
+		host_logic::statement_store::{
+			MAX_MATCH_ALL_TOPICS, NewStatements, StatementStoreApi, StatementWatchError,
+			TopicFilter, hex_topic,
 		},
-		host_rpc_client::HostRpcClient,
-		nft_purse::{TEST_STATIC_SECRET, test_purses_over},
-		platform::{JsonRpcConnection, ProductId},
-		runtime::statement_allowance::{self as alloc, collection::PersonhoodCollection},
-		store::open_temporary_core_db,
+		platform::JsonRpcConnection,
 		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
 	};
-
-	const LITE_PEOPLE: PersonhoodCollection = PersonhoodCollection::LitePeople;
 
 	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
 
@@ -532,7 +586,7 @@ mod tests {
 			statement_page_frame("watch", vec![vec![2]], Some(0)),
 			statement_page_frame("watch", vec![vec![3]], None),
 		]);
-		let filter = RemoteStatementStoreSubscribeRequest::MatchAll(vec![[7; 32]]);
+		let filter = TopicFilter::MatchAll(vec![[7; 32]]);
 
 		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
 		let batches = block_on_stream(batches).take(2).map(Result::unwrap).collect::<Vec<_>>();
@@ -557,7 +611,7 @@ mod tests {
 			malformed.to_string(),
 			statement_page_frame("watch", vec![vec![1]], Some(0)),
 		]);
-		let filter = RemoteStatementStoreSubscribeRequest::MatchAny(vec![[7; 32]]);
+		let filter = TopicFilter::MatchAny(vec![[7; 32]]);
 
 		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
 		let mut batches = block_on_stream(batches);
@@ -574,7 +628,7 @@ mod tests {
 	fn a_statement_watch_with_too_many_topics_does_not_start() {
 		let (statement_store, platform) = watching_statement_store(vec![]);
 		let topics = vec![[7; 32]; MAX_MATCH_ALL_TOPICS + 1];
-		let filter = RemoteStatementStoreSubscribeRequest::MatchAll(topics);
+		let filter = TopicFilter::MatchAll(topics);
 
 		let started = block_on(statement_store.start_statement_watch(filter));
 
@@ -582,195 +636,79 @@ mod tests {
 		assert_eq!(platform.chain_connects.lock().unwrap().len(), 0);
 	}
 
-	/// A connection to the live People chain, from `TRUAPI_LIVE_PEOPLE_WS` and
-	/// `TRUAPI_LIVE_PEOPLE_GENESIS`, or Paseo People Next.
-	struct LivePeopleChain {
-		provider: Arc<truapi_provider::EmbeddedChainProvider>,
-		genesis: [u8; 32],
-		host_client: HostRpcClient,
-	}
-
-	async fn connect_live_people_chain() -> LivePeopleChain {
-		let url = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
-			.unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".into());
-		let genesis = std::env::var("TRUAPI_LIVE_PEOPLE_GENESIS").unwrap_or_else(|_| {
-			"4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48".into()
-		});
-		let genesis: [u8; 32] = hex::decode(genesis).unwrap().try_into().unwrap();
-		let source = truapi_provider::ChainSource::rpc_node(url.parse().unwrap());
-		let provider = Arc::new(
-			truapi_provider::EmbeddedChainProvider::builder().chain(genesis, source).build(),
-		);
-		let connection = truapi_provider::platform::ChainProvider::connect(&*provider, genesis)
-			.await
-			.unwrap();
-		let host_client = HostRpcClient::new(Arc::from(connection), tokio_spawner());
-		LivePeopleChain { provider, genesis, host_client }
-	}
-
 	/// The live People chain answers a watch of a topic nobody uses with one
 	/// empty batch, which is what tells an inbox it caught up. Run with
-	/// `cargo test -p truapi --lib live_statement_watch -- --ignored`;
-	/// `TRUAPI_LIVE_PEOPLE_WS` and `TRUAPI_LIVE_PEOPLE_GENESIS` pick another
-	/// node.
+	/// `cargo test -p truapi --lib live_statement_watch -- --ignored`.
 	#[tokio::test(flavor = "multi_thread")]
 	#[ignore = "needs the live Paseo People Next chain"]
 	async fn live_statement_watch_of_an_unused_topic_starts_with_one_empty_batch() {
-		let chain = connect_live_people_chain().await;
-		let rpc_client = RpcClient::new(chain.host_client);
-		let topic: [u8; 32] = rand::random();
+		let statements = LivePeopleStatements::connect().await;
+		let filter = TopicFilter::MatchAll(vec![rand::random()]);
 
-		let mut batches =
-			start_statement_watch_over(&rpc_client, TopicFilterKind::MatchAll, &[topic])
-				.await
-				.unwrap();
+		let mut batches = statements.start_statement_watch(filter).await.unwrap();
 		let first = tokio::time::timeout(LIVE_WAIT, batches.next()).await;
 
 		assert_eq!(first.unwrap().map(Result::unwrap), Some(vec![]));
 	}
 
-	/// How long a live test waits for the chain to answer.
-	const LIVE_WAIT: core::time::Duration = core::time::Duration::from_secs(60);
-
-	/// The live statement store, watched as the host watches it.
-	struct LiveStatements(RpcClient);
-
-	#[async_trait]
-	impl StatementStoreApi for LiveStatements {
-		async fn start_statement_watch(
-			&self,
-			filter: RemoteStatementStoreSubscribeRequest,
-		) -> Result<StatementBatches, StatementWatchError> {
-			let (kind, topics) = validated_topic_filter(filter).unwrap();
-			start_statement_watch_over(&self.0, kind, &topics).await
-		}
+	fn statement_page(statements: &[u8], remaining: Option<u64>) -> Result<NewStatements, String> {
+		let statements = statements.iter().map(|statement| vec![*statement]).collect();
+		Ok(NewStatements { remote_subscription_id: "sub".to_string(), statements, remaining })
 	}
 
-	/// The sr25519 key the live tests sign statements with, derived from the
-	/// person behind `entropy` so every run reuses one statement-store slot.
-	fn live_statement_signer(entropy: &[u8]) -> schnorrkel::Keypair {
-		derive_sr25519_hard_path(entropy, &["truapi-live-test", "statement-store"]).unwrap()
+	fn batches_of(pages: Vec<Result<NewStatements, String>>) -> Vec<Result<Vec<Vec<u8>>, String>> {
+		block_on_stream(super::backlog_then_live_batches(futures::stream::iter(pages))).collect()
 	}
 
-	/// Gives `signer` a statement allowance for this period through the People
-	/// Lite ring of the person behind `entropy`, unless it already has one.
-	async fn allocate_live_statement_allowance(
-		chain: &LivePeopleChain,
-		entropy: &[u8],
-		signer: &schnorrkel::Keypair,
-	) {
-		let rpc = alloc::rpc::RpcClient::new(RpcClient::new(chain.host_client.clone()));
-		let metadata = alloc::fetch_metadata(&rpc).await.unwrap();
-		let network_suffix = alloc::slot::read_network_suffix(&rpc).await.unwrap();
-		let suffix = String::from_utf8(network_suffix.clone()).unwrap();
-		let entropy = derive_lite_person_ring_vrf_entropy(entropy, &suffix);
-		let candidates = [alloc::CollectionCandidate { collection: LITE_PEOPLE, entropy }];
-		let person = alloc::FixedPersonhoodSigner::new(&candidates).await.unwrap();
-		let target = signer.public.to_bytes();
-		let period = alloc::slot::current_period(current_unix_secs());
-		let memberships =
-			alloc::find_including_rings(&rpc, &metadata, &person, &[LITE_PEOPLE], u32::MAX)
-				.await
-				.unwrap();
-		let scan = alloc::CollectionScanParams {
-			network_suffix: &network_suffix,
-			period,
-			target: &target,
-			reuse_existing: true,
-		};
-		let scans = alloc::scan_collections(&rpc, &metadata, &person, &[LITE_PEOPLE], scan)
-			.await
-			.unwrap();
-		let versions = Arc::new(FixedExtensionVersions::one_chain(H256(chain.genesis), 1));
-		let extrinsics =
-			ExtrinsicService::from_provider(chain.provider.clone(), tokio_spawner(), versions);
-		let target_chain =
-			alloc::ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(chain.genesis) };
-		let registration = alloc::PooledRegistrationParams {
-			target: &target,
-			period,
-			network_suffix: &network_suffix,
-			reuse_existing: true,
-			allow_eviction: false,
-			protected: &[],
-		};
-		alloc::register_statement_account_pooled(
-			&rpc,
-			&metadata,
-			target_chain,
-			&person,
-			&scans,
-			&memberships,
-			registration,
-		)
-		.await
-		.unwrap();
-	}
-
-	/// The statement a sender publishes to put `cheque` under `topic`: the
-	/// envelope sealed to the static receive key, signed by `signer`.
-	fn signed_inbox_statement(
-		signer: &schnorrkel::Keypair,
-		topic: v01::StatementTopic,
-		cheque: &v01::NftPurseCheque,
-	) -> Vec<u8> {
-		let plaintext = (0u8, topic, cheque).encode();
-		let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
-		let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
-		let expiry = (current_unix_secs() + 3600) << 32;
-		let fields = vec![
-			StatementField::Expiry(expiry),
-			StatementField::Channel(rand::random()),
-			StatementField::Topic1(topic.0),
-			StatementField::Data(sealed.to_bytes()),
+	/// A product reading an inbox gets everything already there in one item,
+	/// then each new page as it arrives.
+	#[test]
+	fn the_backlog_is_one_batch_and_each_later_page_its_own() {
+		let pages = vec![
+			statement_page(&[1, 2], Some(1)),
+			statement_page(&[3], Some(0)),
+			statement_page(&[4], None),
+			statement_page(&[5], None),
 		];
-		let signed =
-			sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields);
-		signed.unwrap().encode()
+
+		let expected =
+			vec![Ok(vec![vec![1], vec![2], vec![3]]), Ok(vec![vec![4]]), Ok(vec![vec![5]])];
+		assert_eq!(batches_of(pages), expected);
 	}
 
-	fn current_unix_secs() -> u64 {
-		let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-		now.unwrap().as_secs()
+	/// An empty topic still reports that the backlog is complete.
+	#[test]
+	fn an_empty_backlog_is_one_empty_batch() {
+		let pages = vec![statement_page(&[], Some(0))];
+
+		assert_eq!(batches_of(pages), vec![Ok(vec![])]);
 	}
 
-	/// A cheque a real sender publishes on the live People chain reaches a
-	/// product listening to its inbox. Needs a person in a People Lite ring:
-	/// `TRUAPI_LIVE_PERSON_MNEMONIC` names one, and the test skips without it.
-	/// The first run in a period takes one of the person's statement-store
-	/// slots; later runs reuse it. Run with
-	/// `cargo test -p truapi --lib live_payment_inbox -- --ignored`.
-	#[tokio::test(flavor = "multi_thread")]
-	#[ignore = "needs the live Paseo People Next chain and a person's mnemonic"]
-	async fn live_payment_inbox_receives_a_published_cheque() {
-		let Ok(mnemonic) = std::env::var("TRUAPI_LIVE_PERSON_MNEMONIC") else {
-			eprintln!("skipped: TRUAPI_LIVE_PERSON_MNEMONIC is not set");
-			return;
-		};
-		let entropy = bip39::Mnemonic::parse(mnemonic.trim()).unwrap().to_entropy();
-		let chain = connect_live_people_chain().await;
-		let signer = live_statement_signer(&entropy);
-		allocate_live_statement_allowance(&chain, &entropy, &signer).await;
-		let rpc_client = RpcClient::new(chain.host_client.clone());
-		let (_dir, db) = open_temporary_core_db();
-		let purses = test_purses_over(db, Arc::new(LiveStatements(rpc_client.clone())));
-		let product = ProductId::for_test("tickets.dot");
-		let inbox = purses.start_payment_inbox_listen(rand::random(), &product, rand::random());
-		let mut listen = inbox.await.unwrap();
-		let backlog = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
-		assert_eq!(backlog.unwrap().map(Result::unwrap), Some(vec![]));
-		let cheque = v01::NftPurseCheque {
-			version: 0,
-			id: v01::NftPurseChequeId(rand::random()),
-			recipient: v01::NftPurseChequeRecipient::Static,
-			items: vec![v01::NftPurseItemKey(rand::random())],
-			encrypted_secrets: vec![0x55; 4],
-		};
-		let statement = signed_inbox_statement(&signer, listen.channel, &cheque);
+	/// The node may interleave new statements, which carry no `remaining`,
+	/// with the backlog pages.
+	#[test]
+	fn a_page_without_remaining_before_the_backlog_ends_joins_the_backlog() {
+		let pages = vec![
+			statement_page(&[1], Some(1)),
+			statement_page(&[2], None),
+			statement_page(&[3], Some(0)),
+		];
 
-		submit_sso(&rpc_client, statement, "live payment").await.unwrap();
+		assert_eq!(batches_of(pages), vec![Ok(vec![vec![1], vec![2], vec![3]])]);
+	}
 
-		let arrived = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
-		assert_eq!(arrived.unwrap().map(Result::unwrap), Some(vec![cheque]));
+	/// A failure must reach the reader, wherever it happens.
+	#[test]
+	fn errors_pass_on_before_and_after_the_backlog() {
+		let failure = "transport".to_string();
+		let pages = vec![
+			statement_page(&[1], Some(1)),
+			Err(failure.clone()),
+			statement_page(&[2], Some(0)),
+			Err(failure.clone()),
+		];
+
+		let expected = vec![Err(failure.clone()), Ok(vec![vec![1], vec![2]]), Err(failure)];
+		assert_eq!(batches_of(pages), expected);
 	}
 }

@@ -105,7 +105,7 @@ fn channel_then_arrivals<T: Send + 'static, I: Send + 'static, E: Send + 'static
 	failure: fn(PaymentListenError) -> CallError<E>,
 ) -> Subscription<I, CallError<E>> {
 	let standard =
-		latest::NftPursePaymentTransmissionChannel::Standard { sss_topic: listen.channel };
+		latest::NftPursePaymentTransmissionChannel::Standard { sss_topic: listen.statement_topic };
 	let arrivals = listen.arrivals.map(move |arrived| arrived.map(arrival).map_err(failure));
 	let items = stream::once(async move { Ok(channel(standard)) }).chain(arrivals);
 	Subscription::new(items)

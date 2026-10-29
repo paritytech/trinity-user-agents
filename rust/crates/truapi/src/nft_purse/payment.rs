@@ -11,14 +11,15 @@ use parity_scale_codec::{Decode, DecodeAll, Encode};
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
 	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
-	NftPurseReceiveKey, RemoteStatementStoreSubscribeRequest, StatementTopic,
+	NftPurseReceiveKey, StatementTopic,
 };
 
 use super::{NftPurses, cheque::cheque_id_for, receive_key::ReceiveSecretError};
 use crate::{
 	host_logic::{
 		statement_store::{
-			StatementBatches, StatementStoreParseError, StatementWatchError, decode_statement_data,
+			StatementBatches, StatementStoreParseError, StatementWatchError, TopicFilter,
+			decode_statement_data,
 		},
 		x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	},
@@ -37,10 +38,11 @@ const ONE_TIME_TOPIC_DOMAIN: &[u8] = b"nft-purse/payment-channel";
 /// Domain of the topic a payment inbox is published under.
 const INBOX_TOPIC_DOMAIN: &[u8] = b"nft-purse/payment-inbox";
 
-/// A started payment listen: the channel to advertise, and what arrives on it.
+/// A started payment listen: the statement topic the sender publishes under,
+/// and what arrives on it.
 pub struct PaymentListen<T> {
 	/// The topic the host watches.
-	pub channel: StatementTopic,
+	pub statement_topic: StatementTopic,
 	/// What arrives. Ends with an `Err` when the watch fails or ends.
 	pub arrivals: BoxStream<'static, Result<T, PaymentListenError>>,
 }
@@ -100,28 +102,28 @@ enum RejectedEnvelope {
 }
 
 impl NftPurses {
-	/// Starts watching the channel of `key` for its first cheque. Fails before
+	/// Starts watching the statement topic of `key` for its first cheque. Fails before
 	/// watching when `creator` did not make `key`.
 	pub async fn start_one_time_payment_listen(
 		&self,
 		creator: &ProductId,
 		key: NftPurseReceiveKey,
 	) -> Result<PaymentListen<NftPurseCheque>, PaymentListenError> {
-		self.check_receive_key_maker(creator, key).await?;
+		self.check_receive_key_owner(creator, key).await?;
 		let secret = self.receive_secret(&key).await?;
-		let channel = one_time_payment_topic(&key);
-		let batches = self.start_topic_watch(channel).await?;
+		let statement_topic = one_time_payment_topic(&key);
+		let batches = self.start_topic_watch(statement_topic).await?;
 		let id = cheque_id_for(&NftPurseChequeDestination::Ephemeral(key));
 		let recipient = NftPurseChequeRecipient::Ephemeral(key);
-		let expected = ExpectedCheque { topic: channel, recipient, id: Some(id) };
+		let expected = ExpectedCheque { topic: statement_topic, recipient, id: Some(id) };
 		let arrivals = arriving_cheque_batches(batches, secret, expected)
 			.flat_map(|batch| {
-				let cheques = cheques_one_by_one(batch);
+				let cheques = transpose_batch(batch);
 				stream::iter(cheques)
 			})
 			.take(1)
 			.boxed();
-		Ok(PaymentListen { channel, arrivals })
+		Ok(PaymentListen { statement_topic, arrivals })
 	}
 
 	/// Starts watching `creator`'s inbox `inbox_domain` of the identity
@@ -137,17 +139,17 @@ impl NftPurses {
 			.static_secret
 			.static_receive_secret()
 			.map_err(PaymentListenError::StaticSecret)?;
-		let channel = payment_inbox_topic(account, creator, inbox_domain);
-		let batches = self.start_topic_watch(channel).await?;
+		let statement_topic = payment_inbox_topic(account, creator, inbox_domain);
+		let batches = self.start_topic_watch(statement_topic).await?;
 		let recipient = NftPurseChequeRecipient::Static;
-		let expected = ExpectedCheque { topic: channel, recipient, id: None };
+		let expected = ExpectedCheque { topic: statement_topic, recipient, id: None };
 		let batches = arriving_cheque_batches(batches, secret, expected);
-		let arrivals = without_later_empty_batches(batches);
-		Ok(PaymentListen { channel, arrivals })
+		let arrivals = drop_empty_updates(batches);
+		Ok(PaymentListen { statement_topic, arrivals })
 	}
 
 	/// Fails when `creator` did not make `key` on this host.
-	async fn check_receive_key_maker(
+	async fn check_receive_key_owner(
 		&self,
 		creator: &ProductId,
 		key: NftPurseReceiveKey,
@@ -161,7 +163,7 @@ impl NftPurses {
 		&self,
 		topic: StatementTopic,
 	) -> Result<StatementBatches, StatementWatchError> {
-		let filter = RemoteStatementStoreSubscribeRequest::MatchAll(vec![topic.0]);
+		let filter = TopicFilter::MatchAll(vec![topic.0]);
 		self.statements.start_statement_watch(filter).await
 	}
 }
@@ -183,8 +185,9 @@ fn payment_inbox_topic(
 	StatementTopic(blake2_256(&preimage))
 }
 
-/// `batches` without the empty ones after the first.
-fn without_later_empty_batches<E: Send + 'static>(
+/// `batches` without the empty updates after the first batch, which holds
+/// what was already stored.
+fn drop_empty_updates<E: Send + 'static>(
 	batches: BoxStream<'static, Result<Vec<NftPurseCheque>, E>>,
 ) -> BoxStream<'static, Result<Vec<NftPurseCheque>, E>> {
 	batches
@@ -213,7 +216,7 @@ fn arriving_cheque_batches(
 }
 
 /// The cheques of `batch` one by one, or its error.
-fn cheques_one_by_one<E>(batch: Result<Vec<NftPurseCheque>, E>) -> Vec<Result<NftPurseCheque, E>> {
+fn transpose_batch<E>(batch: Result<Vec<NftPurseCheque>, E>) -> Vec<Result<NftPurseCheque, E>> {
 	match batch {
 		Ok(cheques) => cheques.into_iter().map(Ok).collect(),
 		Err(error) => vec![Err(error)],
@@ -359,7 +362,7 @@ mod tests {
 		arrivals.map(|arrival| arrival.map_err(|error| error.to_string())).collect()
 	}
 
-	/// Senders outside this crate derive the same channel.
+	/// Senders outside this crate derive the same statement topic.
 	#[test]
 	fn the_one_time_topic_matches_its_vector() {
 		let topic = one_time_payment_topic(&NftPurseReceiveKey([1; 32]));
@@ -386,7 +389,7 @@ mod tests {
 		assert_eq!(cheque, Some(cheque_for(key, 0x44)));
 	}
 
-	/// Junk on the channel must not end a listen that waits for one cheque.
+	/// Junk on the topic must not end a listen that waits for one cheque.
 	#[test]
 	fn a_one_time_listen_skips_what_is_not_its_cheque_and_ends_after_the_first() {
 		let Listening { _dir, purses, statements, key } = listening_purses();
@@ -490,6 +493,6 @@ mod tests {
 			Err(PaymentListenError::WatchEnded.to_string()),
 		];
 		assert_eq!(arrivals.collect::<Vec<_>>(), expected);
-		assert_eq!(listen.channel, topic);
+		assert_eq!(listen.statement_topic, topic);
 	}
 }

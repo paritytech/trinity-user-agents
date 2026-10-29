@@ -9,9 +9,8 @@
 //! <https://github.com/paritytech/polkadot-sdk/blob/f2f3aa6a8fda8ea52282da9711b3c5da4ba82529/substrate/primitives/statement-store/src/store_api.rs#L204-L221>
 
 use serde_json::Value;
-use truapi::latest::RemoteStatementStoreSubscribeRequest;
 
-use super::StatementStoreParseError;
+use super::{StatementStoreParseError, TopicFilter};
 
 /// Statement-store RPC method used to open a topic subscription.
 pub const SUBSCRIBE_STATEMENT_METHOD: &str = "statement_subscribeStatement";
@@ -44,13 +43,13 @@ pub enum TopicFilterKind {
 	MatchAny,
 }
 
-/// The filter kind and topics of `request`. Fails when it lists more topics
+/// The filter kind and topics of `filter`. Fails when it lists more topics
 /// than the statement-store RPC accepts.
 pub fn validated_topic_filter(
-	request: RemoteStatementStoreSubscribeRequest,
+	filter: TopicFilter,
 ) -> Result<(TopicFilterKind, Vec<[u8; 32]>), String> {
-	match request {
-		RemoteStatementStoreSubscribeRequest::MatchAll(topics) => {
+	match filter {
+		TopicFilter::MatchAll(topics) => {
 			if topics.len() > MAX_MATCH_ALL_TOPICS {
 				return Err(format!(
 					"MatchAll has {} topics, maximum is {}",
@@ -60,7 +59,7 @@ pub fn validated_topic_filter(
 			}
 			Ok((TopicFilterKind::MatchAll, topics))
 		},
-		RemoteStatementStoreSubscribeRequest::MatchAny(topics) => {
+		TopicFilter::MatchAny(topics) => {
 			if topics.len() > MAX_MATCH_ANY_TOPICS {
 				let topic_count = topics.len();
 				return Err(format!(

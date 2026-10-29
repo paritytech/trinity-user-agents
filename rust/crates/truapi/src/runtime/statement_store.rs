@@ -224,7 +224,7 @@ impl ProductRuntimeHost {
 		Subscription<latest::RemoteStatementStoreSubscribeItem, CallError<latest::GenericError>>,
 		CallError<latest::GenericError>,
 	> {
-		let (kind, topics) = validated_topic_filter(request)
+		let (kind, topics) = validated_topic_filter(request.into())
 			.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 		let statement_store = self.statement_store_rpc();
 		let rpc_client = statement_store.client("statement-store").await.map_err(|reason| {
