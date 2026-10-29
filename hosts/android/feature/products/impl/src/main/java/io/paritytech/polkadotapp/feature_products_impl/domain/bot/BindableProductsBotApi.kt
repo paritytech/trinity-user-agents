@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -56,8 +57,9 @@ class BindableProductsBotApi(
     override suspend fun setRoomMetadata(
         chatIdParameter: ProductChatIdParameter,
         name: String,
+        iconChange: RoomIconChange?,
         metadata: ChatRoomMetadataModel,
-    ): Result<Unit> = withChat { it.setRoomMetadata(chatIdParameter, name, metadata) }
+    ): Result<Unit> = withChat { it.setRoomMetadata(chatIdParameter, name, iconChange, metadata) }
 
     override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit> =
         withChat { it.setRoomPreview(chatIdParameter, preview) }

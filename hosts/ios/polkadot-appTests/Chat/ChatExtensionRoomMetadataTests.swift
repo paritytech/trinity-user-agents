@@ -41,6 +41,25 @@ struct ChatExtensionRoomMetadataTests {
         #expect(try await storedRoom()?.message?.messageId == message.messageId)
     }
 
+    /// `set_room_metadata` changes the icon only when the product sends one, and an empty icon removes it.
+    @Test(arguments: [
+        (Chat.RoomIconChange.keep, Optional(pngIcon)),
+        (.replace(otherIcon), Optional(otherIcon)),
+        (.replace(nil), nil)
+    ])
+    func metadataChangesTheIconAsTheProductAsks(change: Chat.RoomIconChange, storedIcon: String?) async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
+
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Finals", icon: change)
+
+        #expect(try await storedRoom()?.roomMetadata == Chat.RoomMetadata(
+            chatRelativeId: roomId,
+            name: "Finals",
+            icon: storedIcon
+        ))
+    }
+
     /// A save of the chat model never deletes what the product declared for its room.
     @Test
     func savingTheRoomChatAgainKeepsItsDeclarations() async throws {
@@ -85,6 +104,7 @@ struct ChatExtensionRoomMetadataTests {
 private let roomId = "jollity"
 private let pngData = Data([0x89, 0x50, 0x4E, 0x47])
 private let pngIcon = "data:image/png;base64," + pngData.base64EncodedString()
+private let otherIcon = "data:image/png;base64," + Data([0x89, 0x50]).base64EncodedString()
 
 private extension ChatExtensionRoomMetadataTests {
     var chatId: Chat.Id {
