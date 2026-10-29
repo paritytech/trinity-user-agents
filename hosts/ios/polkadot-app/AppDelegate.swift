@@ -30,6 +30,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureTips()
 
         issueMonitoringService.setup()
+        addHostLogSink()
         hostEventRecorder.record(.processStarted(
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
@@ -43,6 +44,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         UserNotificationService.shared.startGatheringNotifications()
 
         LegacyGameAlarmCleanup.run()
+        LegacyOnrampStateCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()
@@ -74,6 +76,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 private extension AppDelegate {
+    func addHostLogSink() {
+        guard let sink = IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN) else { return }
+
+        Logger.shared.log.addDestination(HostLogSinkDestination(sink: sink))
+    }
+
     func configureTips() {
         #if TESTNET_FEATURE
             resetTipsDatastoreIfRequested()
