@@ -1346,11 +1346,25 @@
           "now": 1792069200
         },
         {
+          "build": "refresh/42.json",
+          "buildDotns": null,
+          "restart": 1792069200
+        },
+        {
           "expect": {
             "fetch": null,
             "serves": 42
           },
           "get": 1792072799
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": "\"a\""
+            },
+            "serves": 42
+          },
+          "get": 1792072800
         }
       ]
     },

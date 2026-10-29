@@ -967,7 +967,9 @@ fn refresh_cases() -> Vec<Value> {
 				json!({ "due": NOW + 3_600, "expect": true }),
 				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
 				not_modified(NOW + 3_600, outcome("unchanged", 42, true)),
+				json!({ "restart": NOW + 3_600, "build": "refresh/42.json", "buildDotns": null }),
 				get(NOW + 7_199, Some(42), Value::Null),
+				get(NOW + 7_200, Some(42), fetch(Some("\"a\""))),
 			],
 		),
 		case(
