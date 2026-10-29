@@ -24,6 +24,15 @@ public enum IssueMonitoringFactory {
         #endif
     }
 
+    /// Log sink for the service `createService(dsn:)` starts, or nil when that service is a no-op.
+    public static func createLogSink(dsn: String) -> HostLogSink? {
+        #if SENTRY_ENABLED
+            dsn.isEmpty ? nil : SentryHostLogSink()
+        #else
+            nil
+        #endif
+    }
+
     /// Builds the immutable product bootstrap only when this build links reporting support.
     public static func createNativeHostTelemetry(
         hostSessionID: UUID,

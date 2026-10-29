@@ -154,7 +154,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 }
 
 pub struct EventCallbacks {
-	pub logs: Mutex<Vec<String>>,
+	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -252,8 +252,8 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-	fn on_core_log(&self, marker: String, _detail: String) {
-		self.logs.lock().expect("logs mutex poisoned").push(marker);
+	fn on_core_log(&self, marker: String, detail: String) {
+		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
 	}
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
@@ -2629,7 +2629,7 @@ fn starting_a_host_proves_the_core_log_channel_reaches_it() {
 		.expect("create host");
 		let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
 		drop(host);
-		if seen.iter().any(|marker| marker == "truapi.core.started") {
+		if seen.iter().any(|(marker, _)| marker == "truapi.core.started") {
 			return;
 		}
 		last = seen;
@@ -2659,6 +2659,31 @@ fn the_core_log_sink_does_not_retain_a_dropped_host() {
 		|| weak.upgrade().is_none(),
 		"the core log sink retained the host's callbacks",
 	);
+}
+
+/// A host that fails to start must not take the running host's log with it.
+/// The sink is process-wide and its registration clears the slot as it drops,
+/// so it is installed only once this runtime is certain to exist.
+#[test]
+fn a_failed_host_start_leaves_the_running_host_logging() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	let mut doomed = native_host_runtime_config();
+	doomed.database_directory = "/truapi-probe-that-cannot-be-opened".to_string();
+	let failed =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), doomed);
+	assert!(failed.is_err(), "the probe config was supposed to fail");
+
+	assert!(
+		crate::logging::host_sink_installed(),
+		"a host that failed to start cleared the running host's sink",
+	);
+	drop(host);
 }
 
 #[test]
@@ -2710,7 +2735,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 					.lock()
 					.expect("logs mutex poisoned")
 					.iter()
-					.any(|marker| marker == "truapi.ws_bridge.text_frame_ignored")
+					.any(|(marker, _)| marker == "truapi.ws_bridge.text_frame_ignored")
 			})
 		},
 		"connection did not process the text frame",
@@ -2721,8 +2746,8 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 			.lock()
 			.expect("logs mutex poisoned")
 			.iter()
+			.map(|(marker, _)| marker.clone())
 			.filter(|marker| marker.starts_with("truapi.ws_bridge."))
-			.cloned()
 			.collect::<Vec<_>>()
 	});
 	assert_eq!(
