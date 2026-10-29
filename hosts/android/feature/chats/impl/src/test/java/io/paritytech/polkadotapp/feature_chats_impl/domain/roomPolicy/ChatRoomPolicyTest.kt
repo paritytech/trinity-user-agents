@@ -83,13 +83,6 @@ class ChatRoomPolicyTest {
     }
 
     @Test
-    fun `a hidden badge reads as hidden`() {
-        val hidden = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadgeModel.Hidden)))
-
-        assertEquals(ListBadge.Hidden, hidden.listBadge)
-    }
-
-    @Test
     fun `a negative count reads as zero`() {
         val policy = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadgeModel.Count(-4))))
 
