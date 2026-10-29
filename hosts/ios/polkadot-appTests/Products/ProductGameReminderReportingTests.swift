@@ -90,7 +90,7 @@ struct ProductGameReminderReportingTests {
         for alarmIds: Set<UUID> in [[UUID()], [alarmId], [alarmId], [otherAlarmId]] {
             fakes.alarmAlerts.yield(alarmIds)
         }
-        _ = try await fakes.recorder.waitForEvents(count: 2)
+        try await fakes.recorder.waitForEvents(count: 2)
 
         #expect(
             fakes.recorder.events == [
