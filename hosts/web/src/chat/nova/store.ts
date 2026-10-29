@@ -100,6 +100,28 @@ export interface PendingMessage {
     | { kind: "call-closed"; offerId: string };
 }
 
+/** A device of a peer, as announced in its request or its acceptance. */
+export interface StoredDevice {
+  /** The account that signs for the device, as 0x hex. */
+  statementAccount: HexString;
+  /** The device's X25519 encryption key, as 0x hex. */
+  encryptionKey: HexString;
+}
+
+/**
+ * This host's acceptance of a version 2 request, published alone on the
+ * identity route and renewed on every start until the peer shows up on its
+ * device route. Nobody answers it.
+ */
+export interface StoredAcceptance {
+  /** The request accepted. */
+  requestId: string;
+  /** The chat message that carries the acceptance; also its transport request id. */
+  messageId: string;
+  /** The peer was seen on its device route, so it has the acceptance. */
+  delivered: boolean;
+}
+
 export interface Contact {
   account: HexString;
   chatKey: HexString;
@@ -128,6 +150,23 @@ export interface Contact {
    * last, so a delivery seen again changes nothing.
    */
   seenSignals?: string[];
+  /**
+   * This host announced its device to the peer, in the version 2 request it
+   * sent or in its acceptance of the peer's. The chat then runs on the device
+   * route once the peer's device is known. A record from before never
+   * announced one and stays on the identity route.
+   */
+  deviceRoute?: true;
+  /** The peer's devices this host knows, kept only for a chat on the device route. */
+  devices?: StoredDevice[];
+  /** This host's acceptance of the peer's version 2 request, until the peer is seen on its device route. */
+  acceptance?: StoredAcceptance;
+  /**
+   * Ids of version 2 requests this host answered for a contact it had
+   * already accepted, newest last, so the store delivering one again does not
+   * answer it again.
+   */
+  answeredRequests?: string[];
 }
 
 export interface IncomingRequest {
@@ -138,6 +177,8 @@ export interface IncomingRequest {
   welcome: string | null;
   at: number;
   version: 1 | 2;
+  /** The sending device, for a version 2 request. */
+  device?: StoredDevice;
   /** Why the request cannot be accepted, when it cannot. */
   problem: string | null;
 }

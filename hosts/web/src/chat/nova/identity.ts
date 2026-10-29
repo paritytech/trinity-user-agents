@@ -1,7 +1,9 @@
 import { cryptoRandom, type RandomBytes } from "./crypto.js";
 import type { ChatKeys } from "./keys.js";
+import { openDeviceEnvelope, wrapDeviceEnvelope } from "./multi-device.js";
 import {
   decodeSessionData,
+  identityProof,
   identityProofMatches,
   requestChannel,
   requestDayTopic,
@@ -14,6 +16,7 @@ import {
   sessionTopic,
   unsealRequest,
   unsealSession,
+  type DeviceInfo,
 } from "./protocol.js";
 import { encodeSigned } from "./statement.js";
 
@@ -27,8 +30,14 @@ import { encodeSigned } from "./statement.js";
  * Signing is not general. The implementation builds each statement itself
  * from the peer's keys: a session statement goes on the pair's outgoing
  * topic and request or response channel, with data sealed here from
- * session data that decodes; a chat request is built here from its fields.
- * No operation signs bytes the caller chose.
+ * session data that decodes; a chat request is built here from its fields,
+ * including its identity proof. No operation signs bytes the caller chose.
+ *
+ * A chat has two routes. The identity route is the pair's session under the
+ * two chat keys. The device route is the session between this host's device
+ * key and the peer's chat key (outgoing) and between this host's chat key and
+ * a peer device's key (incoming), whose statements are multi-device
+ * envelopes. Every statement is signed with the identity account.
  *
  * This is the Nova protocol's identity, not a general chat interface: another
  * engine (libsignal, OpenMLS) keeps its own keys and state.
@@ -38,6 +47,11 @@ export interface NovaIdentity {
   readonly identity: Uint8Array;
   /** The X25519 chat key peers find on chain. */
   readonly chatPublic: Uint8Array;
+  /**
+   * This host's one device, as announced to peers: the identity account
+   * signs for it, and its own X25519 key wraps what peers send it.
+   */
+  readonly device: DeviceInfo;
   /** Decrypt a chat request's data, sealed to this chat key. */
   openRequest(data: Uint8Array): Promise<Uint8Array>;
   /** Whether a version 2 request's identity proof matches the sender's chat key. */
@@ -47,11 +61,37 @@ export interface NovaIdentity {
   ): Promise<boolean>;
   /** The pair's session topics: the peer writes on `incoming`, this side on `outgoing`. */
   sessionTopics(peer: Uint8Array, peerChatKey: Uint8Array): Promise<PairTopics>;
+  /**
+   * The device-route topics with one device of the peer: `incoming` is what
+   * that device writes on, `outgoing` what this host writes on for the peer.
+   */
+  deviceTopics(
+    peer: Uint8Array,
+    peerChatKey: Uint8Array,
+    peerDevice: DeviceInfo,
+  ): Promise<PairTopics>;
   /** Decrypt a session statement's data from the peer with this chat key. */
   openSession(peerChatKey: Uint8Array, sealed: Uint8Array): Promise<Uint8Array>;
+  /**
+   * Decrypt a device-route statement's data from `peerDevice` and open its
+   * envelope, to plain session data. Throws when the envelope names no entry
+   * for this host's device.
+   */
+  openDeviceSession(
+    peerDevice: DeviceInfo,
+    sealed: Uint8Array,
+  ): Promise<Uint8Array>;
   /** Seal session data for the peer and sign it as a statement on this side's topic. */
   sessionStatement(request: SessionStatementRequest): Promise<Uint8Array>;
-  /** Build, sign and seal a version 1 chat request to the peer, as a statement. */
+  /**
+   * Wrap session data in an envelope for the peer's devices, seal it under
+   * the device-route key and sign it as a statement on this side's
+   * device-route topic.
+   */
+  deviceSessionStatement(
+    request: DeviceSessionStatementRequest,
+  ): Promise<Uint8Array>;
+  /** Build, sign and seal a version 2 chat request to the peer, as a statement. */
   requestStatement(request: ChatRequestStatement): Promise<SignedRequest>;
 }
 
@@ -70,6 +110,16 @@ export interface SessionStatementRequest {
   peer: Uint8Array;
   peerChatKey: Uint8Array;
   /** Encoded session data: a request goes on the request channel, a response on the response channel. */
+  plaintext: Uint8Array;
+  expiry: bigint;
+}
+
+export interface DeviceSessionStatementRequest {
+  peer: Uint8Array;
+  peerChatKey: Uint8Array;
+  /** The devices that can open it: every device of the peer this host knows. */
+  devices: DeviceInfo[];
+  /** Encoded session data: a request or a response. */
   plaintext: Uint8Array;
   expiry: bigint;
 }
@@ -101,6 +151,7 @@ export function localNovaIdentity(
   return {
     identity: me,
     chatPublic: keys.chatPublic,
+    device: { statementAccount: me, encryptionKey: keys.devicePublic },
     async openRequest(data) {
       return unsealRequest(data, (ephemeral) => keys.agree(ephemeral));
     },
@@ -119,8 +170,26 @@ export function localNovaIdentity(
         outgoing: sessionTopic(secret, me, peer),
       };
     },
+    async deviceTopics(peer, peerChatKey, peerDevice) {
+      return {
+        incoming: sessionTopic(
+          keys.agree(peerDevice.encryptionKey),
+          peerDevice.statementAccount,
+          me,
+        ),
+        outgoing: sessionTopic(keys.agreeDevice(peerChatKey), me, peer),
+      };
+    },
     async openSession(peerChatKey, sealed) {
       return unsealSession(keys.agree(peerChatKey), sealed);
+    },
+    async openDeviceSession(peerDevice, sealed) {
+      return openDeviceEnvelope(
+        unsealSession(keys.agree(peerDevice.encryptionKey), sealed),
+        me,
+        peerDevice.encryptionKey,
+        (peerKey) => keys.agreeDevice(peerKey),
+      );
     },
     async sessionStatement({ peer, peerChatKey, plaintext, expiry }) {
       const data = decodeSessionData(plaintext);
@@ -142,13 +211,51 @@ export function localNovaIdentity(
         sign,
       );
     },
+    async deviceSessionStatement({
+      peer,
+      peerChatKey,
+      devices,
+      plaintext,
+      expiry,
+    }) {
+      const data = decodeSessionData(plaintext);
+      if (data.kind === "multi-device")
+        throw new Error("This identity does not send multi-device envelopes.");
+      const secret = keys.agreeDevice(peerChatKey);
+      const topic = sessionTopic(secret, me, peer);
+      const envelope = wrapDeviceEnvelope(
+        plaintext,
+        devices,
+        (peerKey) => keys.agreeDevice(peerKey),
+        random,
+      );
+      return encodeSigned(
+        {
+          expiry,
+          channel:
+            data.kind === "request"
+              ? requestChannel(topic)
+              : responseChannel(topic),
+          topics: [topic],
+          data: sealSessionPlaintext(secret, envelope, random),
+        },
+        me,
+        sign,
+      );
+    },
     async requestStatement(request) {
       const { peer, peerChatKey } = request;
       const plaintext = requestPlaintext(
         {
           id: request.id,
           timestampMs: request.timestampMs,
-          content: { version: 1, welcome: request.welcome },
+          content: {
+            version: 2,
+            identity: me,
+            identityProof: identityProof(keys.agree(peerChatKey), me, me),
+            deviceKey: keys.devicePublic,
+            welcome: request.welcome,
+          },
         },
         peer,
         me,

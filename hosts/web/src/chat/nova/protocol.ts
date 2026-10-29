@@ -32,8 +32,10 @@ import {
  * No code is taken from them. Only the parts a host with one device needs are
  * here: first-contact requests, pairwise sessions, text, acceptance,
  * reactions, leaving and attachments (the reference to a file sent through
- * HOP, `./hop.ts`). Multi-device envelopes are recognised and reported,
- * not opened.
+ * HOP, `./hop.ts`). A chat opened by a version 2 request runs on the device
+ * route: its statements are multi-device envelopes (`./multi-device.ts`)
+ * between this host's one device and the peer's devices. Older chats stay on
+ * the identity route.
  */
 
 const SLASH = utf8("/");
@@ -100,6 +102,16 @@ export const responseChannel = (topic: Uint8Array): Uint8Array =>
 // ---------------------------------------------------------------------------
 // Chat requests
 // ---------------------------------------------------------------------------
+
+/**
+ * One device of a person: the account that signs for it and the X25519 key
+ * that wraps what is sent to it. For this host the account is the identity
+ * account.
+ */
+export interface DeviceInfo {
+  statementAccount: Uint8Array;
+  encryptionKey: Uint8Array;
+}
 
 /** The text a request opens with. Attachments are not read. */
 export type RequestContent =
@@ -249,14 +261,19 @@ function readPushToken(reader: Reader): PushToken {
 }
 
 export function encodeRequestMessage(request: ChatRequest): Uint8Array {
-  if (request.content.version !== 1)
-    throw new Error("this host sends version 1 requests only");
+  const { content } = request;
+  const welcome = option(content.welcome, (value) => encodeRichText(value));
+  const head = concat(text(request.id), u64(request.timestampMs));
+  if (content.version === 1)
+    return concat(head, Uint8Array.of(0), Uint8Array.of(0), welcome);
   return concat(
-    text(request.id),
-    u64(request.timestampMs),
+    head,
+    Uint8Array.of(1),
+    key32(content.identity, "the identity"),
+    key32(content.identityProof, "the identity proof"),
+    key32(content.deviceKey, "the device key"),
     Uint8Array.of(0),
-    Uint8Array.of(0),
-    option(request.content.welcome, (welcome) => encodeRichText(welcome)),
+    welcome,
   );
 }
 
@@ -298,7 +315,7 @@ const requestSigningPayload = (message: Uint8Array, acceptor: Uint8Array) =>
   concat(message, bytes(acceptor));
 
 /**
- * A version 1 request's plaintext, signed for `acceptor`:
+ * A request's plaintext, signed for `acceptor`:
  * `message || 0x00 || signature || signer`.
  */
 export function requestPlaintext(
@@ -330,7 +347,7 @@ export function sealRequestPlaintext(
   );
 }
 
-/** Seal a version 1 request to `acceptorChatKey`; see {@link requestPlaintext}. */
+/** Seal a request to `acceptorChatKey`; see {@link requestPlaintext}. */
 export const sealRequest = (
   request: ChatRequest,
   acceptor: Uint8Array,
@@ -430,6 +447,24 @@ export function checkIdentityProof(
   );
 }
 
+/**
+ * A version 2 request's identity proof: the identity and the signing device
+ * account, keyed by the secret the two chat keys agree.
+ */
+export const identityProof = (
+  secret: Uint8Array,
+  identity: Uint8Array,
+  signer: Uint8Array,
+): Uint8Array =>
+  keyedBlake2b256(
+    key32(secret, "shared secret"),
+    concat(
+      key32(identity, "the identity"),
+      key32(signer, "the signer"),
+      text("mds-chat-request"),
+    ),
+  );
+
 /** The check of {@link checkIdentityProof}, over the proof's parts. */
 export function identityProofMatches(
   secret: Uint8Array,
@@ -437,11 +472,7 @@ export function identityProofMatches(
   signer: Uint8Array,
   proof: Uint8Array,
 ): boolean {
-  const expected = keyedBlake2b256(
-    secret,
-    concat(identity, signer, text("mds-chat-request")),
-  );
-  return equalBytes(expected, proof);
+  return equalBytes(identityProof(secret, identity, signer), proof);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +499,12 @@ export type MessageContent =
   /** Text with files (kind 15, or a reply, kind 7). */
   | { kind: "rich"; text: string | null; attachments: Attachment[] }
   | { kind: "accepted"; requestId: string }
+  /**
+   * The acceptance of a version 2 request (kind 20): the request's id and
+   * the accepting device. It is published alone on the identity route and
+   * nobody answers it.
+   */
+  | { kind: "device-accepted"; requestId: string; device: DeviceInfo }
   /**
    * A sender's emoji on one of the conversation's messages (kind 4), or its
    * removal (kind 5). Removal names the same emoji it takes away.
@@ -527,8 +564,8 @@ const readKey = (reader: Reader, what: string): Uint8Array =>
 class UnsupportedContent extends Error {}
 
 /**
- * Encode `id || timestamp || 0x00 (version 1) || content`. Sends text, plain
- * acceptance, reactions and leaving.
+ * Encode `id || timestamp || 0x00 (version 1) || content`. Sends text,
+ * acceptance (plain and by device), reactions, calls, files and leaving.
  */
 export function encodeMessage(message: ChatMessage): Uint8Array {
   const head = concat(
@@ -548,6 +585,14 @@ export function encodeMessage(message: ChatMessage): Uint8Array {
         head,
         Uint8Array.of(CONTENT_TAG.chatAccepted),
         text(message.content.requestId),
+      );
+    case "device-accepted":
+      return concat(
+        head,
+        Uint8Array.of(CONTENT_TAG.deviceChatAccepted),
+        text(message.content.requestId),
+        key32(message.content.device.statementAccount, "a device's account"),
+        key32(message.content.device.encryptionKey, "a device's key"),
       );
     case "rich":
       return concat(
@@ -717,8 +762,13 @@ function readContent(tag: number, reader: Reader): MessageContent {
         };
       case CONTENT_TAG.deviceChatAccepted: {
         const requestId = reader.text();
-        reader.take(64);
-        return { kind: "accepted", requestId };
+        const statementAccount = reader.take(32).slice();
+        const encryptionKey = reader.take(32).slice();
+        return {
+          kind: "device-accepted",
+          requestId,
+          device: { statementAccount, encryptionKey },
+        };
       }
       default:
         return { kind: "other", tag };

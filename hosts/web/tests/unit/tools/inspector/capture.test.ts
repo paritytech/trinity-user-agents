@@ -284,11 +284,13 @@ describe("payload capture", () => {
       },
     });
 
-    // The first delivery and the replay after the reconnect are two arrivals.
+    // The first delivery is one arrival. The device change in it adds a topic
+    // to follow, which delivers what the store holds once more, and the
+    // reconnect delivers it again.
     const arrivals = sessionEvents(events)
       .filter((event) => event.statement === controlHash)
       .map((event) => event.arrival);
-    expect(arrivals).toEqual([1, 2]);
+    expect(arrivals).toEqual([1, 2, 3]);
 
     // What does not decrypt is kept raw, with the reason and no plaintext.
     const garbledCapture = payloads.statementFor(
@@ -371,7 +373,9 @@ describe("payload capture", () => {
       protocol: {
         message: {
           content: {
-            index: 0,
+            index: 1,
+            identityProof: { identityAccountId: bytesToHex(alice.identity) },
+            deviceEncPubKey: bytesToHex(alice.devicePublic),
             pushToken: { option: 0 },
             welcomeMessage: {
               option: 1,
@@ -381,7 +385,7 @@ describe("payload capture", () => {
         },
         proof: { signer: bytesToHex(alice.identity) },
       },
-      annotations: { "$.message.content.index": { name: "V1" } },
+      annotations: { "$.message.content.index": { name: "V2" } },
     });
 
     // No key, secret or key derived from one is held anywhere.

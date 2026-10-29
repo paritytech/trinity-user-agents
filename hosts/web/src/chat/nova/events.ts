@@ -59,6 +59,7 @@ export type ChatEventBody =
         | "declined earlier"
         | "contact active"
         | "answers ours"
+        | "device route"
         | "blocked";
       problem?: string;
     } & Carried)
@@ -74,6 +75,8 @@ export type ChatEventBody =
       type: "session";
       peer: string;
       data: "request" | "response" | "multi-device";
+      /** The route the statement arrived on, `identity` or `device`. */
+      route?: "identity" | "device";
       requestId?: string;
       /** Content kind of each message, in order; null for one that could not be read. */
       kinds?: (number | null)[];
@@ -85,6 +88,8 @@ export type ChatEventBody =
       type: "submit";
       purpose: "chat request" | "accept" | "messages" | "leave" | "ack";
       peer: string;
+      /** The route the statement goes on, `identity` or `device`. */
+      route?: "identity" | "device";
       requestId?: string;
       messages?: number;
       result: "stored" | "refused" | "error";

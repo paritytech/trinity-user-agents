@@ -18,7 +18,12 @@ import {
  *   names this side of every session topic, and it signs every statement;
  * - the chat key, X25519 from `blake2b(key: "//chat" chain code,
  *   blake2b(key: "ecdh", entropy))`. Peers find it on chain and agree every
- *   shared secret with it.
+ *   shared secret with it;
+ * - the device encryption key, X25519 from the same root under the
+ *   `chat-device` chain code. The apps keep a random key per device; this
+ *   host derives its one so that a restore reproduces it. It is announced
+ *   with the identity account as this device's statement account, and wraps
+ *   the one-time keys of device-route envelopes.
  *
  * The secrets stay in this object. Callers get public keys, signatures and
  * agreed secrets.
@@ -26,20 +31,29 @@ import {
 export class ChatKeys {
   readonly identity: Uint8Array;
   readonly chatPublic: Uint8Array;
+  readonly devicePublic: Uint8Array;
   readonly #identitySecret: Uint8Array;
   readonly #chatSecret: Uint8Array;
+  readonly #deviceSecret: Uint8Array;
 
-  private constructor(identitySecret: Uint8Array, chatSecret: Uint8Array) {
+  private constructor(
+    identitySecret: Uint8Array,
+    chatSecret: Uint8Array,
+    deviceSecret: Uint8Array,
+  ) {
     this.#identitySecret = identitySecret;
     this.#chatSecret = chatSecret;
+    this.#deviceSecret = deviceSecret;
     this.identity = sr25519.getPublicKey(identitySecret);
     this.chatPublic = x25519PublicKey(chatSecret);
+    this.devicePublic = x25519PublicKey(deviceSecret);
   }
 
   static fromEntropy(entropy: Uint8Array, networkSuffix: string): ChatKeys {
     return new ChatKeys(
       deriveIdentitySecret(entropy, networkSuffix),
       deriveChatSecret(entropy),
+      deriveDeviceSecret(entropy),
     );
   }
 
@@ -50,6 +64,11 @@ export class ChatKeys {
   /** The raw X25519 secret shared with a peer's chat key. */
   agree(peerChatKey: Uint8Array): Uint8Array {
     return x25519Agree(this.#chatSecret, peerChatKey);
+  }
+
+  /** The raw X25519 secret of this device's encryption key with a peer's key. */
+  agreeDevice(peerKey: Uint8Array): Uint8Array {
+    return x25519Agree(this.#deviceSecret, peerKey);
   }
 }
 
@@ -74,6 +93,12 @@ export function junctionCode(junction: string): Uint8Array {
 export function deriveChatSecret(entropy: Uint8Array): Uint8Array {
   const root = keyedBlake2b256(utf8("ecdh"), entropy);
   return keyedBlake2b256(chainCode(text("chat")), root);
+}
+
+/** The X25519 device encryption secret: the `chat-device` domain under the entropy's `ecdh` root. */
+export function deriveDeviceSecret(entropy: Uint8Array): Uint8Array {
+  const root = keyedBlake2b256(utf8("ecdh"), entropy);
+  return keyedBlake2b256(chainCode(text("chat-device")), root);
 }
 
 /** `index_bytes(0)`: a zero u32 and the first 28 bytes of `blake2b256("product-account-index")`. */

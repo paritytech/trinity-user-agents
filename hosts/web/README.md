@@ -377,8 +377,9 @@ not TrUAPI, and is meant to show the boundary a native host could copy.
 ### Chat
 
 Chat is an experimental, host-drawn screen. It is not a product and adds nothing to TrUAPI. It is written from reading
-the Polkadot app's one-to-one protocol. It has received requests and control messages from the iOS app, but it is not
-yet known to interoperate with the app in every respect.
+the Polkadot app's one-to-one protocol. Its wire is checked against a second, separately written implementation of the
+apps' wire (see **What is tested**), but no current iOS or Android build has exchanged a message with it, so it is not
+known to interoperate with them in every respect.
 
 - **Runs with the session.** Signing in starts chat for that wallet, network and identity, whichever screen is in front,
   and signing out, switching wallet or network, or reloading stops it. There is one engine and one connection per
@@ -391,14 +392,14 @@ yet known to interoperate with the app in every respect.
   isolated from a product opened by name on this origin (see [Trust model](#trust-model)), and the phrase they come from
   is stored unencrypted.
 - **What it does.** It reads requests addressed to the identity, opens and verifies them (version 1, and version 2 with
-  its identity proof), accepts or declines them, sends a version 1 request to a lite username or a `0x` account id, and
-  exchanges text on the pairwise session with acknowledgements, one request outstanding per direction. A push token
-  (kind 1) and device changes (kinds 17 and 18) are read and acknowledged but not shown or kept, as the apps do not show
-  them. Reactions, leaving, blocking, files and calls are below. Other message kinds show as a placeholder with their
-  kind number.
+  its identity proof), accepts or declines them, sends a version 2 request to a lite username or a `0x` account id, and
+  exchanges text with acknowledgements, one request outstanding per direction, on the route the **One device** bullet
+  below describes. A push token (kind 1) is read and acknowledged but not shown or kept. Device changes (kinds 17
+  and 18) are not shown; in a chat on the device route they update the peer's device list. Reactions, leaving, blocking,
+  files and calls are below. Other message kinds show as a placeholder with their kind number.
 - **New chat.** **+** opens the host's [contact picker](#contacts), the one products open, titled **New chat** and
   naming no product. Choosing someone the user already chats with opens that conversation. Choosing anyone else opens
-  **Send request to …** with an optional first message; only that button sends a version 1 request, through the
+  **Send request to …** with an optional first message; only that button sends a version 2 request, through the
   provider's own start, with the person's account. Closing the picker leaves the screen as it was, and a choice made
   after the session changed is dropped. Only a provider that can start a chat (the host's Nova chat) offers **+**; a
   chat product run as a worker does not. There is no QR scanner, and an account id cannot be typed.
@@ -462,22 +463,51 @@ yet known to interoperate with the app in every respect.
   used. When both name a key or an account and they differ, neither is used. A stored request whose sender had no key is
   looked up again each time the store delivers it. The identity's own allowance is the People chain
   `:statement_allowance:` entry.
-- **One device.** The host announces no device key, so a peer would talk to it pairwise. It accepts with the older
-  `ChatAccepted` message (kind 14), not the app's current `DeviceChatAccepted` (kind 20). Whether current app builds
-  treat it as acceptance is not verified. It does not open multi-device envelopes, pair with a phone, sync history or
-  share an identity with another device.
+- **One device.** The host is one device of its identity. It announces a device key of its own, an X25519 key derived
+  from the wallet's entropy under a `chat-device` domain (the apps keep a random one per device), with the identity
+  account as the device's statement account. A chat opened by a version 2 request, sent or accepted here, runs on the
+  _device route_ of chat-spec `mds.md`: each statement is a multi-device envelope (tag 2 or 3) whose one-time key is
+  wrapped for each known device of the peer, under the outer key of this host's device key and the peer's chat key, on
+  its own topic (`src/chat/nova/multi-device.ts`). The acceptance of a version 2 request is `DeviceChatAccepted`
+  (kind 20) naming this device, published alone on the identity route; nobody answers it, so it is published again on
+  every start until the peer writes on its device route (the apps renew it every period). A chat that started before, or
+  with a version 1 request, stays on the identity route as it was, with kind 14, and is never moved by a device
+  acceptance, since the peer never learned this device there. A version 2 request from someone already accepted moves
+  that chat to the device route once, without asking again, keeping its history. Both routes are read for every contact;
+  an answer goes on the route the message came on. A statement is bound to its contact by topic, never by its signer. A
+  peer's devices come from its request, its acceptance of this host's request (the request id must be this host's), and
+  its device changes. Not supported: more than one device of this identity (a phone restored from the same phrase would
+  share this host's statement account, which the apps cannot tell apart), pairing with a phone, history sync, the
+  device-to-device sync channel, a push token of its own (so a native acceptor's renewal of its acceptance ends only
+  when this host first writes), and moving an existing chat to the device route on this host's own initiative.
+- **Anonymous signers.** The apps now sign requests, acceptances and chat statements with accounts of their own per
+  request or chat, funded through anonymous calls of the resources pallet (chat-spec RFC-0005). This host reads such
+  statements, as it goes by topic and checks only the proof. It sends none: it signs with the identity account, which
+  the RFC allows as a fallback after the user's consent. Here that consent is the session's chat write permission. Its
+  statements are linkable to the identity, which the apps' anonymous accounts avoid. Making the accounts needs the
+  allowance calls of the resources pallet, which this host does not make. Because the identity signs both routes, a chat
+  on the device route can hold up to three of the identity's statement slots (the acceptance, and the request and
+  response channels of the device route), where a chat on the identity route held two.
 - **Storage.** Conversations are kept in this browser's `localStorage` per network and wallet
   (`truapi-web-signing-host:network:<id>:chat:<wallet>:v1`).
-- **Writes.** Published statements are signed by the identity and need a statement allowance. Requests are signed and
-  published by the identity itself, not by the anonymous per-request account the app uses when it holds a notification
-  slot.
+- **Writes.** Published statements are signed by the identity and need a statement allowance, as **Anonymous signers**
+  says.
 - **What is tested.** Checked against an outside source: the chat key against the core's pinned Rust value, the identity
-  account and chat key against the running core, and the Asset Hub keys and value layout against live storage. Tested
-  only against this code: the request, message, session and statement codecs and the engine, by round trips between two
-  copies of it. The reaction, leave, attachment and call message layouts, the HOP root entry and the compact SDP are
-  pinned to byte layouts written from the app sources, and the HOP root entry to the iOS app's own test vectors. HOP
-  transfers run against a node in memory and calls against a second call manager in the same page. No captured app
-  traffic, no live HOP node, and no exchange or call with a Polkadot app.
+  account and chat key against the running core, and the Asset Hub keys and value layout against live storage. The
+  version 2 request, its identity proof, the request topics, the identity-route and device-route topics, the
+  multi-device envelope, the device acceptance and the response are checked against a second implementation written
+  apart from this code, from the public iOS (`polkadot-ios-community` at `a15fbf250`) and Android
+  (`polkadot-android-community` at `3a4cfdcd3`) sources and chat-spec at `2cc07e368`
+  (`tests/unit/fixtures/nova/native-peer.py`, `tests/unit/chat/nova/native-interop.test.ts`): the engine reads that
+  peer's statements, and that peer reads the engine's, pinned in `native-peer.emitted.json`. That peer is not an app and
+  no app took part; it cannot catch a misreading shared by both. The sr25519 signatures inside a request are checked
+  only by this code's tests. Tested only against this code: the other codecs and the engine's flows (the older route,
+  the move to the device route, restarts, duplicates, blocking, device changes), by round trips between two copies of
+  it, and the same flows in the Nova chat worker over the identity bridge. The reaction, leave, attachment and call
+  message layouts, the HOP root entry and the compact SDP are pinned to byte layouts written from the app sources, and
+  the HOP root entry to the iOS app's own test vectors. HOP transfers run against a node in memory and calls against a
+  second call manager in the same page. No captured app traffic, no live HOP node, and no exchange or call with a
+  Polkadot app.
 
 ### Product chats
 
@@ -635,11 +665,12 @@ chat worker**. **Host (default)** switches back. The choice is kept per network 
   `statement_store.subscribe` and `submit` (the core asks the user once for `StatementSubmit`), `chain.*` for the
   directory, and `localStorage` for the history, which the core keeps per product, so it survives a worker restart.
 - **What stays in the host.** The wallet's chat keys. The host lends their operations over a page-local identity bridge
-  (`src/chat/draft/identity-bridge.ts`, draft, not TrUAPI): decrypt a request or session message, check an identity
-  proof, give the pair's public session topics, and build, seal and sign a session statement or a chat request. No
-  operation returns a secret key, an agreed secret or the entropy, and none signs bytes the caller chose. The worker
-  does get plaintext: it is the chat. Only the `localhost` worker gets the bridge, only in worker mode, and only for the
-  session it was granted in; any other frame that asks is refused.
+  (`src/chat/draft/identity-bridge.ts`, draft, not TrUAPI): decrypt a request, a session message or a device-route
+  message, check an identity proof, give the pair's public topics for either route, and build, seal and sign a session
+  statement, a device-route statement or a chat request (the request's identity proof is made there). It names the
+  host's one device, public parts only. No operation returns a secret key, an agreed secret or the entropy, and none
+  signs bytes the caller chose. The worker does get plaintext: it is the chat. Only the `localhost` worker gets the
+  bridge, only in worker mode, and only for the session it was granted in; any other frame that asks is refused.
 - **Signing.** `statement_store.submit` encodes the `SignedStatement` again as the store's sorted field list with the
   proof unchanged (`signed_statement_to_scale` in the core), so the worker's statements carry the same bytes and the
   same identity signer as the host's engine would send. This was read in the core's code and checked offline in unit
@@ -1400,9 +1431,10 @@ nothing else of it.
   providers, `screen.ts`, `tabs.ts`, `conversation-view.ts` and `call-view.ts` draw it.
   - `nova/`: the Nova protocol, the one engine both the page and the Nova chat worker run. `gate.ts` refuses the public
     development phrase, `keys.ts` derives the keys, `identity.ts` gives the engine their operations and never the keys,
-    `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
-    reads, `store.ts` the saved conversations, `hop.ts` file transfer, `call-wire.ts` and `call.ts` calls, `turn.ts`
-    relay credentials, and `engine.ts` ties them together. `events.ts` is what the engine reports to an observer.
+    `protocol.ts`, `multi-device.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC,
+    `directory.ts` the chain reads, `store.ts` the saved conversations, `hop.ts` file transfer, `call-wire.ts` and
+    `call.ts` calls, `turn.ts` relay credentials, and `engine.ts` ties them together. `events.ts` is what the engine
+    reports to an observer.
   - `nova-session.ts` builds the page's engine for a session, `nova-provider.ts` translates it for the Chat screen, and
     `account-proofs.ts` asks the core for the proof that buys relay credentials.
   - `worker/`: the Nova chat worker, a product that runs the same engine in a product worker. `worker.ts` is its entry,
@@ -1451,8 +1483,8 @@ nothing else of it.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
 - A Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance, and holds only
   the pinned Humanity card. The host passes no payment callbacks, so the core answers those calls `Unsupported`. Chat
-  has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls. Live OS permission status
-  is not provided either.
+  has no phone pairing, history sync, or second device of the same identity. Live OS permission status is not provided
+  either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs
