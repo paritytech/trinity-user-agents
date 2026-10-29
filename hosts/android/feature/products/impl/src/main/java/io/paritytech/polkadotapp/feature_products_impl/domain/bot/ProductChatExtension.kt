@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -222,8 +223,9 @@ class ProductChatExtension(
         override suspend fun setRoomMetadata(
             chatIdParameter: ProductChatIdParameter,
             name: String,
+            iconChange: RoomIconChange?,
             metadata: ChatRoomMetadataModel,
-        ): Result<Unit> = extensionContext.setRoomMetadata(chatIdParameter.toChatId(id), name, metadata)
+        ): Result<Unit> = extensionContext.setRoomMetadata(chatIdParameter.toChatId(id), name, iconChange, metadata)
 
         override suspend fun setRoomPreview(chatIdParameter: ProductChatIdParameter, preview: ChatRoomPreviewModel): Result<Unit> =
             extensionContext.setRoomPreview(chatIdParameter.toChatId(id), preview)

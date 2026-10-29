@@ -51,8 +51,8 @@ interface ChatExtensionContext {
      */
     suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit>
 
-    /** Replaces the name and the description of the room. The v1 icon of the room stays. */
-    suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
+    /** Replaces the name and the description of the room. A null [iconChange] keeps the icon of the room. */
+    suspend fun setRoomMetadata(chatId: ChatId, name: String, iconChange: RoomIconChange?, metadata: ChatRoomMetadataModel): Result<Unit>
 
     suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit>
 
