@@ -423,9 +423,7 @@ pub struct ChatRoomMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomBadge {
-	/// No badge.
-	Hidden,
-	/// A number. The value `0` removes the badge.
+	/// A number. The value `0` shows no badge.
 	UnreadCount {
 		/// The number the host shows.
 		count: u32,
