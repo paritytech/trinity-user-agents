@@ -21,7 +21,6 @@ internal fun ChatSummary.withRoomPolicy(policy: ChatRoomPolicy?): ChatSummary {
     val productBadge = when (val badge = policy.listBadge) {
         // The host counts nothing in a room whose product keeps the messages.
         ChatRoomPolicy.ListBadge.HostUnreadCount -> if (keepsMessages) ChatSummaryBadge.None else this.badge
-        ChatRoomPolicy.ListBadge.Hidden -> ChatSummaryBadge.None
         is ChatRoomPolicy.ListBadge.Count -> unreadBadge(badge.count)
         is ChatRoomPolicy.ListBadge.Image -> ChatSummaryBadge.Image(badge.icon)
     }
