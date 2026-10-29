@@ -214,6 +214,8 @@ function webSocketSession(urls: string[], timeoutMs: number) {
   };
   let lastId = 0;
   let connecting: Promise<{ socket: WebSocket; url: string }> | undefined;
+  /** The socket requests go over; one failover gave up on never fails them. */
+  let live: WebSocket | undefined;
   const open = (url: string) =>
     new Promise<{ socket: WebSocket; url: string }>((resolve, reject) => {
       const socket = new WebSocket(url);
@@ -223,13 +225,20 @@ function webSocketSession(urls: string[], timeoutMs: number) {
       }, timeoutMs);
       socket.onopen = () => {
         clearTimeout(timer);
+        live = socket;
         resolve({ socket, url });
       };
       socket.onerror = () => {
         clearTimeout(timer);
         reject(new Error(`could not connect to ${url}`));
       };
-      socket.onclose = () => failAll("closed before answering");
+      socket.onclose = () => {
+        if (socket !== live) return;
+        // The next request connects again rather than waiting on a closed socket.
+        live = undefined;
+        connecting = undefined;
+        failAll("closed before answering");
+      };
       socket.onmessage = (event) => {
         let reply: RpcReply | null;
         try {
