@@ -545,7 +545,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   selection)` whenever one changes, and the options pushed back carry
   `limits`, which combine them across every provider into the
   range the amount screen enforces: the smallest minimum and the largest
-  maximum, with no bound while any provider has not shown one. The host's
+  maximum, with no bound while any provider has not shown one. For a crypto selection with an asset, the options'
+  `networks` give the same range on each network a candidate's route
+  declares for it, for the network picker. The host's
   own product floor applies on top. A quote carries its asset's
   `asset_decimals`, so the host shows asset amounts without knowing the
   asset.

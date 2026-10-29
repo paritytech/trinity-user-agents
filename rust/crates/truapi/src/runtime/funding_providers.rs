@@ -32,8 +32,8 @@ use crate::{
 		funding::FundingSessionError,
 		funding_providers::{
 			FUNDING_MIN_AMOUNT, FundingAmountLimits, FundingCandidate, FundingCountry,
-			FundingOptions, FundingProviderEntry, FundingProviderOrigin, FundingSelection,
-			LearnedSupport, LimitScope, amount_limits, country_support,
+			FundingNetworkLimits, FundingOptions, FundingProviderEntry, FundingProviderOrigin,
+			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -245,28 +245,47 @@ impl RuntimeServices {
 		};
 		let providers = self.funding_providers();
 		let selection = lock(&providers.selections).get(intent).cloned();
-		let options = FundingOptions {
-			candidates: providers.candidates(session.direction),
-			countries: selection
-				.as_ref()
-				.and_then(|selection| {
-					let asset = selection.asset.as_deref()?;
-					Some(providers.countries(session.direction, selection.rail, asset))
-				})
-				.unwrap_or_default(),
-			limits: selection
-				.map(|selection| {
-					providers.amount_limits(LimitScope {
-						direction: session.direction,
-						rail: selection.rail,
-						asset: selection.asset.as_deref().unwrap_or_default(),
-						network: selection.network.as_deref(),
-						country: selection.country.as_deref(),
-					})
-				})
-				.unwrap_or(FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None }),
+		let candidates = providers.candidates(session.direction);
+		let limits_on = |selection: &FundingSelection, network: Option<&str>| {
+			providers.amount_limits(LimitScope {
+				direction: session.direction,
+				rail: selection.rail,
+				asset: selection.asset.as_deref().unwrap_or_default(),
+				network,
+				country: selection.country.as_deref(),
+			})
 		};
-		feed.funding_options_changed(intent.to_string(), options);
+		let (countries, limits, networks) = match &selection {
+			None => (
+				Vec::new(),
+				FundingAmountLimits { min: Some(FUNDING_MIN_AMOUNT), max: None },
+				Vec::new(),
+			),
+			Some(selection) => {
+				let countries = selection
+					.asset
+					.as_deref()
+					.map(|asset| providers.countries(session.direction, selection.rail, asset))
+					.unwrap_or_default();
+				let networks = match (&selection.rail, &selection.asset) {
+					(FundingRail::Crypto, Some(asset)) => {
+						declared_networks(&candidates, session.direction, asset)
+							.into_iter()
+							.map(|network| FundingNetworkLimits {
+								limits: limits_on(selection, Some(&network)),
+								network,
+							})
+							.collect()
+					},
+					_ => Vec::new(),
+				};
+				(countries, limits_on(selection, selection.network.as_deref()), networks)
+			},
+		};
+		feed.funding_options_changed(
+			intent.to_string(),
+			FundingOptions { candidates, countries, limits, networks },
+		);
 	}
 
 	/// Forget what the user picked in session `intent`'s overlay, once it
@@ -436,6 +455,31 @@ fn normalized_product_id(product_id: String) -> Result<String, String> {
 		.map_err(|error| error.to_string())
 }
 
+/// The networks `candidates`' crypto routes declare for `asset` in
+/// `direction`, each once, in the order first declared.
+fn declared_networks(
+	candidates: &[FundingCandidate],
+	direction: FundingDirection,
+	asset: &str,
+) -> Vec<String> {
+	let mut networks: Vec<String> = Vec::new();
+	let declared = candidates
+		.iter()
+		.flat_map(|candidate| &candidate.routes)
+		.filter(|route| {
+			route.rail == FundingRail::Crypto &&
+				route.directions.contains(&direction) &&
+				route.assets.iter().any(|declared| declared == asset)
+		})
+		.flat_map(|route| route.networks.iter().flatten());
+	for network in declared {
+		if !networks.contains(network) {
+			networks.push(network.clone());
+		}
+	}
+	networks
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -443,6 +487,38 @@ mod tests {
 	use truapi::latest::FundingRail;
 
 	use crate::host_logic::worker_manifest::FundingRoute;
+
+	// The network picker lists each network a crypto route declares for the
+	// asset once, in the order the providers declare them.
+	#[test]
+	fn declared_networks_are_listed_once_in_order() {
+		let route = |rail, assets: &[&str], networks: Option<&[&str]>| FundingRoute {
+			rail,
+			directions: vec![FundingDirection::In],
+			assets: assets.iter().map(|asset| asset.to_string()).collect(),
+			networks: networks.map(|n| n.iter().map(|network| network.to_string()).collect()),
+			countries: None,
+		};
+		let candidate = |routes| FundingCandidate {
+			provider_id: "ramp.dot".to_string(),
+			routes,
+			unsupported: Vec::new(),
+			limits: Vec::new(),
+		};
+		let candidates = [
+			candidate(vec![
+				route(FundingRail::Crypto, &["USDT"], Some(&["polkadot", "ethereum"])),
+				route(FundingRail::Crypto, &["USDC"], Some(&["base"])),
+				route(FundingRail::Card, &["USDT"], None),
+			]),
+			candidate(vec![route(FundingRail::Crypto, &["USDT"], Some(&["ethereum", "tron"]))]),
+		];
+
+		assert_eq!(
+			declared_networks(&candidates, FundingDirection::In, "USDT"),
+			["polkadot", "ethereum", "tron"]
+		);
+	}
 
 	fn manifest(routes: &str) -> String {
 		format!(
