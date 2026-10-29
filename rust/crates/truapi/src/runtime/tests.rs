@@ -2991,16 +2991,16 @@ impl HeldTasks {
 // so a session in flight is announced on resume, once it is loaded.
 #[test]
 fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
-	let storage = stub_platform();
-	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
-		let services = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, test_spawner());
 		let platform =
 			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 		assert!(services.funding().install_platform(platform.clone()));
 		services.resume_funding();
 		(services, platform)
 	};
-	let (before, _) = start(&storage);
+	let (before, _) = start(&db);
 	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
@@ -3015,7 +3015,7 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 			.expect("selected")
 	);
 
-	let (after, platform) = start(&storage);
+	let (after, platform) = start(&db);
 	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
 	for _ in 0..200 {
 		if !announced().is_empty() {
@@ -9069,8 +9069,8 @@ fn wait_for_stage(
 // resumes; the answer comes from storage, not from the empty registry.
 #[test]
 fn funding_in_progress_reads_storage_before_funding_resumes() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -9088,7 +9088,7 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 			.expect("selected")
 	);
 
-	let relaunched = funding_services_over(storage.clone());
+	let relaunched = funding_services_on(&db, test_spawner());
 
 	assert_eq!(
 		(

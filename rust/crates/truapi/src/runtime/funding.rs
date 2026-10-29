@@ -33,6 +33,10 @@ mod store {
 		match *db {}
 	}
 
+	pub(super) async fn read_sessions(db: &Db) -> Result<Vec<FundingSession>, FundingSessionError> {
+		match *db {}
+	}
+
 	pub(super) async fn write(
 		db: &Db,
 		_sessions: &[&FundingSession],
@@ -504,18 +508,15 @@ impl FundingRegistry {
 		self.lock_sessions().values().any(provider_works_on)
 	}
 
-	/// [`Self::in_progress`], reading storage when the sessions are not
-	/// loaded yet. It writes nothing back and starts nothing.
-	pub async fn in_progress_stored(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-	) -> Result<bool, FundingSessionError> {
+	/// [`Self::in_progress`], reading the core database when the sessions are
+	/// not loaded yet. It writes nothing back and starts nothing.
+	pub async fn in_progress_stored(&self) -> Result<bool, FundingSessionError> {
 		let loaded = self.writes.lock().await;
 		if *loaded {
 			return Ok(self.in_progress());
 		}
 		drop(loaded);
-		Ok(load_sessions(storage).await?.iter().any(provider_works_on))
+		Ok(store::read_sessions(self.db()?).await?.iter().any(provider_works_on))
 	}
 
 	/// Every session the user started that the host still has to hear of, for
@@ -1613,7 +1614,7 @@ impl RuntimeServices {
 	/// sessions are loaded: a host asking at launch, before funding resumes,
 	/// gets the answer from storage rather than an empty registry.
 	pub async fn funding_in_progress(&self) -> Result<bool, FundingSessionError> {
-		self.funding().in_progress_stored(self.platform.as_ref()).await
+		self.funding().in_progress_stored().await
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -2217,8 +2218,7 @@ mod tests {
 	// there is nothing left for it to do.
 	#[test]
 	fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
+		let registry = registry_on(&open_memory_core_db());
 		let mut released =
 			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
 		assert!(released.assign("ramp.dot", None, NOW));
@@ -2227,7 +2227,7 @@ mod tests {
 			at_ms: NOW,
 		});
 		assert!(released.settle(100, NOW));
-		insert(&registry, storage.as_ref(), released);
+		insert(&registry, released);
 		let first_served = || {
 			registry
 				.pending_calls("ramp.dot")
@@ -2241,7 +2241,6 @@ mod tests {
 
 		let before = first_served();
 		let reported = block_on(registry.report(
-			storage.as_ref(),
 			NOW + 1,
 			&worker("ramp.dot"),
 			"fs_out",
@@ -2345,8 +2344,7 @@ mod tests {
 	// takes none.
 	#[test]
 	fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
+		let registry = registry_on(&open_memory_core_db());
 		let withdrawal = |intent: &str, payout: Option<truapi::latest::FundingPayout>| {
 			let mut withdrawal =
 				FundingSession { direction: FundingDirection::Out, ..session(intent, NOW) };
@@ -2370,11 +2368,10 @@ mod tests {
 			withdrawal
 		};
 		let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
-		insert(&registry, storage.as_ref(), withdrawal("fs_failed", Some(failed)));
-		insert(&registry, storage.as_ref(), withdrawal("fs_paying", None));
+		insert(&registry, withdrawal("fs_failed", Some(failed)));
+		insert(&registry, withdrawal("fs_paying", None));
 		let refund = |intent: &str, host_id: [u8; 32]| {
 			block_on(registry.record_start(
-				storage.as_ref(),
 				NOW,
 				"ramp.dot",
 				intent,
