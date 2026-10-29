@@ -32,6 +32,7 @@ import uniffi.truapi.ChatMessageOrigin
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPaymentRecord
 import uniffi.truapi.ChatReactionSummary
+import uniffi.truapi.ChatReply
 import uniffi.truapi.ChatReplyPreview
 import uniffi.truapi.ChatResource
 import uniffi.truapi.NativeChatFeedRejection
@@ -167,7 +168,7 @@ class ProductChatHostBridgeFeedTest {
     @Test
     fun `a reply carries the quote of its replied message`() {
         val reply = coreMessage(ChatMessageBody.Text("yes"))
-            .copy(replyPreview = ChatReplyPreview(ChatMessageOrigin("contact"), ChatMessageBody.Text("lunch?")))
+            .copy(reply = ChatReply("parent", ChatReplyPreview(ChatMessageOrigin("contact"), ChatMessageBody.Text("lunch?"))))
 
         val preview = requireNotNull(reply.toModel(productId).replyPreview)
 
@@ -181,10 +182,9 @@ class ProductChatHostBridgeFeedTest {
         timestamp = 9uL,
         body = body,
         status = ChatMessageStatus.DELIVERED,
-        replyTo = "parent",
+        reply = ChatReply("parent", null),
         editedAt = null,
         reactions = listOf(ChatReactionSummary("👍", 1u, false, unseen = false)),
         request = request,
-        replyPreview = null,
     )
 }
