@@ -334,10 +334,10 @@ impl PocketPlatform for PocketCards {
 }
 
 const CARDS: &str = "SELECT product_id, card_id, title, pin IS NOT NULL AS privileged
-	FROM pocket_card ORDER BY pin IS NULL, pin, added_at, rowid";
+	FROM pocket_card ORDER BY pin IS NULL, pin, added_order";
 
 const PRODUCT_CARDS: &str = "SELECT card_id, pin IS NOT NULL AS privileged FROM pocket_card
-	WHERE product_id = :product ORDER BY pin IS NULL, pin, added_at, rowid";
+	WHERE product_id = :product ORDER BY pin IS NULL, pin, added_order";
 
 const UNPIN_ALL: &str = "UPDATE pocket_card SET pin = NULL WHERE pin IS NOT NULL";
 
@@ -345,15 +345,15 @@ const PIN: &str = "INSERT INTO pocket_card (product_id, card_id, title, pin)
 	VALUES (:product, :card, :title, :pin)
 	ON CONFLICT (product_id, card_id) DO UPDATE SET title = excluded.title, pin = excluded.pin";
 
-const DROP_UNPINNED: &str = "DELETE FROM pocket_card WHERE pin IS NULL AND added_at IS NULL";
+const DROP_UNPINNED: &str = "DELETE FROM pocket_card WHERE pin IS NULL AND added_order IS NULL";
 
 const AGE_FACES: &str = "UPDATE pocket_card_face SET draw_order = 0";
 
-const ADD: &str = "INSERT INTO pocket_card (product_id, card_id, title, added_at)
-	VALUES (:product, :card, :title, unixepoch())
+const ADD: &str = "INSERT INTO pocket_card (product_id, card_id, title, added_order)
+	VALUES (:product, :card, :title, (SELECT COALESCE(MAX(added_order), 0) + 1 FROM pocket_card))
 	ON CONFLICT (product_id, card_id) DO UPDATE
 		SET title = CASE WHEN pin IS NULL THEN excluded.title ELSE title END,
-		added_at = COALESCE(added_at, excluded.added_at)";
+		added_order = COALESCE(added_order, excluded.added_order)";
 
 const PRIVILEGED: &str =
 	"SELECT pin IS NOT NULL FROM pocket_card WHERE product_id = :product AND card_id = :card";
