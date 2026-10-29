@@ -210,6 +210,17 @@ struct DocumentCase {
 	expect: &'static str,
 }
 
+const REGISTRAR: [u8; 20] = [0xaa; 20];
+
+/// The base descriptor with `dotns` set.
+fn stating(dotns: Value) -> Value {
+	with(|value| value["dotns"] = dotns)
+}
+
+fn both_stated() -> Value {
+	json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&[0xbb; 20]) })
+}
+
 fn document_cases() -> Vec<DocumentCase> {
 	let plain =
 		|name, value: Value, expect| DocumentCase { name, bytes: bytes(&value), key: None, expect };
@@ -437,6 +448,39 @@ fn document_cases() -> Vec<DocumentCase> {
 		plain(
 			"contract-address-long",
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
+			"invalid-hex",
+		),
+		plain("dotns-set", stating(both_stated()), "ok"),
+		plain(
+			"dotns-without-asset-hub",
+			with(|value| {
+				value["dotns"] = both_stated();
+				value["chains"].as_array_mut().unwrap().remove(1);
+				value.as_object_mut().unwrap().remove("assets");
+			}),
+			"unknown-chain-role",
+		),
+		plain(
+			"dotns-key-longer-than-bytes32",
+			stating(json!({ "a".repeat(33): hex(&REGISTRAR) })),
+			"dotns-key",
+		),
+		plain("dotns-key-empty", stating(json!({ "": hex(&REGISTRAR) })), "dotns-key"),
+		plain("dotns-key-of-32-bytes", stating(json!({ "a".repeat(32): hex(&REGISTRAR) })), "ok"),
+		plain(
+			"dotns-key-with-an-underscore",
+			stating(json!({ "store_factory": hex(&REGISTRAR) })),
+			"dotns-key",
+		),
+		plain("dotns-key-not-ascii", stating(json!({ "régistrar": hex(&REGISTRAR) })), "dotns-key"),
+		plain(
+			"dotns-address-zero",
+			stating(json!({ "registrar": hex(&[0; 20]) })),
+			"dotns-zero-address",
+		),
+		plain(
+			"dotns-address-uppercase",
+			stating(json!({ "registrar": hex(&REGISTRAR).to_uppercase().replace("0X", "0x") })),
 			"invalid-hex",
 		),
 		plain(
