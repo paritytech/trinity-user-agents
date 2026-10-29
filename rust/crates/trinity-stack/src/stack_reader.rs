@@ -68,7 +68,7 @@ pub struct StackRead {
 	/// The copy to use. `None` means wait for the stack's fetch, which this call or an earlier
 	/// one handed out.
 	pub current: Option<CurrentStack>,
-	/// A fetch to make. The reader hands out at most one per stack until it is answered.
+	/// A fetch to make. The reader hands out at most one per stack until it is completed.
 	pub fetch: Option<FetchRequest>,
 }
 
@@ -114,12 +114,12 @@ pub struct StackReader {
 
 #[derive(Clone, Debug, Default)]
 struct Stack {
-	held: Option<Held>,
-	fetches: Schedule,
+	copy: Option<StackCopy>,
+	fetches: FetchState,
 }
 
 #[derive(Clone, Debug)]
-struct Held {
+struct StackCopy {
 	document: Vec<u8>,
 	stack: Verified,
 	/// When it was fetched; `None` for a build copy.
@@ -130,7 +130,7 @@ struct Held {
 /// What the store keeps per stack.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Kept {
+struct StoredRecord {
 	document: String,
 	fetched_at: Option<i64>,
 	etag: Option<String>,
@@ -138,27 +138,27 @@ struct Kept {
 
 /// When to fetch a stack.
 #[derive(Clone, Debug, Default)]
-struct Schedule {
-	/// Asked and not answered yet.
+struct FetchState {
+	/// Asked and not completed yet.
 	pending: bool,
-	asked_at: Option<i64>,
-	answered: bool,
+	requested_at: Option<i64>,
+	completed: bool,
 }
 
-impl Schedule {
+impl FetchState {
 	/// Whether a caller waits for the answer instead of using the copy it has.
 	fn waits(&self, refresh: Refresh) -> bool {
-		refresh == Refresh::Once && !self.answered
+		refresh == Refresh::Once && !self.completed
 	}
 
-	fn ask(&mut self, now: i64) {
+	fn start(&mut self, now: i64) {
 		self.pending = true;
-		self.asked_at = Some(now);
+		self.requested_at = Some(now);
 	}
 
-	fn answer(&mut self) {
+	fn finish(&mut self) {
 		self.pending = false;
-		self.answered = true;
+		self.completed = true;
 	}
 }
 
@@ -180,7 +180,7 @@ impl StackReader {
 	) -> Result<(), Error> {
 		let build = build
 			.map(|bytes| {
-				Ok::<_, Error>(Held {
+				Ok::<_, Error>(StackCopy {
 					stack: open(bytes, pointer)?,
 					document: bytes.to_vec(),
 					fetched_at: None,
@@ -189,31 +189,31 @@ impl StackReader {
 			})
 			.transpose()?;
 		// Through `Value`, which the crate links anyway, rather than a typed slice parser.
-		let kept = stored.and_then(|bytes| {
+		let record = stored.and_then(|bytes| {
 			serde_json::from_slice::<serde_json::Value>(bytes)
-				.and_then(Kept::deserialize)
+				.and_then(StoredRecord::deserialize)
 				.ok()
 		});
-		let stored_copy = kept.as_ref().and_then(|kept| {
-			Some(Held {
-				stack: open(kept.document.as_bytes(), pointer).ok()?,
-				document: kept.document.as_bytes().to_vec(),
-				fetched_at: kept.fetched_at,
-				etag: kept.etag.clone(),
+		let stored_copy = record.and_then(|record| {
+			Some(StackCopy {
+				stack: open(record.document.as_bytes(), pointer).ok()?,
+				document: record.document.into_bytes(),
+				fetched_at: record.fetched_at,
+				etag: record.etag,
 			})
 		});
 		// By `sequence` even when unsigned, where `accept` would take an older copy.
-		let held = match (build, stored_copy) {
+		let copy = match (build, stored_copy) {
 			(Some(build), Some(stored)) => {
-				let (built, kept) =
+				let (built, stored_sequence) =
 					(build.stack.descriptor.sequence, stored.stack.descriptor.sequence);
-				let newer =
-					kept > built || (kept == built && stored.stack.same_content(&build.stack));
+				let newer = stored_sequence > built ||
+					(stored_sequence == built && stored.stack.same_content(&build.stack));
 				Some(if newer { stored } else { build })
 			},
 			(build, stored) => build.or(stored),
 		};
-		self.stacks.insert(pointer.stack_id(), Stack { held, ..Default::default() });
+		self.stacks.insert(pointer.stack_id(), Stack { copy, ..Default::default() });
 		Ok(())
 	}
 
@@ -223,14 +223,14 @@ impl StackReader {
 		let refresh = self.refresh;
 		let stack = self.stack(pointer);
 		let fetch = stack.fetch_due(refresh, now_unix_seconds).then(|| {
-			stack.fetches.ask(now_unix_seconds);
+			stack.fetches.start(now_unix_seconds);
 			stack.request(pointer)
 		});
 		let current = stack
-			.held
+			.copy
 			.as_ref()
 			.filter(|_| !stack.fetches.waits(refresh))
-			.map(|held| held.current(now_unix_seconds));
+			.map(|copy| copy.current(now_unix_seconds));
 		StackRead { current, fetch }
 	}
 
@@ -238,7 +238,7 @@ impl StackReader {
 	pub fn refresh(&mut self, pointer: &Pointer, now_unix_seconds: i64) -> Option<FetchRequest> {
 		let stack = self.stack(pointer);
 		(!stack.fetches.pending).then(|| {
-			stack.fetches.ask(now_unix_seconds);
+			stack.fetches.start(now_unix_seconds);
 			stack.request(pointer)
 		})
 	}
@@ -250,7 +250,7 @@ impl StackReader {
 		self.stacks
 			.iter()
 			.filter(|(_, stack)| {
-				stack.held.is_some() && stack.fetch_due(self.refresh, now_unix_seconds)
+				stack.copy.is_some() && stack.fetch_due(self.refresh, now_unix_seconds)
 			})
 			.map(|(id, _)| id.clone())
 			.collect()
@@ -265,35 +265,35 @@ impl StackReader {
 		now_unix_seconds: i64,
 	) -> Result<Refreshed, Error> {
 		let stack = self.stack(pointer);
-		stack.fetches.answer();
-		let stored = stack.held.as_ref().map(|held| held.document.clone());
-		let (fetched, etag) = match (served, &stored) {
+		stack.fetches.finish();
+		let stored = stack.copy.as_ref().map(|copy| copy.document.as_slice());
+		let (fetched, etag) = match (served, stored) {
 			(Served::Document { bytes, etag }, _) => (Fetched::Document(bytes), etag),
 			// The server vouches for the copy the reader sent the ETag of.
 			(Served::NotModified, Some(stored)) => (Fetched::Document(stored), None),
 			(Served::NotModified | Served::Unreachable, _) => (Fetched::Unreachable, None),
 		};
-		let accepted = accept(pointer, stored.as_deref(), fetched, now_unix_seconds)?;
+		let accepted = accept(pointer, stored, fetched, now_unix_seconds)?;
 		let etag = etag.map(str::to_owned);
-		match (&accepted.status, &mut stack.held) {
-			(Status::Updated, held) => {
-				*held = Some(Held {
+		match (&accepted.status, &mut stack.copy) {
+			(Status::Updated, copy) => {
+				*copy = Some(StackCopy {
 					document: accepted.document.clone(),
 					stack: accepted.stack.clone(),
 					fetched_at: Some(now_unix_seconds),
 					etag,
 				})
 			},
-			(Status::Unchanged, Some(held)) => {
-				held.fetched_at = Some(now_unix_seconds);
-				held.etag = etag.or(held.etag.take());
+			(Status::Unchanged, Some(copy)) => {
+				copy.fetched_at = Some(now_unix_seconds);
+				copy.etag = etag.or(copy.etag.take());
 			},
 			// A browser cannot send `If-None-Match` cross-origin to a server whose CORS does not
 			// allow it, so a conditional fetch that failed is followed by a plain one.
-			(Status::Unreachable, Some(held)) if held.etag.is_some() => held.etag = None,
+			(Status::Unreachable, Some(copy)) if copy.etag.is_some() => copy.etag = None,
 			_ => return Ok(Refreshed { accepted, stored: None }),
 		}
-		Ok(Refreshed { accepted, stored: stack.kept() })
+		Ok(Refreshed { accepted, stored: stack.stored_record() })
 	}
 
 	fn stack(&mut self, pointer: &Pointer) -> &mut Stack {
@@ -306,14 +306,14 @@ impl Stack {
 		if self.fetches.pending {
 			return false;
 		}
-		let Some(held) = &self.held else { return true };
+		let Some(copy) = &self.copy else { return true };
 		match refresh {
 			Refresh::Never => false,
-			Refresh::Once => self.fetches.asked_at.is_none(),
+			Refresh::Once => self.fetches.requested_at.is_none(),
 			Refresh::MaxAge(age) => {
 				// A fetch time ahead of the clock was kept under a skewed one, so it says nothing.
-				let fetched_at = held.fetched_at.filter(|at| *at <= now_unix_seconds);
-				fetched_at.max(self.fetches.asked_at).is_none_or(|last| {
+				let fetched_at = copy.fetched_at.filter(|at| *at <= now_unix_seconds);
+				fetched_at.max(self.fetches.requested_at).is_none_or(|last| {
 					now_unix_seconds.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
 				})
 			},
@@ -323,23 +323,23 @@ impl Stack {
 	fn request(&self, pointer: &Pointer) -> FetchRequest {
 		FetchRequest {
 			url: pointer.url().to_string(),
-			if_none_match: self.held.as_ref().and_then(|held| held.etag.clone()),
+			if_none_match: self.copy.as_ref().and_then(|copy| copy.etag.clone()),
 		}
 	}
 
 	/// What the store keeps for this stack; `None` until it holds a descriptor.
-	fn kept(&self) -> Option<Vec<u8>> {
-		let held = self.held.as_ref()?;
-		let kept = Kept {
-			document: String::from_utf8(held.document.clone()).expect("a descriptor is UTF-8"),
-			fetched_at: held.fetched_at,
-			etag: held.etag.clone(),
+	fn stored_record(&self) -> Option<Vec<u8>> {
+		let copy = self.copy.as_ref()?;
+		let record = StoredRecord {
+			document: String::from_utf8(copy.document.clone()).expect("descriptor is not UTF-8"),
+			fetched_at: copy.fetched_at,
+			etag: copy.etag.clone(),
 		};
-		Some(serde_json::to_vec(&kept).expect("a record serialises"))
+		Some(serde_json::to_vec(&record).expect("failed to serialize the stored record"))
 	}
 }
 
-impl Held {
+impl StackCopy {
 	fn current(&self, now_unix_seconds: i64) -> CurrentStack {
 		let descriptor = &self.stack.descriptor;
 		CurrentStack {
