@@ -2325,6 +2325,7 @@ mod tests {
 			name: "Lobby".to_string(),
 			description: Some("Say hello".to_string()),
 			icon: Some("https://icons.example/lobby.png".to_string()),
+			placeholder: None,
 		};
 		let preview = latest::ChatRoomPreview {
 			timestamp: Some(7),
@@ -2332,6 +2333,8 @@ mod tests {
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
+			pinned: false,
+			activity: None,
 		};
 		let update = latest::ChatFeedUpdate::StatusChanged {
 			message_id: "m1".to_string(),

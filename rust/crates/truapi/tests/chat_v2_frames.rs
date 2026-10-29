@@ -146,6 +146,7 @@ fn frames() -> Vec<String> {
 		name: "Room".into(),
 		description: Some("About".into()),
 		icon: Some("https://icons.example/renamed.png".into()),
+		placeholder: Some("No games yet".into()),
 	};
 	let preview = v01::ChatRoomPreview {
 		timestamp: Some(5),
@@ -158,6 +159,8 @@ fn frames() -> Vec<String> {
 			removed: true,
 		}),
 		unseen_reactions: 2,
+		pinned: true,
+		activity: Some(v01::ChatRoomActivity { text: "Ben is typing".into(), ongoing: true }),
 	};
 	vec![
 		line(
@@ -327,7 +330,23 @@ fn frames() -> Vec<String> {
 			MESSAGE_TYPE_REQUEST,
 			HostChatSetRoomPreviewRequest::V1(v01::HostChatSetRoomPreviewRequest {
 				room_id: room(),
-				preview,
+				preview: preview.clone(),
+			}),
+		),
+		line(
+			"9.set_room_preview.image_badge",
+			wire_table::CHAT_SET_ROOM_PREVIEW,
+			MESSAGE_TYPE_REQUEST,
+			HostChatSetRoomPreviewRequest::V1(v01::HostChatSetRoomPreviewRequest {
+				room_id: room(),
+				preview: v01::ChatRoomPreview {
+					badge: Some(v01::ChatRoomBadge::Image {
+						icon: "https://icons.example/live.png".into(),
+					}),
+					pinned: false,
+					activity: None,
+					..preview
+				},
 			}),
 		),
 		line(
