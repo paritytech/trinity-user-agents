@@ -40,22 +40,23 @@ use truapi::{
 		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
 		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewReaction, ChatReaction,
 		ChatReactionSummary, ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity,
-		ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, CodeFormat,
-		FundingDirection, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview,
+		ChatRoomRegistrationStatus, CodeFormat, FundingDirection, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
@@ -3043,8 +3044,9 @@ mod tests {
 		async fn create_chat_room(
 			&self,
 			_product: &ProductContext,
+			_room_id: String,
 			_request: HostChatCreateRoomRequest,
-		) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
+		) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
 			unimplemented!("not used by this test")
 		}
 
@@ -3532,12 +3534,16 @@ pub trait PreimageHost: Send + Sync {
 /// anything a host derives from product-supplied values remain host-owned.
 #[async_trait]
 pub trait ChatPlatform: Send + Sync {
-	/// Create or resolve a product-scoped native chat room.
+	/// Create or resolve a product-scoped native chat room. `room_id` is the id
+	/// that the core derived from the product and `request.room_id_source`. The
+	/// host stores the room under this id, and every later call names the room
+	/// with it.
 	async fn create_chat_room(
 		&self,
 		product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError>;
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError>;
 
 	/// Register or resolve a product-scoped native chat bot. Host-owned in the
 	/// same way rooms are.
