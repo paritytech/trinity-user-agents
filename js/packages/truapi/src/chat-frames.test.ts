@@ -198,6 +198,8 @@ const preview: T.ChatRoomPreview = {
         removed: true,
     },
     unseenReactions: 2,
+    pinned: true,
+    activity: { text: "Ben is typing", ongoing: true },
 };
 
 /** The frame the snapshot keeps under `name`. */
@@ -350,6 +352,28 @@ describe("chat extension v2 frames", () => {
                 ),
             ],
             [
+                "9.set_room_preview.image_badge",
+                frame(
+                    W.CHAT_SET_ROOM_PREVIEW,
+                    MESSAGE_TYPE_REQUEST,
+                    T.VersionedHostChatSetRoomPreviewRequest.enc({
+                        tag: "V1",
+                        value: {
+                            roomId: "room",
+                            preview: {
+                                ...preview,
+                                badge: {
+                                    tag: "Image",
+                                    value: { icon: "https://icons.example/live.png" },
+                                },
+                                pinned: false,
+                                activity: undefined,
+                            },
+                        },
+                    }),
+                ),
+            ],
+            [
                 "13.user_action.start",
                 frame(
                     W.CHAT_USER_ACTION,
@@ -462,6 +486,7 @@ describe("chat extension v2 frames", () => {
             name: "Room",
             description: "About",
             icon: "https://icons.example/renamed.png",
+            placeholder: "No games yet",
         };
         const notRoomHost: CallErrorValue<T.VersionedHostChatSetRoomMetadataError> = {
             tag: "Domain",
