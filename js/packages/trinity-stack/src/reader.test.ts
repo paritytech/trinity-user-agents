@@ -1,32 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
-import { type DotnsRecord, type DotnsTransport, DotnsRevert } from "./dotns.js";
-import {
-  type Fetch,
-  type Model,
-  generateSecret,
-  memoryStore,
-  publicKey,
-  publish,
-} from "./index.js";
+import type { DotnsRecord } from "./dotns.js";
+import { type Fetch, memoryStore } from "./index.js";
 import { type Bundled, createStackReader } from "./reader.js";
+import {
+  MODEL,
+  cases,
+  file,
+  pointer,
+  pointerOf,
+  publishedAt as at,
+  transportOf,
+} from "./test-fixtures.js";
 import { wasm } from "./wasm.js";
-
-const VECTORS = new URL(
-  "../../../../rust/crates/trinity-stack/vectors/",
-  import.meta.url,
-);
-const cases = JSON.parse(
-  await readFile(new URL("cases.json", VECTORS), "utf8"),
-);
-const file = async (path: string | null) =>
-  path === null
-    ? undefined
-    : new Uint8Array(await readFile(new URL(path, VECTORS)));
-const pointerOf = (pointer: { url: string; key: string | null }) => ({
-  url: pointer.url,
-  key: pointer.key ?? undefined,
-});
 
 /** One step of a refresh vector: the one action it names, and what the reader must answer. */
 type Step = {
@@ -84,18 +69,19 @@ async function run(vector: {
     } else if (step.fetched) {
       const { document, etag, notModified } = step.fetched;
       try {
-        const { accepted, record } = reader.fetched(
+        const refreshed = reader.fetched(
           pointer,
           await file(document),
           etag ?? undefined,
           notModified,
           step.now,
         );
-        stored = record ?? stored;
+        const { accepted } = refreshed;
+        stored = refreshed.stored ?? stored;
         outcome = {
           status: accepted.status,
           serves: accepted.descriptor.sequence,
-          stores: record !== undefined,
+          stores: refreshed.stored !== undefined,
           newGeneration: accepted.newGeneration,
         };
       } catch (error) {
@@ -105,11 +91,13 @@ async function run(vector: {
       reader = await start(step.build, step.buildDotns);
       continue;
     } else if (step.dotns !== undefined) {
-      const read = reader.dotns(pointer, step.dotns)!;
-      outcome = {
-        record: read.record?.generation ?? null,
-        lookUp: read.lookUp ?? null,
-      };
+      const read = reader.dotns(pointer, step.dotns);
+      outcome = read
+        ? {
+            record: read.record?.generation ?? null,
+            lookUp: read.lookUp ?? null,
+          }
+        : null;
     } else {
       const looked = reader.lookedUp(
         pointer,
@@ -131,35 +119,7 @@ describe("refresh conformance vectors", () => {
   for (const vector of cases.refresh) test(vector.name, () => run(vector));
 });
 
-const URL_ = "https://stack.example/.well-known/trinity-stack.json";
-const MODEL: Model = {
-  id: "local",
-  name: "Local",
-  network: "local",
-  tld: "local",
-  chains: [
-    {
-      role: "Relay",
-      genesisHash: `0x${"86".repeat(32)}`,
-      rpc: ["ws://127.0.0.1:9944"],
-    },
-  ],
-  services: [],
-};
-const secret = generateSecret();
-const pointer = { url: URL_, key: publicKey(secret) };
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-
-/** Signed copies of one stack: `at(n)` is published at second n, so a later one is newer. */
-async function at(seconds: number, generation = "g1") {
-  const { document } = await publish(MODEL, {
-    generation,
-    secret,
-    now: new Date(seconds * 1000),
-  });
-  // A copy over a plain ArrayBuffer, which a Response body takes.
-  return document.slice();
-}
 
 /** A server for `URL_` that answers each request with `answer`, recording the requests. */
 function server(answer: (request: Request) => Response | Promise<Response>) {
@@ -176,27 +136,6 @@ const down = () =>
   server(() => {
     throw new TypeError("connection refused");
   });
-
-/** Asset Hub as a dotNS vector has it; `before` runs ahead of each lookup's block read. */
-const chainOf = (
-  vector: {
-    at: { number: number; hash: string };
-    storage: string | null;
-    calls: Record<string, string | null>;
-  },
-  before: () => Promise<void> = async () => {},
-): DotnsTransport => ({
-  at: async () => {
-    await before();
-    return vector.at;
-  },
-  storage: async () => vector.storage,
-  call: async (to, data) => {
-    const answer = vector.calls[`${to}:${data}`];
-    if (answer === null) throw new DotnsRevert("execution reverted");
-    return answer;
-  },
-});
 
 const bundle = async (
   document: Uint8Array,
@@ -299,9 +238,9 @@ describe("createStackReader", () => {
     ).toBe(true);
     await expect(
       reader.get(pointer, {
-        require: { chains: ["Relay", "AssetHub"], services: ["eth-rpc"] },
+        require: { chains: ["Relay", "Bulletin"], services: ["eth-rpc"] },
       }),
-    ).rejects.toThrow("local has no chain AssetHub, service eth-rpc");
+    ).rejects.toThrow("local has no chain Bulletin, service eth-rpc");
   });
 
   test("a custom fetch's own bug surfaces, and the stack can be fetched again", async () => {
@@ -325,8 +264,11 @@ describe("createStackReader", () => {
     const vector = cases.dotns[0];
     let lookups = 0;
     const transport = () =>
-      chainOf(vector, async () => {
-        lookups++;
+      transportOf(vector, {
+        at: async () => {
+          lookups++;
+          return vector.at;
+        },
       });
     const restarted = await at(200, "g2");
     const reader = createStackReader({
@@ -363,8 +305,8 @@ describe("createStackReader", () => {
       fetch: server(() => new Response(restarted)).fetch,
       transport: (descriptor) =>
         descriptor.generation === "g1"
-          ? chainOf(g1Chain, () => gate)
-          : chainOf(g2Chain),
+          ? transportOf(g1Chain, { at: () => gate.then(() => g1Chain.at) })
+          : transportOf(g2Chain),
     });
     const first = reader.dotns(pointer);
     await reader.refresh(pointer);
@@ -380,6 +322,21 @@ describe("createStackReader", () => {
       expect(() => createStackReader({ refresh: { maxAgeMs } })).toThrow(
         "maxAgeSeconds of at least 1",
       );
+  });
+
+  test("dotNS: a stack with no Asset Hub has none, and no lookup is made", async () => {
+    const reader = createStackReader({
+      bundled: [
+        await bundle(
+          await at(100, "g1", { ...MODEL, chains: [MODEL.chains[0]] }),
+        ),
+      ],
+      refresh: "never",
+      transport: () => {
+        throw new Error("no lookup for a stack without an Asset Hub");
+      },
+    });
+    expect(await reader.dotns(pointer)).toBeUndefined();
   });
 
   test("dotNS: a failed lookup keeps the record of the same generation", async () => {

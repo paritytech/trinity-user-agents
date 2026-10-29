@@ -92,8 +92,8 @@ export function createStackReader(
       stack,
     ]),
   );
-  const pointers = new Map<string, Pointer>();
-  const loads = new Map<string, Promise<void>>();
+  /** Each stack the reader has started, with the pointer it was started from. */
+  const loads = new Map<string, { pointer: Pointer; loading: Promise<void> }>();
   const fetches = new Map<string, Promise<CurrentStack>>();
   const lookups = new Map<string, Promise<DotnsRecord | undefined>>();
   const listeners = new Set<(change: StackChange) => void>();
@@ -102,10 +102,9 @@ export function createStackReader(
   /** Starts the stack from its build copy and stored record, once. */
   const load = (pointer: Pointer): Promise<void> => {
     const id = stackId(pointer);
-    let loading = loads.get(id);
-    if (!loading) {
-      pointers.set(id, pointer);
-      loading = (async () => {
+    let started = loads.get(id);
+    if (!started) {
+      const loading = (async () => {
         const build = bundled.get(id);
         reader.load(
           pointer,
@@ -114,9 +113,10 @@ export function createStackReader(
           await options.store?.get(storeKey(id)),
         );
       })();
-      loads.set(id, loading);
+      started = { pointer, loading };
+      loads.set(id, started);
     }
-    return loading;
+    return started.loading;
   };
 
   /** Keeps `promise` as the stack's pending one in `pending` until it settles. */
@@ -153,14 +153,14 @@ export function createStackReader(
           } catch {}
           throw error;
         }
-        const { accepted, record } = reader.fetched(
+        const { accepted, stored } = reader.fetched(
           pointer,
           served.document,
           served.etag,
           served.notModified,
           now(),
         );
-        if (record) await options.store?.set(storeKey(id), record);
+        if (stored) await options.store?.set(storeKey(id), stored);
         if (accepted.status === "updated")
           for (const listener of listeners)
             listener({
@@ -223,10 +223,12 @@ export function createStackReader(
       for (;;) {
         const { descriptor } = await api.get(stack);
         const read = reader.dotns(pointer, now());
-        const looking = read?.lookUp
+        // A stack with no Asset Hub has no dotNS.
+        if (!read) return undefined;
+        const looking = read.lookUp
           ? lookUp(pointer, descriptor)
           : lookups.get(stackId(pointer));
-        const record = read?.record ?? (await looking);
+        const record = read.record ?? (await looking);
         if (record) return record.dotns;
         if (!looking)
           throw new Error(`no dotNS record of ${pointer.url} and no lookup`);
@@ -254,8 +256,8 @@ export function createStackReader(
       ? setInterval(
           () => {
             for (const id of reader.due(now())) {
-              const pointer = pointers.get(id);
-              if (pointer) api.refresh(pointer).catch(() => {});
+              const started = loads.get(id);
+              if (started) api.refresh(started.pointer).catch(() => {});
             }
           },
           Math.min(policy.maxAgeMs, 60_000),
