@@ -213,6 +213,9 @@ pub struct LightState {
 }
 
 impl LightState {
+	/// A client that starts on the first connect. With `keep_running`, each
+	/// chain keeps running after its last connection closes; see
+	/// [`keep_running`].
 	pub fn new(
 		connection_types: crate::connection_types::ConnectionTypes,
 		keep_running: bool,
@@ -299,41 +302,40 @@ impl LightState {
 		}
 
 		let relay_genesis = relay.as_ref().map(|(genesis, _)| *genesis);
-		let relay_id = match &relay {
-			None => None,
-			Some((genesis, relay_source)) => Some(add_relay(&mut guard, *genesis, relay_source)?),
-		};
+		let relay_id = relay
+			.as_ref()
+			.map(|(genesis, relay_source)| add_relay(&mut guard, *genesis, relay_source))
+			.transpose()?;
 
-		if self.keep_running &&
-			let Err(error) = keep_running(
+		let held = if self.keep_running {
+			keep_running(
 				&mut guard,
 				genesis_hash,
 				&specification,
 				database_content.as_deref(),
 				*statement_protocol,
 				relay.as_ref(),
-			) {
-			if let Some(genesis) = relay_genesis {
-				release_chain(&mut guard, genesis);
-			}
-			return Err(error);
-		}
-
-		let added = guard
-			.client
-			.add_chain(AddChainConfig {
-				user_data: (),
-				specification: specification.as_ref(),
-				database_content: database_content.as_deref().unwrap_or(""),
-				potential_relay_chains: relay_id.into_iter(),
-				json_rpc: AddChainConfigJsonRpc::Enabled {
-					max_pending_requests: NonZero::new(MAX_PENDING_REQUESTS)
-						.expect("budget is non-zero"),
-					max_subscriptions: MAX_SUBSCRIPTIONS,
-				},
-				statement_protocol_config: statement_protocol.then(statement_protocol_config),
-			})
-			.map_err(|err| ProviderError::AddChain { reason: err.to_string() });
+			)
+		} else {
+			Ok(())
+		};
+		let added = held.and_then(|()| {
+			guard
+				.client
+				.add_chain(AddChainConfig {
+					user_data: (),
+					specification: specification.as_ref(),
+					database_content: database_content.as_deref().unwrap_or(""),
+					potential_relay_chains: relay_id.into_iter(),
+					json_rpc: AddChainConfigJsonRpc::Enabled {
+						max_pending_requests: NonZero::new(MAX_PENDING_REQUESTS)
+							.expect("budget is non-zero"),
+						max_subscriptions: MAX_SUBSCRIPTIONS,
+					},
+					statement_protocol_config: statement_protocol.then(statement_protocol_config),
+				})
+				.map_err(|err| ProviderError::AddChain { reason: err.to_string() })
+		});
 
 		// No connection is constructed on the error path, so nothing would ever
 		// release the reference taken on the relay above (smoldot rejects the
@@ -450,10 +452,9 @@ fn keep_running(
 	if guard.added.get(&genesis_hash).is_some_and(|chain| chain.implicit_id.is_some()) {
 		return Ok(());
 	}
-	let relay_id = match relay {
-		None => None,
-		Some((genesis, relay_source)) => Some(add_relay(guard, *genesis, relay_source)?),
-	};
+	let relay_id = relay
+		.map(|(genesis, relay_source)| add_relay(guard, *genesis, relay_source))
+		.transpose()?;
 	let held = add_implicit(
 		guard,
 		genesis_hash,
