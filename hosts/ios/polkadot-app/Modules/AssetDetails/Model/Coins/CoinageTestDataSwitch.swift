@@ -34,6 +34,7 @@
                 availableNowBalance: breakdown.availableNowBalance,
                 gainingPrivacyBalance: breakdown.gainingPrivacyBalance,
                 symbol: breakdown.symbol,
+                amounts: breakdown.amounts,
                 strip: coins,
                 traces: CoinageTestData.traces(for: coins)
             )
@@ -215,6 +216,7 @@
             availableNowBalance: "0",
             gainingPrivacyBalance: "0",
             symbol: "",
+            amounts: CoinageAmounts(total: 0, availableNow: 0, gainingPrivacy: 0),
             strip: [],
             traces: [:]
         )

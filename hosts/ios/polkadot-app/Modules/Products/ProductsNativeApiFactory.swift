@@ -96,10 +96,8 @@ final class ProductsNativeApiFactory: ProductsNativeApiMaking {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol
     ) -> any ProductsNativeApiProtocol {
-        let fundingProvider = FundingDomainProvider(hostProvider: hostProvider)
         let permissionGuard = ProductPermissionGuard.create(
             router: routers.productsRouter,
-            fundingProvider: fundingProvider,
             repository: permissionRepository,
             osAsker: osPermissionAsker
         )
@@ -120,10 +118,7 @@ final class ProductsNativeApiFactory: ProductsNativeApiMaking {
             entropyDeriver: entropyDeriver,
             substrateStorageFacade: substrateStorageFacade,
             permissionGuard: permissionGuard,
-            paymentApprovalRequester: PaymentApprovalRequesterFactory.create(
-                router: routers.productsRouter,
-                fundingProvider: fundingProvider
-            ),
+            paymentApprovalRequester: PaymentApprovalRequesterFactory.create(router: routers.productsRouter),
             paymentPrivacyConfirmer: PaymentPrivacyConfirmer(router: routers.productsRouter),
             recyclingStrategy: CoinageRecyclingStrategyStore.shared,
             paymentsSupport: paymentsSupport,
@@ -152,7 +147,6 @@ private extension ProductsNativeApiFactory {
             routers: routers,
             entropyManager: entropyManager,
             permissionRepository: permissionRepository,
-            fundingProvider: FundingDomainProvider(hostProvider: hostProvider),
             operationQueue: operationQueue,
             logger: logger
         )

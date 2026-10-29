@@ -1,0 +1,204 @@
+import CoreData
+import Foundation
+import Operation_iOS
+import StructuredConcurrency
+import TrUAPIHost
+
+/// The host's funding history, one row per ended session, keyed by its id so
+/// writing a session again updates its row. A row that does not read is
+/// skipped and logged, so it cannot take the rest of the history with it.
+final class CoreDataFundingHistoryStore: FundingHistoryStoring, @unchecked Sendable {
+    private let repository: AnyDataProviderRepository<FundingRecord>
+    private let databaseService: CoreDataServiceProtocol
+
+    init(storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared) {
+        repository = AnyDataProviderRepository(
+            storageFacade.createRepository(mapper: AnyCoreDataMapper(FundingRecordMapper()))
+        )
+        databaseService = storageFacade.databaseService
+    }
+
+    func records() async throws -> [FundingRecord] {
+        try await databaseService.performRead { context in
+            let mapper = FundingRecordMapper()
+            let entities = try context.fetch(NSFetchRequest<CDFundingRecord>(entityName: "CDFundingRecord"))
+            return entities.compactMap { entity in
+                do {
+                    return try mapper.transform(entity: entity)
+                } catch {
+                    Logger.shared.error("[funding] skipped history row \(entity.identifier ?? "?"): \(error)")
+                    return nil
+                }
+            }
+        }
+    }
+
+    func save(_ record: FundingRecord) async throws {
+        try await repository.saveOperation({ [record] }, { [] }).asyncExecute()
+    }
+}
+
+extension FundingRecord: Operation_iOS.Identifiable {
+    var identifier: String { intent }
+}
+
+final class FundingRecordMapper {
+    var entityIdentifierFieldName: String {
+        #keyPath(CoreDataEntity.identifier)
+    }
+
+    typealias DataProviderModel = FundingRecord
+    typealias CoreDataEntity = CDFundingRecord
+}
+
+extension FundingRecordMapper: CoreDataMapperProtocol {
+    func transform(entity: CDFundingRecord) throws -> FundingRecord {
+        let identifier = try required(entity.identifier, #keyPath(CDFundingRecord.identifier))
+        let direction = try required(
+            entity.direction.flatMap(FundingDirection.init(storageValue:)),
+            #keyPath(CDFundingRecord.direction)
+        )
+        let outcome = try required(
+            entity.outcome.flatMap { FundingRecord.Outcome(storageValue: $0, entity: entity) },
+            #keyPath(CDFundingRecord.outcome)
+        )
+        let openedAt = try required(entity.openedAt, #keyPath(CDFundingRecord.openedAt))
+        let settledAt = try required(entity.settledAt, #keyPath(CDFundingRecord.settledAt))
+
+        return FundingRecord(
+            intent: identifier,
+            direction: direction,
+            rail: entity.rail.flatMap(FundingRail.init(storageValue:)),
+            asset: entity.asset,
+            providerId: entity.providerId,
+            requestedAmount: entity.requestedAmount,
+            settledAmount: entity.settledAmount,
+            paidAmount: entity.paidAmount,
+            paidAsset: entity.paidAsset,
+            paidDecimals: entity.paidDecimals.map(\.uint8Value),
+            paidNetwork: entity.paidNetwork,
+            outcome: outcome,
+            payout: entity.payout.flatMap { FundingRecord.Payout(storageValue: $0, reason: entity.payoutReason) },
+            refundedAmount: entity.refundedAmount,
+            transactionId: entity.transactionId,
+            reference: entity.reference,
+            openedAt: openedAt,
+            settledAt: settledAt
+        )
+    }
+
+    func populate(entity: CDFundingRecord, from model: FundingRecord, using _: NSManagedObjectContext) throws {
+        entity.identifier = model.intent
+        entity.direction = model.direction.storageValue
+        entity.rail = model.rail?.storageValue
+        entity.asset = model.asset
+        entity.providerId = model.providerId
+        entity.requestedAmount = model.requestedAmount
+        entity.settledAmount = model.settledAmount
+        entity.paidAmount = model.paidAmount
+        entity.paidAsset = model.paidAsset
+        entity.paidDecimals = model.paidDecimals.map { NSNumber(value: $0) }
+        entity.paidNetwork = model.paidNetwork
+        entity.outcome = model.outcome.storageValue
+        entity.failureCode = model.outcome.failure?.code
+        entity.failureMessage = model.outcome.failure?.message
+        entity.payout = model.payout?.storageValue
+        entity.payoutReason = model.payout?.reason
+        entity.refundedAmount = model.refundedAmount
+        entity.transactionId = model.transactionId
+        entity.reference = model.reference
+        entity.openedAt = model.openedAt
+        entity.settledAt = model.settledAt
+    }
+}
+
+private func required<Value>(_ value: Value?, _ keyPath: String) throws -> Value {
+    guard let value else { throw CoreDataMapperError.missingRequiredData(keyPath: keyPath) }
+    return value
+}
+
+private extension FundingDirection {
+    init?(storageValue: String) {
+        switch storageValue {
+        case "in": self = .in
+        case "out": self = .out
+        default: return nil
+        }
+    }
+
+    var storageValue: String {
+        switch self {
+        case .in: "in"
+        case .out: "out"
+        }
+    }
+}
+
+private extension FundingRail {
+    init?(storageValue: String) {
+        switch storageValue {
+        case "card": self = .card
+        case "bank": self = .bank
+        case "crypto": self = .crypto
+        default: return nil
+        }
+    }
+
+    var storageValue: String {
+        switch self {
+        case .card: "card"
+        case .bank: "bank"
+        case .crypto: "crypto"
+        }
+    }
+}
+
+private extension FundingRecord.Outcome {
+    init?(storageValue: String, entity: CDFundingRecord) {
+        switch storageValue {
+        case "delivered": self = .delivered
+        case "released": self = .released
+        case "refunded": self = .refunded
+        case "cancelled": self = .cancelled
+        case "failed": self = .failed(FundingFailure(code: entity.failureCode ?? "", message: entity.failureMessage))
+        default: return nil
+        }
+    }
+
+    var storageValue: String {
+        switch self {
+        case .delivered: "delivered"
+        case .released: "released"
+        case .refunded: "refunded"
+        case .cancelled: "cancelled"
+        case .failed: "failed"
+        }
+    }
+
+    var failure: FundingFailure? {
+        guard case let .failed(failure) = self else { return nil }
+        return failure
+    }
+}
+
+private extension FundingRecord.Payout {
+    init?(storageValue: String, reason: String?) {
+        switch storageValue {
+        case "paidOut": self = .paidOut
+        case "failed": self = .failed(reason: reason ?? "")
+        default: return nil
+        }
+    }
+
+    var storageValue: String {
+        switch self {
+        case .paidOut: "paidOut"
+        case .failed: "failed"
+        }
+    }
+
+    var reason: String? {
+        guard case let .failed(reason) = self else { return nil }
+        return reason
+    }
+}

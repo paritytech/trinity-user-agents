@@ -153,15 +153,10 @@ private extension ProductManifestParser {
             return reject("\(identifier): worker missing entrypoint")
         }
 
-        // Declaring neither is valid — the worker runs as background logic with no user-facing
-        // surface — but an absent flag means the publisher never declared one.
-        guard let includesChat = dto.includes?.chat else {
-            return reject("\(identifier): worker includes missing 'chat'")
-        }
-
-        guard let includesPocket = dto.includes?.pocket else {
-            return reject("\(identifier): worker includes missing 'pocket'")
-        }
+        // A modality the worker does not list is one it does not serve. A
+        // worker can serve none of these, such as one that only funds.
+        let includesChat = dto.includes?.chat ?? false
+        let includesPocket = dto.includes?.pocket ?? false
 
         // Read whatever the flag says, so cards published without the flag are
         // still reported as the defect they are.

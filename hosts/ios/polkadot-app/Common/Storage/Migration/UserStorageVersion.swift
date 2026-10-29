@@ -25,6 +25,7 @@ enum UserStorageVersion: String, CaseIterable {
     case version53 = "UserDataModel53"
     case version54 = "UserDataModel54"
     case version55 = "UserDataModel55"
+    case version56 = "UserDataModel56"
 
     // swiftlint:disable:next cyclomatic_complexity
     func nextVersion() -> UserStorageVersion? {
@@ -58,6 +59,8 @@ enum UserStorageVersion: String, CaseIterable {
         case .version54:
             .version55
         case .version55:
+            .version56
+        case .version56:
             nil
         }
     }
