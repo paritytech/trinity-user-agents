@@ -1,56 +1,20 @@
 // A stack's dotNS contracts, read from its Asset Hub as docs/rfcs/trinity-stack-descriptor.md
-// describes: descriptors leave them out, so the chain and the descriptor never disagree. The host
-// core finds the dispatcher the same way, in `discover_pop_controller`
-// (rust/crates/truapi/src/host_logic/dotns_gateway.rs).
-import {
-  type Descriptor,
-  type Fetch,
-  type Pointer,
-  type Store,
-  DEFAULT_TIMEOUT_MS,
-  stackId,
-} from "./index.js";
-import { unixSeconds } from "./time.js";
+// describes: descriptors leave them out, so the chain and the descriptor never disagree. The
+// trinity-stack crate's `DotnsLookup` decides every step; this module only makes the reads.
+import type { Block, Descriptor, DotnsRecord } from "../wasm/trinity_stack.js";
+import { type Fetch, DEFAULT_TIMEOUT_MS } from "./index.js";
+import { wasm } from "./wasm.js";
 
-/** The protocol registry's address keys, as dotNS's `DotnsConstants` names them. */
-export const DOTNS_KEYS = [
-  "registrar",
-  "controller",
-  "registry",
-  "reverseResolver",
-  "popRules",
-  "storeFactory",
-  "resolver",
-  "contentResolver",
-  "popController",
-  "popResolver",
-  "popLens",
-  "nameEscrow",
-  "multicall3",
-  "create3Factory",
-  "nameWhitelist",
-  "costModel",
-] as const;
+export type { Dotns, DotnsRecord } from "../wasm/trinity_stack.js";
 
-/** One of the protocol registry's address keys. */
-export type DotnsKey = (typeof DOTNS_KEYS)[number];
-
-/** A stack's dotNS contracts, as its Asset Hub's gateway and protocol registry report them. */
-export type Dotns = {
-  /** The contract the `DotnsGateway` pallet dispatches to. */
-  dispatcher: string;
-  /** The protocol registry, which names every other dotNS contract. */
-  protocolRegistry: string;
-  /** Registry keys to addresses. Keys the registry leaves unset are absent. */
-  addresses: Partial<Record<DotnsKey, string>>;
-};
-
-/** How `resolveDotns` reaches Asset Hub, for a reader with its own client, such as a light client. */
+/** How `readDotns` reaches Asset Hub, for a reader with its own client, such as a light client. */
 export type DotnsTransport = {
-  /** The hex value at an Asset Hub storage key, or null when it is unset. */
-  storage(key: string): Promise<string | null>;
-  /** The hex result of an `eth_call` to `to` with `data`. Throws a `DotnsRevert` when the call reverts. */
-  call(to: string, data: string): Promise<string>;
+  /** The block every read is made at, such as the latest finalized one. */
+  at(): Promise<Block>;
+  /** The hex value at an Asset Hub storage key at `at`, or null when it is unset. */
+  storage(key: string, at: Block): Promise<string | null>;
+  /** The hex result of a call to `to` with `data` at `at`. Throws a `DotnsRevert` when it reverts. */
+  call(to: string, data: string, at: Block): Promise<string>;
 };
 
 /** A contract call that reverted, as opposed to one that could not be made. */
@@ -58,17 +22,56 @@ export class DotnsRevert extends Error {
   override name = "DotnsRevert";
 }
 
-const DEFAULT_MAX_AGE_MS = 60 * 60 * 1000;
-// twox128("DotnsGateway") ++ twox128("DispatcherAddress")
-const DISPATCHER_ADDRESS_KEY =
-  "0x57ca9018d648b40a8286a471e82c3808f31ce5ec278db3dff6304333f0019302";
-const PROTOCOL_REGISTRY = "0x7656419f"; // protocolRegistry()
-const TARGET = "0xcc1f2afa"; // TARGET()
-const REGISTRY_GET = "0x8eaa6ac0"; // get(bytes32)
-const UNSET = `0x${"0".repeat(40)}`;
+/**
+ * Reads the stack's dotNS contracts from its Asset Hub, every read at one block. The record's
+ * `dotns` is undefined when the Asset Hub has no dotNS gateway. Throws when the chain cannot be
+ * reached, or answers in a way no dotNS deployment does.
+ */
+export async function readDotns(
+  descriptor: Descriptor,
+  options: {
+    transport?: DotnsTransport;
+    fetch?: Fetch;
+    timeoutMs?: number;
+  } = {},
+): Promise<DotnsRecord> {
+  const transport = options.transport ?? defaultTransport(descriptor, options);
+  const at = await transport.at();
+  const lookup = new wasm.DotnsLookup(descriptor.generation, at);
+  try {
+    for (;;) {
+      const step = lookup.next();
+      if ("done" in step) return step.done;
+      if ("storage" in step)
+        lookup.storage(
+          (await transport.storage(step.storage, at)) ?? undefined,
+        );
+      else
+        lookup.answer(
+          await Promise.all(
+            step.calls.map(({ to, input }) =>
+              transport.call(to, input, at).catch((error: unknown) => {
+                if (error instanceof DotnsRevert) return null;
+                throw error;
+              }),
+            ),
+          ),
+        );
+    }
+  } finally {
+    lookup.free();
+  }
+}
 
-/** What the store keeps; `dotns` is null for a stack without a dotNS gateway. */
-type Kept = { generation: string; resolvedAt: number; dotns: Dotns | null };
+/** A record as a project commits it, next to the stack's signed copy. */
+export function encodeDotnsRecord(record: DotnsRecord): Uint8Array {
+  return wasm.encodeDotnsRecord(record);
+}
+
+/** Reads a record `encodeDotnsRecord` wrote, checking every address. */
+export function decodeDotnsRecord(bytes: Uint8Array): DotnsRecord {
+  return wasm.decodeDotnsRecord(bytes);
+}
 
 type RpcReply = {
   id?: unknown;
@@ -76,157 +79,7 @@ type RpcReply = {
   error?: { code?: number; message?: string };
 };
 
-/**
- * The stack's dotNS contracts, or undefined when its Asset Hub has no gateway dispatcher set.
- * With a store, under the pointer's `stackId` plus `#dotns`, an answer from the descriptor's
- * `generation` younger than `maxAgeMs` (an hour by default) skips the chain, and a refresh that
- * fails falls back to it. "No gateway" is always asked again, since a restarted stack sets its
- * gateway after its chains start. Throws when the chain cannot be reached and nothing usable is
- * stored.
- */
-export async function resolveDotns(
-  pointer: Pointer,
-  descriptor: Descriptor,
-  options: {
-    store?: Store;
-    maxAgeMs?: number;
-    now?: Date;
-    transport?: DotnsTransport;
-    fetch?: Fetch;
-    timeoutMs?: number;
-  } = {},
-): Promise<Dotns | undefined> {
-  const now = unixSeconds(options.now ?? new Date());
-  const id = `${stackId(pointer)}#dotns`;
-  const kept = decodeKept(await options.store?.get(id));
-  const usable =
-    kept?.generation === descriptor.generation && kept.resolvedAt <= now
-      ? kept
-      : undefined;
-  if (
-    usable?.dotns &&
-    (now - usable.resolvedAt) * 1000 < (options.maxAgeMs ?? DEFAULT_MAX_AGE_MS)
-  )
-    return usable.dotns;
-  let dotns: Dotns | null;
-  try {
-    dotns = await lookUp(
-      options.transport ?? defaultTransport(descriptor, options),
-    );
-  } catch (error) {
-    if (usable) return usable.dotns ?? undefined;
-    throw error;
-  }
-  const fresh: Kept = {
-    generation: descriptor.generation,
-    resolvedAt: now,
-    dotns,
-  };
-  await options.store?.set(id, new TextEncoder().encode(JSON.stringify(fresh)));
-  return dotns ?? undefined;
-}
-
-/** What a store holds under a stack's dotNS id, or undefined when it holds nothing usable. */
-function decodeKept(bytes: Uint8Array | undefined): Kept | undefined {
-  try {
-    const kept = JSON.parse(new TextDecoder().decode(bytes));
-    const dotns = kept.dotns;
-    const valid =
-      typeof kept.generation === "string" &&
-      Number.isSafeInteger(kept.resolvedAt) &&
-      (dotns === null ||
-        (isAddress(dotns?.dispatcher) &&
-          isAddress(dotns.protocolRegistry) &&
-          typeof dotns.addresses === "object" &&
-          Object.values(dotns.addresses).every(isAddress)));
-    return valid ? kept : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isAddress(value: unknown): value is string {
-  return typeof value === "string" && /^0x[0-9a-f]{40}$/.test(value);
-}
-
-async function lookUp(transport: DotnsTransport): Promise<Dotns | null> {
-  const stored = await transport.storage(DISPATCHER_ADDRESS_KEY);
-  if (stored === null) return null;
-  const dispatcher = stored.toLowerCase();
-  if (!isAddress(dispatcher))
-    throw new Error(
-      `DotnsGateway.DispatcherAddress holds ${stored}, not an address`,
-    );
-  const protocolRegistry = await registryOf(transport, dispatcher);
-  const entries = await Promise.all(
-    DOTNS_KEYS.map(
-      async (key) =>
-        [
-          key,
-          await address(
-            transport,
-            protocolRegistry,
-            REGISTRY_GET + bytes32(key),
-          ),
-        ] as const,
-    ),
-  );
-  return {
-    dispatcher,
-    protocolRegistry,
-    addresses: Object.fromEntries(
-      entries.filter(([, value]) => value !== UNSET),
-    ),
-  };
-}
-
-/**
- * The registry the dispatcher's PoP controller names. The dispatcher is the controller, or a
- * `RootGatewayDispatcher`, which has no `protocolRegistry()` and forwards to the one in `TARGET()`.
- */
-async function registryOf(
-  transport: DotnsTransport,
-  dispatcher: string,
-): Promise<string> {
-  try {
-    return await address(transport, dispatcher, PROTOCOL_REGISTRY);
-  } catch (error) {
-    if (!(error instanceof DotnsRevert)) throw error;
-  }
-  let controller: string;
-  try {
-    controller = await address(transport, dispatcher, TARGET);
-  } catch (error) {
-    if (error instanceof DotnsRevert)
-      throw new Error(
-        `${dispatcher} answers neither protocolRegistry() nor TARGET()`,
-      );
-    throw error;
-  }
-  return address(transport, controller, PROTOCOL_REGISTRY);
-}
-
-/** The address an `eth_call` returns as its one ABI word: twelve zero bytes, then the address. */
-async function address(
-  transport: DotnsTransport,
-  to: string,
-  data: string,
-): Promise<string> {
-  const word = await transport.call(to, data);
-  const match = /^0x0{24}([0-9a-f]{40})$/i.exec(word);
-  if (!match)
-    throw new Error(`${to} returned ${word} for ${data}, not an address`);
-  return `0x${match[1].toLowerCase()}`;
-}
-
-/** An ASCII key as Solidity's `bytes32("...")` holds it: its bytes, padded on the right. */
-function bytes32(key: string): string {
-  const hex = [...key]
-    .map((char) => char.charCodeAt(0).toString(16).padStart(2, "0"))
-    .join("");
-  return hex.padEnd(64, "0");
-}
-
+/** Asset Hub's RPC for the block and storage, and the stack's `eth-rpc` for calls. */
 function defaultTransport(
   descriptor: Descriptor,
   options: { fetch?: Fetch; timeoutMs?: number },
@@ -244,25 +97,33 @@ function defaultTransport(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const askRpc = failover(rpc);
   const askEthRpc = failover(ethRpc);
+  const request = (method: string, params: unknown[]) =>
+    askRpc((url) => webSocketRequest(url, method, params, timeoutMs));
   return {
-    storage: (key) =>
-      askRpc(async (url) => {
-        const value = await webSocketRequest(
-          url,
-          "state_getStorage",
-          [key],
-          timeoutMs,
+    at: async () => {
+      const hash = await request("chain_getFinalizedHead", []);
+      const header = (await request("chain_getHeader", [hash])) as {
+        number?: unknown;
+      } | null;
+      if (typeof hash !== "string" || typeof header?.number !== "string")
+        throw new Error(
+          `Asset Hub's finalized head ${String(hash)} has no header`,
         );
-        if (value !== null && typeof value !== "string")
-          throw new Error(
-            `state_getStorage on ${url} returned ${JSON.stringify(value)}`,
-          );
-        return value;
-      }),
-    call: (to, data) => {
+      return { number: Number(header.number), hash };
+    },
+    storage: async (key, at) => {
+      const value = await request("state_getStorage", [key, at.hash]);
+      if (value !== null && typeof value !== "string")
+        throw new Error(`state_getStorage returned ${JSON.stringify(value)}`);
+      return value;
+    },
+    call: (to, data, at) => {
       if (ethRpc.length === 0)
         throw new Error(`${descriptor.id} names no eth-rpc; pass a transport`);
-      return askEthRpc((url) => ethCall(fetcher, url, to, data, timeoutMs));
+      const block = `0x${at.number.toString(16)}`;
+      return askEthRpc((url) =>
+        ethCall(fetcher, url, { to, data }, block, timeoutMs),
+      );
     },
   };
 }
@@ -296,8 +157,8 @@ function failover(urls: string[]) {
 async function ethCall(
   fetcher: Fetch,
   url: string,
-  to: string,
-  data: string,
+  call: { to: string; data: string },
+  block: string,
   timeoutMs: number,
 ): Promise<string> {
   const response = await fetcher(url, {
@@ -307,7 +168,7 @@ async function ethCall(
       jsonrpc: "2.0",
       id: 1,
       method: "eth_call",
-      params: [{ to, data }, "latest"],
+      params: [call, block],
     }),
     redirect: "error",
     signal: AbortSignal.timeout(timeoutMs),
@@ -316,14 +177,14 @@ async function ethCall(
   if (reply.error) {
     // Code 3 is the Ethereum JSON-RPC code for a reverted call.
     if (reply.error.code === 3)
-      throw new DotnsRevert(`${to} reverted for ${data}`);
+      throw new DotnsRevert(`${call.to} reverted for ${call.data}`);
     throw new Error(
-      `eth_call to ${to} on ${url} failed: ${reply.error.message}`,
+      `eth_call to ${call.to} on ${url} failed: ${reply.error.message}`,
     );
   }
   if (typeof reply.result !== "string")
     throw new Error(
-      `eth_call to ${to} on ${url} returned ${JSON.stringify(reply.result)}`,
+      `eth_call to ${call.to} on ${url} returned ${JSON.stringify(reply.result)}`,
     );
   return reply.result;
 }
