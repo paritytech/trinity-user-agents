@@ -324,7 +324,7 @@ impl NftLedger {
 
 	/// Checks, in a read, that `request` can be handed off, and returns the
 	/// slot of each of its keys. The write that records it checks again.
-	async fn validate_can_handoff<E: Send + 'static>(
+	pub async fn validate_can_handoff<E: Send + 'static>(
 		&self,
 		request: &HandoffRequest,
 	) -> Result<Vec<ItemSlot>, HandoffError<E>> {

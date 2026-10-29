@@ -19,7 +19,7 @@ use crate::{
 	durable::RegistrationError,
 	host_logic::x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	nft::{
-		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret,
+		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret, NftLedger,
 		OperationKey, PurseId, ReclaimRequest, StartOperationError,
 	},
 	platform::ProductId,
@@ -49,23 +49,40 @@ pub fn cheque_id_for(destination: &NftPurseChequeDestination) -> NftPurseChequeI
 	}
 }
 
+/// A cheque nothing refused when it was prepared: its id was unused by its
+/// creator and its items idle. Creating it checks both again.
+pub struct PreparedCheque {
+	ledger: NftLedger,
+	to: NftPurseChequeDestination,
+	id: NftPurseChequeId,
+	request: HandoffRequest,
+}
+
+impl PreparedCheque {
+	/// Hands the items off in the cheque. They are spent from then on.
+	pub async fn create(self) -> Result<NftPurseCheque, HandoffError<SealError>> {
+		let Self { ledger, to, id, request } = self;
+		let items = request.keys.clone();
+		ledger.hand_off(request, |secrets| seal_cheque(&to, id, &items, secrets)).await
+	}
+}
+
 impl NftPurses {
-	/// Hands `items` of `from` off in a cheque for `to`, made by `creator`.
-	/// The served handler has already answered `NoItems`, `PurseNotFound` and
-	/// `Denied`. A second cheque with the same id from the same creator is
-	/// refused as `TagInUse`.
-	pub async fn create_cheque(
+	/// Prepares handing `items` of `from` off in a cheque for `to`, made by
+	/// `creator`, unless it is refused already. The served handler has
+	/// already answered `NoItems` and `PurseNotFound`. A second cheque with
+	/// the same id from the same creator is refused as `TagInUse`.
+	pub async fn prepare_cheque(
 		&self,
 		creator: &ProductId,
 		from: PurseId,
 		to: &NftPurseChequeDestination,
 		items: BTreeSet<ItemKey>,
-	) -> Result<NftPurseCheque, HandoffError<SealError>> {
+	) -> Result<PreparedCheque, HandoffError<SealError>> {
 		let id = cheque_id_for(to);
-		let tag = handoff_tag(creator, &id);
-		let request = HandoffRequest { from, keys: items.clone(), tag };
-		let seal = |secrets: &[ItemSecret]| seal_cheque(to, id, &items, secrets);
-		self.ledger.hand_off(request, seal).await
+		let request = HandoffRequest { from, keys: items, tag: handoff_tag(creator, &id) };
+		self.ledger.validate_can_handoff(&request).await?;
+		Ok(PreparedCheque { ledger: self.ledger.clone(), to: to.clone(), id, request })
 	}
 
 	/// Starts moving what sits at the keys of `creator`'s cheque `id` back
@@ -285,7 +302,8 @@ mod tests {
 		keys: &[ItemKey],
 	) -> Result<NftPurseCheque, HandoffError<SealError>> {
 		let items = keys.iter().copied().collect();
-		block_on(purses.create_cheque(&creator(product), FROM, to, items))
+		let prepared = block_on(purses.prepare_cheque(&creator(product), FROM, to, items))?;
+		block_on(prepared.create())
 	}
 
 	/// The keys `cheque` opens to with `secret`.
