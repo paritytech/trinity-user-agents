@@ -107,7 +107,7 @@ dependencies {
     // :bindings:truapi-host ships JNA as an @aar, which carries only the Android
     // dispatch libraries. JVM unit tests that cross the FFI boundary need the
     // desktop jar's libjnidispatch too.
-    testImplementation("net.java.dev.jna:jna:5.14.0")
+    testImplementation("net.java.dev.jna:jna:5.17.0")
 
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

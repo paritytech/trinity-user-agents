@@ -219,7 +219,7 @@ apply(from = file("$truapiDir/android/truapi-container.gradle"))
 
 dependencies {
     // UniFFI Kotlin bindings use JNA for FFI.
-    api("net.java.dev.jna:jna:5.14.0@aar")
+    api("net.java.dev.jna:jna:5.17.0@aar")
 
     // The generated bindings bridge the core's async callbacks onto coroutines.
     api(libs.kotlinx.coroutines.core)
