@@ -78,35 +78,28 @@ export async function update(
   const unknown = names.filter((name) => !stacks[name]);
   if (unknown.length > 0)
     throw new Error(`no stack named ${unknown.join(", ")}`);
-  const changed: string[] = [];
-  const failures: string[] = [];
-  for (const name of names.length > 0 ? names : Object.keys(stacks)) {
-    try {
-      changed.push(...(await refresh(name, decodeLink(stacks[name]), options)));
-    } catch (error) {
-      failures.push(
-        `${name}: ${error instanceof Error ? error.message : error}`,
-      );
-    }
-  }
+  const chosen = names.length > 0 ? names : Object.keys(stacks);
+  const results = await Promise.allSettled(
+    chosen.map((name) => refresh(name, decodeLink(stacks[name]), options)),
+  );
+  const changed = results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+  const failures = results.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [`${chosen[index]}: ${messageOf(result.reason)}`]
+      : [],
+  );
   changed.push(...(await generate(options)));
   return { changed, failures };
 }
 
-/** Each stack's name, link and the copy the project holds. */
+/** Each stack's name, link and the copies the project holds. */
 export async function list(options: ProjectOptions = {}) {
-  const stacks = await readStacks(options);
-  return Promise.all(
-    Object.entries(stacks).map(async ([name, link]) => {
-      const document = await readOptional(join(dir(options), `${name}.json`));
-      return {
-        name,
-        link,
-        descriptor: document && parse(document).descriptor,
-        dotns: await readRecord(name, options),
-      };
-    }),
-  );
+  return (await readCopies(options)).map(({ document, ...copy }) => ({
+    ...copy,
+    descriptor: document && parse(document).descriptor,
+  }));
 }
 
 /** Removes a stack and its copies. */
@@ -117,7 +110,7 @@ export async function remove(
   const { [name]: removed, ...stacks } = await readStacks(options);
   if (!removed) throw new Error(`no stack named ${name}`);
   await writeStacks(stacks, options);
-  for (const file of [`${name}.json`, `${name}.dotns.json`])
+  for (const file of Object.values(filesOf(name)))
     await rm(join(dir(options), file), { force: true });
   return { changed: ["stacks.json", ...(await generate(options))] };
 }
@@ -130,11 +123,10 @@ async function refresh(
 ): Promise<string[]> {
   if (!pointer.key)
     throw new Error("a build copy must be signed; add the stack with its key");
-  const documentFile = `${name}.json`;
-  const committed = await readOptional(join(dir(options), documentFile));
+  const files = filesOf(name);
   const accepted = accept(
     pointer,
-    committed,
+    await read(files.document, options),
     await fetchDescriptor(pointer.url, options),
     options.now,
   );
@@ -159,44 +151,44 @@ async function refresh(
       })
     : undefined;
   const changed: string[] = [];
-  if (!committed || !same(committed, accepted.document)) {
-    await write(documentFile, accepted.document, options);
-    changed.push(documentFile);
+  if (accepted.status === "updated") {
+    await write(files.document, accepted.document, options);
+    changed.push(files.document);
   }
-  const recordFile = `${name}.dotns.json`;
   const kept = await readRecord(name, options);
   if (!record) {
-    if (await readOptional(join(dir(options), recordFile))) {
-      await rm(join(dir(options), recordFile));
-      changed.push(recordFile);
+    if (await read(files.dotns, options)) {
+      await rm(join(dir(options), files.dotns));
+      changed.push(files.dotns);
     }
   } else if (
     // A record of the same contracts stays as committed, so a new block alone is no change.
     kept?.generation !== record.generation ||
     JSON.stringify(kept.dotns) !== JSON.stringify(record.dotns)
   ) {
-    await write(recordFile, encodeDotnsRecord(record), options);
-    changed.push(recordFile);
+    await write(files.dotns, encodeDotnsRecord(record), options);
+    changed.push(files.dotns);
   }
   return changed;
 }
 
 /** Writes `index.js` and `index.d.ts` for the stacks the project holds; returns those it changed. */
 async function generate(options: ProjectOptions): Promise<string[]> {
-  const stacks = await readStacks(options);
-  const entries = await Promise.all(
-    Object.entries(stacks).map(async ([name, link]) => {
-      const document = await readOptional(join(dir(options), `${name}.json`));
-      if (!document) return undefined;
-      const value = {
-        pointer: decodeLink(link),
-        document: new TextDecoder().decode(document),
-        dotns: (await readRecord(name, options)) ?? null,
-      };
-      return [name, value] as const;
-    }),
+  const bundled = (await readCopies(options)).flatMap(
+    ({ name, link, document, dotns }) =>
+      document
+        ? [
+            {
+              name,
+              value: {
+                pointer: decodeLink(link),
+                document: new TextDecoder().decode(document),
+                dotns: dotns ?? null,
+              },
+            },
+          ]
+        : [],
   );
-  const bundled = entries.filter((entry) => entry !== undefined);
   const header =
     "// Generated by `trinity-stack update` from stacks.json. Do not edit.\n";
   const module =
@@ -204,7 +196,7 @@ async function generate(options: ProjectOptions): Promise<string[]> {
     "export const stacks = {\n" +
     bundled
       .map(
-        ([name, value]) =>
+        ({ name, value }) =>
           `  ${JSON.stringify(name)}: ${JSON.stringify(value)},\n`,
       )
       .join("") +
@@ -214,7 +206,7 @@ async function generate(options: ProjectOptions): Promise<string[]> {
     'import type { Bundled } from "@parity/trinity-stack/reader";\n\n' +
     "export declare const stacks: {\n" +
     bundled
-      .map(([name]) => `  readonly ${JSON.stringify(name)}: Bundled;\n`)
+      .map(({ name }) => `  readonly ${JSON.stringify(name)}: Bundled;\n`)
       .join("") +
     "};\n";
   const changed: string[] = [];
@@ -223,13 +215,30 @@ async function generate(options: ProjectOptions): Promise<string[]> {
     ["index.d.ts", declarations],
   ] as const) {
     const bytes = new TextEncoder().encode(text);
-    const existing = await readOptional(join(dir(options), file));
+    const existing = await read(file, options);
     if (!existing || !same(existing, bytes)) {
       await write(file, bytes, options);
       changed.push(file);
     }
   }
   return changed;
+}
+
+/** The files a stack's copies live in. */
+function filesOf(name: string) {
+  return { document: `${name}.json`, dotns: `${name}.dotns.json` };
+}
+
+/** Each stack's link, signed copy and dotNS record, as the project holds them. */
+async function readCopies(options: ProjectOptions) {
+  return Promise.all(
+    Object.entries(await readStacks(options)).map(async ([name, link]) => ({
+      name,
+      link,
+      document: await read(filesOf(name).document, options),
+      dotns: await readRecord(name, options),
+    })),
+  );
 }
 
 function dir(options: ProjectOptions) {
@@ -239,7 +248,7 @@ function dir(options: ProjectOptions) {
 async function readStacks(
   options: ProjectOptions,
 ): Promise<Record<string, string>> {
-  const bytes = await readOptional(join(dir(options), "stacks.json"));
+  const bytes = await read("stacks.json", options);
   return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : {};
 }
 
@@ -262,7 +271,7 @@ async function readRecord(
   name: string,
   options: ProjectOptions,
 ): Promise<DotnsRecord | undefined> {
-  const bytes = await readOptional(join(dir(options), `${name}.dotns.json`));
+  const bytes = await read(filesOf(name).dotns, options);
   try {
     return bytes && decodeDotnsRecord(bytes);
   } catch {
@@ -270,9 +279,13 @@ async function readRecord(
   }
 }
 
-async function readOptional(path: string): Promise<Uint8Array | undefined> {
+/** A file in the project's stack directory, or undefined when there is none. */
+async function read(
+  file: string,
+  options: ProjectOptions,
+): Promise<Uint8Array | undefined> {
   try {
-    return new Uint8Array(await readFile(path));
+    return new Uint8Array(await readFile(join(dir(options), file)));
   } catch (error) {
     if ((error as { code?: string }).code === "ENOENT") return undefined;
     throw error;
@@ -286,4 +299,8 @@ async function write(file: string, bytes: Uint8Array, options: ProjectOptions) {
 
 function same(a: Uint8Array, b: Uint8Array) {
   return a.length === b.length && a.every((byte, index) => byte === b[index]);
+}
+
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

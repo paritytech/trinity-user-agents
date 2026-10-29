@@ -2,70 +2,26 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DotnsTransport, DotnsRevert } from "./dotns.js";
-import {
-  type Fetch,
-  type Model,
-  encodeLink,
-  generateSecret,
-  publicKey,
-  publish,
-} from "./index.js";
+import { type Fetch, encodeLink } from "./index.js";
 import { type ProjectOptions, add, list, remove, update } from "./project.js";
 import { createStackReader } from "./reader.js";
+import {
+  MODEL,
+  URL_,
+  cases,
+  pointer,
+  publishedAt as at,
+  transportOf,
+} from "./test-fixtures.js";
 
-const VECTORS = new URL(
-  "../../../../rust/crates/trinity-stack/vectors/",
-  import.meta.url,
-);
-const cases = JSON.parse(
-  await readFile(new URL("cases.json", VECTORS), "utf8"),
-);
 const controller = cases.dotns[0];
-
-const URL_ = "https://stack.example/.well-known/trinity-stack.json";
-const MODEL: Model = {
-  id: "local",
-  name: "Local",
-  network: "local",
-  tld: "local",
-  chains: [
-    {
-      role: "Relay",
-      genesisHash: `0x${"86".repeat(32)}`,
-      rpc: ["ws://127.0.0.1:9944"],
-    },
-    {
-      role: "AssetHub",
-      genesisHash: `0x${"bb".repeat(32)}`,
-      paraId: 1000,
-      rpc: ["ws://127.0.0.1:9945"],
-    },
-  ],
-  services: [],
-};
-const secret = generateSecret();
-const link = encodeLink({ url: URL_, key: publicKey(secret) });
-
-async function at(seconds: number, generation = "g1", model = MODEL) {
-  const { document } = await publish(model, {
-    generation,
-    secret,
-    now: new Date(seconds * 1000),
-  });
-  return document.slice();
-}
+const link = encodeLink(pointer);
 
 /** Asset Hub as the controller vector has it, at block `number`. */
-const chainAt = (number: number) => (): DotnsTransport => ({
-  at: async () => ({ ...controller.at, number }),
-  storage: async () => controller.storage,
-  call: async (to, data) => {
-    const answer = controller.calls[`${to}:${data}`];
-    if (answer === null) throw new DotnsRevert("execution reverted");
-    return answer;
-  },
-});
+const chainAt = (number: number) => () =>
+  transportOf(controller, {
+    at: async () => ({ ...controller.at, number }),
+  });
 
 let dir: string;
 let served: Uint8Array<ArrayBuffer> | undefined;
