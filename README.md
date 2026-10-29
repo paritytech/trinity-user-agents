@@ -112,7 +112,7 @@ rust/crates/
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
-                         refresh policy and dotNS check; conformance vectors and JSON Schema
+                         refresh policy; conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -125,8 +125,7 @@ js/packages/
                           (embedded smoldot light client + remote WebSocket RPC)
   trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
                           reading with a store and publishing; `/reader` keeps stacks
-                          current from build copies the `trinity-stack` CLI writes, and
-                          `/dotns` checks a descriptor's dotNS addresses against its Asset Hub
+                          current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
