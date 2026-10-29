@@ -102,13 +102,16 @@ suite("worker serving a signing host", () => {
     try {
       const client = createClient(createTransport(provider));
       const created = await client.chat.createRoom({
-        roomId: "lobby",
+        roomIdSource: "lobby",
         name: "Lobby",
         icon: "",
       });
-      expect(created._unsafeUnwrap()).toEqual({ status: "New" });
+      const { status, roomId } = created._unsafeUnwrap();
+      expect(status).toBe("New");
+      // The core makes the id, and the host stores the room under it.
+      expect(roomId).toMatch(/^0x[0-9a-f]{64}$/);
       expect(host.getChatRooms()).toEqual([
-        { roomId: "lobby", participatingAs: "RoomHost" },
+        { roomId, participatingAs: "RoomHost" },
       ]);
     } finally {
       provider.dispose();
