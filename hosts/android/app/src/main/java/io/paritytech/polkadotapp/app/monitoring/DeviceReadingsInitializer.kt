@@ -37,7 +37,6 @@ internal class DeviceReadingsInitializer @Inject constructor(
 ) : AppInitializer {
     private val activityManager = context.getSystemService(ActivityManager::class.java)
     private val powerManager = context.getSystemService(PowerManager::class.java)
-    private val coreCount = Runtime.getRuntime().availableProcessors()
 
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
@@ -50,7 +49,8 @@ internal class DeviceReadingsInitializer @Inject constructor(
                     runCancellableCatching {
                         val cpu = CpuSample.now()
                         val onlineCores = Runtime.getRuntime().availableProcessors()
-                        val readings = read(previousCpu?.let { cpu.usagePercentSince(it, onlineCores) })
+                        val readings =
+                            read(previousCpu?.let { cpu.usagePercentSince(it, onlineCores) }, onlineCores)
                         Timber.tag(LOG_TAG).i("Device readings: %s", readings.toLogLine())
                         reporter.report(readings)
                         previousCpu = cpu
@@ -61,13 +61,13 @@ internal class DeviceReadingsInitializer @Inject constructor(
         }
     }
 
-    private fun read(processCpuUsagePercent: Double?): DeviceReadings {
+    private fun read(processCpuUsagePercent: Double?, onlineCores: Int): DeviceReadings {
         val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
         val storage = StatFs(context.filesDir.path)
 
         return DeviceReadings(
             processCpuUsagePercent = processCpuUsagePercent,
-            coreCount = coreCount,
+            coreCount = onlineCores,
             memoryTotalBytes = memory.totalMem,
             memoryAvailableBytes = memory.availMem,
             processMemoryBytes = Debug.getPss() * 1024,
@@ -112,8 +112,11 @@ internal class DeviceReadingsReporter @Inject constructor(
         if (!telemetryEnabledProvider.isEnabled()) return
 
         with(readings) {
+            // Cores are read each tick rather than at launch, because a device under thermal
+            // pressure parks them, and seeing that is the point. iOS reports the same live
+            // count, so the metric means one thing on both.
+            metrics.gauge("device.cpu.cores", coreCount.toDouble(), null)
             if (!launchConstantsReported) {
-                metrics.gauge("device.cpu.cores", coreCount.toDouble(), null)
                 metrics.gauge("device.memory.total", memoryTotalBytes.toDouble(), MetricsUnit.Information.BYTE)
                 metrics.gauge("device.storage.total", storageTotalBytes.toDouble(), MetricsUnit.Information.BYTE)
                 launchConstantsReported = true

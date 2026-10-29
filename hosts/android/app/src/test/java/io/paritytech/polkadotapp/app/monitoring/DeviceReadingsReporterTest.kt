@@ -51,6 +51,8 @@ class DeviceReadingsReporterTest {
 
     @Test
     fun `totals that cannot change while the process runs go out once across reports`() {
+        // Cores are not one of them: a device under thermal pressure parks them, so the count
+        // rides every report, as it does on iOS.
         // Given
         val reporter = DeviceReadingsReporter(HostTelemetryEnabledProvider { true }, metrics)
 
@@ -61,7 +63,7 @@ class DeviceReadingsReporterTest {
         // Then
         assertEquals(
             mapOf(
-                "device.cpu.cores" to 1,
+                "device.cpu.cores" to 2,
                 "device.memory.total" to 1,
                 "device.storage.total" to 1,
                 "device.cpu.process_usage" to 2,
