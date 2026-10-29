@@ -1327,6 +1327,16 @@ impl ChatPlatform for MockPlatform {
 		Box::pin(receiver.map(Ok))
 	}
 
+	async fn list_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> Result<latest::HostChatListSubscribeItem, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		Ok(latest::HostChatListSubscribeItem { rooms: self.chat_rooms() })
+	}
+
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,
@@ -2311,8 +2321,24 @@ mod tests {
 		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
 	}
 
-	// Every declaration a product makes through the core lands where a test
-	// reads it back, and deleting the room takes all of it away.
+	// The core checks the room of each call that changes a room. A check
+	// through a subscription keeps one sender for each call, so the mock
+	// answers the check with one read, as the TS mock does.
+	#[test]
+	fn a_room_check_reads_the_room_list_once() {
+		let p = MockPlatform::new();
+		let product = mock_product();
+		create_room(&p, "lobby");
+
+		let listed = block_on(p.list_chat_rooms(&product)).expect("the mock lists its rooms");
+
+		assert_eq!(listed.rooms, p.chat_rooms());
+		assert!(p.chat_room_subscribers.lock().expect("chat subscribers poisoned").is_empty());
+	}
+
+	// Every declaration that a product makes through the core lands where a
+	// test reads it back. When the product deletes the room, the mock removes
+	// all of it.
 	#[test]
 	fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
 		let p = MockPlatform::new();
