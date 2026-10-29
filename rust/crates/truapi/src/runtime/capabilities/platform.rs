@@ -1,6 +1,6 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::{PermissionAuthorizationStatus, ProductId};
+use crate::platform::{PermissionAuthorizationStatus, ProductExecutionKind, ProductId};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -28,7 +28,8 @@ use truapi::{
 		system::{
 			HostFeatureSupportedError, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 			HostGetProductContextError, HostGetProductContextRequest,
-			HostGetProductContextResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
+			HostGetProductContextResponse, HostHandshakeError, HostHandshakeRequest,
+			HostHandshakeResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
 			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
@@ -51,6 +52,29 @@ use crate::{
 
 #[truapi::async_trait]
 impl System for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "system.handshake"))]
+	async fn handshake(
+		&self,
+		_cx: &CallContext,
+		request: HostHandshakeRequest,
+	) -> Result<HostHandshakeResponse, CallError<HostHandshakeError>> {
+		let HostHandshakeRequest::V1(version) = request;
+		if version.codec_version != truapi::WIRE_CODEC_VERSION {
+			return Err(CallError::Domain(HostHandshakeError::V1(
+				truapi::v01::HostHandshakeError::UnsupportedProtocolVersion,
+			)));
+		}
+		// A worker that agreed the codec can take the core's calls, so a
+		// funding provider's is handed the sessions it serves.
+		if self.connection.product.execution_kind == ProductExecutionKind::Worker {
+			self.connection
+				.services
+				.funding()
+				.connected(self.connection.product.product_id.as_str());
+		}
+		Ok(HostHandshakeResponse::V1)
+	}
+
 	#[instrument(skip_all, fields(runtime.method = "system.feature_supported"))]
 	async fn feature_supported(
 		&self,

@@ -17,18 +17,18 @@ use crate::{
 #[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Funding: Send + Sync {
-	/// Open the funding modality for a direction and, optionally, an amount,
-	/// under a caller-chosen `id` the session is then watched by. Returns once
-	/// the user starts the session.
+	/// Open the funding modality for a direction and, optionally, an amount.
+	/// Answers at once with the session's `intent`, while the host shows the
+	/// overlay; watch the session by it. A user who closes the overlay
+	/// without starting ends the session as `Cancelled`.
 	///
 	/// ```ts
 	/// const result = await truapi.funding.request({
-	///   id: "0x0000000000000000000000000000000000000000000000000000000000000001",
 	///   direction: "In",
 	///   amount: 1000n,
 	/// });
 	/// assert(result.isOk(), "funding.request failed:", result);
-	/// console.log("funding session opened");
+	/// console.log("funding session opened:", result.value.intent);
 	/// ```
 	#[wire(id = 0)]
 	async fn request(
@@ -49,9 +49,7 @@ pub trait Funding: Send + Sync {
 	/// const status = await firstValueFrom(
 	///   from(
 	///     truapi.funding.statusSubscribe({
-	///       request: {
-	///         id: "0x0000000000000000000000000000000000000000000000000000000000000001",
-	///       },
+	///       request: { intent: "fs_example" },
 	///     }),
 	///   ),
 	/// );

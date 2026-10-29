@@ -52,13 +52,16 @@ pub enum FundingFailure {
 	/// release.
 	#[codec(index = 9)]
 	Cancelled,
-	/// Outcome not covered above. Clients render the message and treat the
-	/// code as opaque.
+	/// Outcome not covered above. A client shows `message`, except for the
+	/// codes the core sets itself, which it may show in its own words.
 	#[codec(index = 10)]
 	Other {
-		/// Stable machine-readable code.
+		/// Stable machine-readable code. The core sets `not_claimed` when
+		/// nothing reached the balance and `payment_failed` when the user's
+		/// payment did not go through; any other code is the provider's own.
 		code: String,
-		/// Human-readable text, already localized by the host.
+		/// Text to show: the provider's own, or English text for the codes
+		/// the core sets.
 		message: String,
 	},
 }
@@ -66,15 +69,18 @@ pub enum FundingFailure {
 /// Request to open the funding modality.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostFundingRequest {
-	/// Caller-chosen id the session is watched by, so a product that reloads
-	/// while the overlay is up can still watch it. Reusing one is refused
-	/// with `AlreadyExists`.
-	pub id: [u8; 32],
 	/// Which way value moves; the host opens on the matching screen.
 	pub direction: FundingDirection,
 	/// Amount sought, in the user's payment balance units. `None` lets the
 	/// user choose.
 	pub amount: Option<u128>,
+}
+
+/// Response of [`crate::api::Funding::request`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingResponse {
+	/// The session's id, to watch it by.
+	pub intent: String,
 }
 
 /// Error from [`crate::api::Funding::request`].
@@ -83,28 +89,22 @@ pub enum HostFundingError {
 	/// User is not logged in.
 	#[codec(index = 0)]
 	NotConnected,
-	/// The user dismissed the funding screen without starting a session.
-	#[codec(index = 1)]
-	Rejected,
 	/// The amount sought is zero.
-	#[codec(index = 2)]
+	#[codec(index = 1)]
 	InvalidAmount,
 	/// Catch-all.
-	#[codec(index = 3)]
+	#[codec(index = 2)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
 	},
-	/// This product already has a session with this id.
-	#[codec(index = 4)]
-	AlreadyExists,
 }
 
 /// Request to watch a funding session.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostFundingStatusSubscribeRequest {
-	/// The id the session was requested with.
-	pub id: [u8; 32],
+	/// The id [`crate::api::Funding::request`] answered.
+	pub intent: String,
 }
 
 /// Progress of a funding session, ending in exactly one terminal item.
@@ -146,9 +146,10 @@ pub enum HostFundingStatusSubscribeItem {
 /// Error from [`crate::api::Funding::status_subscribe`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingStatusSubscribeError {
-	/// The caller has no session with this id. An ended session stays
-	/// watchable for good, compacted once newer ones push it out, and
-	/// watching it yields its terminal item.
+	/// The caller has no session with this id, or the user closed the
+	/// funding screen without starting it. An ended session stays watchable
+	/// for good, compacted once newer ones push it out, and watching it
+	/// yields its terminal item.
 	#[codec(index = 0)]
 	NotFound,
 	/// Catch-all.
