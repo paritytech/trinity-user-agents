@@ -399,7 +399,7 @@ class ProductMessageSource(
         return askAction(action) { window.put(original) }
     }
 
-    // The window drops the message only once the product has deleted it.
+    // The window removes the message only after the product deletes it.
     private suspend fun delete(messageId: ChatMessageId): ChatSourceActionOutcome {
         if (messageId !in window.messages) return ChatSourceActionOutcome.Refused(reason = null)
 
