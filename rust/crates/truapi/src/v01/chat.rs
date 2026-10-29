@@ -734,6 +734,17 @@ pub struct ChatReplyPreview {
 	pub body: ChatMessageBody,
 }
 
+/// The message that a message replies to.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatReply {
+	/// The id of the quoted message.
+	pub message_id: String,
+	/// The quoted message, as the host shows it. `None` when the product no
+	/// longer has that message.
+	pub preview: Option<ChatReplyPreview>,
+}
+
 /// One message of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
@@ -749,10 +760,7 @@ pub struct ChatMessage {
 	/// Where the message is on its way.
 	pub status: ChatMessageStatus,
 	/// The message this one replies to.
-	pub reply_to: Option<String>,
-	/// The message this one replies to, as the host quotes it. `None` when
-	/// `reply_to` is `None` or the product no longer has that message.
-	pub reply_preview: Option<ChatReplyPreview>,
+	pub reply: Option<ChatReply>,
 	/// Milliseconds since the Unix epoch of the last edit.
 	pub edited_at: Option<u64>,
 	/// Reactions, one entry for each emoji.
