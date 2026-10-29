@@ -196,6 +196,7 @@ class ProductMessageSource(
             markSeen(action.messageIds)
             ChatSourceActionOutcome.Done
         }
+        is ChatSourceAction.Delete -> userActions.async { delete(action.messageId) }.await()
     }
 
     override suspend fun apply(chatId: ChatId, update: ProductFeedUpdateModel) {
@@ -368,6 +369,7 @@ class ProductMessageSource(
                 window.modify(update.messageId) { it.adjustReaction(update.emoji, update.participantId, placed = false) }
 
             is ProductFeedUpdateModel.StatusChanged -> window.modify(update.messageId) { it.copy(status = update.status) }
+            is ProductFeedUpdateModel.Deleted -> window.remove(update.messageId)
         }
     }
 
@@ -395,6 +397,23 @@ class ProductMessageSource(
         }
         val action = if (placed) ChatUserActionModel.ReactionPlaced(messageId, emoji) else ChatUserActionModel.ReactionRemoved(messageId, emoji)
         return askAction(action) { window.put(original) }
+    }
+
+    // The window drops the message only once the product has deleted it.
+    private suspend fun delete(messageId: ChatMessageId): ChatSourceActionOutcome {
+        if (messageId !in window.messages) return ChatSourceActionOutcome.Refused(reason = null)
+
+        val error = querying.userAction(chatId, ChatUserActionModel.DeleteMessage(messageId)).exceptionOrNull()
+        if (error != null) {
+            if (error is CancellationException) throw error
+            Timber.w(error, "A deletion of a product room failed")
+            return ChatSourceActionOutcome.Refused((error as? ProductChatQueryException.Rejected)?.reason)
+        }
+
+        window.remove(messageId)
+        emit()
+        cache.apply(chatId, ProductFeedUpdateModel.Deleted(messageId))
+        return ChatSourceActionOutcome.Done
     }
 
     /** Sends an action whose change the window shows already. [revert] undoes the change when the action fails. */

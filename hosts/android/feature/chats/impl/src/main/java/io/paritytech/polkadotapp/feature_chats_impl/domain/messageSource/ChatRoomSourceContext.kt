@@ -17,6 +17,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -105,6 +106,11 @@ class ChatRoomSourceContext(
     fun observeSource(): Flow<ChatMessageSource> = services.observePolicy(chatId)
         .distinctUntilChangedBy { storeOf(it) }
         .map { policy -> sourceFor(policy) }
+
+    /** True while the product keeps the messages of the room. */
+    fun observeProductKeepsMessages(): Flow<Boolean> = services.observePolicy(chatId)
+        .map { storeOf(it) == ChatRoomPolicy.MessageStore.PRODUCT }
+        .distinctUntilChanged()
 
     /** The source of the room when the product keeps its messages, or null when the host database keeps them. */
     suspend fun productSource(): ChatMessageSource? {

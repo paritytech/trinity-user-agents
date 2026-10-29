@@ -275,6 +275,7 @@ sealed interface MessageAction {
     data class ShowReactionDetails(val message: ChatMessageUiModel) : MessageAction
     data class ReplyPreviewTap(val messageId: ChatMessageId) : MessageAction
     data class ViewEditHistory(val message: ChatMessageUiModel) : MessageAction
+    data class Delete(val message: ChatMessageUiModel) : MessageAction
     data object DismissActionMenu : MessageAction
 }
 
@@ -283,4 +284,5 @@ sealed interface AllowedMessageMenuAction {
     data class Copy(val text: String) : AllowedMessageMenuAction
     data class Edit(val text: String) : AllowedMessageMenuAction
     data object ViewEditHistory : AllowedMessageMenuAction
+    data object Delete : AllowedMessageMenuAction
 }

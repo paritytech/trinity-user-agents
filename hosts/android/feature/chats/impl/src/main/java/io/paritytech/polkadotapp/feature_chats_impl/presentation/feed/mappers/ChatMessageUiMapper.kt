@@ -86,9 +86,11 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
+        deletesUserMessages: Boolean,
     ): MessagePopUpUiState? {
         return when (selection.type) {
-            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState)
+            MessagePopUpSelection.Type.ACTIONS ->
+                constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState, deletesUserMessages)
             MessagePopUpSelection.Type.REACTION_DETAILS -> constructReactionDetailsPopUpState(selection.messageId, reactions, originDisplayResolver)
         }
     }
@@ -310,6 +312,7 @@ class ChatMessageUiMapper @Inject constructor(
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
+        deletesUserMessages: Boolean,
     ): MessagePopUpUiState.ActionMenu? {
         val messageReactions = reactions[messageId].orEmpty()
         val userReactedEmojis = messageReactions
@@ -323,7 +326,7 @@ class ChatMessageUiMapper @Inject constructor(
             message = message,
             userReactedEmojis = userReactedEmojis,
             canLeaveReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState),
-            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState).toImmutableList(),
+            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState, deletesUserMessages).toImmutableList(),
         )
     }
 }

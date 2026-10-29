@@ -192,6 +192,47 @@ struct ChatProductFeedTests {
         }
     }
 
+    // MARK: - Deleted
+
+    /// A delete takes the message out of the room with its edit and its unread mark, and the chat list shows the
+    /// message before it.
+    @Test func aDeleteRemovesTheMessageAndTheChatListShowsTheMessageBefore() async throws {
+        let bridge = try await openRoom()
+        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: .text(text: "a"))), persist: true)
+        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m2", body: .text(text: "b"))), persist: true)
+        try await bridge.updateFeed(
+            roomId: "lobby",
+            update: .edited(messageId: "m2", body: .text(text: "b2"), editedAt: 1_700_000_000_500),
+            persist: true
+        )
+
+        try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m2"), persist: true)
+
+        #expect(try await fixture.messages("lobby").map(\.content) == [.text("a")])
+        let chat = try #require(try await fixture.storedChat("lobby"))
+        #expect(chat.message?.content == .text("a"))
+        #expect(chat.unreadDisplayMessageCount == 1)
+    }
+
+    @Test func aProductCannotDeleteAMessageOfTheUser() async throws {
+        let bridge = try await openRoom()
+        let user = fixture.userMessage(.text("mine"), roomId: "lobby")
+        try await fixture.save(user)
+
+        await #expect(throws: NativeChatFeedRejection.NotOwner) {
+            try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: user.messageId), persist: true)
+        }
+        #expect(try await fixture.messages("lobby").map(\.content) == [.text("mine")])
+    }
+
+    @Test func aDeleteOfAMessageThatIsNotThereIsUnknown() async throws {
+        let bridge = try await openRoom()
+
+        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
+            try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m9"), persist: true)
+        }
+    }
+
     // MARK: - Reactions
 
     @Test func reactionsOfProductParticipantsAddUpWithTheUser() async throws {
