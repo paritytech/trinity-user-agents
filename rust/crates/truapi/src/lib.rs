@@ -848,7 +848,10 @@ pub use host_core::{
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{preimage_cid, preimage_key};
+pub use host_internal::{
+	bulletin::{preimage_cid, preimage_key},
+	extrinsic::Sr25519Signer,
+};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
@@ -881,8 +884,8 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

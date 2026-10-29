@@ -285,6 +285,18 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
+/// Screen a product-supplied chat icon with the rules `create_room` and
+/// `register_bot` apply.
+///
+/// Hosts call this wherever they take a room icon from a product instead of
+/// screening it themselves: the rules are the core's, and a host that guesses
+/// at them draws icons the core refused. An absent icon screens to the empty
+/// string.
+#[uniffi::export]
+pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
+}
+
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
@@ -303,6 +315,7 @@ pub fn has_trusted_remote_permissions(product_id: String) -> bool {
 /// the `tracing` output, which on native routes to stderr (system logs on
 /// iOS/Android). Most native diagnostics flow through `on_core_log` instead;
 /// this controls the cross-platform `tracing` events shared with wasm.
+/// Warnings and errors reach `on_core_log` as well, whatever this level.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);

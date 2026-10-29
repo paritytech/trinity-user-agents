@@ -523,8 +523,9 @@ The script installs the shared browser container and publishes
 `window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
 stable client, sharing one WebSocket and one Rust execution. The container
 consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Interrupted calls
-fail, subscriptions end, and neither is replayed. Older SDKs use the compatibility
+same TCP port. After a disconnect, the SDK replaces the socket. Calls and
+subscriptions already sent fail and are not replayed. Calls not yet sent go out
+on the replacement once its handshake completes. Older SDKs use the compatibility
 `window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
 disconnect.
 Production builds must omit the tag.
@@ -1246,7 +1247,13 @@ A new auto account:
    unminted on the dotNS registrar (`DotnsRegistrar.ownerOf` reverts for its
    node under the network TLD): a reservation for a registered name could never
    be claimed and would hold that stem's reservation queue for the whole
-   reservation window;
+   reservation window. Each account signature follows the runtime of the
+   chain that checks it, read from that chain's metadata at this step: a
+   runtime that publishes a `SigningContext` constant on the verifying pallet
+   (`PeopleLite` on People for the candidate and consumer registration
+   signatures, `DotnsGateway` on Asset Hub for the reservation signature)
+   checks the signature over that context followed by the message. A runtime
+   without the constant checks the message alone;
 8. polls the dotNS contracts on Asset Hub for the final `name.discriminator`;
 9. waits for inclusion in a personhood ring; and
 10. marks and saves the account as attested.

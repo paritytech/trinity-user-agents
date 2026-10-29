@@ -23,7 +23,7 @@ use crate::{
 		authority::ProductAuthority,
 		signing_host::allowance::current_unix_secs,
 		statement_allowance::{
-			self, fetch_chain_state, fetch_metadata, find_including_rings,
+			self, fetch_metadata, find_including_rings,
 			renewal::{
 				RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport,
 				next_tick_delay, renew_targets,
@@ -249,25 +249,24 @@ pub async fn renew_now(
 	// key reaches renewal too — and it revalidates the session first.
 	let session = signing_host.current_session().ok_or(StatementRenewalError::NoActiveSession)?;
 	let candidates = signing_host.reserved_person_collection_candidates(&session)?;
-	let rpc = statement_allowance::rpc::RpcClient::new(
-		services.statement_store.client("statement-allowance renewal").await?,
-	);
-	let metadata = fetch_metadata(&rpc).await?;
-	let chain_state = fetch_chain_state(&rpc).await?;
-	let network_suffix = statement_allowance::slot::read_network_suffix(&rpc).await?;
+	// The pooled client, so the extrinsic's birth block and its submission
+	// reach the same node.
+	let client = services.statement_store.chain_client("statement-allowance renewal").await?;
+	let rpc = client.rpc();
+	let metadata = fetch_metadata(rpc).await?;
+	let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
 	// Every ring back to index 0, because a membership that stopped being
 	// re-included still proves against the ring that holds it.
 	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
 	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
-	let memberships =
-		find_including_rings(&rpc, &metadata, &signer, &collections, u32::MAX).await?;
+	let memberships = find_including_rings(rpc, &metadata, &signer, &collections, u32::MAX).await?;
 	if memberships.is_empty() {
 		return Err(StatementRenewalError::MissingPersonhoodMembership);
 	}
 	let context = RenewalChainContext {
-		rpc: &rpc,
+		rpc,
 		metadata: &metadata,
-		chain_state: &chain_state,
+		target_chain: client.extrinsic_target(&services.extrinsics),
 		network_suffix: &network_suffix,
 		signer: &signer,
 		collections: &collections,

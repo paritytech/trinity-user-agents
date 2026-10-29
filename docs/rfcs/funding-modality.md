@@ -14,11 +14,10 @@ user's payment on its own rail, converts it, and credits the user with `payment.
 reports, and decides the outcome itself from the top-ups and payments the worker names.
 
 This RFC covers the worker's side, the `FundingProvider` trait. A product opens a session with
-`funding.request({ id, direction, amount? })` under an id it chooses, and the host draws the overlay; those are defined
-with the `Funding` trait and the host's `FundingPlatform`. The core keeps the session under that id hashed with the
-product, as payment ids are, so a product that reloads while the overlay is up still watches it with
-`statusSubscribe({ id })`, and a reused id is refused with `AlreadyExists`. The overlay runs on its own task, so a caller
-that goes away does not leave it open; a session the user dismisses ends its watchers as `Failed { Cancelled }`. The Worker
+`funding.request({ direction, amount? })`, which answers at once with the session's `intent` while the host draws the
+overlay; those are defined with the `Funding` trait and the host's `FundingPlatform`. The product watches the session
+with `statusSubscribe({ intent })`, and no other product can. The overlay runs on its own task, so no call stays open
+while the user is on it; a session the user dismisses ends its watchers as `Failed { Cancelled }` and is not kept. The Worker
 manifest's `includes.funding` is defined in the [product manifest RFC](product-manifest.md#funding-configuration).
 
 ## Motivation
@@ -71,7 +70,7 @@ The worker prices quotes and runs sessions against that API.
 
 Products keep `Funding`; the worker side is a trait of its own because execution gating applies to a whole trait.
 
-The core asks the worker through host-initiated calls, each answered with one item, and the worker tells the core through
+The core asks the worker through host-initiated requests, each awaiting one answer, and the worker tells the core through
 ordinary calls.
 
 ```rust
@@ -79,13 +78,13 @@ ordinary calls.
 #[service(required_execution = Worker)]
 pub trait FundingProvider {
     #[wire(host_initiated, id = 0)] // every provider, each quote round; 10 s to answer
-    fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Subscription<FundingQuoteAnswer, _>;
+    async fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Result<FundingQuoteAnswer, _>;
     #[wire(host_initiated, id = 1)] // the user picked it; again when the worker connects
-    fn assign(&self, cx, request: ProductFundingAssignRequest) -> Subscription<(), _>;
+    async fn assign(&self, cx, request: ProductFundingAssignRequest) -> Result<(), _>;
     #[wire(host_initiated, id = 2)] // the user asked to cancel
-    fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Subscription<FundingCancelAnswer, _>;
+    async fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Result<FundingCancelAnswer, _>;
     #[wire(host_initiated, id = 3)] // the user answered the provider's offer
-    fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Subscription<(), _>;
+    async fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Result<(), _>;
     #[wire(id = 4)] // stored before it answers
     async fn report(&self, cx, request: HostFundingReportRequest) -> Result<(), HostFundingReportError>;
     #[wire(id = 5)] // an App route or an external https page, answers once the frame closes
@@ -103,8 +102,8 @@ CORE   --- settle_cancel(decision) ---------> WORKER   user answered the offer
 ```
 
 The worker registers one handler per call, as `truapi.renderer.onRender` does: `onQuote`, `onAssign`, `onCancel` and
-`onSettleCancel`. A handler sends its one answer item and nothing after; the core ends the call once it has it, since a
-frame ending the call could overtake the item on a host that handles a connection's frames concurrently.
+`onSettleCancel`. A handler returns its answer, `ok(answer)` or `err(error)`; the core awaits it, and a call it drops
+aborts the handler's signal.
 
 ### `assign`
 
@@ -210,7 +209,7 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and `funding_history` gives the host every recorded session, full or compacted, to rebuild its own history if it was lost. Sessions and the pack are stored as versioned blobs: a corrupt one is set aside under `FundingSessionsUnreadable`, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
+- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the core hands the host every recorded session, full or compacted, through `funding_history` each time funding resumes, to rebuild its own history if it was lost. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
 - A worker names the session when it starts funds: `payment.topUp` and `payment.request` take `funding: Some(intent)`
   for an open session it serves in that direction, or fail with `FundingNotServed`. A withdrawal whose payout failed
   takes top-ups too, as its refund, and a top-up the user cancelled before paying takes one as a payment that arrived
@@ -300,10 +299,11 @@ The host app can be closed or crash at any point; a session carries on from its 
   instead of moving funds twice. On `assign` it resumes from `last_update` and its stored state, not from the start.
 - **What the host does.** It starts funding at launch when it has sessions in flight, rather than waiting for a
   product to need the core, and it keeps its own top-up and payment records across restarts so a claim in progress
-  carries on. It learns whether sessions are in flight from `funding_in_progress`, which reads storage when funding
-  has not resumed yet, and asks again on each `funding_session_changed`.
-- **Stored sessions are versioned.** Their blob leads with a format number, and the core keeps reading every earlier
-  format, so an upgrade keeps the sessions in flight. A blob it cannot read is kept aside rather than overwritten.
+  carries on. The core tells it whether a provider still works on a session through `funding_in_progress_changed`,
+  once funding resumes and again whenever that changes, and the host keeps the last answer for its next launch.
+- **Stored sessions are versioned.** Each row leads with a format number. A row of an older format is dropped, one of a
+  newer format leaves funding unavailable without touching it, and one that does not decode is skipped and left in
+  place.
 
 A worker keeps running while the user is elsewhere in the app. Running with the app in the background is out of
 scope for now.

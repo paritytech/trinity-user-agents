@@ -72,6 +72,8 @@ pub struct NativeTrUApiHostRuntime {
 	payments: OnceLock<Arc<PaymentCallbackPlatform>>,
 	/// The balance view changes are pushed to, once installed.
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
+	/// Forwards core warnings to the host of this runtime until the runtime drops.
+	_host_sink: crate::logging::HostSinkRegistration,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -82,6 +84,31 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
+		// Installed before the rest of startup, so the warnings raised on the way
+		// up reach this host rather than falling in a gap. A runtime that does
+		// not finish starting puts back the sink it displaced as its
+		// registration drops, so a failed start cannot silence a host that is
+		// already running.
+		//
+		// Events the core addresses to a host, and its warnings, reach this log
+		// regardless of the trace level, which defaults to ERROR and so drops
+		// everything the core would otherwise say about itself. The callbacks are
+		// held weakly so a line in flight cannot resurrect a host being torn down.
+		let log_callbacks = Arc::downgrade(&callbacks);
+		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
+			if let Some(callbacks) = log_callbacks.upgrade() {
+				callbacks.on_core_log(marker.to_string(), detail.to_string());
+			}
+		}));
+		// Raised through tracing rather than called directly, so a host log
+		// carries proof that the layer forwarding to this sink is alive. A host
+		// that reaches a later condition and sees nothing can tell a quiet core
+		// from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
@@ -146,6 +173,7 @@ impl NativeTrUApiHostRuntime {
 			top_up: OnceLock::new(),
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
+			_host_sink: host_sink,
 		}))
 	}
 
@@ -272,8 +300,9 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		self.runtime.set_funding_feed(platform.clone()) &&
+			self.runtime.set_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -285,45 +314,6 @@ impl NativeTrUApiHostRuntime {
 		amount: Option<u128>,
 	) -> Result<Option<String>, HostRejection> {
 		Ok(self.runtime.open_funding(direction, amount).await?)
-	}
-
-	/// Session `intent` as the core holds it, for the host's status and
-	/// history views.
-	pub fn funding_session(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_session(&intent)
-	}
-
-	/// Session `intent`'s progress: the steps for its direction and rail
-	/// with when each was reached, and the provider's references.
-	pub fn funding_progress(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.runtime.funding_progress(&intent)
-	}
-
-	/// Whether a provider still works on any funding session, read from
-	/// storage if funding has not resumed yet; the host keeps the answer to
-	/// start funding at its next launch, and asks again on each
-	/// `funding_session_changed`.
-	pub async fn funding_in_progress(&self) -> Result<bool, HostRejection> {
-		Ok(self.runtime.funding_in_progress().await?)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost.
-	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
-		self.runtime.funding_history()
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -429,53 +419,6 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.set_funding_providers(providers)?)
 	}
 
-	/// The providers funding session `intent` can be handed to.
-	pub fn funding_candidates(
-		&self,
-		intent: String,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.runtime.funding_candidates(&intent)
-	}
-
-	/// What the core knows about each country for funding session `intent`
-	/// on `rail` and `asset`: supported, with the lowest minimum a provider
-	/// showed there, or unsupported. A country the core knows nothing about
-	/// is left out.
-	pub fn funding_countries(
-		&self,
-		intent: String,
-		rail: v01::FundingRail,
-		asset: String,
-	) -> Vec<crate::host_logic::funding_providers::FundingCountry> {
-		self.runtime.funding_countries(&intent, rail, &asset)
-	}
-
-	/// The amounts funding session `intent` can take on `rail`, `asset`,
-	/// `network` and `country` across every provider, as their refusals
-	/// showed. The minimum is never below the $10 product floor.
-	pub fn funding_amount_limits(
-		&self,
-		intent: String,
-		rail: v01::FundingRail,
-		asset: String,
-		network: Option<String>,
-		country: Option<String>,
-	) -> crate::host_logic::funding_providers::FundingAmountLimits {
-		self.runtime.funding_amount_limits(
-			&intent,
-			rail,
-			&asset,
-			network.as_deref(),
-			country.as_deref(),
-		)
-	}
-
-	/// The country quotes go by until the user picks one, as the host's
-	/// `detected_country` last answered.
-	pub async fn detected_funding_country(&self) -> Option<String> {
-		self.runtime.detected_funding_country().await
-	}
-
 	/// Ask every funding provider to price `ask` for session `intent`. The
 	/// list arrives through `funding_quotes_changed`, and is asked for again
 	/// every minute until the session is handed to a provider or ends, the
@@ -490,6 +433,17 @@ impl NativeTrUApiHostRuntime {
 	/// leaves the provider list.
 	pub fn stop_funding_quotes(&self, intent: String) {
 		self.runtime.stop_funding_quotes(&intent);
+	}
+
+	/// Report what the user picked so far in session `intent`'s overlay. The
+	/// countries and amount limits it leads to arrive through
+	/// `funding_options_changed`.
+	pub fn select_funding_options(
+		&self,
+		intent: String,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.runtime.select_funding_options(&intent, selection);
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose, by
@@ -1261,6 +1215,29 @@ mod tests {
 	use futures::stream::StreamExt;
 	use std::sync::{Arc, atomic::Ordering};
 	use truapi::v01;
+
+	/// The runtime owns its log sink, so core warnings reach the callbacks it was built with.
+	#[test]
+	fn the_runtime_forwards_core_warnings_to_its_callbacks() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let mut config = native_host_runtime_config();
+		config.local_session_secret = None;
+		config.local_session_lite_username = None;
+		let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+			.expect("host runtime config should be valid");
+
+		crate::logging::testing::forward(
+			&host._host_sink,
+			"truapi.tracing.warn",
+			"chain call failed",
+		);
+
+		let logs = callbacks.logs.lock().unwrap();
+		assert!(
+			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			"{logs:?}"
+		);
+	}
 
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {

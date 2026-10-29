@@ -31,7 +31,10 @@ use crate::{
 		},
 		worker_manifest::WorkerManifest,
 	},
-	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
+	runtime::{
+		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		services::RuntimeServices,
+	},
 	unix_time::current_unix_secs,
 };
 
@@ -60,8 +63,15 @@ pub async fn fetch_root_manifest(
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	fetch_text_record(chain, asset_hub_chain_genesis_hash, product_id, None, MANIFEST_RECORD_KEY)
-		.await
+	fetch_text_record(
+		chain,
+		asset_hub_chain_genesis_hash,
+		DotnsLookupKind::Manifest(product_id),
+		product_id,
+		None,
+		MANIFEST_RECORD_KEY,
+	)
+	.await
 }
 
 /// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes
@@ -76,6 +86,7 @@ pub async fn fetch_worker_manifest(
 	fetch_text_record(
 		chain,
 		asset_hub_chain_genesis_hash,
+		DotnsLookupKind::WorkerManifest(product_id),
 		product_id,
 		Some(WORKER_SUBNAME),
 		EXECUTABLE_RECORD_KEY,
@@ -90,20 +101,17 @@ fn record_node(tld: &str, product_id: &ProductId, subname: Option<&str>) -> [u8;
 }
 
 /// Reads text record `key` on `product_id`'s base name, or on its `subname`
-/// when one is given.
+/// when one is given. `kind` names the lookup in its follow id.
 async fn fetch_text_record(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
+	kind: DotnsLookupKind<'_>,
 	product_id: &ProductId,
 	subname: Option<&str>,
 	key: &str,
 ) -> Result<Option<String>, DotnsError> {
-	let mut lookup = DotnsLookup::pinned_to_best_block(
-		chain,
-		asset_hub_chain_genesis_hash,
-		&format!("{key}:{product_id}"),
-	)
-	.await?;
+	let mut lookup =
+		DotnsLookup::pinned_to_best_block(chain, asset_hub_chain_genesis_hash, kind).await?;
 
 	let Some(protocol_registry) = protocol_registry(&mut lookup).await? else {
 		return Ok(None);
@@ -236,6 +244,67 @@ mod tests {
 		assert_eq!(call[99], 8, "key length precedes its bytes");
 		assert_eq!(&call[100..108], b"manifest");
 	}
+
+	/// The source each lookup with nothing cached reports, for a host with no
+	/// Asset Hub, a chain that cannot be reached, and one that never answers.
+	#[test]
+	fn an_uncached_lookup_reports_why_it_read_no_manifest() {
+		let lookup = |platform: crate::test_support::StubPlatform,
+		              asset_hub_chain_genesis_hash: [u8; 32],
+		              ceiling: Duration| {
+			let platform = std::sync::Arc::new(platform);
+			let services = RuntimeServices::new(
+				platform.clone(),
+				crate::platform::HostInfo {
+					name: "Polkadot Mobile".to_string(),
+					icon: None,
+					version: None,
+					platform: truapi::latest::HostPlatform::Unknown,
+				},
+				[0; 32],
+				[0xbb; 32],
+				asset_hub_chain_genesis_hash,
+				crate::test_support::test_spawner(),
+			);
+			futures::executor::block_on(root_manifest_within(
+				ceiling,
+				&services,
+				platform.as_ref(),
+				&ProductId::for_test("peopl.dot"),
+			))
+		};
+		assert_eq!(
+			[
+				lookup(Default::default(), [0; 32], MANIFEST_RESOLUTION_CEILING),
+				lookup(
+					crate::test_support::StubPlatform {
+						chain_connect_error: Some("fixture serves no chain"),
+						..Default::default()
+					},
+					[0xcc; 32],
+					MANIFEST_RESOLUTION_CEILING,
+				),
+				lookup(
+					crate::test_support::StubPlatform {
+						chain_connect_pending: true,
+						..Default::default()
+					},
+					[0xcc; 32],
+					Duration::from_millis(10),
+				),
+			],
+			[
+				(None, ManifestSource::NoAssetHub),
+				(
+					None,
+					ManifestSource::LookupFailed {
+						reason: "Asset Hub follow stopped before initialization".to_string(),
+					},
+				),
+				(None, ManifestSource::TimedOut),
+			]
+		);
+	}
 }
 
 /// How long a cached root manifest is honoured.
@@ -306,6 +375,8 @@ enum RefusedBecause {
 	ManifestMalformed,
 	/// No manifest could be resolved at all.
 	ManifestUnavailable,
+	/// The proof context names a product on another network from the owner.
+	ContextOffNetwork,
 }
 
 impl RefusedBecause {
@@ -316,7 +387,80 @@ impl RefusedBecause {
 			Self::DecisionUnreadable => "stored decision unreadable",
 			Self::ManifestMalformed => "manifest malformed",
 			Self::ManifestUnavailable => "manifest unavailable",
+			Self::ContextOffNetwork => "context on another network",
 		}
+	}
+}
+
+/// Where a grant lookup got the manifest it judged by.
+///
+/// A cached copy is up to [`MANIFEST_TTL_SECS`] old, and a cached miss refuses
+/// for that long, so two devices can judge one grant differently by where each
+/// got its manifest.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+enum ManifestSource {
+	/// Read from the cache on this device, written `age_secs` ago.
+	#[display("cache, {age_secs} s old")]
+	Cached { age_secs: u64 },
+	/// Read from dotNS by this lookup.
+	#[display("dotNS")]
+	Fetched,
+	/// The host names no Asset Hub to resolve against.
+	#[display("no Asset Hub")]
+	NoAssetHub,
+	/// The dotNS lookup failed. Nothing was cached.
+	#[display("dotNS lookup failed: {reason}")]
+	LookupFailed { reason: String },
+	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
+	#[display("dotNS lookup timed out")]
+	TimedOut,
+}
+
+/// Why a grant lookup refused, with what it judged by.
+struct Refusal {
+	because: RefusedBecause,
+	/// Where the manifest came from, or `None` for a refusal that read none.
+	source: Option<ManifestSource>,
+	/// What the manifest lists under the `trustedProducts` key for the caller,
+	/// or `None` when it has no such key or no manifest was read.
+	scopes: Option<Vec<Granted>>,
+}
+
+impl Refusal {
+	/// Record the refusal where a native host forwards it off the device.
+	///
+	/// A warning because the wire answers one refusal for every reason, so this
+	/// line is the only record of which it was. The detail is cut at
+	/// [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`], so the two unbounded
+	/// fields go last: the source, which carries the reason a lookup failed,
+	/// then the scopes the publisher lists. A failed lookup reads no scopes, so
+	/// the cut lands in whichever of the two the line carries.
+	fn warn(&self, caller: &ProductId, owner: &ProductId, context: Option<&ProductId>) {
+		warn!(
+			because = %self.because.as_str(),
+			entry = %caller.bare_label(),
+			caller = %caller,
+			owner = %owner,
+			context = context.map(tracing::field::display),
+			source = self.source.as_ref().map(tracing::field::display),
+			scopes = ?self.scopes,
+			"ring-VRF access refused"
+		);
+	}
+
+	/// Record a key-grant refusal the caller recovers from by asking the user,
+	/// on the device only, since it is a step towards a prompt rather than the
+	/// answer the product gets.
+	fn inform(&self, caller: &ProductId, owner: &ProductId) {
+		info!(
+			because = %self.because.as_str(),
+			entry = %caller.bare_label(),
+			caller = %caller,
+			owner = %owner,
+			source = self.source.as_ref().map(tracing::field::display),
+			scopes = ?self.scopes,
+			"ring-VRF key access not granted by manifest, asking for user consent"
+		);
 	}
 }
 
@@ -334,32 +478,40 @@ pub async fn grants_scope(
 	target: &ProductId,
 	scope: Granted,
 ) -> bool {
-	scope_grant(services, platform, caller_id, target, scope).await.is_ok()
+	scope_grant(services, platform, caller_id, target, scope, MANIFEST_RESOLUTION_CEILING)
+		.await
+		.is_ok()
 }
 
-/// Published access subject to this host's stored account-access refusals.
+/// Published access subject to this host's stored account-access refusals,
+/// with the manifest lookup bounded by `ceiling`.
 async fn scope_grant(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	caller_id: &ProductId,
 	target: &ProductId,
 	scope: Granted,
-) -> Result<(), RefusedBecause> {
-	// Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
-	let json = with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
-		.await
-		.flatten()
-		.ok_or(RefusedBecause::ManifestUnavailable)?;
-	let manifest = RootManifest::parse(&json).map_err(|_| RefusedBecause::ManifestMalformed)?;
+	ceiling: Duration,
+) -> Result<(), Refusal> {
+	let (json, source) = root_manifest_within(ceiling, services, platform, target).await;
+	let source = Some(source);
+	let Some(json) = json else {
+		return Err(Refusal { because: RefusedBecause::ManifestUnavailable, source, scopes: None });
+	};
+	let Ok(manifest) = RootManifest::parse(&json) else {
+		return Err(Refusal { because: RefusedBecause::ManifestMalformed, source, scopes: None });
+	};
+	let scopes = manifest.trusted_products.get(caller_id.bare_label()).cloned();
 	if !manifest.grants(caller_id, scope) {
-		return Err(RefusedBecause::NotGranted);
+		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
 	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
-		match stored_account_decision(platform, caller_id, target).await {
-			StoredDecision::Denied => return Err(RefusedBecause::UserDenied),
-			StoredDecision::Unreadable => return Err(RefusedBecause::DecisionUnreadable),
-			StoredDecision::Absent => {},
-		}
+		let because = match stored_account_decision(platform, caller_id, target).await {
+			StoredDecision::Denied => RefusedBecause::UserDenied,
+			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
+			StoredDecision::Absent => return Ok(()),
+		};
+		return Err(Refusal { because, source, scopes });
 	}
 	Ok(())
 }
@@ -440,6 +592,18 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 	}
 }
 
+/// [`root_manifest`], or no manifest from a lookup that ran past `ceiling`.
+async fn root_manifest_within(
+	ceiling: Duration,
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	target: &ProductId,
+) -> (Option<String>, ManifestSource) {
+	with_ceiling(ceiling, root_manifest(services, platform, target))
+		.await
+		.unwrap_or((None, ManifestSource::TimedOut))
+}
+
 /// Which proof contexts a caller granted another product's ring-VRF key may use.
 ///
 /// The owner's grant covers the key, not whose pseudonym the caller mints with
@@ -492,6 +656,11 @@ pub async fn require_context_access(
 	// the host's: an owner id from another network reads this host's manifests,
 	// as `ring_vrf_key_access_granted` already does for the key grant.
 	if !context_id.on_one_network(&access.owner) {
+		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
+			&access.caller,
+			&access.owner,
+			Some(&context_id),
+		);
 		return Err(RingVrfError::NotAllowlisted);
 	}
 	let decision = scope_grant(
@@ -500,19 +669,27 @@ pub async fn require_context_access(
 		&access.caller,
 		&context_id,
 		Granted::Context,
+		MANIFEST_RESOLUTION_CEILING,
 	)
 	.await;
 	// Recorded either way, for the reason `ring_vrf_key_access_granted` records
 	// its own decision: the wire answers one refusal for every reason, and a
 	// granted use raises no prompt and stores nothing.
-	info!(
-		caller = %access.caller,
-		owner = %access.owner,
-		context = %context_id,
-		because = decision.err().map_or("granted", RefusedBecause::as_str),
-		"ring-VRF proof context checked against the context product's manifest"
-	);
-	decision.map_err(|_| RingVrfError::NotAllowlisted)
+	match decision {
+		Ok(()) => {
+			info!(
+				caller = %access.caller,
+				owner = %access.owner,
+				context = %context_id,
+				"ring-VRF proof context granted by the context product's manifest"
+			);
+			Ok(())
+		},
+		Err(refusal) => {
+			refusal.warn(&access.caller, &access.owner, Some(&context_id));
+			Err(RingVrfError::NotAllowlisted)
+		},
+	}
 }
 
 /// The identities the gate decided about, returned together because every
@@ -526,36 +703,95 @@ pub struct AuthorizedAccess {
 
 /// Own-key or published access, honoring stored account-access refusals.
 /// Returns canonical identities for key derivation and context checks.
+///
+/// A published refusal is recorded as a warning for the host.
 pub async fn ring_vrf_key_access_granted(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	caller: ProductId,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(
+		services,
+		platform,
+		caller,
+		handle,
+		MANIFEST_RESOLUTION_CEILING,
+		|refusal, caller, owner| refusal.warn(caller, owner, None),
+	)
+	.await
+}
+
+/// [`ring_vrf_key_access_granted`] with the grant lookup bounded by `budget`.
+///
+/// A lookup still running past the budget is refused and recorded as timed
+/// out. Cancelling the call is for the caller to handle, by dropping this
+/// future.
+pub async fn ring_vrf_key_access_granted_within(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	caller: ProductId,
+	handle: &v01::ProductAccountId,
+	budget: Option<Duration>,
+) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(
+		services,
+		platform,
+		caller,
+		handle,
+		budget
+			.map_or(MANIFEST_RESOLUTION_CEILING, |budget| budget.min(MANIFEST_RESOLUTION_CEILING)),
+		|refusal, caller, owner| refusal.warn(caller, owner, None),
+	)
+	.await
+}
+
+/// The same decision as [`ring_vrf_key_access_granted`], for a caller that
+/// answers a refusal by asking the user instead, so the refusal stays on the
+/// device.
+pub async fn ring_vrf_key_access_granted_or_consent(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	caller: ProductId,
+	handle: &v01::ProductAccountId,
+) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(services, platform, caller, handle, MANIFEST_RESOLUTION_CEILING, Refusal::inform)
+		.await
+}
+
+/// Own-key or published access, handing a published refusal to `record_refusal`.
+///
+/// The grant lookup is bounded by `ceiling`.
+async fn key_access(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	caller: ProductId,
+	handle: &v01::ProductAccountId,
+	ceiling: Duration,
+	record_refusal: fn(&Refusal, &ProductId, &ProductId),
+) -> Result<AuthorizedAccess, RingVrfError> {
 	let owner = handle.dot_ns_identifier.clone();
 	if caller == owner {
 		return Ok(AuthorizedAccess { caller, owner });
 	}
-	let decision = scope_grant(services, platform, &caller, &owner, Granted::Context).await;
-	if decision.is_ok() {
-		info!(
-			caller = %caller,
-			owner = %owner,
-			"ring-VRF key access granted by the owner's manifest"
-		);
-		return Ok(AuthorizedAccess { caller, owner });
+	match scope_grant(services, platform, &caller, &owner, Granted::Context, ceiling).await {
+		Ok(()) => {
+			info!(
+				caller = %caller,
+				owner = %owner,
+				"ring-VRF key access granted by the owner's manifest"
+			);
+			Ok(AuthorizedAccess { caller, owner })
+		},
+		Err(refusal) => {
+			record_refusal(&refusal, &caller, &owner);
+			Err(RingVrfError::NotAllowlisted)
+		},
 	}
-	info!(
-		caller = %caller,
-		owner = %owner,
-		because = decision.err().map_or("granted", RefusedBecause::as_str),
-		"ring-VRF key access refused"
-	);
-	Err(RingVrfError::NotAllowlisted)
 }
 
-/// `target`'s root manifest JSON, from cache when it is younger than
-/// [`MANIFEST_TTL_SECS`] and from dotNS otherwise.
+/// The root manifest JSON of `target` and where it came from: the cache when
+/// the entry is younger than [`MANIFEST_TTL_SECS`], dotNS otherwise.
 ///
 /// A freshly read manifest is cached even though the caller may not be granted
 /// anything by it: the document describes the product, not the asker. So is the
@@ -570,16 +806,24 @@ async fn root_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	target: &ProductId,
-) -> Option<String> {
-	cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
-		fetch_root_manifest(&services.chain, asset_hub(services)?, target)
+) -> (Option<String>, ManifestSource) {
+	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
+		let genesis_hash =
+			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
+		fetch_root_manifest(&services.chain, genesis_hash, target)
 			.await
-			.map_err(|error| error.reason())
+			.map_err(|error| {
+				let reason = error.reason();
+				warn!(%target, %reason, "root manifest lookup failed");
+				ManifestSource::LookupFailed { reason }
+			})
 	})
-	.await
-	.inspect_err(|reason| warn!(%target, %reason, "root manifest lookup failed"))
-	.ok()
-	.flatten()
+	.await;
+	match read {
+		Ok((json, DotnsRead::Cached { age_secs })) => (json, ManifestSource::Cached { age_secs }),
+		Ok((json, DotnsRead::Fetched)) => (json, ManifestSource::Fetched),
+		Err(source) => (None, source),
+	}
 }
 
 /// `product_id`'s Worker manifest, cached as [`root_manifest`] caches the root
@@ -591,7 +835,7 @@ pub async fn worker_manifest(
 	platform: &dyn Platform,
 	product_id: &ProductId,
 ) -> Result<Option<WorkerManifest>, String> {
-	let json = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
+	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
 		fetch_worker_manifest(&services.chain, asset_hub(services)?, product_id)
 			.await
 			.map_err(|error| error.reason())
@@ -612,20 +856,30 @@ pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
 	CoreStorageKey::WorkerManifest { product_id: product_id.bare_label().to_string() }
 }
 
+/// Where [`cached_dotns_json`] read its answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DotnsRead {
+	/// From the cache on this device, written `age_secs` ago.
+	Cached { age_secs: u64 },
+	/// From dotNS, just now.
+	Fetched,
+}
+
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
-/// younger than [`MANIFEST_TTL_SECS`]. Whatever `fetch` answers, including
-/// that there is nothing published, is cached for that lifetime.
+/// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
+/// answers, including that there is nothing published, is cached for that
+/// lifetime.
 ///
 /// A failed lookup is not cached. It says nothing about what is published,
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
-pub async fn cached_dotns_json<F>(
+pub async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
 	key: CoreStorageKey,
 	fetch: impl FnOnce() -> F,
-) -> Result<Option<String>, String>
+) -> Result<(Option<String>, DotnsRead), E>
 where
-	F: Future<Output = Result<Option<String>, String>>,
+	F: Future<Output = Result<Option<String>, E>>,
 {
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
@@ -639,7 +893,7 @@ where
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
 	{
-		return Ok(cached.json);
+		return Ok((cached.json, DotnsRead::Cached { age_secs: now - cached.fetched_at_secs }));
 	}
 
 	let json = fetch().await?;
@@ -649,7 +903,7 @@ where
 			CachedManifest { fetched_at_secs: now, json: json.clone() }.encode(),
 		)
 		.await;
-	Ok(json)
+	Ok((json, DotnsRead::Fetched))
 }
 
 /// The Asset Hub dotNS is read from, or why there is none.

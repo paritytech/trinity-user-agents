@@ -803,40 +803,12 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
-	/// Session `intent`'s progress as the host draws it: the steps for its
-	/// direction and rail with when each was reached, and the provider's
-	/// references.
-	pub fn funding_progress(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| session.progress(crate::unix_time::current_unix_millis()))
-	}
-
-	/// Whether a provider still works on any funding session, read from
-	/// storage if funding has not resumed yet. A host that remembers it
-	/// starts funding at its next launch, so the providers carry on from
-	/// their last checkpoint without waiting for a product. Every change to
-	/// it comes with a `funding_session_changed`, so a host asks again there.
-	pub async fn funding_in_progress(&self) -> Result<bool, v01::GenericError> {
-		Ok(self.services.funding_in_progress().await?)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.services.funding().sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost. Compacted
-	/// sessions are kept for good, so this never forgets one.
-	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
-		self.services.funding().history()
+	/// Install the feed the host draws its funding screens from: sessions,
+	/// history, whether funding is in progress, and the overlay's options.
+	/// Install it before [`Self::set_funding_platform`], which resumes
+	/// funding. Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -875,77 +847,6 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// The providers funding session `intent` can be handed to, with the
-	/// routes that serve its direction, in the host's order. Empty for a
-	/// session the core does not know.
-	pub fn funding_candidates(
-		&self,
-		intent: &str,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| self.services.funding_candidates(session.direction))
-			.unwrap_or_default()
-	}
-
-	/// What the core knows about each country for funding session `intent`
-	/// on `rail` and `asset`, for the host's country picker. Empty for a
-	/// session the core does not know.
-	pub fn funding_countries(
-		&self,
-		intent: &str,
-		rail: v01::FundingRail,
-		asset: &str,
-	) -> Vec<crate::host_logic::funding_providers::FundingCountry> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| {
-				self.services.funding_providers().countries(session.direction, rail, asset)
-			})
-			.unwrap_or_default()
-	}
-
-	/// The amounts funding session `intent` can take on `rail`, `asset`,
-	/// `network` and `country`, across every provider, as their refusals
-	/// showed: the bounds the host's amount screen enforces before quoting.
-	/// The minimum is never below the $10 product floor. Unbounded for a
-	/// session the core does not know.
-	pub fn funding_amount_limits(
-		&self,
-		intent: &str,
-		rail: v01::FundingRail,
-		asset: &str,
-		network: Option<&str>,
-		country: Option<&str>,
-	) -> crate::host_logic::funding_providers::FundingAmountLimits {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| {
-				self.services.funding_providers().amount_limits(
-					crate::host_logic::funding_providers::LimitScope {
-						direction: session.direction,
-						rail,
-						asset,
-						network,
-						country,
-					},
-				)
-			})
-			.unwrap_or(crate::host_logic::funding_providers::FundingAmountLimits {
-				min: Some(crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT),
-				max: None,
-			})
-	}
-
-	/// The country the host detected for the user, which quotes go by until
-	/// the user picks one.
-	pub async fn detected_funding_country(&self) -> Option<String> {
-		self.services.detected_funding_country().await
-	}
-
 	/// Live quotes for funding session `intent`: one row per funding
 	/// provider, whatever routes its manifest declares, `Pending` and then
 	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
@@ -969,6 +870,7 @@ impl SigningHostRuntime {
 	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) -> u64 {
 		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
 		let platform = self.services.funding().platform();
+		let services = self.services.clone();
 		let intent = intent.to_string();
 		(self.services.spawner)(Box::pin(async move {
 			let Some(platform) = platform else {
@@ -977,6 +879,7 @@ impl SigningHostRuntime {
 			futures::pin_mut!(lists);
 			while let Some(list) = futures::StreamExt::next(&mut lists).await {
 				platform.funding_quotes_changed(intent.clone(), list);
+				services.send_funding_options(&intent);
 			}
 		}));
 		request_id
@@ -985,6 +888,17 @@ impl SigningHostRuntime {
 	/// Stop asking again for funding session `intent`'s quotes.
 	pub fn stop_funding_quotes(&self, intent: &str) {
 		self.services.funding_quotes().stop_watching(intent);
+	}
+
+	/// Record what the user picked in funding session `intent`'s overlay;
+	/// the options it leads to arrive through
+	/// [`crate::runtime::FundingFeed::funding_options_changed`].
+	pub fn select_funding_options(
+		&self,
+		intent: &str,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.services.select_funding_options(intent, selection);
 	}
 
 	/// Answer the provider's cancel offer on funding session `intent`:
@@ -1014,15 +928,6 @@ impl SigningHostRuntime {
 			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
-
-	/// One funding session as the core holds it, for the host's own status
-	/// and history views.
-	pub fn funding_session(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.services.funding().get(intent)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance card's
@@ -1982,8 +1887,8 @@ impl ProductRuntimeControl {
 	}
 }
 
-/// Calls a funding provider's worker through its product connection. Each
-/// call is a host-initiated subscription the worker answers with one item.
+/// Calls a funding provider's worker through its product connection, each
+/// call awaiting the worker's one answer.
 struct WorkerFundingLink {
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
@@ -1995,26 +1900,20 @@ impl WorkerFundingLink {
 	}
 }
 
-/// The first item of a call answered once. `None` when the worker errs, or
-/// the connection closes first. Dropping the stream then stops the call, so
-/// the worker sends its one item and nothing after it: a frame that ended
-/// the call could overtake the item, as a host may handle a connection's
-/// frames concurrently.
-async fn first_answer<Item, Error>(
-	mut stream: truapi::Subscription<Item, truapi::CallError<Error>>,
-) -> Option<Item> {
-	stream.next().await?.ok()
-}
-
 impl FundingProviderLink for WorkerFundingLink {
 	fn assign(&self, session: v01::FundingAssignment) -> BoxFuture<'static, bool> {
 		use truapi::versioned::funding_provider::ProductFundingAssignRequest;
-		let stream = crate::generated::dispatcher::funding_provider_assign(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
-		);
-		Box::pin(async move { first_answer(stream).await.is_some() })
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_assign(
+				&subscriptions,
+				transport,
+				ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
+			)
+			.await
+			.is_ok()
+		})
 	}
 
 	fn quote(
@@ -2022,30 +1921,38 @@ impl FundingProviderLink for WorkerFundingLink {
 		ask: v01::FundingQuoteAsk,
 	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
 		use truapi::versioned::funding_provider::{
-			ProductFundingQuoteItem, ProductFundingQuoteRequest,
+			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
 		};
-		let stream = crate::generated::dispatcher::funding_provider_quote(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingQuoteRequest::V1(v01::ProductFundingQuoteRequest { ask }),
-		);
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
 		Box::pin(async move {
-			let ProductFundingQuoteItem::V1(answer) = first_answer(stream).await?;
+			let ProductFundingQuoteResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_quote(
+					&subscriptions,
+					transport,
+					ProductFundingQuoteRequest::V1(v01::ProductFundingQuoteRequest { ask }),
+				)
+				.await
+				.ok()?;
 			Some(answer)
 		})
 	}
 
 	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
 		use truapi::versioned::funding_provider::{
-			ProductFundingCancelItem, ProductFundingCancelRequest,
+			ProductFundingCancelRequest, ProductFundingCancelResponse,
 		};
-		let stream = crate::generated::dispatcher::funding_provider_cancel(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
-		);
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
 		Box::pin(async move {
-			let ProductFundingCancelItem::V1(answer) = first_answer(stream).await?;
+			let ProductFundingCancelResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_cancel(
+					&subscriptions,
+					transport,
+					ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
+				)
+				.await
+				.ok()?;
 			Some(answer)
 		})
 	}
@@ -2056,15 +1963,20 @@ impl FundingProviderLink for WorkerFundingLink {
 		decision: v01::FundingCancelDecision,
 	) -> BoxFuture<'static, bool> {
 		use truapi::versioned::funding_provider::ProductFundingSettleCancelRequest;
-		let stream = crate::generated::dispatcher::funding_provider_settle_cancel(
-			&self.host_subscriptions,
-			self.transport(),
-			ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
-				intent,
-				decision,
-			}),
-		);
-		Box::pin(async move { first_answer(stream).await.is_some() })
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_settle_cancel(
+				&subscriptions,
+				transport,
+				ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
+					intent,
+					decision,
+				}),
+			)
+			.await
+			.is_ok()
+		})
 	}
 }
 
@@ -3466,6 +3378,59 @@ mod tests {
 		(runtime, sink)
 	}
 
+	#[test]
+	fn host_request_uses_subscription_routing() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		let sent = sink.frames.lock().unwrap()[0].clone();
+		let mut response = ProtocolMessage::decode(&mut &sent[..]).unwrap();
+		response.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		response.payload.value = 7_u32.encode();
+		futures::executor::block_on(runtime.receive_frame(response.encode())).unwrap();
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn disposing_the_runtime_finishes_its_host_requests() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		runtime.dispose();
+		let closed = Err(truapi::CallError::HostFailure {
+			reason: "the product connection closed while the stream was open".into(),
+		});
+		let next = runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![10],
+			runtime.transport.clone(),
+		);
+		assert_eq!(
+			(
+				request.as_mut().now_or_never(),
+				next.now_or_never(),
+				sink.frames.lock().unwrap().len()
+			),
+			(
+				Some(closed),
+				Some(Err(truapi::CallError::HostFailure {
+					reason: "host-initiated subscriptions are closed".into(),
+				})),
+				1,
+			),
+		);
+	}
+
 	/// Open one render for a Pocket card.
 	fn start_render(
 		runtime: &ProductRuntime,
@@ -3602,8 +3567,10 @@ mod tests {
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
+		// The render fails rather than finishing, so the host opens it again on
+		// the next connection; the failure is where its reference is released.
 		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
 
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
@@ -4067,28 +4034,15 @@ mod tests {
 		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
 	}
 
-	/// An empty database in memory.
-	#[cfg(not(target_arch = "wasm32"))]
-	fn memory_db() -> crate::store::Db {
-		use crate::store::{Db, DbConfig, DbLocation};
-
-		let config = DbConfig {
-			location: DbLocation::Memory,
-			migrations: crate::store::core_migrations,
-			readers: 1,
-		};
-		futures::executor::block_on(Db::open(config)).expect("database opens")
-	}
-
 	/// Every durable consumer shares one core database: a second installer
 	/// must not swap it.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[test]
 	fn the_core_database_is_installed_once() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
-		assert!(!runtime.set_core_db(memory_db()));
+		assert!(!runtime.set_core_db(crate::store::open_memory_core_db()));
 	}
 
 	/// A host that configured no database gets a clear error rather than a
@@ -4107,7 +4061,7 @@ mod tests {
 	#[test]
 	fn nft_purses_stay_off_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 
@@ -4120,7 +4074,7 @@ mod tests {
 	#[test]
 	fn nft_purses_are_served_once_core_services_start() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 
 		runtime.start_core_services();
@@ -4135,7 +4089,7 @@ mod tests {
 	#[test]
 	fn dropping_the_runtime_releases_nft_purse_services() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 		runtime.start_core_services();
 		let services = Arc::downgrade(&runtime.services);
@@ -4151,7 +4105,7 @@ mod tests {
 	#[test]
 	fn the_durable_engine_starts_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 

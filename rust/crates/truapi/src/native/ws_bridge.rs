@@ -579,8 +579,7 @@ async fn connection_setup(
 		} else {
 			let conn_entry = entry.clone();
 			state.handles.push(tokio::spawn(async move {
-				let _guard = guard;
-				connection_lifecycle(ws, peer, conn_entry).await;
+				connection_lifecycle(ws, peer, conn_entry, guard).await;
 			}));
 			false
 		}
@@ -706,14 +705,25 @@ async fn authenticate_and_upgrade(
 		.expect("ws bridge handshake mutex poisoned")
 		.take()
 		.expect("a successful upgrade always resolved a matching registry entry");
-	(entry.logger)("truapi.ws_bridge.connection_open", &peer.to_string());
+	let open = entry.connection_count.load(Ordering::Acquire);
+	(entry.logger)(
+		"truapi.ws_bridge.connection_open",
+		&format!(
+			"{peer} connected; this execution now holds {open} of {MAX_WS_CONNECTIONS_PER_EXECUTION} connections"
+		),
+	);
 	Some((ws, entry, guard))
 }
 
+/// Serve one product connection until its socket ends.
+///
+/// The connection's slot in the execution's count is held here so the closing
+/// marker reports what the execution still holds once this one is released.
 async fn connection_lifecycle(
 	ws: WebSocketStream<tokio::net::TcpStream>,
 	peer: SocketAddr,
 	entry: Arc<RegistryEntry>,
+	counted: ConnectionCountGuard,
 ) {
 	let logger = &entry.logger;
 	let (mut sink, mut source) = ws.split();
@@ -770,7 +780,14 @@ async fn connection_lifecycle(
 	let _ = sink.close().now_or_never();
 	drop(in_flight);
 	drop(dispose_guard);
-	logger("truapi.ws_bridge.connection_closed", &peer.to_string());
+	drop(counted);
+	let open = entry.connection_count.load(Ordering::Acquire);
+	logger(
+		"truapi.ws_bridge.connection_closed",
+		&format!(
+			"{peer} disconnected; this execution now holds {open} of {MAX_WS_CONNECTIONS_PER_EXECUTION} connections"
+		),
+	);
 }
 
 // Scan duplicate `t=` parameters too, so their order cannot expose an early match.
@@ -1437,6 +1454,77 @@ mod tests {
 			}
 		});
 		(logger, markers)
+	}
+
+	/// Markers paired with their detail, as the host callback receives them.
+	type LoggedLines = Arc<Mutex<Vec<(String, String)>>>;
+
+	fn recording_detail_logger() -> (BridgeLogger, LoggedLines) {
+		let lines = Arc::new(Mutex::new(Vec::new()));
+		let logger: BridgeLogger = Arc::new({
+			let lines = lines.clone();
+			move |marker, detail| {
+				lines
+					.lock()
+					.expect("log lines mutex poisoned")
+					.push((marker.to_string(), detail.to_string()))
+			}
+		});
+		(logger, lines)
+	}
+
+	fn logged_detail(lines: &LoggedLines, marker: &str) -> Option<String> {
+		lines
+			.lock()
+			.expect("log lines mutex poisoned")
+			.iter()
+			.find(|(logged, _)| logged == marker)
+			.map(|(_, detail)| detail.clone())
+	}
+
+	/// A host reading its log can tell a connection that was released from one
+	/// that is still held, which is what a leaked product socket looks like.
+	#[test]
+	fn a_connection_reports_what_its_execution_holds_as_it_opens_and_closes() {
+		let (logger, lines) = recording_detail_logger();
+		let socket = bind_loopback(0).expect("bind");
+		let port = socket.local_addr().expect("local addr").port();
+		let registry = Arc::new(WsBridgeRegistry::default());
+		let token = "c".repeat(64);
+		registry.insert(token.clone(), test_runtime_factory(), logger);
+		let executor = shared_native_executor().expect("shared native executor");
+		let listener =
+			Listener::serve(socket, &executor.handle(), registry, no_log()).expect("serve");
+
+		let rt = tokio::runtime::Builder::new_current_thread()
+			.enable_all()
+			.build()
+			.expect("test runtime");
+		let url = format!("ws://127.0.0.1:{port}/?t={token}");
+		let (ws, _) =
+			rt.block_on(async { tokio_tungstenite::connect_async(&url).await.expect("dial") });
+
+		crate::test_support::wait_until(
+			|| logged_detail(&lines, "truapi.ws_bridge.connection_open").is_some(),
+			"the connection never reported itself open",
+		);
+		let opened =
+			logged_detail(&lines, "truapi.ws_bridge.connection_open").expect("an open marker");
+		assert!(
+			opened.contains("holds 1 of"),
+			"open marker did not count the connection: {opened}"
+		);
+
+		drop(ws);
+		drop(rt);
+		crate::test_support::wait_until(
+			|| logged_detail(&lines, "truapi.ws_bridge.connection_closed").is_some(),
+			"the connection never reported itself closed",
+		);
+		let closed =
+			logged_detail(&lines, "truapi.ws_bridge.connection_closed").expect("a closed marker");
+		assert!(closed.contains("holds 0 of"), "closed marker did not release the slot: {closed}");
+		listener.stop(true);
 	}
 
 	/// Products keep the port and token they were given when the host's

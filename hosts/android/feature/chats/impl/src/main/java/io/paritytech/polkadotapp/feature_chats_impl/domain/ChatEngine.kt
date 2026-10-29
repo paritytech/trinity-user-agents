@@ -176,8 +176,8 @@ class ChatEngine @Inject constructor(
             .map { extension ->
                 val defaultMetadata = extension.defaultRoomMetadata ?: return@map null
 
-                val avatar = defaultMetadata.icon?.let(ChatAvatar::Url)
-                    ?: ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val letterAvatar = ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val avatar = defaultMetadata.icon?.let { ChatAvatar.Url(it, placeholder = letterAvatar) } ?: letterAvatar
 
                 ChatDisplay(defaultMetadata.name, avatar)
             }.requireNotNull()
@@ -504,14 +504,20 @@ class ChatEngine @Inject constructor(
         onSaved: suspend () -> Unit = {},
     ): Boolean {
         val customContentDecoder = getCustomContentDecoder(chatMessage.chatId)
-        return chatMessageRepository.saveMessage(chatMessage, customContentDecoder, onConflict, placement, onSaved)
-            .also { saved ->
-                if (saved) {
-                    messageSaveProcessors.forEach { it.onMessageSaved(chatMessage) }
-                    savedMessagesFlow.tryEmit(chatMessage)
-                    messagesChangedFlow.tryEmit(Unit)
-                }
-            }
+        var saved = false
+
+        // A processor's writes (e.g. an acceptance's request state and peer device) commit with the message or not at all.
+        contactsRepository.withTransaction {
+            saved = chatMessageRepository.saveMessage(chatMessage, customContentDecoder, onConflict, placement, onSaved)
+            if (saved) messageSaveProcessors.forEach { it.onMessageSaved(chatMessage) }
+        }
+
+        if (saved) {
+            savedMessagesFlow.tryEmit(chatMessage)
+            messagesChangedFlow.tryEmit(Unit)
+        }
+
+        return saved
     }
 
     suspend fun saveMessages(
@@ -522,12 +528,14 @@ class ChatEngine @Inject constructor(
         if (chatMessages.isEmpty()) return emptyList()
 
         val customContentDecoder = getGlobalContentDecoder()
-        val savedMessages = chatMessageRepository.saveMessages(chatMessages, customContentDecoder, onConflict, placement)
+        var savedMessages = emptyList<ChatMessage>()
 
-        savedMessages.forEach { saved ->
-            messageSaveProcessors.forEach { it.onMessageSaved(saved) }
-            savedMessagesFlow.tryEmit(saved)
+        contactsRepository.withTransaction {
+            savedMessages = chatMessageRepository.saveMessages(chatMessages, customContentDecoder, onConflict, placement)
+            savedMessages.forEach { saved -> messageSaveProcessors.forEach { it.onMessageSaved(saved) } }
         }
+
+        savedMessages.forEach { saved -> savedMessagesFlow.tryEmit(saved) }
 
         if (savedMessages.isNotEmpty()) {
             messagesChangedFlow.tryEmit(Unit)

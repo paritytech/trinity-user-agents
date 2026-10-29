@@ -26,7 +26,7 @@
 //! was told.
 
 use std::{
-	collections::HashSet,
+	collections::{HashMap, HashSet},
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
@@ -35,10 +35,12 @@ use std::{
 
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
-	SigningHostRuntime,
+	FundingFeed, SigningHostRuntime,
 	host_logic::{
-		funding::{CancelTerms, FundingCancel},
-		funding_providers::{FundingProviderEntry, FundingProviderOrigin},
+		funding::{
+			CancelTerms, FundingCancel, FundingProgress, FundingSession, FundingSessionSummary,
+		},
+		funding_providers::{FundingOptions, FundingProviderEntry, FundingProviderOrigin},
 	},
 	latest::{
 		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk, FundingRail,
@@ -119,18 +121,23 @@ pub struct CliFundingHost {
 	runtime: Weak<SigningHostRuntime>,
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
+	/// The providers the core last offered each session.
+	candidates: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl CliFundingHost {
 	/// Serve funding on `runtime`, asking `user`, with the files the
 	/// environment names.
 	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
-		runtime.set_funding_platform(Arc::new(Self {
+		let host = Arc::new(Self {
 			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
-		}));
+			candidates: Mutex::new(HashMap::new()),
+		});
+		runtime.set_funding_feed(host.clone());
+		runtime.set_funding_platform(host);
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
@@ -138,13 +145,13 @@ impl CliFundingHost {
 		}
 	}
 
-	/// Put the provider's cancel offer on session `intent` to the user, once
-	/// per offer, and pass on their answer.
-	fn ask_about_offer(&self, intent: String) {
+	/// Put the provider's cancel offer on `session` to the user, once per
+	/// offer, and pass on their answer.
+	fn ask_about_offer(&self, intent: String, session: Option<&FundingSession>) {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return;
 		};
-		let offer = match runtime.funding_session(&intent).and_then(|session| session.cancel) {
+		let offer = match session.and_then(|session| session.cancel.clone()) {
 			Some(FundingCancel::Offered { fee, refund, .. }) => CancelTerms { fee, refund },
 			_ => {
 				self.lock_asked().remove(&intent);
@@ -182,6 +189,10 @@ impl CliFundingHost {
 	fn lock_asked(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
+
+	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<String>>> {
+		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+	}
 }
 
 /// Cancel session `intent` at the user's request, and record what that did.
@@ -215,11 +226,7 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let candidates: Vec<String> = runtime
-			.funding_candidates(&session.intent)
-			.into_iter()
-			.map(|candidate| candidate.provider_id)
-			.collect();
+		let candidates = self.lock_candidates().remove(&session.intent).unwrap_or_default();
 		let rows: Vec<FundingQuoteRow> = runtime
 			.get_funding_quote(&session.intent, default_ask(session.direction, session.amount))
 			.collect()
@@ -309,8 +316,16 @@ impl FundingPlatform for CliFundingHost {
 			.ok()
 			.filter(|country| !country.is_empty())
 	}
+}
 
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+impl FundingFeed for CliFundingHost {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		session: Option<FundingSession>,
+		_progress: Option<FundingProgress>,
+	) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
 			HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
@@ -319,11 +334,9 @@ impl FundingPlatform for CliFundingHost {
 		};
 		// The core's own status, which shows what the product's item does
 		// not, such as a withdrawal cancelled after its release.
-		let progress = self
-			.runtime
-			.upgrade()
-			.and_then(|runtime| runtime.funding_progress(&intent))
-			.map(|progress| format!("{:?}", progress.status));
+		let progress = session
+			.as_ref()
+			.map(|session| format!("{:?}", session.status(truapi::current_unix_millis())));
 		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
@@ -331,7 +344,17 @@ impl FundingPlatform for CliFundingHost {
 			"amount": amount.map(|amount| amount.to_string()),
 			"progress": progress,
 		}));
-		self.ask_about_offer(intent);
+		self.ask_about_offer(intent, session.as_ref());
+	}
+
+	fn funding_history(&self, _history: Vec<FundingSessionSummary>) {}
+
+	fn funding_in_progress_changed(&self, _in_progress: bool) {}
+
+	fn funding_options_changed(&self, intent: String, options: FundingOptions) {
+		let candidates =
+			options.candidates.into_iter().map(|candidate| candidate.provider_id).collect();
+		self.lock_candidates().insert(intent, candidates);
 	}
 }
 

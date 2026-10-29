@@ -26,6 +26,13 @@ on:
         required: false
         type: string
         default: ""
+      core_artifact:
+        description: >-
+          An artifact an earlier job in the calling run packed the in-tree core
+          into. Empty builds the core here.
+        required: false
+        type: string
+        default: ""
     outputs:
       tag:
         description: "Tag of the release carrying the bundle."
@@ -86,7 +93,14 @@ jobs:
       # this tree. The app repository got the core as a published package and
       # needed none of this; here it has to be generated before any build.
       - name: Bootstrap the in-tree core
+        if: inputs.core_artifact == ''
         uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Restore the in-tree core
+        if: inputs.core_artifact != ''
+        uses: ./.github/actions/restore-ios-core
+        with:
+          name: ${{ inputs.core_artifact }}
 
       - name: Configure Google services
         uses: ./hosts/ios/.github/actions/configure-google-services

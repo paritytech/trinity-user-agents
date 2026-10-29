@@ -1,5 +1,26 @@
 # @parity/truapi-debugger
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [f67e9cb]
+- Updated dependencies [b5e1aa4]
+- Updated dependencies [0eb93a9]
+- Updated dependencies [ff34f26]
+- Updated dependencies [d61da55]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [f231850]
+- Updated dependencies [dce190f]
+- Updated dependencies [8c23b5e]
+- Updated dependencies [e9b6d73]
+- Updated dependencies [0c77379]
+- Updated dependencies [747865c]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [c18c267]
+- Updated dependencies [f67e9cb]
+  - @parity/truapi@0.27.0
+
 ## 0.1.13
 
 ### Patch Changes

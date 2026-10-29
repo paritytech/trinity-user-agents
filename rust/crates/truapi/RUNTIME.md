@@ -465,21 +465,26 @@ for raw bytes signed inside the `<Bytes>` watermark.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_progress`, `funding_sessions`, `funding_history`,
-  `set_funding_providers`,
-  `funding_candidates`, `funding_countries`, `funding_amount_limits`,
-  `detected_funding_country`, `get_funding_quote`, `stop_funding_quotes`,
-  `select_funding_provider`, `cancel_funding`, `confirm_funding_cancel`,
-  `acknowledge_funding_session`
-  and `funding_in_progress`. Amounts cross the FFI as decimal strings.
-  Sessions are stored as a versioned blob, and the core keeps reading every
-  earlier format, so an upgrade keeps the sessions in flight; a blob it
-  cannot read is kept under `FundingSessionsUnreadable` rather than
-  overwritten. `funding_in_progress` reads storage when funding has not
-  resumed yet, so a host can ask at launch.
+  `set_funding_providers`, `get_funding_quote`, `stop_funding_quotes`,
+  `select_funding_options`, `select_funding_provider`, `cancel_funding`,
+  `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
+  reports something the user did or the host owns; the host reads nothing
+  back. Everything it draws, the core pushes through the callbacks, the
+  `FundingFeed` a Rust host installs with `set_funding_feed` before its
+  funding platform:
+  `funding_session_changed` carries a session's status, the session as the
+  core holds it (choice, cancel offer, amounts) and its progress;
+  `funding_options_changed` carries what the overlay offers;
+  `funding_history` and `funding_in_progress_changed` come once each time
+  funding resumes, and the latter again whenever it changes, so the host
+  keeps a launch marker that starts funding at its next launch. Amounts
+  cross the FFI as decimal strings.
+  Sessions are stored in the core database, one row each; a row the core
+  cannot read is skipped and left in place.
   The host owns the funding history. A session is stored only once the user
-  starts it in the overlay. `funding_sessions` lists sessions in flight first,
-  then ended ones the host has not recorded, each newest first. An ended
+  starts it in the overlay. When funding resumes, every session in flight
+  and every ended one the host has not recorded comes through
+  `funding_session_changed` again. An ended
   session is handed to the host through `funding_session_changed` each time
   funding resumes until the host calls `acknowledge_funding_session`, so the
   host's history writes every outcome once. A released withdrawal whose
@@ -491,21 +496,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   it never trims, so a product watching a compacted session still gets its
   terminal item. It keeps the 200 newest ended sessions the host has not
   recorded in full too, and compacts older ones the same way.
-  `funding_history` lists every ended session the host recorded or the core
-  compacted, as a summary newest first, so a host that lost its history
+  `funding_history` hands over every ended session the host recorded or the
+  core compacted, as a summary newest first, so a host that lost its history
   rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
+  `request({ direction, amount? })`, which answers at once with its `intent`,
+  and watches it with `statusSubscribe({ intent })`; another product's
+  session reads as `NotFound`. The overlay runs on a task of its own, so no
+  call waits on it; a session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. Sessions and the pack live in the core database,
+  one versioned row per session: a row that does not decode is skipped and
+  left in place, one of an older format is dropped, and one in a newer
+  format is left untouched while funding answers a host failure. Funding
+  needs the core database: natively the configured `database_directory`,
+  otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
   The host lists its providers with `set_funding_providers`, each with the
-  Worker manifest it ships for it. `funding_candidates(intent)` answers the
+  Worker manifest it ships for it. Before the overlay shows, the core sends
+  `funding_options_changed(intent, options)`: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
@@ -518,14 +525,20 @@ for raw bytes signed inside the `<Bytes>` watermark.
   country) with every funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: the core
   calls each provider's worker with `quote`, holding the worker while it
-  waits, and the worker answers priced from its own API. The manifest names no backend: a provider signs in to its own API
+  waits, and the worker answers priced from its own API. Every provider's
+  worker is held from the moment the overlay opens until it closes, so it
+  is up before the first quote; a provider handed the session keeps its
+  worker after that. A quote already asked keeps its provider's worker
+  until it is answered or times out, overlay closed or not, unless the
+  session is handed to another provider: then every quote still waiting
+  ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
   itself and keeps its tokens with the host.
   Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
   provider that does not answer within 10 seconds is unavailable. A provider's
   answer is reused for the same ask for 30 seconds. What an answer shows (a
   quote or an out-of-range amount: served; a refused country: not served
   there, only for an ask that named the country) is stored under
-  `FundingSupport` and folded into `funding_candidates` for 12 hours, as
+  `FundingSupport` and folded into the candidates for 12 hours, as
   routes the manifest did not declare and as `unsupported` entries the host
   can filter by the user's country, while the provider's current manifest
   serves Funding. A crypto ask names the `network` it moves on, one a route's
@@ -533,10 +546,15 @@ for raw bytes signed inside the `<Bytes>` watermark.
   routes. A refusal of only the amount is kept as the candidate's `limits`
   (minimum and maximum per rail, asset, network and country), each for 12
   hours from its own refusal: a later quote does not renew it, and a quote at
-  an amount it rules out clears it. `funding_amount_limits(intent, rail,
-  asset, network, country)` combines them across every provider into the
+  an amount it rules out clears it. The host reports the user's rail,
+  asset, network and country with `select_funding_options(intent,
+  selection)` whenever one changes, and the options pushed back carry
+  `limits`, which combine them across every provider into the
   range the amount screen enforces: the smallest minimum and the largest
-  maximum, with no bound while any provider has not shown one. The host's
+  maximum, with no bound while any provider has not shown one. For a crypto selection, the options' `networks`
+  give the same range on each network a candidate's route declares, for
+  the network picker: for the picked asset, or the widest across the
+  network's assets before one is picked. The host's
   own product floor applies on top. A quote carries its asset's
   `asset_decimals`, so the host shows asset amounts without knowing the
   asset.
@@ -545,8 +563,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   SIM or network country, then locale region, without any permission
   prompt), kept only when it is an ISO 3166-1 alpha-2 code and reused for an
   hour, or asked again after a minute when it found none; the user's own
-  choice is passed as the ask's country. `funding_countries(intent, rail, asset)` says what the core knows
-  about each country for the host's picker: `Supported` with the lowest
+  choice is passed as the ask's country. The options' `countries` say what
+  the core knows about each country for the selection's rail and asset, for
+  the host's picker: `Supported` with the lowest
   minimum a provider showed there, from manifest routes and recent answers,
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
@@ -558,7 +577,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   another, and `refresh_at_ms`. The core asks every provider again each
   minute, the rows going back to `Pending`, until the session is assigned or
   ends, the host asks for another ask, or calls `stop_funding_quotes`; from
-  then on no list of that request arrives, mid round too.
+  then on no list of that request arrives, mid round too. The options are
+  sent again after each list, since a refusal can teach the core new limits.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one quotes are asked of (its manifest serves Funding,
   whatever routes it declares), on the quote it was chosen by, which
@@ -568,8 +588,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   amount takes the quote's. The provider receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  `funding_progress(intent)` gives the milestones the host draws for a
-  session, each with when it was reached: in, `Started`, `Received` (the
+  A native host's `funding_session_changed` carries the session's
+  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
   provider saw the payment) and `Added`; out, `Started`, `Received` (released
   to the provider) and `Sent` (paid out). A milestone the provider skipped
   takes the time of the first later one. `band` is the line under them, what

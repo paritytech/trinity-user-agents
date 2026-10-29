@@ -164,7 +164,7 @@ pub async fn allocate_statement_store_allowance(
 	let outcome = register_statement_account_pooled(
 		rpc,
 		&chain.metadata,
-		&chain.state,
+		client.extrinsic_target(&services.extrinsics),
 		&signer,
 		&scans,
 		&memberships,
@@ -281,7 +281,7 @@ pub async fn allocate_bulletin_allowance(
 	let outcome = claim_long_term_storage(statement_allowance::LongTermStorageClaim {
 		rpc: people_rpc,
 		metadata: &chain.metadata,
-		chain_state: &chain.state,
+		target_chain: people_client.extrinsic_target(&services.extrinsics),
 		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
@@ -401,7 +401,8 @@ pub async fn allocate_smart_contract_allowance(
 	signing_host.require_current_session(session)?;
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: asset_hub_client.rpc(),
-		asset_hub: &asset_hub,
+		asset_hub_metadata: &asset_hub.metadata,
+		asset_hub_target: asset_hub_client.extrinsic_target(&services.extrinsics),
 		people_rpc,
 		people_metadata: &people.metadata,
 		signer: &signer,

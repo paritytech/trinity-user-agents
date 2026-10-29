@@ -19,9 +19,16 @@ pub const ASSET_HUB_RING_5_ROOTS: &[u8] =
 /// The only fixture declaring `AsPgas`, `Pgas` and `MembersSubscriber`, so it is
 /// also the only one that can exercise the ring-root generation.
 static ASSET_HUB: LazyLock<Metadata> = LazyLock::new(|| {
-	Metadata::decode(include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-metadata.scale"))
-		.expect("the committed Asset Hub fixture decodes")
+	Metadata::decode(ASSET_HUB_METADATA).expect("the committed Asset Hub fixture decodes")
 });
+
+/// The Asset Hub fixture's raw `RuntimeMetadataPrefixed` bytes.
+pub const ASSET_HUB_METADATA: &[u8] =
+	include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-metadata.scale");
+
+/// The People fixture's raw `RuntimeMetadataPrefixed` bytes.
+pub const PEOPLE_METADATA: &[u8] =
+	include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
 
 /// Borrow the decoded Asset Hub fixture.
 pub fn asset_hub() -> &'static Metadata {
@@ -44,10 +51,7 @@ const PEOPLE_RESOURCE_BUDGETS: [(&str, u32); 5] = [
 
 /// People-chain V16 metadata with [`PEOPLE_RESOURCE_BUDGETS`] already resolved.
 static PEOPLE: LazyLock<Metadata> = LazyLock::new(|| {
-	let metadata = Metadata::decode(include_bytes!(
-		"../../../tests/fixtures/paseo-next-v2-metadata-v16.scale"
-	))
-	.expect("the committed People fixture decodes");
+	let metadata = Metadata::decode(PEOPLE_METADATA).expect("the committed People fixture decodes");
 	for (function, value) in PEOPLE_RESOURCE_BUDGETS {
 		let definition = metadata
 			.view_function("Resources", function)
@@ -60,6 +64,18 @@ static PEOPLE: LazyLock<Metadata> = LazyLock::new(|| {
 /// Borrow the decoded People fixture.
 pub fn people() -> &'static Metadata {
 	&PEOPLE
+}
+
+/// An extrinsic service over a scripted node serving the People fixture, on a
+/// host that builds People as V5 on pipeline 0.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn people_extrinsics() -> crate::chain::ExtrinsicService {
+	crate::chain::extrinsic_service_serving(PEOPLE_METADATA, 0)
+}
+
+/// Where allowance tests build their People extrinsics.
+pub fn people_target(extrinsics: &crate::chain::ExtrinsicService) -> super::ExtrinsicTarget<'_> {
+	super::ExtrinsicTarget { extrinsics, genesis: subxt::utils::H256([0xab; 32]) }
 }
 
 #[cfg(test)]

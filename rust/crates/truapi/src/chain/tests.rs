@@ -25,6 +25,7 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod live_extrinsic_builder;
 mod live_storage_watch;
 mod watched_storage;
 
@@ -61,6 +62,8 @@ pub struct Node {
 	/// The `RuntimeMetadataPrefixed` bytes the node serves, the bulletin
 	/// fixture unless a test sets another.
 	pub metadata: &'static [u8],
+	/// What `system_accountNextIndex` answers for every account.
+	pub account_next_index: u64,
 }
 
 impl Node {
@@ -86,6 +89,7 @@ impl Node {
 			watch_events: Vec::new(),
 			next_operation: 0,
 			metadata: BULLETIN_METADATA_BYTES,
+			account_next_index: 0,
 		}
 	}
 
@@ -188,6 +192,7 @@ impl Node {
 				vec![response(block.unwrap_or(Value::Null))]
 			},
 			"chain_getFinalizedHead" => vec![response(json!(self.block(self.finalized).hash))],
+			"system_accountNextIndex" => vec![response(json!(self.account_next_index))],
 			"state_call" => {
 				let output = self.runtime_call(params[0].as_str().unwrap(), &params[2]);
 				vec![response(json!(format!("0x{}", hex::encode(output))))]
@@ -353,7 +358,47 @@ pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRunti
 	(node, provider, chain)
 }
 
-fn method_count(provider: &ScriptedProvider, method: &str) -> usize {
+/// A host that builds every chain as V4.
+pub struct V4OnlyHost;
+
+impl crate::platform::ExtrinsicVersionHost for V4OnlyHost {}
+
+/// A host that answers a fixed map of V5 chains.
+pub struct FixedExtensionVersions(pub crate::platform::ExtensionVersionMap);
+
+impl FixedExtensionVersions {
+	/// A host that builds `genesis` as V5 on `extension_version`.
+	pub fn one_chain(genesis: H256, extension_version: u8) -> Self {
+		let chain =
+			crate::platform::ChainExtensionVersion { genesis_hash: genesis.0, extension_version };
+		Self(crate::platform::ExtensionVersionMap { chains: vec![chain] })
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ExtrinsicVersionHost for FixedExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
+/// An extrinsic service over a scripted node serving `metadata`, on a host
+/// that builds that node's chain as V5 on `extension_version`.
+pub fn extrinsic_service_serving(
+	metadata: &'static [u8],
+	extension_version: u8,
+) -> super::ExtrinsicService {
+	let mut node = Node::new(4, 6);
+	node.metadata = metadata;
+	let (_node, _provider, chain) = serve(node);
+	let versions = FixedExtensionVersions::one_chain(GENESIS, extension_version);
+	super::ExtrinsicService::over_chain(chain, Arc::new(versions))
+}
+
+/// How many requests for `method` the node received.
+pub fn method_count(provider: &ScriptedProvider, method: &str) -> usize {
 	provider
 		.sent
 		.lock()

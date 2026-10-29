@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.app.root.presentation.root.compose
 
+import android.view.View
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -13,7 +14,7 @@ import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixi
  * The [navController]'s current entry is the "screen entered" signal the bar resets its posture on.
  */
 @Composable
-fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndicatorsModel) {
+fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndicatorsModel, backdropSource: View) {
     val viewModel: RootNavBarViewModel = hiltViewModel()
 
     val hidden by viewModel.hidden.collectAsStateWithLifecycle()
@@ -34,6 +35,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
         chainsHealth = chainsHealth,
         scannerTooltipVisible = tooltipVisible,
         openScanPanelRequests = viewModel.scanPanelOpenRequests,
+        backdropSource = backdropSource,
         onTabSelected = viewModel::onTabSelected,
         onScannerTooltipDismiss = viewModel::dismissScannerTooltip,
         onAppClick = viewModel::onAppClick,

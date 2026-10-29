@@ -36,23 +36,17 @@ class OutgoingChatRequestPayload(
     val welcomeMessage: ChatMessage.Content.RichText?,
 )
 
-fun newOutgoingChatRequest(delivery: ChatRequest.Delivery): ChatRequest {
+fun newOutgoingChatRequest(): ChatRequest {
     return ChatRequest(
         welcomeMessageId = UUID.randomUUID().toString(),
         timestamp = System.currentTimeMillis(),
         direction = ChatRequest.Direction.OUTGOING,
         status = ChatRequest.Status.PENDING,
-        delivery = delivery,
+        delivery = ChatRequest.Delivery.Undelivered,
     )
 }
 
 interface OutgoingChatRequestService {
-    /**
-     * Creates a new chat request and submits it signed by the contact's own meta account.
-     * [OutgoingChatRequestPayload.contact] does not have to be present in db.
-     */
-    suspend fun sendChatRequest(payload: OutgoingChatRequestPayload): Result<ChatRequest>
-
     /**
      * Submits the already recorded [request]. Its inner proof stays with the contact's meta account; only the
      * outer statement is signed by [statementProver], which is what the statement store shows publicly.
@@ -79,16 +73,7 @@ class RealOutgoingChatRequestService @Inject constructor(
     private val accountRepository: AccountRepository,
     private val ourDeviceKeypairProvider: OurDeviceKeypairProvider,
     private val identityProofCodec: IdentityProofCodec,
-    private val statementProverFactory: StatementStoreMessageProver.Factory,
 ) : OutgoingChatRequestService {
-    override suspend fun sendChatRequest(payload: OutgoingChatRequestPayload): Result<ChatRequest> {
-        val request = newOutgoingChatRequest(ChatRequest.Delivery.Delivered)
-
-        return identityAccountOf(payload.contact)
-            .flatMap { identity -> deliverChatRequest(request, payload, statementProverFactory.createKeyPairProver(identity)) }
-            .map { request }
-    }
-
     override suspend fun deliverChatRequest(
         request: ChatRequest,
         payload: OutgoingChatRequestPayload,

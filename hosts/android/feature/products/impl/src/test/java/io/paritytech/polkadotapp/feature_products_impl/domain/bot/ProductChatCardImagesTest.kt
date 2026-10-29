@@ -73,6 +73,7 @@ class ProductChatCardImagesTest {
             appContext = mockk<Context>(relaxed = true),
             workerRefCounter = mockk(),
             imageResolver = RealProductImageResolver(archive, ipfsContentLookup, FakePinnedPocketCards(emptyList())),
+            resolveProduct = mockk(),
         )
         val extension = factory.create(product, ProductChatExtensionOrigin.InstalledByUser)
         val renderer = extension.customMessageRenderers().single() as ProductsMessageRenderer

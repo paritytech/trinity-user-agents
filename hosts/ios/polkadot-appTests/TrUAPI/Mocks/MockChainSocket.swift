@@ -2,6 +2,7 @@ import Foundation
 import ChainRegistry
 
 final class MockChainSocket: ChainSocketProtocol, @unchecked Sendable {
+    let url = URL(string: "wss://node.example")!
     weak var delegate: ChainSocketDelegate?
 
     private(set) var openCallCount = 0
@@ -14,6 +15,7 @@ final class MockChainSocket: ChainSocketProtocol, @unchecked Sendable {
 
     func open() {
         openCallCount += 1
+        delegate?.chainSocketDidOpen(self)
         onOpen?(self)
     }
 

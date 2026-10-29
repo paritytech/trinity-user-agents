@@ -31,9 +31,9 @@ jobs:
       - uses: ./.github/actions/mac-preflight
 
       # This workflow calls the distribute action directly rather than through
-      # ios-build-distribute.yml, so it inherits no github-actions[bot] check,
-      # and this is the only thing between a dispatch and a TestFlight build on
-      # the production record.
+      # ios-build-distribute.yml, so it inherits none of that workflow's checks
+      # of who started the upload, and this is the only thing between a dispatch
+      # and a TestFlight build on the production record.
       # Narrower than write access: see the action for why, and
       # IOS_SIGNING_ACTORS for who.
       - name: Require an iOS signing actor
