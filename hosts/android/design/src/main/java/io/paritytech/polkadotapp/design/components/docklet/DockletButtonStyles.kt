@@ -16,14 +16,21 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 internal val LobeTouchTarget = 48.dp
 
 @Composable
-fun rememberDockletFieldButtonStyle(): PolkadotButtonStyle {
-    val fill = LocalDockletPalette.current.fieldFill
+fun rememberDockletFieldButtonStyle(): PolkadotButtonStyle =
+    rememberDockletFillButtonStyle(LocalDockletPalette.current.fieldFill)
+
+@Composable
+fun rememberDockletGlassButtonStyle(): PolkadotButtonStyle =
+    rememberDockletFillButtonStyle(LocalDockletPalette.current.glassFill)
+
+@Composable
+private fun rememberDockletFillButtonStyle(fill: Color): PolkadotButtonStyle {
     val contentColor = PolkadotTheme.colors.fg.primary
-    return remember(fill, contentColor) { DockletFieldButtonStyle(fill, contentColor) }
+    return remember(fill, contentColor) { DockletFillButtonStyle(fill, contentColor) }
 }
 
 @Immutable
-private data class DockletFieldButtonStyle(
+private data class DockletFillButtonStyle(
     private val fill: Color,
     private val contentColor: Color,
 ) : PolkadotButtonStyle {
