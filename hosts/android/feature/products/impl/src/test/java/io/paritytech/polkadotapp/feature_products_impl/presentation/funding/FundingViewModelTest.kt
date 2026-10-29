@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
@@ -11,7 +12,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCas
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingLimits
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -35,7 +36,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
@@ -43,6 +46,7 @@ import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
+import uniffi.truapi.FundingSelection
 import java.math.BigDecimal
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -53,22 +57,22 @@ class FundingViewModelTest {
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val quoteLists = MutableSharedFlow<FundingQuoteList>()
+    private val pushedOptions = MutableStateFlow<FundingOptions?>(options(cardCandidate()))
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
         coEvery { spendable(any()) } returns null
-        coEvery { candidates("intent") } returns listOf(cardCandidate())
+        every { options("intent") } returns pushedOptions
+        coEvery { selectOptions("intent", any()) } returns Unit
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
-        coEvery { countrySupport("intent", any(), any()) } returns emptyList()
         coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns emptyFlow()
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
-        coEvery { amountLimits("intent", any(), any(), any(), any(), any()) } returns FundingLimits(null, null)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
         coEvery { selectProvider("intent", "ramp.dot", "q-1") } returns Result.success(true)
-        coEvery { progress("intent") } returns null
-        coEvery { session("intent") } returns null
+        every { progress("intent") } returns null
+        every { session("intent") } returns null
     }
 
     @Before
@@ -137,7 +141,7 @@ class FundingViewModelTest {
 
     @Test
     fun `a crypto top-up starts with the best quote once every provider answered`() = runTest(testDispatcher) {
-        coEvery { interactor.candidates("intent") } returns listOf(cryptoCandidate("a"), cryptoCandidate("b"))
+        pushedOptions.value = options(cryptoCandidate("a"), cryptoCandidate("b"))
         coEvery { interactor.selectProvider("intent", "b", "q-b") } returns Result.success(true)
         val model = viewModel()
         advanceUntilIdle()
@@ -160,6 +164,27 @@ class FundingViewModelTest {
         coVerify(exactly = 0) { router.closeFundingOverlay(any()) }
         stopFollowingDeposit(model)
     }
+
+    @Test
+    fun `the core is told each selection, and the amount limits it pushes back reach the amount screen`() = runTest(testDispatcher) {
+        val model = viewModel()
+        advanceUntilIdle()
+        coVerify { interactor.selectOptions("intent", FundingSelection(FundingRail.CARD, "EUR", null, "DE")) }
+
+        pushedOptions.value = options(cardCandidate(), min = "20000000")
+        advanceUntilIdle()
+
+        val note = (model.state.value as LoadingState.Loaded).data.amount.note
+        assertEquals(FundingAmountNote.Minimum(FundingCash("CASH", 6).label(BigDecimal("20")), withdraw = false), note)
+        cancelTicker(model)
+    }
+
+    private fun options(vararg candidates: FundingCandidate, min: String? = null) = FundingOptions(
+        candidates = candidates.toList(),
+        countries = emptyList(),
+        limits = FundingAmountLimits(min = min, max = null),
+        networks = emptyList(),
+    )
 
     private fun cryptoCandidate(providerId: String) = FundingCandidate(
         providerId = providerId,

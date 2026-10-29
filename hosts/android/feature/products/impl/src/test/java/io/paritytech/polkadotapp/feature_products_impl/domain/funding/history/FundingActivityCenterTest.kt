@@ -11,8 +11,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
-import kotlinx.coroutines.flow.emptyFlow
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -29,13 +31,15 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
-import kotlin.time.Clock
 
 class FundingActivityCenterTest {
+    private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
+    private val recorded = MutableStateFlow<List<FundingSessionSummary>?>(emptyList())
     private val runtime = mockk<FundingRuntime> {
-        every { sessionChanges() } returns emptyFlow()
+        every { sessions } returns this@FundingActivityCenterTest.sessions
+        every { history } returns recorded
+        coEvery { start() } returns Result.success(Unit)
         coEvery { acknowledge(any()) } returns Result.success(true)
-        coEvery { history() } returns emptyList()
     }
     private val saved = mutableListOf<FundingRecord>()
     private val history = mockk<FundingHistoryRepository> {
@@ -170,42 +174,49 @@ class FundingActivityCenterTest {
         assertEquals(listOf(FundingRecordOutcome.Released), saved.map { it.outcome })
     }
 
-    // No status change announces a session turning slow, so the list wakes itself at the time the core gave.
     @Test
-    fun `the list is read again once a session turns taking longer`() = runBlocking {
-        val longerAt = Clock.System.now().toEpochMilliseconds().toULong() + 50uL
-        serve(session("in", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.WaitingForPayment, longerAtMs = longerAt))
+    fun `the list is built again when the core pushes a session`() = runBlocking {
+        serve(session("in", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.WaitingForPayment))
 
-        val reads = withTimeout(2_000) { center.observe().take(2).toList() }
+        val steps = withTimeout(2_000) {
+            center.observe().take(2).map { activity ->
+                val step = (activity.inFlight.single().status as FundingActivityStatus.InProgress).step
+                if (step == FundingActivityStep.WaitingForPayment) {
+                    serve(session("in", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.TakingLonger))
+                }
+                step
+            }.toList()
+        }
 
-        assertEquals(2, reads.size)
+        assertEquals(listOf(FundingActivityStep.WaitingForPayment, FundingActivityStep.TakingLonger), steps)
+        coVerify(exactly = 1) { runtime.start() }
     }
 
     // The core keeps every session the host recorded, so a row lost from the store comes back from its summary, once.
     @Test
     fun `a row lost from the store is rebuilt from the core's history once, and a stored row wins`() = runBlocking {
         serve(session("kept", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
-        coEvery { runtime.history() } returns listOf(
+        recorded.value = listOf(
             summary("kept", FundingStage.Delivered("40", settledAtMs = 1uL)),
             summary("lost", FundingStage.Released("30", settledAtMs = 2uL)),
         )
 
         center.observe().first()
+        saved.removeAll { it.intent == "lost" }
         center.observe().first()
 
-        assertEquals(1, saved.count { it.intent == "lost" })
+        assertEquals(0, saved.count { it.intent == "lost" })
         assertEquals(setOf(50.intoBalance()), saved.filter { it.intent == "kept" }.mapTo(mutableSetOf()) { it.settledAmount })
-        coVerify(exactly = 1) { runtime.history() }
     }
 
-    // A core that cannot be read yet leaves the rebuild for the next reload.
+    // Until funding resumes the core has pushed no history, so the rebuild waits for it.
     @Test
-    fun `the rebuild waits for the core`() = runBlocking {
+    fun `the rebuild waits for the core's history`() = runBlocking {
         serve()
-        coEvery { runtime.history() } returns null
+        recorded.value = null
         center.observe().first()
 
-        coEvery { runtime.history() } returns listOf(summary("lost", FundingStage.Delivered("30", settledAtMs = 2uL)))
+        recorded.value = listOf(summary("lost", FundingStage.Delivered("30", settledAtMs = 2uL)))
         center.observe().first()
 
         assertEquals(listOf("lost"), saved.map { it.intent })
@@ -221,15 +232,13 @@ class FundingActivityCenterTest {
     )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
-        coEvery { runtime.sessions() } returns entries.map { it.first }
-        entries.forEach { (session, progress) -> coEvery { runtime.progress(session.intent) } returns progress }
+        sessions.value = entries.associate { (session, progress) -> session.intent to FundingSessionEntry(session, progress) }
     }
 
     private fun progress(
         status: FundingStatus,
         payout: FundingPayout? = null,
         refunded: String? = null,
-        longerAtMs: ULong? = null,
     ) = FundingProgress(
         steps = emptyList(),
         band = FundingBand.AWAITING_PAYMENT,
@@ -243,7 +252,7 @@ class FundingActivityCenterTest {
         payout = payout,
         refunded = refunded,
         status = status,
-        longerAtMs = longerAtMs,
+        longerAtMs = null,
         moneyMoved = false,
     )
 

@@ -17,8 +17,9 @@ protocol FundingOverlayEnvironment: AnyObject {
     func present(_ controller: UIViewController) -> Bool
     /// The provider product's page at `route`, as the app shows products.
     func providerPage(providerId: String, route: String, title: String) -> UIViewController?
-    /// A session the core holds changed, for the CASH card's lists.
-    func fundingSessionChanged(intent: String)
+    /// A session or the history the core recorded changed, for the CASH
+    /// card's lists.
+    func fundingActivityChanged()
 }
 
 /// The runtime's funding overlay: the sheet a session is started from, and
@@ -53,10 +54,15 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     }
 
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
-        if let runtime {
-            FundingResumeMarker.record(runtime)
-        }
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
+    }
+
+    func fundingOptionsChanged(intent: String) {
+        Task { @MainActor in coordinator?.optionsChanged(intent: intent) }
+    }
+
+    func fundingHistoryChanged() {
+        Task { @MainActor in coordinator?.historyChanged() }
     }
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -114,12 +120,14 @@ private extension AppFundingOverlay {
 @MainActor
 final class FundingOverlayCoordinator {
     private weak var runtime: FundingRuntime?
+    private let book: FundingSessionBook
     private let environment: FundingOverlayEnvironment
     private var flows: [String: FundingFlowModel] = [:]
     private var frames: [String: FundingProviderFrameController] = [:]
 
-    init(runtime: FundingRuntime, environment: FundingOverlayEnvironment) {
+    init(runtime: FundingRuntime, environment: FundingOverlayEnvironment, book: FundingSessionBook = .shared) {
         self.runtime = runtime
+        self.book = book
         self.environment = environment
     }
 
@@ -151,7 +159,7 @@ final class FundingOverlayCoordinator {
     /// still waits on one, or an ended one on its ended screen.
     func reopen(intent: String) {
         guard flows[intent] == nil,
-              let session = runtime?.fundingSession(intent: intent),
+              let session = book.session(intent: intent),
               let model = makeModel(intent: intent, direction: session.direction, amount: session.amount)
         else { return }
 
@@ -164,7 +172,7 @@ final class FundingOverlayCoordinator {
 
     /// An ended session the core has dropped is drawn from the host's record.
     func showEnded(_ record: FundingRecord) {
-        if runtime?.fundingSession(intent: record.intent) != nil {
+        if book.session(intent: record.intent) != nil {
             reopen(intent: record.intent)
             return
         }
@@ -213,7 +221,7 @@ final class FundingOverlayCoordinator {
               let page = environment.providerPage(providerId: providerId, route: route, title: brand.name)
         else { return .dismissed }
 
-        let rail = flows[intent]?.rail ?? runtime?.fundingSession(intent: intent)?.choice?.rail ?? .card
+        let rail = flows[intent]?.rail ?? book.session(intent: intent)?.choice?.rail ?? .card
 
         let presented = Presented<FundingProviderFrameController>()
         return await withTaskCancellationHandler {
@@ -266,10 +274,18 @@ final class FundingOverlayCoordinator {
 
     func sessionChanged(intent: String) {
         flows[intent]?.refreshSession()
-        if let frame = frames[intent], let runtime, Self.paymentMoved(runtime: runtime, intent: intent) {
+        if let frame = frames[intent], book.paymentMoved(intent: intent) {
             frame.finish(.closed)
         }
-        environment.fundingSessionChanged(intent: intent)
+        environment.fundingActivityChanged()
+    }
+
+    func optionsChanged(intent: String) {
+        flows[intent]?.refreshOptions()
+    }
+
+    func historyChanged() {
+        environment.fundingActivityChanged()
     }
 
     func quotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -289,6 +305,7 @@ private extension FundingOverlayCoordinator {
                 cash: environment.cash
             ),
             runtime: runtime,
+            book: book,
             branding: environment.branding
         )
         if direction == .out {
@@ -332,19 +349,6 @@ private extension FundingOverlayCoordinator {
                 Logger.shared.error("[funding] starting over failed: \(error)")
             }
         }
-    }
-
-    /// The provider's screen has done its part once the payment is seen or
-    /// the session is over, which is when the frame closes itself.
-    static func paymentMoved(runtime: FundingRuntime, intent: String) -> Bool {
-        guard let session = runtime.fundingSession(intent: intent) else { return true }
-        if case .open = session.stage {
-            let reached = runtime.fundingProgress(intent: intent)?.steps
-                .filter { $0.reachedAtMs != nil }
-                .map(\.step) ?? []
-            return reached.contains { $0 != .started }
-        }
-        return true
     }
 }
 

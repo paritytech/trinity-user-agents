@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingLimits
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
@@ -21,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -61,18 +61,17 @@ class FundingCancelViewModelTest {
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
         coEvery { spendable(any()) } returns null
-        coEvery { candidates("intent") } returns emptyList()
+        every { options("intent") } returns flowOf(null)
+        coEvery { selectOptions("intent", any()) } returns Unit
         coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
-        coEvery { countrySupport("intent", any(), any()) } returns emptyList()
         coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns sessionChanges
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
-        coEvery { amountLimits("intent", any(), any(), any(), any(), any()) } returns FundingLimits(null, null)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
-        coEvery { progress("intent") } answers { progress() }
-        coEvery { session("intent") } answers { session() }
+        every { progress("intent") } answers { progress() }
+        every { session("intent") } answers { session() }
     }
 
     @Before

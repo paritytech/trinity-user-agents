@@ -29,10 +29,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -41,6 +41,7 @@ import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
@@ -83,6 +84,7 @@ class FundingViewModel @Inject constructor(
     private var startsWhenQuoted = false
 
     private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
+    private val brandsLoading = mutableSetOf<String>()
     private val countryQuery = MutableStateFlow("")
     private val countries by lazy { interactor.countries() }
     private val detectedCountry = MutableStateFlow<FundingCountry?>(null)
@@ -113,11 +115,10 @@ class FundingViewModel @Inject constructor(
         launchUnit {
             val initial = initialState()
             flow.value = initial
-            loadBrands(initial)
-            refreshAmountLimits()
             if (context.mode == FundingOverlayMode.Resumed) resume()
+            launch { interactor.options(intent).filterNotNull().collect(::onOptions) }
+            reportSelection()
         }
-        launch { path.map { it.lastOrNull() == FundingScreen.DEPOSIT }.distinctUntilChanged().collectLatest { if (it) followDeposit() } }
     }
 
     fun onNetworkChosen(id: String) {
@@ -125,17 +126,13 @@ class FundingViewModel @Inject constructor(
         push(FundingScreen.TOKEN)
     }
 
-    fun onOpenNetworks() {
-        push(FundingScreen.NETWORK)
-        launchUnit { refreshNetworkMinimums() }
-    }
+    fun onOpenNetworks() = push(FundingScreen.NETWORK)
 
     /** Value in goes straight to the deposit screen, which starts with the best quote once every provider answered. */
     fun onTokenChosen(symbol: String) {
         val current = flow.value ?: return
         flow.value = current.withAsset(symbol)
         requestQuote()
-        launchUnit { refreshAmountLimits() }
 
         if (current.direction == CoreFundingDirection.IN) {
             startsWhenQuoted = true
@@ -188,7 +185,6 @@ class FundingViewModel @Inject constructor(
     fun onRailSelected(rail: FundingRail) {
         flow.update { it?.withRail(rail) }
         scheduleQuote()
-        launchUnit { refreshAmountLimits() }
     }
 
     fun onKey(key: FundingKey) {
@@ -220,7 +216,6 @@ class FundingViewModel @Inject constructor(
     fun onOpenCountry() {
         countryQuery.value = ""
         push(FundingScreen.COUNTRY)
-        launchUnit { refreshCountrySupport() }
     }
 
     fun onOpenProviders() = push(FundingScreen.PROVIDERS)
@@ -234,7 +229,6 @@ class FundingViewModel @Inject constructor(
         flow.update { it?.withCountry(chosen) }
         pop()
         requestQuote()
-        launchUnit { refreshAmountLimits() }
     }
 
     fun onProviderChosen(providerId: String) {
@@ -296,7 +290,7 @@ class FundingViewModel @Inject constructor(
             direction = request.direction.toCore(),
             cash = cash,
             spendable = interactor.spendable(cash),
-            candidates = interactor.candidates(intent),
+            candidates = interactor.options(intent).first()?.candidates.orEmpty(),
             amount = request.amount?.let { cash.decimal(it.value.toString()) },
             country = detected,
         )
@@ -315,13 +309,6 @@ class FundingViewModel @Inject constructor(
         val updated = current.receiving(list)
         if (updated === current) return
         flow.value = updated
-        // What the answers showed about each provider is learned by the core, so the limits may have moved.
-        if (updated.allAnswered) {
-            launchUnit {
-                refreshCountrySupport()
-                refreshAmountLimits()
-            }
-        }
 
         if (startsWhenQuoted && updated.allAnswered) {
             startsWhenQuoted = false
@@ -329,8 +316,8 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /** The core's view of the session moved on: read it again, and leave once it is over. A failed one stays up with its reason. */
-    private suspend fun refreshSession() {
+    /** The core pushed the session again: draw it, and leave once it is over. A failed one stays up with its reason. */
+    private fun refreshSession() {
         progress.value = interactor.progress(intent)
         val session = interactor.session(intent)
         followCancel(session?.cancel)
@@ -349,9 +336,10 @@ class FundingViewModel @Inject constructor(
     }
 
     /** A session the user left running, shown on its deposit screen as the sheet had it once it started. */
-    private suspend fun resume() {
+    private fun resume() {
         val session = interactor.session(intent) ?: return
         val choice = session.choice
+        session.providerId?.let { loadBrands(listOf(it)) }
 
         flow.update { state ->
             state?.let { if (choice != null) it.withRail(choice.rail).withAsset(choice.asset) else it }
@@ -409,25 +397,9 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /**
-     * The core announces every change to the session, which [sessionChanges] follows. What it does not announce is
-     * the moment a step starts taking longer than quoted, so the deposit screen reads the session again then.
-     */
-    private suspend fun followDeposit() {
-        if (start.value.started) refreshSession()
-        progress.collectLatest { current ->
-            val longerAtMs = current?.longerAtMs?.toLong() ?: return@collectLatest
-            // A moment already past is in the status the core gave; only a future one needs another read.
-            val waitMs = longerAtMs - System.currentTimeMillis()
-            if (waitMs <= 0) return@collectLatest
-            delay(waitMs)
-            if (start.value.started) refreshSession()
-        }
-    }
-
     private fun didStart(rail: FundingRail) {
         context.answer(FundingOverlayOutcome.STARTED)
-        launchUnit { refreshSession() }
+        refreshSession()
 
         when (rail) {
             FundingRail.CARD -> closeSheet()
@@ -435,54 +407,29 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    private fun loadBrands(state: FundingFlowState) {
-        state.candidates.forEach { candidate ->
+    private fun onOptions(options: FundingOptions) {
+        flow.update { it?.withOptions(options) }
+        loadBrands(options.candidates.map { it.providerId })
+    }
+
+    private fun loadBrands(providerIds: List<String>) {
+        providerIds.filter(brandsLoading::add).forEach { providerId ->
             launchUnit {
-                val brand = interactor.brand(candidate.providerId)
-                brands.update { it + (candidate.providerId to brand) }
+                val brand = interactor.brand(providerId)
+                brands.update { it + (providerId to brand) }
             }
         }
     }
 
     /**
-     * What the providers take for the rail, asset, network and country on screen, as the core works it out. Lookups
-     * run unordered, so an answer for a choice the user has since left is dropped.
+     * Tells the core the rail, asset, network and country on screen whenever one changes; what they lead to comes
+     * back as options. The core ignores this once the sheet is no longer waited on.
      */
-    private suspend fun refreshAmountLimits() {
-        val current = flow.value ?: return
-        val key = current.limitsKey
-        val limits = interactor.amountLimits(intent, current.cash, key.rail, key.asset, key.network, key.country)
-        flow.update { state -> if (state?.limitsKey == key) state.withAmountLimits(limits) else state }
-    }
-
-    /** The least each crypto network takes: the lowest minimum across its tokens. */
-    private suspend fun refreshNetworkMinimums() {
-        val current = flow.value ?: return
-        val minimums = current.networks.associate { network ->
-            val assets = current.cryptoRoutes
-                .filter { route -> route.networks?.contains(network.id) ?: true }
-                .flatMap { it.assets }
-                .distinct()
-            val minimum = assets
-                .mapNotNull { asset ->
-                    interactor.amountLimits(intent, current.cash, FundingRail.CRYPTO, asset, network.id, current.country?.code).minimum
-                }
-                .minOrNull()
-            network.id to minimum
+    private suspend fun reportSelection() {
+        flow.filterNotNull().map { it.selection }.distinctUntilChanged().collect { selection ->
+            context.selection = selection
+            interactor.selectOptions(intent, selection)
         }
-        val country = current.country?.code
-        flow.update { state ->
-            if (state == null || state.country?.code != country) return@update state
-            state.withNetworkMinimums(minimums.mapNotNull { (id, min) -> min?.let { id to it } }.toMap())
-        }
-    }
-
-    /** What the core now knows about each country for the rail and asset on screen. */
-    private suspend fun refreshCountrySupport() {
-        val current = flow.value ?: return
-        val asset = current.ask?.asset ?: current.asset ?: current.fiatAsset
-        val support = interactor.countrySupport(intent, current.rail, asset)
-        flow.update { it?.withCountrySupport(support) }
     }
 
     /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */

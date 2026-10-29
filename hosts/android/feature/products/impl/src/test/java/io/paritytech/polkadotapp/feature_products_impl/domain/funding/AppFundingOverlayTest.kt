@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
-import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -11,9 +10,11 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -26,6 +27,7 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingProgressStep
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
@@ -35,16 +37,17 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class AppFundingOverlayTest {
     private val contexts = FundingOverlayContexts()
     private val frames = FundingFrameContexts()
+    private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val runtime = mockk<FundingRuntime> {
         every { sessionChanges() } returns MutableSharedFlow()
-        coEvery { progress(any()) } returns null
+        every { sessions } returns this@AppFundingOverlayTest.sessions
     }
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val overlay = AppFundingOverlay(contexts, frames, runtime, router)
 
     @Test
     fun `a card's provider screen opens over its sheet`() = runTest {
-        coEvery { runtime.session("intent") } returns session(FundingRail.CARD, FundingStage.Open)
+        push(session(FundingRail.CARD, FundingStage.Open))
         contexts.put(FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New))
 
         val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
@@ -59,7 +62,23 @@ class AppFundingOverlayTest {
 
     @Test
     fun `a bank transfer's provider screen offers to say the funds were sent`() = runTest {
-        coEvery { runtime.session("intent") } returns session(FundingRail.BANK, FundingStage.Open)
+        push(session(FundingRail.BANK, FundingStage.Open))
+
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("pay")) }
+        runCurrent()
+
+        val frame = requireNotNull(frames.get("intent"))
+        assertTrue(frame.showsSentFunds)
+        frame.answer(ProviderFrameOutcome.Dismissed)
+        assertEquals(ProviderFrameOutcome.Dismissed, outcome.await())
+    }
+
+    // The core announces a session once the user starts it, so a frame shown as it is handed over goes by the sheet.
+    @Test
+    fun `a provider screen shown before the session is announced goes by the sheet's selection`() = runTest {
+        val sheet = FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New)
+        sheet.selection = FundingSelection(rail = FundingRail.BANK, asset = "EUR", network = null, country = null)
+        contexts.put(sheet)
 
         val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
@@ -82,14 +101,25 @@ class AppFundingOverlayTest {
 
     @Test
     fun `the provider screen has done its part once a step past started is reached`() = runTest {
-        val interactor = FundingFlowInteractor(mockk(), mockk<FundingBalance>(), runtime, mockk())
-        coEvery { runtime.session("intent") } returns session(FundingRail.CARD, FundingStage.Open)
-        coEvery { runtime.progress("intent") } returnsMany listOf(
+        val interactor = FundingFlowInteractor(mockk(), mockk<FundingBalance>(), runtime, mockk(), mockk())
+        val moved = listOf(
             progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.RECEIVED, null)),
             progress(FundingProgressStep(FundingStep.STARTED, 1uL), FundingProgressStep(FundingStep.RECEIVED, 2uL)),
-        )
+        ).map { progress ->
+            push(session(FundingRail.CARD, FundingStage.Open), progress)
+            interactor.paymentMoved("intent")
+        }
 
-        assertEquals(listOf(false, true), listOf(interactor.paymentMoved("intent"), interactor.paymentMoved("intent")))
+        assertEquals(listOf(false, true), moved)
+    }
+
+    @Test
+    fun `nothing has moved before the core announces the session`() {
+        assertFalse(runtime.paymentMoved("intent"))
+    }
+
+    private fun push(session: FundingSession, progress: FundingProgress? = null) {
+        sessions.value = mapOf(session.intent to FundingSessionEntry(session, progress))
     }
 
     private fun progress(vararg steps: FundingProgressStep) = FundingProgress(

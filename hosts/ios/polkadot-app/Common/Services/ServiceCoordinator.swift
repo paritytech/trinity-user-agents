@@ -322,12 +322,11 @@ extension ServiceCoordinator {
 
         // The core resumes funding when it starts; start it now, with payments
         // attached, if a provider was still working on a session when the app
-        // last ran, and record again what it finds, so a launch with nothing
-        // left stops starting it.
+        // last ran. The core says again whether one still is, so a launch with
+        // nothing left stops starting it.
         if FundingResumeMarker.inProgress {
             Task.detached {
-                guard let runtime = try? truapiRuntimeProvider.sharedRuntime() else { return }
-                FundingResumeMarker.record(runtime)
+                _ = try? truapiRuntimeProvider.sharedRuntime()
             }
         }
 

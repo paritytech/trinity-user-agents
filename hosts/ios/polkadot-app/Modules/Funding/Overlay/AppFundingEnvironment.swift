@@ -76,7 +76,7 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         return SPAViewFactory.createView(configuration: configuration, flowState: flowState)?.controller
     }
 
-    func fundingSessionChanged(intent _: String) {
+    func fundingActivityChanged() {
         FundingActivityCenter.shared.refresh()
     }
 }

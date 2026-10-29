@@ -19,11 +19,16 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingBand
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import java.math.BigInteger
@@ -109,7 +114,7 @@ class AppFundingHostBridgeTest {
         val changed = withTimeout(1_000) {
             bridge.changedSessions()
                 .onSubscription {
-                    bridge.fundingSessionChanged("intent", HostFundingStatusSubscribeItem.InProgress(expiresAt = null), null)
+                    bridge.fundingSessionChanged("intent", HostFundingStatusSubscribeItem.InProgress(expiresAt = null), null, null)
                 }
                 .first()
         }
@@ -119,15 +124,72 @@ class AppFundingHostBridgeTest {
 
     // The funding screens draw what the core last handed over; a session the core keeps only as a summary has none.
     @Test
-    fun `a session change keeps the progress it carries`() {
+    fun `a session change keeps the session and progress it carries`() {
         val inProgress = HostFundingStatusSubscribeItem.InProgress(expiresAt = null)
+        val session = session()
 
-        bridge.fundingSessionChanged("intent", inProgress, progress(FundingStatus.ConvertingToCash))
-        val kept = bridge.progress("intent")?.status
-        bridge.fundingSessionChanged("intent", inProgress, null)
+        bridge.fundingSessionChanged("intent", inProgress, session, progress(FundingStatus.ConvertingToCash))
+        val kept = bridge.sessions().value["intent"]
+        bridge.fundingSessionChanged("intent", inProgress, null, null)
 
-        assertEquals(FundingStatus.ConvertingToCash to null, kept to bridge.progress("intent"))
+        assertEquals(session to FundingStatus.ConvertingToCash, kept?.session to kept?.progress?.status)
+        assertEquals(emptyMap<String, FundingSessionEntry>(), bridge.sessions().value)
     }
+
+    @Test
+    fun `the latest options are kept per session`() {
+        bridge.fundingOptionsChanged("a", options(min = "10"))
+        bridge.fundingOptionsChanged("b", options(min = "20"))
+        bridge.fundingOptionsChanged("a", options(min = "30"))
+
+        assertEquals(mapOf("a" to options(min = "30"), "b" to options(min = "20")), bridge.options().value)
+    }
+
+    @Test
+    fun `an overlay's options go once it closes`() = runBlocking {
+        bridge.fundingOptionsChanged("intent", options(min = "10"))
+        bridge.fundingOptionsChanged("other", options(min = "20"))
+        coEvery { overlay.present(any()) } returns FundingOverlayOutcome.DISMISSED
+
+        present()
+
+        assertEquals(mapOf("other" to options(min = "20")), bridge.options().value)
+    }
+
+    @Test
+    fun `the history and the in-progress flag are kept as pushed`() {
+        assertEquals(null to null, bridge.history().value to bridge.inProgress().value)
+
+        bridge.fundingHistory(emptyList())
+        bridge.fundingInProgressChanged(true)
+
+        assertEquals(emptyList<FundingSessionSummary>() to true, bridge.history().value to bridge.inProgress().value)
+    }
+
+    private fun options(min: String) = FundingOptions(
+        candidates = emptyList(),
+        countries = emptyList(),
+        limits = FundingAmountLimits(min = min, max = null),
+        networks = emptyList(),
+    )
+
+    private fun session() = FundingSession(
+        intent = "intent",
+        ownerProductId = null,
+        direction = CoreFundingDirection.IN,
+        amount = "50",
+        stage = FundingStage.Open,
+        openedAtMs = 0uL,
+        deadlineMs = 0uL,
+        acknowledged = false,
+        providerId = "ramp.dot",
+        assignedAtMs = 0uL,
+        cancel = null,
+        updates = emptyList(),
+        started = emptyList(),
+        choice = null,
+        refund = null,
+    )
 
     private fun progress(status: FundingStatus) = FundingProgress(
         steps = emptyList(),

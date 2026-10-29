@@ -8,17 +8,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,10 +21,10 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.time.Clock
 import kotlin.time.Instant
 
 /**
@@ -39,8 +34,8 @@ import kotlin.time.Instant
  * until its payout is reported, and a failed payout until its refund settles; such a session comes back
  * unacknowledged when the provider reports, and its row is rewritten by intent.
  *
- * Once per process the store is checked against every session the core says the host recorded, and a row lost from
- * the store is rebuilt from the core's summary.
+ * Once per process the store is checked against the summaries the core pushes when funding resumes, and a row lost
+ * from the store is rebuilt from the core's summary.
  */
 @Singleton
 class FundingActivityCenter @Inject constructor(
@@ -52,41 +47,24 @@ class FundingActivityCenter @Inject constructor(
     /** Whether lost rows were rebuilt from the core's history; read and set under [reloadMutex]. */
     private var historyRestored = false
 
-    /** The earliest time a session in flight turns "taking longer", which no status change announces. */
-    private val nextLonger = MutableStateFlow<Instant?>(null)
-
-    /** Re-read on every session change, and when a session in flight turns "taking longer". */
+    /** Built again whenever the core pushes a session or its history. Starts the core, which then pushes them. */
     fun observe(): Flow<FundingActivity> =
-        merge(runtime.sessionChanges().map { }, longerWakes())
-            .onStart { emit(Unit) }
-            .map { reloadMutex.withLock { reload() } }
+        combine(runtime.sessions, runtime.history) { sessions, recorded -> sessions.values to recorded }
+            .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
+            .map { (sessions, recorded) -> reloadMutex.withLock { reload(sessions, recorded) } }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private fun longerWakes(): Flow<Unit> = nextLonger.flatMapLatest { at ->
-        if (at == null) {
-            emptyFlow()
-        } else {
-            flow {
-                delay(at - Clock.System.now())
-                emit(Unit)
-            }
-        }
-    }
+    private suspend fun reload(
+        sessions: Collection<FundingSessionEntry>,
+        recorded: List<FundingSessionSummary>?,
+    ): FundingActivity {
+        val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
-    private suspend fun reload(): FundingActivity {
-        val entries = runtime.sessions().map { it to runtime.progress(it.intent) }
-
-        val inFlight = entries.mapNotNull { (session, progress) -> inFlightItem(session, progress) }
+        val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
         val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
-        nextLonger.value = entries
-            .filter { (session, _) -> session.intent in inFlightIds }
-            .mapNotNull { (_, progress) -> progress?.longerAtMs?.let { Instant.fromEpochMilliseconds(it.toLong()) } }
-            .filter { it > Clock.System.now() }
-            .minOrNull()
 
         settle(entries)
-        if (!historyRestored) historyRestored = restoreHistory()
-        val ended = entries.mapNotNull { (session, progress) -> FundingRecord.of(session, progress) }
+        if (!historyRestored && recorded != null) historyRestored = restoreHistory(recorded)
+        val ended = entries.mapNotNull { FundingRecord.of(it.session, it.progress) }
 
         val stored = history.records().logFailure("Funding history read failed").getOrDefault(emptyList())
         val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
@@ -101,9 +79,9 @@ class FundingActivityCenter @Inject constructor(
     }
 
     /** One row per ended session the host has not acknowledged yet; a failed write leaves it unacknowledged for next time. */
-    private suspend fun settle(entries: List<Pair<FundingSession, FundingProgress?>>) {
+    private suspend fun settle(entries: List<FundingSessionEntry>) {
         entries
-            .filter { (session, _) -> !session.acknowledged }
+            .filter { !it.session.acknowledged }
             .forEach { (session, progress) ->
                 val record = FundingRecord.of(session, progress) ?: return@forEach
                 val saved = history.save(record).logFailure("Funding history write failed").isSuccess
@@ -113,10 +91,9 @@ class FundingActivityCenter @Inject constructor(
 
     /**
      * Writes a row for every session the core says the host recorded that the store lacks; a stored row wins. Returns
-     * whether the core and the store could both be read, so a failed pass is tried again on the next reload.
+     * whether the store could be read, so a failed pass is tried again on the next reload.
      */
-    private suspend fun restoreHistory(): Boolean {
-        val recorded = runtime.history() ?: return false
+    private suspend fun restoreHistory(recorded: List<FundingSessionSummary>): Boolean {
         val stored = history.records().logFailure("Funding history read failed").getOrNull() ?: return false
         val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
         recorded

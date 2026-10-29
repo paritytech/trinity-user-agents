@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import kotlinx.coroutines.CompletableDeferred
+import uniffi.truapi.FundingSelection
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,6 +24,10 @@ class FundingOverlayContext(
 ) {
     private val outcome = CompletableDeferred<FundingOverlayOutcome>()
     private val closed = CompletableDeferred<Unit>()
+
+    /** What the user picked on the sheet, as last reported to the core. */
+    @Volatile
+    var selection: FundingSelection? = null
 
     fun answer(answer: FundingOverlayOutcome) {
         outcome.complete(answer)

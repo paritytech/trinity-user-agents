@@ -5,10 +5,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
+import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountrySupport
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingLimit
+import uniffi.truapi.FundingNetworkLimits
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
@@ -165,6 +168,23 @@ class FundingFlowStateTest {
 
         assertEquals(listOf("ethereum", "polkadot", "tron"), flow.networks.map { it.id })
         assertEquals(listOf("USDT"), flow.withNetwork("tron").tokens.map { it.symbol })
+    }
+
+    @Test
+    fun `the core's options set each network's minimum`() {
+        val flow = state(listOf(candidate("a", crypto(networks = listOf("ethereum", "polkadot"))))).withOptions(
+            FundingOptions(
+                candidates = listOf(candidate("a", crypto(networks = listOf("ethereum", "polkadot")))),
+                countries = emptyList(),
+                limits = FundingAmountLimits(min = null, max = null),
+                networks = listOf(
+                    FundingNetworkLimits("ethereum", FundingAmountLimits(min = "30000000", max = null)),
+                    FundingNetworkLimits("polkadot", FundingAmountLimits(min = null, max = null)),
+                ),
+            ),
+        )
+
+        assertEquals(BigDecimal("30") to null, flow.minimum("ethereum") to flow.minimum("polkadot"))
     }
 
     @Test

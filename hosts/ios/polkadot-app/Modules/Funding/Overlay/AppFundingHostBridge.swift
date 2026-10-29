@@ -21,6 +21,12 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
+    /// What session `intent`'s overlay offers changed in the session book.
+    func fundingOptionsChanged(intent: String)
+
+    /// The core's recorded history arrived in the session book.
+    func fundingHistoryChanged()
+
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
     /// Shows session `intent` again after the user left it running.
@@ -39,14 +45,15 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 }
 
 /// The runtime's funding overlay. Installed once, before any product
-/// execution opens, and forwards to whatever draws the overlay.
+/// execution opens. Keeps what the core pushes in the session book and
+/// forwards to whatever draws the overlay.
 final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     private let overlay: FundingOverlayPresenting
-    private let progressBook: FundingProgressBook
+    private let book: FundingSessionBook
 
-    init(overlay: FundingOverlayPresenting, progressBook: FundingProgressBook = .shared) {
+    init(overlay: FundingOverlayPresenting, book: FundingSessionBook = .shared) {
         self.overlay = overlay
-        self.progressBook = progressBook
+        self.book = book
     }
 
     func presentFunding(
@@ -55,7 +62,14 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         direction: FundingDirection,
         amount: U128?
     ) async throws -> FundingPresentOutcome {
-        await overlay.presentFunding(productId: productId, intent: intent, direction: direction, amount: amount)
+        let outcome = await overlay.presentFunding(
+            productId: productId,
+            intent: intent,
+            direction: direction,
+            amount: amount
+        )
+        book.forgetOptions(intent: intent)
+        return outcome
     }
 
     func presentProviderFrame(
@@ -66,9 +80,28 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
-    func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
-        progressBook.record(intent: intent, progress: progress)
+    func fundingSessionChanged(
+        intent: String,
+        status: HostFundingStatusSubscribeItem,
+        session: FundingSession?,
+        progress: FundingProgress?
+    ) {
+        book.record(intent: intent, session: session, progress: progress)
         overlay.fundingSessionChanged(intent: intent, status: status)
+    }
+
+    func fundingHistory(_ history: [FundingSessionSummary]) {
+        book.record(history: history)
+        overlay.fundingHistoryChanged()
+    }
+
+    func fundingInProgressChanged(_ inProgress: Bool) {
+        FundingResumeMarker.record(inProgress)
+    }
+
+    func fundingOptionsChanged(intent: String, options: FundingOptions) {
+        book.record(intent: intent, options: options)
+        overlay.fundingOptionsChanged(intent: intent)
     }
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
