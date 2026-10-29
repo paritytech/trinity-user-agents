@@ -124,7 +124,7 @@ struct ChatExtensionV2RoomScenarioTests {
 
         try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
             timestamp: nil,
-            badge: .hidden,
+            badge: .unreadCount(count: 0),
             lastMessage: nil,
             lastReaction: nil,
             unseenReactions: 0,
