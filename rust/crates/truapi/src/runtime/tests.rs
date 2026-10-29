@@ -34,9 +34,10 @@ use truapi::{
 			RemoteChainTransactionBroadcastResponse,
 		},
 		chat::{
-			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatPostMessageError,
-			HostChatPostMessageRequest, HostChatRegisterBotError, HostChatRegisterBotRequest,
-			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
+			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+			HostChatPostMessageError, HostChatPostMessageRequest, HostChatRegisterBotError,
+			HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterError,
+			HostChatSetRoomFooterRequest,
 		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::HostExpandedCardSetFaceShownRequest,
@@ -1366,16 +1367,11 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: truapi::latest::HostChatCreateRoomRequest,
-	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
-	{
-		self.created_rooms
-			.lock()
-			.expect("created rooms mutex poisoned")
-			.push(request.room_id);
-		Ok(truapi::latest::HostChatCreateRoomResponse {
-			status: v01::ChatRoomRegistrationStatus::New,
-		})
+		room_id: String,
+		_request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<v01::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError> {
+		self.created_rooms.lock().expect("created rooms mutex poisoned").push(room_id);
+		Ok(v01::ChatRoomRegistrationStatus::New)
 	}
 
 	async fn register_chat_bot(
@@ -1859,28 +1855,47 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	install_pairing_session(&host, session_info());
 
-	futures::executor::block_on(Chat::create_room(
+	let created = futures::executor::block_on(Chat::create_room(
 		&host,
 		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
+		HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+			room_id_source: "cafe".to_string(),
 			name: "Cafe".to_string(),
 			icon: String::new(),
 		}),
 	))
 	.expect("create_room accepts the room");
+	let HostChatCreateRoomResponse::V2(created) = created else {
+		panic!("a V2 request gets a V2 answer, got {created:?}");
+	};
 
-	// Decomposed here, precomposed when the room was created: the host must
-	// see the id it stored, or the footer lands on a room that does not exist.
+	// The host stored the room under the id of the answer, so the footer must
+	// reach the host under that id.
 	futures::executor::block_on(Chat::set_room_footer(
 		&host,
 		&CallContext::default(),
 		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
-			room_id: "cafe\u{301}".to_string(),
+			room_id: created.room_id.clone(),
 			footer: v01::ChatRoomFooter::Empty,
 		}),
 	))
-	.expect("set_room_footer accepts a normalizable id");
+	.expect("set_room_footer accepts the id that create_room returned");
+
+	// The source is the product's own name for the room, not its id.
+	let by_source = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "cafe".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+	assert_eq!(
+		by_source,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
 
 	let rejected = futures::executor::block_on(Chat::set_room_footer(
 		&host,
@@ -1931,7 +1946,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
+		[(created.room_id, v01::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -2018,7 +2033,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 }
 
 #[test]
-fn chat_room_ids_agree_across_create_and_post() {
+fn each_spelling_of_a_room_source_names_one_room() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test("chat.dot"),
@@ -2047,28 +2062,37 @@ fn chat_room_ids_agree_across_create_and_post() {
 	);
 	install_pairing_session(&host, session_info());
 
-	// Precomposed on create, decomposed on post: the host must see one id,
-	// or the message lands in a room that does not exist.
-	futures::executor::block_on(Chat::create_room(
-		&host,
-		&CallContext::default(),
-		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-			room_id: "caf\u{e9}".to_string(),
-			name: "Cafe".to_string(),
-			icon: String::new(),
-		}),
-	))
-	.expect("create_room accepts a normalizable id");
+	// Precomposed, then decomposed: both spellings must resolve one room, or
+	// a product that sends the other spelling gets a second room.
+	let room_ids = ["caf\u{e9}", "cafe\u{301}"].map(|room_id_source| {
+		let created = futures::executor::block_on(Chat::create_room(
+			&host,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+				room_id_source: room_id_source.to_string(),
+				name: "Cafe".to_string(),
+				icon: String::new(),
+			}),
+		))
+		.expect("create_room accepts a normalizable source");
+		let HostChatCreateRoomResponse::V2(created) = created else {
+			panic!("a V2 request gets a V2 answer, got {created:?}");
+		};
+		created.room_id
+	});
+	let room_id = ProductId::for_test("chat.dot").chat_room_id("caf\u{e9}");
+	assert_eq!(room_ids, [room_id.clone(), room_id.clone()]);
 
 	futures::executor::block_on(Chat::post_message(
 		&host,
 		&CallContext::default(),
-		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
-			room_id: "cafe\u{301}".to_string(),
+		HostChatPostMessageRequest::V2(v02::HostChatPostMessageRequest {
+			room_id: room_id.clone(),
 			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+			alt: None,
 		}),
 	))
-	.expect("post_message accepts the other spelling of the same id");
+	.expect("post_message accepts the id that create_room returned");
 
 	let created = chat_platform
 		.created_rooms
@@ -2076,7 +2100,8 @@ fn chat_room_ids_agree_across_create_and_post() {
 		.expect("created rooms mutex poisoned")
 		.clone();
 	let posted = chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned").clone();
-	assert_eq!(created, posted);
+	assert_eq!(created, [room_id.clone(), room_id.clone()]);
+	assert_eq!(posted, [room_id]);
 
 	// create_room screens the same fields register_bot does.
 	for (room_id, icon) in [("", ""), ("room\u{202e}", ""), ("room", "javascript:x")] {

@@ -1212,20 +1212,21 @@ impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatCreateRoomRequest,
-	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		room_id: String,
+		_request: latest::HostChatCreateRoomRequest,
+	) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
 		}
 		let status = {
 			let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-			if rooms.contains_key(&request.room_id) {
+			if rooms.contains_key(&room_id) {
 				latest::ChatRoomRegistrationStatus::Exists
 			} else {
 				rooms.insert(
-					request.room_id.clone(),
+					room_id.clone(),
 					latest::ChatRoom {
-						room_id: request.room_id.clone(),
+						room_id,
 						// A product that creates a room hosts it; a product
 						// reaching a room as a bot registers the bot instead.
 						participating_as: latest::ChatRoomParticipation::RoomHost,
@@ -1237,7 +1238,7 @@ impl ChatPlatform for MockPlatform {
 		if status == latest::ChatRoomRegistrationStatus::New {
 			self.publish_chat_rooms();
 		}
-		Ok(latest::HostChatCreateRoomResponse { status })
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
@@ -1944,16 +1945,19 @@ mod tests {
 
 	fn mock_room_request(room_id: &str) -> latest::HostChatCreateRoomRequest {
 		latest::HostChatCreateRoomRequest {
-			room_id: room_id.to_string(),
+			room_id_source: room_id.to_string(),
 			name: format!("{room_id} room"),
 			icon: "https://example.invalid/i.png".to_string(),
 		}
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
-		block_on(p.create_chat_room(&mock_product(), mock_room_request(room_id)))
-			.expect("room registration succeeds")
-			.status
+		block_on(p.create_chat_room(
+			&mock_product(),
+			room_id.to_string(),
+			mock_room_request(room_id),
+		))
+		.expect("room registration succeeds")
 	}
 
 	fn post_text(
@@ -2019,8 +2023,9 @@ mod tests {
 		});
 		let product = mock_product();
 
-		let room = block_on(p.create_chat_room(&product, mock_room_request("lobby")))
-			.expect_err("room creation carries the injected reason");
+		let room =
+			block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
+				.expect_err("room creation carries the injected reason");
 		assert!(
 			matches!(room, latest::HostChatCreateRoomError::Unknown { reason } if reason == "chat down"),
 		);
@@ -2314,7 +2319,7 @@ mod tests {
 		let product = mock_product();
 		let room = || "lobby".to_string();
 		let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
-		block_on(p.create_chat_room(&product, mock_room_request("lobby")))
+		block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
 			.expect("room registration succeeds");
 		block_on(p.set_chat_room_config(
 			&product,
