@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFra
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.NonCancellable
@@ -61,14 +62,18 @@ class AppFundingOverlay @Inject constructor(
         intent: String,
         target: ProviderFrameTarget,
     ): ProviderFrameOutcome {
+        // The core announces a session once the user starts it, so a frame shown as the session is handed over
+        // goes by what the sheet reported.
         val session = runtime.session(intent)
-        val rail = session?.choice?.rail ?: FundingRail.CARD
+        val overlay = contexts.get(intent)
+        val rail = session?.choice?.rail ?: overlay?.selection?.rail ?: FundingRail.CARD
+        val direction = session?.direction ?: overlay?.request?.direction?.toCore()
 
         val frame = FundingFrameContext(
             providerId = providerId,
             intent = intent,
             target = target,
-            showsSentFunds = rail == FundingRail.BANK && session?.direction == FundingDirection.IN,
+            showsSentFunds = rail == FundingRail.BANK && direction == FundingDirection.IN,
         )
         frames.put(frame)
         try {
@@ -116,9 +121,10 @@ class AppFundingOverlay @Inject constructor(
 }
 
 /** The provider's screen has done its part once the payment is seen or the session is over. */
-suspend fun FundingRuntime.paymentMoved(intent: String): Boolean {
-    val session = session(intent) ?: return true
+fun FundingRuntime.paymentMoved(intent: String): Boolean {
+    // The core announces a session once the user starts it; until then nothing has moved.
+    val (session, progress) = sessions.value[intent] ?: return false
     if (!session.stage.isOpen) return true
 
-    return progress(intent)?.steps.orEmpty().any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
+    return progress?.steps.orEmpty().any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
 }

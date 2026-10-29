@@ -283,14 +283,8 @@ private const val SHORT_ADDRESS_MIN_LENGTH = 14
 private const val SHORT_ADDRESS_HEAD = 6
 private const val SHORT_ADDRESS_TAIL = 5
 
-/** A network stays closed to amounts below the lowest minimum a provider has refused with there. */
 fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { network ->
-    FundingNetworkRow(
-        id = network.id,
-        name = network.name,
-        monogram = network.monogram,
-        minimum = minimum(network.id)?.takeIf { it > amount }?.let(cash::label),
-    )
+    FundingNetworkRow(id = network.id, name = network.name, monogram = network.monogram)
 }.toImmutableList()
 
 fun FundingFlowState.toTokensUiState(): FundingTokensUiState {

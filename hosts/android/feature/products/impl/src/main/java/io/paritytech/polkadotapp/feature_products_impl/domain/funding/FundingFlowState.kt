@@ -3,12 +3,14 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingCountrySupport
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
+import uniffi.truapi.FundingSelection
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
@@ -62,8 +64,6 @@ data class FundingFlowState(
     val requestId: ULong? = null,
     /** What the core says this rail, asset, network and country take. */
     val amountLimits: FundingLimits = FundingLimits(minimum = null, maximum = null),
-    /** The least each crypto network takes, as the core says. */
-    val networkMinimums: Map<String, BigDecimal> = emptyMap(),
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -171,9 +171,6 @@ data class FundingFlowState(
     val networks: List<FundingNetwork>
         get() = cryptoRoutes.flatMap { it.networks.orEmpty() }.distinct().map(::FundingNetwork)
 
-    /** The least [networkId] takes, as the core says. */
-    fun minimum(networkId: String): BigDecimal? = networkMinimums[networkId]
-
     val tokens: List<FundingToken>
         get() = cryptoRoutes
             .filter { route -> network == null || route.networks?.contains(network) ?: true }
@@ -260,22 +257,24 @@ data class FundingFlowState(
         )
     }
 
-    /** The choice the amount limits are read for; an answer for another one is stale. */
-    val limitsKey: FundingLimitsKey
-        get() = FundingLimitsKey(rail = rail, asset = asset ?: fiatAsset, network = network, country = country?.code)
+    /** The rail, asset, network and country on screen, as the core is told of them. */
+    val selection: FundingSelection
+        get() = FundingSelection(
+            rail = rail,
+            asset = if (rail == FundingRail.CRYPTO) asset else fiatAsset,
+            network = network,
+            country = country?.code,
+        )
+
+    /** The core's options for the selection on screen: its providers, what each country supports and the limits. */
+    fun withOptions(options: FundingOptions): FundingFlowState = withCandidates(options.candidates)
+        .withCountrySupport(options.countries)
+        .withAmountLimits(
+            FundingLimits(minimum = options.limits.min?.let(cash::decimal), maximum = options.limits.max?.let(cash::decimal)),
+        )
 
     fun withAmountLimits(limits: FundingLimits): FundingFlowState = copy(amountLimits = limits)
-
-    fun withNetworkMinimums(minimums: Map<String, BigDecimal>): FundingFlowState = copy(networkMinimums = minimums)
 
     fun withCountrySupport(countries: List<CoreFundingCountry>): FundingFlowState =
         copy(countrySupport = countries.associate { it.country.uppercase(Locale.ROOT) to it.support })
 }
-
-/** The rail, asset, network and country an amount-limit lookup answers for. */
-data class FundingLimitsKey(
-    val rail: FundingRail,
-    val asset: String,
-    val network: String?,
-    val country: String?,
-)

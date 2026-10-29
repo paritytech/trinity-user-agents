@@ -1207,7 +1207,6 @@
     <string name="funding_fees_you_pay">You\'ll pay</string>
     <string name="funding_fees_you_send">You\'ll send</string>
     <string name="funding_frame_sent_funds">I\'ve sent funds</string>
-    <string name="funding_network_minimum">Minimum for this network is %1$s</string>
     <string name="funding_network_title">Select network</string>
     <string name="funding_provider_changed">Provider changed successfully</string>
     <string name="funding_providers_country_unsupported">Not available in your country</string>

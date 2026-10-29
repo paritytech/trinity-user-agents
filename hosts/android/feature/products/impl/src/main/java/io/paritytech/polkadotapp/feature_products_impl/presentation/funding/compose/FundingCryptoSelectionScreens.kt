@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -21,8 +20,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.comp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingMonogram
 import kotlinx.collections.immutable.ImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
-
-private const val DISABLED_ALPHA = 0.5f
 
 /** The networks the providers' crypto routes name. */
 @Composable
@@ -52,8 +49,6 @@ fun FundingNetworkScreen(
                 FundingSelectionRow(
                     monogram = row.monogram,
                     title = row.name,
-                    subtitle = row.minimum?.let { stringResource(RCommon.string.funding_network_minimum, it) },
-                    enabled = row.minimum == null,
                     onClick = { onNetwork(row.id) },
                 )
             }
@@ -98,8 +93,6 @@ fun FundingTokenScreen(
                 FundingSelectionRow(
                     monogram = row.monogram,
                     title = row.symbol,
-                    subtitle = null,
-                    enabled = true,
                     onClick = { onToken(row.symbol) },
                 )
             }
@@ -111,17 +104,12 @@ fun FundingTokenScreen(
 private fun FundingSelectionRow(
     monogram: String,
     title: String,
-    subtitle: String?,
-    enabled: Boolean,
     onClick: () -> Unit,
 ) {
     PolkadotSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (enabled) 1f else DISABLED_ALPHA),
+        modifier = Modifier.fillMaxWidth(),
         shape = PolkadotTheme.shapes.large,
         color = PolkadotTheme.colors.bg.surface.container,
-        enabled = enabled,
         onClick = onClick,
     ) {
         Row(
@@ -130,20 +118,11 @@ private fun FundingSelectionRow(
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
         ) {
             FundingMonogram(text = monogram)
-            Column {
-                NovaText(
-                    text = title,
-                    style = PolkadotTheme.typography.body.mediumEmphasized,
-                    color = PolkadotTheme.colors.fg.primary,
-                )
-                if (subtitle != null) {
-                    NovaText(
-                        text = subtitle,
-                        style = PolkadotTheme.typography.body.small,
-                        color = PolkadotTheme.colors.fg.secondary,
-                    )
-                }
-            }
+            NovaText(
+                text = title,
+                style = PolkadotTheme.typography.body.mediumEmphasized,
+                color = PolkadotTheme.colors.fg.primary,
+            )
         }
     }
 }

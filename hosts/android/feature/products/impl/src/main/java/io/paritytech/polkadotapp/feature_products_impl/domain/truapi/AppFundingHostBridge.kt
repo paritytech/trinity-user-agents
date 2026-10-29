@@ -14,17 +14,23 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import timber.log.Timber
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.U128
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import uniffi.truapi.FundingDirection as CoreFundingDirection
@@ -36,7 +42,10 @@ class AppFundingHostBridge @Inject constructor(
     private val overlay: Lazy<FundingOverlay>,
     private val countryDetector: DeviceCountryDetector,
 ) : FundingHostBridge {
-    private val latestProgress = ConcurrentHashMap<String, FundingProgress>()
+    private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
+    private val options = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
+    private val history = MutableStateFlow<List<FundingSessionSummary>?>(null)
+    private val inProgress = MutableStateFlow<Boolean?>(null)
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -47,11 +56,23 @@ class AppFundingHostBridge @Inject constructor(
     )
 
     /**
-     * Emits the intent of every session whose status changed. It never completes and replays nothing, and a
-     * collector that falls more than [EVENT_BUFFER] events behind loses the oldest ones, so a collector reads the
-     * session itself rather than relying on seeing every event.
+     * Emits the intent of every session whose status changed, once the session is in [sessions]. It never completes
+     * and replays nothing, and a collector that falls more than [EVENT_BUFFER] events behind loses the oldest ones,
+     * so a collector looks the session up rather than relying on seeing every event.
      */
     fun changedSessions(): SharedFlow<String> = changedSessions.asSharedFlow()
+
+    /** Every session the core pushed and still holds, with its latest progress, by intent. */
+    fun sessions(): StateFlow<Map<String, FundingSessionEntry>> = sessions.asStateFlow()
+
+    /** What each session's overlay offers, as the core last pushed it, by intent. */
+    fun options(): StateFlow<Map<String, FundingOptions>> = options.asStateFlow()
+
+    /** Every recorded session's summary as the core pushed it when funding resumed; `null` until then. */
+    fun history(): StateFlow<List<FundingSessionSummary>?> = history.asStateFlow()
+
+    /** Whether a provider still works on any session, as the core last said; `null` until funding resumed. */
+    fun inProgress(): StateFlow<Boolean?> = inProgress.asStateFlow()
 
     /**
      * Emits every quote list the core sends: again as each provider answers, and at every refresh. It never
@@ -93,13 +114,29 @@ class AppFundingHostBridge @Inject constructor(
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
-    override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem, progress: FundingProgress?) {
-        if (progress == null) latestProgress.remove(intent) else latestProgress[intent] = progress
+    override fun fundingSessionChanged(
+        intent: String,
+        status: HostFundingStatusSubscribeItem,
+        session: FundingSession?,
+        progress: FundingProgress?,
+    ) {
+        sessions.update { held ->
+            if (session == null) held - intent else held + (intent to FundingSessionEntry(session, progress))
+        }
         changedSessions.tryEmit(intent)
     }
 
-    /** The progress the core last handed over with session [intent]'s change. */
-    fun progress(intent: String): FundingProgress? = latestProgress[intent]
+    override fun fundingHistory(history: List<FundingSessionSummary>) {
+        this.history.value = history
+    }
+
+    override fun fundingInProgressChanged(inProgress: Boolean) {
+        this.inProgress.value = inProgress
+    }
+
+    override fun fundingOptionsChanged(intent: String, options: FundingOptions) {
+        this.options.update { it + (intent to options) }
+    }
 
     override fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
         Timber.tag("truapi.funding").d("quotes %s: best %s, %d rows", intent, quotes.best, quotes.rows.size)
@@ -110,6 +147,12 @@ class AppFundingHostBridge @Inject constructor(
         const val EVENT_BUFFER = 64
     }
 }
+
+/** A session as the core last pushed it, with the progress the host draws for it. */
+data class FundingSessionEntry(
+    val session: FundingSession,
+    val progress: FundingProgress?,
+)
 
 data class FundingQuoteListUpdate(
     val intent: String,

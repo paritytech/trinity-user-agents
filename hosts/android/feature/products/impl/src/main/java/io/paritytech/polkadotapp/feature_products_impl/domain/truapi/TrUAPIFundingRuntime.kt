@@ -1,23 +1,20 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
-import uniffi.truapi.FundingAmountLimits
-import uniffi.truapi.FundingCandidate
-import uniffi.truapi.FundingCountry
 import uniffi.truapi.FundingDirection
-import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
-import uniffi.truapi.FundingRail
-import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSessionSummary
 import javax.inject.Inject
 
@@ -28,39 +25,29 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun openFunding(direction: FundingDirection): Result<String?> =
         runtimeProvider.runtime().mapCatching { it.openFunding(direction, null) }
 
-    override suspend fun session(intent: String): FundingSession? = read { it.fundingSession(intent) }
+    override suspend fun start(): Result<Unit> = runtimeProvider.runtime().map { }
 
-    override suspend fun progress(intent: String): FundingProgress? = bridge.progress(intent)
+    override val sessions: StateFlow<Map<String, FundingSessionEntry>> = bridge.sessions()
 
-    override suspend fun sessions(): List<FundingSession> = read { it.fundingSessions() }.orEmpty()
+    override val history: StateFlow<List<FundingSessionSummary>?> = bridge.history()
 
-    override suspend fun history(): List<FundingSessionSummary>? = read { it.fundingHistory() }
+    override fun options(intent: String): Flow<FundingOptions?> =
+        bridge.options().map { it[intent] }.distinctUntilChanged()
 
-    override suspend fun candidates(intent: String): List<FundingCandidate> = read { it.fundingCandidates(intent) }.orEmpty()
+    override suspend fun selectOptions(intent: String, selection: FundingSelection) {
+        runtimeProvider.runtime()
+            .mapCatching { it.selectFundingOptions(intent, selection) }
+            .logFailure("TrUAPI funding selection failed")
+    }
 
     override suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> =
         runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, ask) }
 
-    override suspend fun amountLimits(
-        intent: String,
-        rail: FundingRail,
-        asset: String,
-        network: String?,
-        country: String?,
-    ): FundingAmountLimits? = read { it.fundingAmountLimits(intent, rail, asset, network, country) }
-
     override suspend fun stopQuotes(intent: String) {
-        read { it.stopFundingQuotes(intent) }
-    }
-
-    override suspend fun countries(intent: String, rail: FundingRail, asset: String): List<FundingCountry> =
-        read { it.fundingCountries(intent, rail, asset) }.orEmpty()
-
-    override suspend fun detectedCountry(): String? =
         runtimeProvider.runtime()
-            .mapCatching { it.detectedFundingCountry() }
-            .logFailure("TrUAPI funding country read failed")
-            .getOrNull()
+            .mapCatching { it.stopFundingQuotes(intent) }
+            .logFailure("TrUAPI funding quotes could not stop")
+    }
 
     override suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
@@ -78,10 +65,4 @@ class TrUAPIFundingRuntime @Inject constructor(
         bridge.quoteLists().filter { it.intent == intent }.map { it.quotes }
 
     override fun sessionChanges(): Flow<String> = bridge.changedSessions()
-
-    private suspend fun <T> read(block: (TrUAPIHostRuntime) -> T): T? =
-        runtimeProvider.runtime()
-            .mapCatching(block)
-            .logFailure("TrUAPI funding read failed")
-            .getOrNull()
 }
