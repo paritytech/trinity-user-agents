@@ -378,8 +378,11 @@ impl LiveRun<'_> {
 		let idempotency_key = NftPurseIdempotencyKey(rand::random());
 		let items = minted.keys.iter().map(|key| ItemKey(key.0)).collect();
 		let sender = sender();
-		let rebalance = self.purses.rebalance(&sender, minted.purse, purse, items, idempotency_key);
-		rebalance.await.expect("the rebalance registers");
+		let rebalance =
+			self.purses
+				.prepare_rebalance(&sender, minted.purse, purse, items, idempotency_key);
+		let prepared = rebalance.await.expect("the rebalance is not refused");
+		prepared.start().await.expect("the rebalance registers");
 		let cleared = self.follow_until_cleared(&sender, idempotency_key).await;
 		let keys: Vec<_> = cleared.iter().map(|item| item.minted).collect();
 		self.wait_until_listed(purse, keys.iter().copied().collect()).await;
@@ -440,8 +443,11 @@ impl LiveRun<'_> {
 		let idempotency_key = NftPurseIdempotencyKey(rand::random());
 		let destination = NftPurseItemKey(foreign.0);
 		let receiver = receiver();
-		let transfer = self.purses.transfer(&receiver, from, item, destination, idempotency_key);
-		transfer.await.expect("the transfer registers");
+		let transfer =
+			self.purses
+				.prepare_transfer(&receiver, from, item, destination, idempotency_key);
+		let prepared = transfer.await.expect("the transfer is not refused");
+		prepared.start().await.expect("the transfer registers");
 		self.follow_until_cleared(&receiver, idempotency_key).await;
 		assert_eq!(self.owner.instances_held_by(&[foreign]).await.len(), 1);
 	}

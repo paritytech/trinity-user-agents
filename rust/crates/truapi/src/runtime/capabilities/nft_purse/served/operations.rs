@@ -88,8 +88,8 @@ pub struct Drain {
 }
 
 impl ProductRuntimeHost {
-	/// Registers a rebalance after checking both purses and confirming a
-	/// drain of a purse the caller does not own.
+	/// Registers a rebalance after checking both purses, the key and the
+	/// items, and then confirming a drain of a purse the caller does not own.
 	pub async fn rebalance_nft_purse(
 		&self,
 		cx: &CallContext,
@@ -104,16 +104,18 @@ impl ProductRuntimeHost {
 		}
 		let (from, to) = (PurseId(from.0), PurseId(to.0));
 		let drain = rebalance_drain(&purses, from, to, items.len()).await?;
-		self.confirm_drain(cx, drain, REBALANCE_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
-		purses
-			.rebalance(caller, from, to, items, idempotency_key)
+		let prepared = purses
+			.prepare_rebalance(caller, from, to, items, idempotency_key)
 			.await
-			.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
+			.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))?;
+		self.confirm_drain(cx, drain, REBALANCE_REFUSALS.denied).await?;
+		prepared.start().await.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
 	}
 
-	/// Registers a transfer of an item of ours to an outside key, after
-	/// confirming a drain of a purse the caller does not own.
+	/// Registers a transfer of an item of ours to an outside key after
+	/// checking the key and the item, and then confirming a drain of a purse
+	/// the caller does not own.
 	pub async fn transfer_nft_item(
 		&self,
 		cx: &CallContext,
@@ -128,12 +130,13 @@ impl ProductRuntimeHost {
 		let owner = purses.owner_of(from).await.map_err(host_failure)?.ok_or_else(not_found)?;
 		let to_key = NftPurseDrainDestination::ExternalKey { key: destination.0 };
 		let drain = Drain { from, owner, item_count: 1, destination: to_key };
-		self.confirm_drain(cx, drain, TRANSFER_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
-		purses
-			.transfer(caller, from, item, destination, idempotency_key)
+		let prepared = purses
+			.prepare_transfer(caller, from, item, destination, idempotency_key)
 			.await
-			.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))
+			.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))?;
+		self.confirm_drain(cx, drain, TRANSFER_REFUSALS.denied).await?;
+		prepared.start().await.map_err(|error| TRANSFER_REFUSALS.refusal_of(error))
 	}
 
 	/// The status of an operation the caller registered, until it ends.
