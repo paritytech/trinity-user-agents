@@ -1,18 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "account.backup.pending" : {
-      "comment" : "Warning row on the asset details while the installation's on-chain backup registration is still pending",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Account backup is still in progress. Keep the app open until it completes."
-          }
-        }
-      }
-    },
     "backup.updated.message" : {
       "comment" : "Toast message shown after confirming balance sync completion",
       "extractionState" : "manual",

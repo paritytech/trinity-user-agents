@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -28,7 +30,9 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardSize
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewContract
@@ -41,6 +45,7 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
 
     PocketFacePreviewScreenInternal(
         state = state,
+        imageResolver = contract.imageResolver,
         onBackClick = contract::onBackClick,
         onUrlChanged = contract::onUrlChanged,
         onDrawClick = contract::onDrawClick,
@@ -50,6 +55,7 @@ fun PocketFacePreviewScreen(contract: PocketFacePreviewContract) {
 @Composable
 private fun PocketFacePreviewScreenInternal(
     state: PocketFacePreviewState,
+    imageResolver: JsImageResolver,
     onBackClick: () -> Unit,
     onUrlChanged: (String) -> Unit,
     onDrawClick: () -> Unit,
@@ -101,7 +107,11 @@ private fun PocketFacePreviewScreenInternal(
                         shape = PolkadotTheme.shapes.large,
                         color = PolkadotTheme.colors.bg.surface.container,
                     ) {
-                        FaceOrExplanation(face = state.face)
+                        CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
+                            key(state.draws) {
+                                FaceOrExplanation(face = state.face)
+                            }
+                        }
                     }
                 }
             }
@@ -154,7 +164,9 @@ private fun PocketFacePreviewScreenPreview() {
             state = PocketFacePreviewState(
                 url = "http://127.0.0.1:5173/faces/loyalty.json",
                 face = LoadingState.Loaded(JsWidget.Text(text = "Loyalty")),
+                draws = 1,
             ),
+            imageResolver = JsImageResolver { null },
             onBackClick = {},
             onUrlChanged = {},
             onDrawClick = {},

@@ -3,8 +3,8 @@ import UIKit_iOS
 import PolkadotUI
 import DesignSystem
 
-/// Bare camera preview that fills its host's bounds: no dimmed cutout and no frame border, with
-/// the message label drawn straight over the preview. `fillColor` is what draws the dimming in
+/// Bare camera preview that fills its host's bounds: no dimmed cutout and no frame border. The
+/// embedded tile shows no messages. `fillColor` is what draws the dimming in
 /// `CameraFrameView`, so clearing it removes the window entirely. The host view (`ScanPanelViewLayout`)
 /// owns the insets and placeholder.
 final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
@@ -30,13 +30,6 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
         }
 
         qrFrameView.addSubview(previewView)
-
-        messageLabel.textColor = .fgPrimary
-        addSubview(messageLabel)
-        messageLabel.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(qrFrameView).inset(DSSpacings.mediumIncreased)
-            make.bottom.equalTo(qrFrameView).inset(DSSpacings.mediumIncreased)
-        }
     }
 
     override func didAttachPreview() {
@@ -60,7 +53,8 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
 
 private extension EmbeddedQRScannerViewLayout {
     /// A resized `AVCaptureVideoPreviewLayer` lays its video out at the final size immediately, pinned to
-    /// the top-left, so the preview keeps the widest size it has had and is scaled around its center.
+    /// the top-left, so the preview keeps the widest size it has had. The frame clips it as it narrows,
+    /// cropping the video around its center.
     func layoutPreview() {
         let side = qrFrameView.bounds.width
 
@@ -71,8 +65,5 @@ private extension EmbeddedQRScannerViewLayout {
         previewSide = max(previewSide, side)
         previewView.bounds = CGRect(x: 0, y: 0, width: previewSide, height: previewSide)
         previewView.center = CGPoint(x: qrFrameView.bounds.midX, y: qrFrameView.bounds.midY)
-
-        let scale = side / previewSide
-        previewView.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 }

@@ -37,6 +37,7 @@ public struct PGASClaimTimeoutError: Error, Equatable {
 /// proof, which the allowance manager waits for — a fresh account simply waits here.
 public final class PGASAccountProvisioner: PGASAccountProvisioning, @unchecked Sendable {
     private let allowanceManager: any AllowanceManaging
+    private let domain: AllowanceRecord.Domain
     private let balanceProvider: any PGASBalanceProviding
     private let issueDiagnostics: AllowanceIssueDiagnostics
     private let claimTimeout: Duration
@@ -44,12 +45,14 @@ public final class PGASAccountProvisioner: PGASAccountProvisioning, @unchecked S
 
     public init(
         allowanceManager: any AllowanceManaging,
+        domain: AllowanceRecord.Domain,
         balanceProvider: any PGASBalanceProviding,
         issueDiagnostics: AllowanceIssueDiagnostics,
         claimTimeout: Duration = .seconds(2 * 60),
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.allowanceManager = allowanceManager
+        self.domain = domain
         self.balanceProvider = balanceProvider
         self.issueDiagnostics = issueDiagnostics
         self.claimTimeout = claimTimeout
@@ -83,8 +86,13 @@ private extension PGASAccountProvisioner {
     func claim(account: AccountId, policy: OnExistingAllowancePolicy) async throws {
         try await issueDiagnostics.observeAllocation {
             do {
-                try await withTimeout(claimTimeout, clock: clock) { [allowanceManager] in
-                    try await allowanceManager.allocate(accountId: account, policy: policy, priority: .normal)
+                try await withTimeout(claimTimeout, clock: clock) { [allowanceManager, domain] in
+                    try await allowanceManager.allocate(
+                        accountId: account,
+                        policy: policy,
+                        priority: .normal,
+                        domain: domain
+                    )
                 }
             } catch is TimeoutError {
                 throw PGASClaimTimeoutError()

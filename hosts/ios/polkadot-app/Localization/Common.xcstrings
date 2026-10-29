@@ -111,6 +111,17 @@
         }
       }
     },
+    "chainConnectionStatusStatementStore" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statement Store"
+          }
+        }
+      }
+    },
     "clear" : {
       "extractionState" : "manual",
       "localizations" : {

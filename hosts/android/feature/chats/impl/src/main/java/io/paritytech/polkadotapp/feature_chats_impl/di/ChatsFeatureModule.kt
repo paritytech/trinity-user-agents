@@ -16,6 +16,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.AddContac
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealAddContactInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealChatListInteractor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.ContactChatSigners
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.RealContactChatSigners
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.RealWaitForChatExistsUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.WaitForChatExistsUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.scan.ContactAddressScanContentParser
@@ -42,6 +44,9 @@ interface ChatsFeatureModule {
 
     @Binds
     fun bindChatStarter(real: RealChatStarter): ChatStarter
+
+    @Binds
+    fun bindContactChatSigners(impl: RealContactChatSigners): ContactChatSigners
 
     @Multibinds
     fun customChatHeaderRenderers(): Map<String, CustomChatHeaderRenderer>

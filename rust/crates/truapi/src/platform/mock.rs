@@ -46,8 +46,9 @@ use truapi::latest;
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-	ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -128,7 +129,7 @@ pub enum PermissionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOperation {
 	/// Product that began it.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Id the mock handed back, unique among this product's open operations.
 	pub id: u32,
 	/// Label the product gave, empty when it gave none.
@@ -736,6 +737,9 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::ProductManifest { product_id } => {
 			format!("core:product-manifest:{product_id}")
 		},
+		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
+		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
+		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
@@ -919,44 +923,6 @@ pub mod mock_genesis {
 	}
 }
 
-/// Decision key for a device permission: the SCALE variant tag.
-///
-/// The `Display` impls render prose for a person to read, so they are the
-/// wrong thing to store a grant under. The generated TypeScript mock keys on
-/// these same tags, which is what lets one suite drive both mocks.
-fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'static str {
-	use latest::HostDevicePermissionRequest as Request;
-	match request {
-		Request::Notifications => "Notifications",
-		Request::Camera => "Camera",
-		Request::Microphone => "Microphone",
-		Request::Bluetooth => "Bluetooth",
-		Request::NFC => "NFC",
-		Request::Location => "Location",
-		Request::Clipboard => "Clipboard",
-		Request::OpenUrl => "OpenUrl",
-		Request::Biometrics => "Biometrics",
-		Request::Motion => "Motion",
-	}
-}
-
-/// Decision key for a remote permission: the SCALE variant tag.
-///
-/// `Remote` renders its domain list through `Display`, so keying on that form
-/// would make the key depend on what the product asked for and leave the
-/// permission impossible to grant ahead of the request.
-fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str {
-	use latest::RemotePermission as Permission;
-	match permission {
-		Permission::Remote { .. } => "Remote",
-		Permission::WebRtc => "WebRtc",
-		Permission::ChainSubmit => "ChainSubmit",
-		Permission::PreimageSubmit => "PreimageSubmit",
-		Permission::StatementSubmit => "StatementSubmit",
-		Permission::BalanceAccess => "BalanceAccess",
-	}
-}
-
 /// A mock policy is two-valued, so a grant is durable and a refusal is durable.
 /// `AllowOnce` is a host answer the mock has no knob to ask for.
 fn decision(granted: bool) -> PermissionDecision {
@@ -973,9 +939,12 @@ impl Permissions for MockPlatform {
 		if let Some(reason) = &self.config.faults.permission_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
+		// Keyed by variant name, not the prose `Display`, so a grant can be set
+		// ahead of the request. The generated TypeScript mock uses the same keys.
+		let key: &'static str = (&request).into();
 		Ok(decision(self.decide_permission(
 			PermissionKind::Device,
-			device_permission_key(&request).to_string(),
+			key.to_string(),
 			self.config.device_permissions,
 		)))
 	}
@@ -988,13 +957,16 @@ impl Permissions for MockPlatform {
 		if let Some(reason) = &self.config.faults.permission_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
+		let key: &'static str = (&request.permission).into();
 		Ok(decision(self.decide_permission(
 			PermissionKind::Remote,
-			remote_permission_key(&request.permission).to_string(),
+			key.to_string(),
 			self.config.remote_permissions,
 		)))
 	}
 }
+
+impl crate::platform::ExtrinsicVersionHost for MockPlatform {}
 
 #[async_trait]
 impl Features for MockPlatform {
@@ -1142,9 +1114,9 @@ impl LocaleHost for MockPlatform {
 impl PreimageHost for MockPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
-		let found = self.preimages.lock().expect("preimages poisoned").get(&key).cloned();
+		let found = self.preimages.lock().expect("preimages poisoned").get(key.as_slice()).cloned();
 		// Emit the current value/miss, then stay open — a live subscription that
 		// never ends, matching `subscribe_theme`, the trait doc, and the JS mock.
 		Box::pin(
@@ -1331,7 +1303,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: "mock.dot".to_string(),
+			calling_product_id: crate::platform::ProductId::for_test("mock.dot"),
 			resources: vec![],
 		})
 	}
@@ -1541,13 +1513,13 @@ mod tests {
 	fn an_operation_is_open_until_its_own_product_ends_it() {
 		let p = MockPlatform::new();
 		let mine = mock_product();
-		let theirs = ProductContext::new("other.dot".to_string()).expect("product id is valid");
+		let theirs = ProductContext::new(ProductId::for_test("other.dot"));
 
 		let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
 		assert_eq!(
 			p.open_operations(),
 			vec![OpenOperation {
-				product_id: "mock.dot".to_string(),
+				product_id: crate::platform::ProductId::for_test("mock.dot"),
 				id,
 				label: "sync".to_string(),
 			}]
@@ -1637,10 +1609,11 @@ mod tests {
 			key,
 			hex_bytes("11c0e79b71c3976ccd0c02d1310e2516c08edc9d8b6f57ccd680d63a4d8e72da")
 		);
+		let key = key.try_into().expect("a blake2b-256 key is 32 bytes");
 		let found = block_on(p.lookup_preimage(key).next()).unwrap().unwrap();
 		assert_eq!(found, Some(vec![1, 2, 3]));
 		// An unknown key misses.
-		let miss = block_on(p.lookup_preimage(vec![9; 32]).next()).unwrap().unwrap();
+		let miss = block_on(p.lookup_preimage([9; 32]).next()).unwrap().unwrap();
 		assert_eq!(miss, None);
 	}
 
@@ -1704,7 +1677,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: product.to_string(),
+			calling_product_id: crate::platform::ProductId::for_test(product),
 			resources: vec![],
 		})
 	}
@@ -1736,7 +1709,7 @@ mod tests {
 			vec![ConfirmKind::ResourceAllocation; 2],
 			"the kind view should see two identical kinds",
 		);
-		let products: Vec<String> = p
+		let products: Vec<crate::platform::ProductId> = p
 			.reviews()
 			.into_iter()
 			.map(|review| match review {
@@ -1744,7 +1717,13 @@ mod tests {
 				other => panic!("unexpected review {other:?}"),
 			})
 			.collect();
-		assert_eq!(products, vec!["first.dot", "second.dot"]);
+		assert_eq!(
+			products,
+			vec![
+				crate::platform::ProductId::for_test("first.dot"),
+				crate::platform::ProductId::for_test("second.dot")
+			]
+		);
 	}
 
 	#[test]
@@ -1843,7 +1822,7 @@ mod tests {
 	}
 
 	fn mock_product() -> ProductContext {
-		ProductContext::new("mock.dot".to_string()).expect("product context is valid")
+		ProductContext::new(ProductId::for_test("mock.dot"))
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {

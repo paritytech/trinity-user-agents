@@ -137,9 +137,6 @@ pub enum HostPaymentTopUpError {
 	/// The source key is malformed, or the source was not found.
 	#[display("invalid top-up source")]
 	InvalidSource,
-	/// A top-up with this id already exists.
-	#[display("a top-up with this id already exists")]
-	AlreadyExists,
 	/// Another top-up from the same source is still running.
 	#[display("another top-up from this source is running")]
 	SourceBusy,
@@ -152,6 +149,9 @@ pub enum HostPaymentTopUpError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// A top-up with this id already exists.
+	#[display("a top-up with this id already exists")]
+	AlreadyExists,
 }
 
 /// Error from [`crate::api::Payment::request`].
@@ -162,24 +162,24 @@ pub enum HostPaymentTopUpError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostPaymentError {
-	/// A payment with this id already exists.
-	#[display("a payment with this id already exists")]
-	AlreadyExists,
 	/// User rejected the payment request.
 	#[display("the payment was declined")]
 	Rejected,
 	/// User's available balance is not sufficient for the requested amount.
 	#[display("the balance does not cover the payment")]
 	InsufficientBalance,
-	/// The amount is zero.
-	#[display("the payment amount is zero")]
-	InvalidAmount,
 	/// Catch-all.
 	#[display("{reason}")]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// The amount is zero.
+	#[display("the payment amount is zero")]
+	InvalidAmount,
+	/// A payment with this id already exists.
+	#[display("a payment with this id already exists")]
+	AlreadyExists,
 }
 
 /// Error from [`crate::api::Payment::status_subscribe`].

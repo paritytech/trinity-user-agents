@@ -4,6 +4,12 @@ import UIKitExt
 
 @MainActor
 final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
+    private let deepLinkHandler: DeferredLinkHandling
+
+    init(deepLinkHandler: DeferredLinkHandling = DeferredLinkHandler.shared) {
+        self.deepLinkHandler = deepLinkHandler
+    }
+
     func openChat(
         from view: ControllerBackedProtocol?,
         chatId: Chat.Id
@@ -19,6 +25,10 @@ final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
 
     func showProductSPA(from _: ControllerBackedProtocol?, productHost: ProductHost) {
         UIApplication.shared.mainTabBarController?.openProduct(page: ProductPage(host: productHost))
+    }
+
+    func openDeeplink(_ url: URL) {
+        deepLinkHandler.handle(with: url)
     }
 
     func showMoreActions(

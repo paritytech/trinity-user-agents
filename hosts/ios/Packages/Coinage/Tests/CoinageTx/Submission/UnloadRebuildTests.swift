@@ -2,6 +2,7 @@ import AsyncExtensions
 import DurableTransactions
 import Foundation
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// An unload rebuilt from its ledger row redeems exactly the vouchers it registered and mints exactly
@@ -185,7 +186,7 @@ private extension UnloadRebuildTests {
                 }
                 .eraseToAnyAsyncSequence()
             },
-            dateProvider: StubDateProvider(RebuildFixtures.now)
+            dateProvider: FixedDateProvider(RebuildFixtures.now)
         )
     }
 

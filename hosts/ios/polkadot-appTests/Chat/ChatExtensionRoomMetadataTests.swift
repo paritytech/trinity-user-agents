@@ -155,6 +155,10 @@ private struct StubRegistry: ChatExtensionsRegistering {
         bot
     }
 
+    func peerListMetadata(for _: ChatExtension.Id) -> Chat.PeerListMetadata? {
+        bot.peerMetadata.list
+    }
+
     func getWidgetProviders() -> [ChatExtensionWidgetProvider] {
         []
     }

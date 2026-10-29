@@ -5,10 +5,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -19,42 +15,43 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.debug.CoinageCoinSetSwitch
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.debug.CoinageTestDataSwitch
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
-fun CoinageCardContent(
+internal fun CoinageCardContent(
     state: CoinageUiState,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
     onHeadingClicked: () -> Unit,
-    onShareLogsClick: () -> Unit
+    onShareLogsClick: () -> Unit,
+    onTestDataSelected: (CoinageTestDataMode) -> Unit,
+    onCoinSetSelected: (CoinageScene.CoinSet) -> Unit
 ) {
-    val debug = FeatureOption.COINAGE_DEBUG_FEATURES.isEnabled
-    // Debug override only. Production always draws the live holdings.
-    var testData by rememberSaveable { mutableStateOf(CoinageTestDataMode.LIVE) }
-
     Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
         CoinageStateCard(
             modifier = Modifier.fillMaxWidth(),
-            state = if (debug) testData.applied(state.tokensState) else state.tokensState,
+            state = state.tokensState,
             detailsVisible = state.detailsVisible,
             focusedCoin = state.focusedCoin,
+            coinSet = state.coinSet,
             onCoinTapped = onCoinTapped,
             onCoinsFlickedDown = onCoinsFlickedDown,
             onHeadingClicked = onHeadingClicked
         )
 
-        if (debug) {
+        if (FeatureOption.COINAGE_DEBUG_FEATURES.isEnabled) {
             DebugFeaturesCard(
                 modifier = Modifier.fillMaxWidth(),
                 state = state,
-                testData = testData,
-                onTestDataChange = { testData = it },
+                onTestDataChange = onTestDataSelected,
+                onCoinSetChange = onCoinSetSelected,
                 onAutoFundClick = onAutoFundClick,
                 onShareLogsClick = onShareLogsClick
             )
@@ -66,8 +63,8 @@ fun CoinageCardContent(
 private fun DebugFeaturesCard(
     modifier: Modifier = Modifier,
     state: CoinageUiState,
-    testData: CoinageTestDataMode,
     onTestDataChange: (CoinageTestDataMode) -> Unit,
+    onCoinSetChange: (CoinageScene.CoinSet) -> Unit,
     onAutoFundClick: () -> Unit,
     onShareLogsClick: () -> Unit
 ) {
@@ -76,7 +73,11 @@ private fun DebugFeaturesCard(
         title = stringResource(RCommon.string.pocket_debug_features_title),
         subtitle = stringResource(RCommon.string.pocket_debug_features_subtitle)
     ) {
-        CoinageTestDataSwitch(mode = testData, onModeChange = onTestDataChange)
+        if (FeatureOption.COINAGE_DEBUG_TOOLS.isEnabled) {
+            CoinageTestDataSwitch(mode = state.testData, onModeChange = onTestDataChange)
+
+            CoinageCoinSetSwitch(set = state.coinSet, onSetChange = onCoinSetChange)
+        }
 
         BalanceBreakdownTable(breakdown = state.tokensState.breakdown)
 

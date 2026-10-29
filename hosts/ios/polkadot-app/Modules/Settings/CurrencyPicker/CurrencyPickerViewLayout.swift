@@ -13,7 +13,7 @@ struct CurrencyPickerViewLayout: View {
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgDisabled)
 
-                TextField("Search", text: $viewModel.searchText)
+                TextField(String(localized: .currencyPickerSearchPlaceholder), text: $viewModel.searchText)
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgPrimary)
                     .autocorrectionDisabled()

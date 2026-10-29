@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionR
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.withConnectionEnabled
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.common.utils.toWorkerResult
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.acceptance.ChatAcceptanceRenewer
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.renewal.ChatRequestRenewer
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTransactionService
 import timber.log.Timber
@@ -28,6 +29,7 @@ class ChatRequestRenewalWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted parameters: WorkerParameters,
     private val renewer: ChatRequestRenewer,
+    private val acceptanceRenewer: ChatAcceptanceRenewer,
     private val durableTransactionService: DurableTransactionService,
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
     private val knownChains: KnownChains,
@@ -38,7 +40,10 @@ class ChatRequestRenewalWorker @AssistedInject constructor(
                 // Slot claims are built by the durable executor, which a worker started after process death must start.
                 durableTransactionService.startRecovery()
                 Timber.i("chatRequestRenewal: worker run started (attempt $runAttemptCount)")
-                renewer.renew().getOrThrow()
+                val requests = renewer.renew()
+                val acceptances = acceptanceRenewer.renew()
+                requests.getOrThrow()
+                acceptances.getOrThrow()
             }
         }
         outcome.onFailure { Timber.e(it, "chatRequestRenewal: worker run failed") }

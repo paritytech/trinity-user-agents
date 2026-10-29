@@ -37,8 +37,6 @@ final class ThemeSelectionViewModel {
 
     var confirmTitle: String { String(localized: .themeSelectionContinue) }
 
-    var showsBackButton: Bool { context == .settings }
-
     var confirmsOnButton: Bool { context == .onboarding }
 
     var showsConfirmButton: Bool { confirmsOnButton }

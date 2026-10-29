@@ -28,7 +28,8 @@ class ProductPocketHostBridge(
     private val store: PocketCardStore,
     private val scope: CoroutineScope,
 ) : PocketHostBridge {
-    private val snapshot = AtomicReference<List<NativePocketCard>>(emptyList())
+    // Null until the collection is first read: before that, the snapshot says nothing about a card.
+    private val snapshot = AtomicReference<List<NativePocketCard>?>(null)
     private var collector: Job? = null
     private val stopped = AtomicBoolean(false)
 
@@ -58,16 +59,20 @@ class ProductPocketHostBridge(
         collector = null
     }
 
-    override fun listCards(): List<NativePocketCard> = snapshot.get()
+    override fun listCards(): List<NativePocketCard> = snapshot.get().orEmpty()
 
     override suspend fun removeCard(cardId: String): NativePocketRemoval {
-        // The snapshot carries the flag, so a card the host placed is refused without reaching the store.
-        if (snapshot.get().any { it.cardId == cardId && it.privileged }) return NativePocketRemoval.PRIVILEGED
+        // Answered from the snapshot where it can be, sparing the store. The snapshot is set before
+        // every republish, so a card missing from it is one the product was never shown.
+        snapshot.get()?.let { cards ->
+            val shown = cards.firstOrNull { it.cardId == cardId } ?: return NativePocketRemoval.ABSENT
+            if (shown.privileged) return NativePocketRemoval.PRIVILEGED
+        }
 
         val removal = store.removeCard(PocketCardKey(productId, PocketCardId(cardId)))
         return removal.fold(
             onSuccess = { outcome ->
-                snapshot.updateAndGet { cards -> cards.filterNot { it.cardId == cardId } }
+                snapshot.updateAndGet { cards -> cards?.filterNot { it.cardId == cardId } }
                 outcome.toNative()
             },
             onFailure = { failure ->

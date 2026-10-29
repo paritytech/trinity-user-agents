@@ -29,8 +29,8 @@ public extension DotnsGatewayPallet {
             full?.label ?? lite?.label
         }
 
-        /// The chat key to reach the account with: whichever entry carries one, since a full
-        /// label can be registered without the key its lite label already holds.
+        ///  a user might become a full person while already has established chat
+        ///  chat system doesn't support key change on the fly so always return lite one for now
         public var chatKey: Data? {
             lite?.chat?.wrappedValue
         }

@@ -13,6 +13,7 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
     var isLoading: Bool = true
 
     private let statusTitleView = NetworkStatusTitleView()
+    private let openingIndicator = UIActivityIndicatorView(style: .medium)
 
     init(
         presenter: ContactsListPresenterProtocol
@@ -116,6 +117,16 @@ private extension ContactsListViewController {
 }
 
 extension ContactsListViewController: ContactsListViewProtocol {
+    func didStartOpeningChat() {
+        openingIndicator.startAnimating()
+        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: openingIndicator)
+    }
+
+    func didStopOpeningChat() {
+        openingIndicator.stopAnimating()
+        navigationItem.leftBarButtonItem = nil
+    }
+
     func didReceive(viewModel: ContactsListViewLayout.ViewModel) {
         isLoading = false
         rootView.bind(viewModel: viewModel)

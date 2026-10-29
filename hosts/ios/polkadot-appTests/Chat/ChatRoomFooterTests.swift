@@ -98,5 +98,9 @@ private struct SingleBotRegistry: ChatExtensionsRegistering {
         extensionId == bot.identifier ? bot : nil
     }
 
+    func peerListMetadata(for extensionId: ChatExtension.Id) -> Chat.PeerListMetadata? {
+        getChatExtensionBot(for: extensionId)?.peerMetadata.list
+    }
+
     func getWidgetProviders() -> [ChatExtensionWidgetProvider] { [] }
 }

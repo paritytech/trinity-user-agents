@@ -27,7 +27,8 @@ final class RootWireframe: RootWireframeProtocol {
             userNotificationService: userNotificationService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
             deepLinkHandling: deepLinkHandler,
-            flowStateProvider: flowStateProvider
+            flowStateProvider: flowStateProvider,
+            windowScene: window.windowScene
         ) else {
             return
         }

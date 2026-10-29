@@ -1,5 +1,7 @@
-import Testing
 import Foundation
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
+import Testing
 import UIKit
 @testable import polkadot_app
 @testable import Products
@@ -11,7 +13,7 @@ final class BrowseInteractorTests {
 
     @Test
     @MainActor
-    func syncHostReturnsWithoutAsyncCall() async {
+    func syncHostReturnsWithoutAsyncCall() async throws {
         guard let host = makeHost() else {
             Issue.record("Failed to create ProductHost")
             return
@@ -29,8 +31,7 @@ final class BrowseInteractorTests {
 
         interactor.resolveBrowseHost()
 
-        // Let main actor hop complete
-        try? await Task.sleep(for: .milliseconds(10))
+        try await presenter.waitForOutcome()
 
         #expect(presenter.didResolveCallCount == 1)
         #expect(presenter.lastResolvedHost?.name == host.name)
@@ -39,7 +40,7 @@ final class BrowseInteractorTests {
 
     @Test
     @MainActor
-    func syncNilThenAsyncSuccessResolves() async {
+    func syncNilThenAsyncSuccessResolves() async throws {
         guard let host = makeHost() else {
             Issue.record("Failed to create ProductHost")
             return
@@ -57,8 +58,7 @@ final class BrowseInteractorTests {
 
         interactor.resolveBrowseHost()
 
-        // Let async operation and main actor hop complete
-        try? await Task.sleep(for: .milliseconds(100))
+        try await presenter.waitForOutcome()
 
         #expect(presenter.didResolveCallCount == 1)
         #expect(presenter.lastResolvedHost?.name == host.name)
@@ -66,7 +66,7 @@ final class BrowseInteractorTests {
 
     @Test
     @MainActor
-    func syncNilThenAsyncThrowFails() async {
+    func syncNilThenAsyncThrowFails() async throws {
         struct TestError: Error {}
 
         let stub = StubProductHostProvider(
@@ -81,8 +81,7 @@ final class BrowseInteractorTests {
 
         interactor.resolveBrowseHost()
 
-        // Let async operation and main actor hop complete
-        try? await Task.sleep(for: .milliseconds(100))
+        try await presenter.waitForOutcome()
 
         #expect(presenter.didFailResolveCallCount == 1)
         #expect(presenter.didResolveCallCount == 0)
@@ -90,7 +89,7 @@ final class BrowseInteractorTests {
 
     @Test
     @MainActor
-    func syncNilThenAsyncNilFails() async {
+    func syncNilThenAsyncNilFails() async throws {
         let stub = StubProductHostProvider(
             syncHostResult: nil,
             asyncHostResult: .success(nil)
@@ -103,8 +102,7 @@ final class BrowseInteractorTests {
 
         interactor.resolveBrowseHost()
 
-        // Let async operation and main actor hop complete
-        try? await Task.sleep(for: .milliseconds(100))
+        try await presenter.waitForOutcome()
 
         #expect(presenter.didFailResolveCallCount == 1)
         #expect(presenter.didResolveCallCount == 0)
@@ -112,7 +110,7 @@ final class BrowseInteractorTests {
 
     @Test
     @MainActor
-    func passesCorrectLabel() async {
+    func passesCorrectLabel() async throws {
         let stub = StubProductHostProvider(
             syncHostResult: nil,
             asyncHostResult: .success(nil)
@@ -125,8 +123,7 @@ final class BrowseInteractorTests {
 
         interactor.resolveBrowseHost()
 
-        // Let async operation and main actor hop complete
-        try? await Task.sleep(for: .milliseconds(100))
+        try await presenter.waitForOutcome()
 
         #expect(stub.lastLabel == AppConfig.DotNs.dotNsBrowse)
     }
@@ -140,12 +137,31 @@ private final class StubPresenter: BrowseInteractorOutputProtocol {
     var didFailResolveCallCount = 0
     var lastResolvedHost: ProductHost?
 
+    private let outcomes: AsyncStream<Void>
+    private let outcomeContinuation: AsyncStream<Void>.Continuation
+
+    init() {
+        (outcomes, outcomeContinuation) = AsyncStream<Void>.makeStream()
+    }
+
+    /// Returns once the interactor has reported an outcome, failing rather than hanging if it never does.
+    func waitForOutcome() async throws {
+        try await withTimeout(.hangGuard) { [outcomes] in
+            for await _ in outcomes {
+                return
+            }
+            throw CancellationError()
+        }
+    }
+
     func didResolve(host: ProductHost) {
         didResolveCallCount += 1
         lastResolvedHost = host
+        outcomeContinuation.yield()
     }
 
     func didFailResolving() {
         didFailResolveCallCount += 1
+        outcomeContinuation.yield()
     }
 }

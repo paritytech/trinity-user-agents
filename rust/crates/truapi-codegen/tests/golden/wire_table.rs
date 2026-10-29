@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6a267e1b8d40de6c";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "72bf858138ead26e";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -566,6 +566,18 @@ pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `funding_request`.
+pub const FUNDING_REQUEST: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_status_subscribe`.
+pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 1,
+};
+
 /// Wire discriminants for `expanded_card_set_face_shown`.
 pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
     trait_id: 23,
@@ -576,6 +588,78 @@ pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
 pub const SCANNER_SCAN: MethodIds = MethodIds {
     trait_id: 25,
     method_id: 0,
+};
+
+/// Wire discriminants for `nft_purse_create_purse`.
+pub const NFT_PURSE_CREATE_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 0,
+};
+
+/// Wire discriminants for `nft_purse_create_items`.
+pub const NFT_PURSE_CREATE_ITEMS: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 1,
+};
+
+/// Wire discriminants for `nft_purse_query_purse`.
+pub const NFT_PURSE_QUERY_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 2,
+};
+
+/// Wire discriminants for `nft_purse_list_purses`.
+pub const NFT_PURSE_LIST_PURSES: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 3,
+};
+
+/// Wire discriminants for `nft_purse_rebalance_purse`.
+pub const NFT_PURSE_REBALANCE_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 4,
+};
+
+/// Wire discriminants for `nft_purse_create_receive_key`.
+pub const NFT_PURSE_CREATE_RECEIVE_KEY: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 5,
+};
+
+/// Wire discriminants for `nft_purse_listen_for_payment`.
+pub const NFT_PURSE_LISTEN_FOR_PAYMENT: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 6,
+};
+
+/// Wire discriminants for `nft_purse_create_cheque`.
+pub const NFT_PURSE_CREATE_CHEQUE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 7,
+};
+
+/// Wire discriminants for `nft_purse_revoke_cheque`.
+pub const NFT_PURSE_REVOKE_CHEQUE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 8,
+};
+
+/// Wire discriminants for `nft_purse_deposit`.
+pub const NFT_PURSE_DEPOSIT: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 9,
+};
+
+/// Wire discriminants for `nft_purse_refund`.
+pub const NFT_PURSE_REFUND: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 10,
+};
+
+/// Wire discriminants for `nft_purse_transfer_item`.
+pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 11,
 };
 
 /// The full wire table. Trait ids and per-trait method ordering are
@@ -931,11 +1015,67 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
     },
     WireEntry {
+        method: "funding_request",
+        kind: WireKind::Request(FUNDING_REQUEST),
+    },
+    WireEntry {
+        method: "funding_status_subscribe",
+        kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
         method: "expanded_card_set_face_shown",
         kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
     },
     WireEntry {
         method: "scanner_scan",
         kind: WireKind::Request(SCANNER_SCAN),
+    },
+    WireEntry {
+        method: "nft_purse_create_purse",
+        kind: WireKind::Request(NFT_PURSE_CREATE_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_create_items",
+        kind: WireKind::Request(NFT_PURSE_CREATE_ITEMS),
+    },
+    WireEntry {
+        method: "nft_purse_query_purse",
+        kind: WireKind::Request(NFT_PURSE_QUERY_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_list_purses",
+        kind: WireKind::Request(NFT_PURSE_LIST_PURSES),
+    },
+    WireEntry {
+        method: "nft_purse_rebalance_purse",
+        kind: WireKind::Subscription(NFT_PURSE_REBALANCE_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_create_receive_key",
+        kind: WireKind::Request(NFT_PURSE_CREATE_RECEIVE_KEY),
+    },
+    WireEntry {
+        method: "nft_purse_listen_for_payment",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_FOR_PAYMENT),
+    },
+    WireEntry {
+        method: "nft_purse_create_cheque",
+        kind: WireKind::Request(NFT_PURSE_CREATE_CHEQUE),
+    },
+    WireEntry {
+        method: "nft_purse_revoke_cheque",
+        kind: WireKind::Request(NFT_PURSE_REVOKE_CHEQUE),
+    },
+    WireEntry {
+        method: "nft_purse_deposit",
+        kind: WireKind::Subscription(NFT_PURSE_DEPOSIT),
+    },
+    WireEntry {
+        method: "nft_purse_refund",
+        kind: WireKind::Subscription(NFT_PURSE_REFUND),
+    },
+    WireEntry {
+        method: "nft_purse_transfer_item",
+        kind: WireKind::Subscription(NFT_PURSE_TRANSFER_ITEM),
     },
 ];

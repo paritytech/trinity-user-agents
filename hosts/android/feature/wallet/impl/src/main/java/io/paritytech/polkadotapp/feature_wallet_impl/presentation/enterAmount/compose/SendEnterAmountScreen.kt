@@ -225,6 +225,7 @@ private fun DebugPlanInfo(info: SendPlanDebugInfo) {
         color = Color(0x0FFFFFFF)
     ) {
         Column(modifier = Modifier.padding(PolkadotTheme.spacings.extraMedium)) {
+            @Suppress("HardcodedComposeText")
             NovaText(text = "[DEBUG] $label: ${info.strategyName}", style = PolkadotTheme.typography.body.small)
 
             if (info.details.isNotEmpty()) {

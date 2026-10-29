@@ -10,7 +10,7 @@ import SubstrateSdk
 enum TrUAPISupportedChains {
     static func make(chainRegistry: ChainRegistryProtocol) -> HostChainSet {
         let roles: [(identifier: ChainIdentifier, chainId: ChainModel.Id)] = [
-            (.people, AppConfig.Chains.usernameChain),
+            (.people, AppConfig.Chains.peopleChain),
             (.bulletin, AppConfig.Chains.bulletInChain),
             (.assetHub, AppConfig.Chains.assethubChain)
         ]

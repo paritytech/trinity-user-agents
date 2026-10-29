@@ -45,7 +45,7 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
             networkSuffixProvider: ChainNetworkSuffixProvider(
-                chainId: AppConfig.Chains.usernameChain,
+                chainId: AppConfig.Chains.peopleChain,
                 chainRegistry: chainRegistry,
                 storageRequestFactory: storageRequestFactory
             )
@@ -68,10 +68,10 @@ final class BulletinSlotAllocatorTests: XCTestCase {
         )
 
         let allocator: AllowanceSlotAllocating = BulletinSlotAllocator(
-            submissionChainId: AppConfig.Chains.usernameChain,
+            submissionChainId: AppConfig.Chains.peopleChain,
             slotInfoProvider: BulletInSlotInfoProvider(
                 bulletInChainId: AppConfig.Chains.bulletInChain,
-                peopleChainId: AppConfig.Chains.usernameChain,
+                peopleChainId: AppConfig.Chains.peopleChain,
                 chainRegistry: chainRegistry,
                 keyResolver: keyResolver,
                 operationQueue: operationQueue,
@@ -84,7 +84,7 @@ final class BulletinSlotAllocatorTests: XCTestCase {
                     ttl: 0
                 ),
                 networkSuffixProvider: ChainNetworkSuffixProvider(
-                    chainId: AppConfig.Chains.usernameChain,
+                    chainId: AppConfig.Chains.peopleChain,
                     chainRegistry: chainRegistry,
                     storageRequestFactory: storageRequestFactory
                 )

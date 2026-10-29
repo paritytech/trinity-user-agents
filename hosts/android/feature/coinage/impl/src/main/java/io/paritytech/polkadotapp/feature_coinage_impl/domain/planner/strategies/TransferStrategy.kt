@@ -16,12 +16,15 @@ sealed interface TransferStrategy {
      * [params] describe.
      */
     context(diagnostics: StalenessReportCollector)
-    suspend fun schedule(params: TransferSubmissionParams): Result<ScheduledTransfer>
+    suspend fun schedule(
+        params: TransferSubmissionParams,
+        reservationMode: CoinReservationMode,
+    ): Result<ScheduledTransfer>
 }
 
 /**
  * [handoffCommit] must be committed once the keys in [entries] are durably on their way — until then the
- * coins are reserved but recoverable, and a relaunch returns them. [transactions] still have to be scheduled.
+ * coins are recoverable. [transactions] still have to be scheduled.
  */
 data class ScheduledTransfer(
     val entries: List<PlannedMemoEntry>,

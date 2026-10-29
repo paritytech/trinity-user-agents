@@ -29,7 +29,7 @@ final class SPAControllerPool: SPAControllerPooling {
         guard let view = SPAViewFactory.createView(
             page: page,
             flowState: flowState,
-            isBrowserTab: true,
+            presentation: .browserTab,
             browserTabId: tab.id
         ) else {
             return nil

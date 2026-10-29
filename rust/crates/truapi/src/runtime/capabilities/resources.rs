@@ -15,12 +15,10 @@ use truapi::{
 	},
 };
 
-use super::from_latest_error;
-use truapi::versioned::{FromLatest, IntoLatest, Versioned};
-
 use crate::runtime::{
 	ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-	remote_authority_call, remote_authority_context_with_default, until_cancelled,
+	authority::AuthorityError, remote_authority_call, remote_authority_context_with_default,
+	versioning::version,
 };
 
 #[truapi::async_trait]
@@ -32,59 +30,52 @@ impl ResourceAllocation for ProductRuntimeHost {
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
 	{
-		let version = request.version();
-		let inner = request.into_latest();
-		let result = async {
-			let Some(session) = self.authority.current_session() else {
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "No active session".to_string(),
-				}));
-			};
+		version(request)
+			.exec(|inner| async move {
+				let session = self.accounts.current_session().ok_or_else(|| {
+					CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: "No active session".to_string(),
+					})
+				})?;
 
-			let confirmed = until_cancelled(
-				cx,
-				self.confirm_product_action(UserConfirmationReview::ResourceAllocation(
-					ResourceAllocationReview {
-						calling_product_id: self.product_id(),
-						resources: inner.resources.clone(),
+				let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+					calling_product_id: self.connection.product_id().clone(),
+					resources: inner.resources.clone(),
+				});
+				match self.confirm(cx, review).await {
+					Ok(()) => {},
+					Err(AuthorityError::Rejected) => {
+						return Ok(latest::HostRequestResourceAllocationResponse {
+							outcomes: vec![
+								latest::AllocationOutcome::Rejected;
+								inner.resources.len()
+							],
+						});
 					},
-				)),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
-				})
-			})?
-			.map_err(|err| CallError::HostFailure {
-				reason: format!("resource allocation confirmation failed: {err:?}"),
-			})?;
-			if !confirmed {
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "User rejected resource allocation".to_string(),
-				}));
-			}
-			let cx = remote_authority_context_with_default(
-				cx,
-				RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-			);
-			remote_authority_call(
-				&cx,
-				self.authority.allocate_resources(&cx, &session, self.product_id(), inner),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
-				})
+					Err(AuthorityError::ConfirmationFailed(error)) => {
+						return Err(CallError::HostFailure {
+							reason: format!("resource allocation confirmation failed: {error:?}"),
+						});
+					},
+					Err(error) => {
+						return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+							reason: error.to_string(),
+						}));
+					},
+				}
+				let cx = remote_authority_context_with_default(
+					cx,
+					RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+				);
+				remote_authority_call(&cx, self.accounts.allocate_resources(&cx, &session, inner))
+					.await
+					.map_err(|err| {
+						CallError::Domain(latest::ResourceAllocationError::Unknown {
+							reason: err.to_string(),
+						})
+					})
 			})
-		}
-		.await;
-		result
-			.map(|response| HostRequestResourceAllocationResponse::from_latest(response, version))
-			.map_err(|error| {
-				from_latest_error::<HostRequestResourceAllocationError>(error, version)
-			})
+			.await
 	}
 }
 
@@ -96,28 +87,21 @@ impl Entropy for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostDeriveEntropyRequest,
 	) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
-		let version = request.version();
-		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
-		let result = async {
-			let Some(session) = self.authority.current_session() else {
-				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
-					reason: "Not connected".to_string(),
-				}));
-			};
-			let entropy = self
-				.authority
-				.derive_entropy(&session, &self.product_id(), &context)
-				.map_err(|err| {
+		version(request)
+			.exec(|latest::HostDeriveEntropyRequest { context }| async move {
+				let session = self.accounts.current_session().ok_or_else(|| {
+					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+						reason: "Not connected".to_string(),
+					})
+				})?;
+				let entropy = self.accounts.derive_entropy(&session, &context).map_err(|err| {
 					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: err.to_string(),
 					})
 				})?;
 
-			Ok(latest::HostDeriveEntropyResponse { entropy })
-		}
-		.await;
-		result
-			.map(|response| HostDeriveEntropyResponse::from_latest(response, version))
-			.map_err(|error| from_latest_error::<HostDeriveEntropyError>(error, version))
+				Ok(latest::HostDeriveEntropyResponse { entropy })
+			})
+			.await
 	}
 }

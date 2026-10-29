@@ -12,6 +12,7 @@ import UIKit
 enum PocketCardOpening {
     static func open(
         _ card: PocketCardViewModel,
+        origin: PocketCardOrigin?,
         flowState: SPAFlowState,
         navigator: ModuleNavigating,
         pocket: ProductPocketService
@@ -27,8 +28,13 @@ enum PocketCardOpening {
             })
         else { return }
 
-        let screen = PocketCardScreenViewController(card: card, product: product.view)
-        navigator.presentFullScreen(screen)
+        let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
+        if origin == nil {
+            navigator.presentFullScreen(screen)
+        } else {
+            // The card flies between the Pocket and its screen, so the Pocket stays in the window under it.
+            navigator.presentOverFullScreen(screen, animatedBy: screen)
+        }
         product.surface.claim(screen)
 
         Task { [weak screen] in
@@ -56,7 +62,7 @@ enum PocketCardOpening {
                 return
             }
 
-            open(card, flowState: flowState, navigator: navigator, pocket: pocket)
+            open(card, origin: nil, flowState: flowState, navigator: navigator, pocket: pocket)
         }
     }
 }

@@ -1,0 +1,904 @@
+{
+  "documents": [
+    {
+      "expect": "ok",
+      "file": "documents/valid-full.json",
+      "name": "valid-full",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-minimal.json",
+      "name": "valid-minimal",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-private-range.json",
+      "name": "valid-private-range",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-unknown-fields.json",
+      "name": "valid-unknown-fields",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-unknown-service-kind.json",
+      "name": "valid-unknown-service-kind",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-fork.json",
+      "name": "valid-fork",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-fork-signed-with-own-key.json",
+      "name": "valid-fork-signed-with-own-key",
+      "pointer": {
+        "key": "0xfd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-signed.json",
+      "name": "valid-signed",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-envelope-read-unsigned.json",
+      "name": "valid-envelope-read-unsigned",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "not-json",
+      "file": "documents/not-json-trailing.json",
+      "name": "not-json-trailing",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "not-json",
+      "file": "documents/not-json-invalid-utf8.json",
+      "name": "not-json-invalid-utf8",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "not-json",
+      "file": "documents/not-json-lone-surrogate.json",
+      "name": "not-json-lone-surrogate",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-member",
+      "file": "documents/duplicate-member-top-level.json",
+      "name": "duplicate-member-top-level",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-member",
+      "file": "documents/duplicate-member-in-contracts.json",
+      "name": "duplicate-member-in-contracts",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-member",
+      "file": "documents/duplicate-member-in-ignored-field.json",
+      "name": "duplicate-member-in-ignored-field",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "unsupported-version",
+      "file": "documents/unsupported-version.json",
+      "name": "unsupported-version",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/malformed-sequence-type.json",
+      "name": "malformed-sequence-type",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/malformed-missing-chains.json",
+      "name": "malformed-missing-chains",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/sequence-out-of-range.json",
+      "name": "sequence-out-of-range",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/sequence-at-maximum.json",
+      "name": "sequence-at-maximum",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/sequence-with-fraction.json",
+      "name": "sequence-with-fraction",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/asset-id-out-of-range.json",
+      "name": "asset-id-out-of-range",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "not-json",
+      "file": "documents/noncharacter-in-name.json",
+      "name": "noncharacter-in-name",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/rpc-ipv4-shorthand.json",
+      "name": "rpc-ipv4-shorthand",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/rpc-ipv4-shorthand-over-tls.json",
+      "name": "rpc-ipv4-shorthand-over-tls",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-tld",
+      "file": "documents/tld-with-leading-dot.json",
+      "name": "tld-with-leading-dot",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-tld",
+      "file": "documents/tld-uppercase.json",
+      "name": "tld-uppercase",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "empty",
+      "file": "documents/empty-generation.json",
+      "name": "empty-generation",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "empty",
+      "file": "documents/empty-rpc.json",
+      "name": "empty-rpc",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-chain-role",
+      "file": "documents/duplicate-chain-role.json",
+      "name": "duplicate-chain-role",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-service-kind",
+      "file": "documents/duplicate-service-kind.json",
+      "name": "duplicate-service-kind",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "duplicate-asset-role",
+      "file": "documents/duplicate-asset-role.json",
+      "name": "duplicate-asset-role",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "relay-count",
+      "file": "documents/no-relay.json",
+      "name": "no-relay",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "para-id",
+      "file": "documents/para-id-on-relay.json",
+      "name": "para-id-on-relay",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "para-id",
+      "file": "documents/para-id-missing.json",
+      "name": "para-id-missing",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "para-id",
+      "file": "documents/para-id-repeated.json",
+      "name": "para-id-repeated",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/para-id-null-on-relay.json",
+      "name": "para-id-null-on-relay",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "unknown-chain-role",
+      "file": "documents/asset-on-unknown-chain.json",
+      "name": "asset-on-unknown-chain",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "unknown-chain-role",
+      "file": "documents/coinage-on-unknown-chain.json",
+      "name": "coinage-on-unknown-chain",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/time-as-string.json",
+      "name": "time-as-string",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/time-out-of-range.json",
+      "name": "time-out-of-range",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-hex",
+      "file": "documents/genesis-hash-uppercase.json",
+      "name": "genesis-hash-uppercase",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-hex",
+      "file": "documents/sha256-short.json",
+      "name": "sha256-short",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-hex",
+      "file": "documents/contract-address-long.json",
+      "name": "contract-address-long",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/rpc-plain-ws-on-hostname.json",
+      "name": "rpc-plain-ws-on-hostname",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/rpc-plain-ws-on-localhost-name.json",
+      "name": "rpc-plain-ws-on-localhost-name",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/rpc-without-authority.json",
+      "name": "rpc-without-authority",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/stun-scheme-outside-stun.json",
+      "name": "stun-scheme-outside-stun",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/service-url-not-base.json",
+      "name": "service-url-not-base",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/service-url-with-query.json",
+      "name": "service-url-with-query",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "chain-id",
+      "file": "documents/eth-rpc-without-chain-id.json",
+      "name": "eth-rpc-without-chain-id",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "chain-id",
+      "file": "documents/chain-id-on-dub.json",
+      "name": "chain-id-on-dub",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/chain-id-above-u32.json",
+      "name": "chain-id-above-u32",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "chain-id",
+      "file": "documents/chain-id-above-2-53.json",
+      "name": "chain-id-above-2-53",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/url-with-credentials.json",
+      "name": "url-with-credentials",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "forked-at",
+      "file": "documents/fork-without-forked-at.json",
+      "name": "fork-without-forked-at",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "forked-at",
+      "file": "documents/forked-at-without-fork.json",
+      "name": "forked-at-without-fork",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-base64",
+      "file": "documents/envelope-invalid-base64.json",
+      "name": "envelope-invalid-base64",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "envelope-version-mismatch",
+      "file": "documents/envelope-version-mismatch.json",
+      "name": "envelope-version-mismatch",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "unsupported-version",
+      "file": "documents/envelope-version-unsupported.json",
+      "name": "envelope-version-unsupported",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "malformed",
+      "file": "documents/envelope-in-envelope.json",
+      "name": "envelope-in-envelope",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "fork-signed-with-source-key",
+      "file": "documents/fork-signed-with-source-key.json",
+      "name": "fork-signed-with-source-key",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "unsigned",
+      "file": "documents/keyed-pointer-plain-document.json",
+      "name": "keyed-pointer-plain-document",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "non-canonical-key",
+      "file": "documents/key-non-canonical.json",
+      "name": "key-non-canonical",
+      "pointer": {
+        "key": "0xf0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "small-order-key",
+      "file": "documents/key-small-order.json",
+      "name": "key-small-order",
+      "pointer": {
+        "key": "0x0100000000000000000000000000000000000000000000000000000000000000",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "non-canonical-r",
+      "file": "documents/signature-r-non-canonical.json",
+      "name": "signature-r-non-canonical",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "small-order-r",
+      "file": "documents/signature-r-small-order.json",
+      "name": "signature-r-small-order",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "non-canonical-s",
+      "file": "documents/signature-s-not-reduced.json",
+      "name": "signature-s-not-reduced",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "bad-signature",
+      "file": "documents/signature-other-key.json",
+      "name": "signature-other-key",
+      "pointer": {
+        "key": "0xfd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "bad-signature",
+      "file": "documents/signature-without-prefix.json",
+      "name": "signature-without-prefix",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "bad-signature",
+      "file": "documents/signature-cofactored-only.json",
+      "name": "signature-cofactored-only",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    }
+  ],
+  "links": [
+    {
+      "expect": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "link": "polkadotapp://stack?key=0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json",
+      "name": "rfc-link"
+    },
+    {
+      "expect": {
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "link": "https://app.example/open?ref=qr&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json",
+      "name": "https-link-extra-parameters"
+    },
+    {
+      "expect": {
+        "error": "invalid-link"
+      },
+      "link": "polkadotapp://stack?key=0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "name": "no-url"
+    },
+    {
+      "expect": {
+        "error": "invalid-link"
+      },
+      "link": "polkadotapp://stack?url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json",
+      "name": "repeated-url"
+    },
+    {
+      "expect": {
+        "error": "invalid-url"
+      },
+      "link": "polkadotapp://stack?url=http%3A%2F%2Fexample.com%2Fs.json",
+      "name": "plain-http-hostname"
+    },
+    {
+      "expect": {
+        "error": "invalid-hex"
+      },
+      "link": "polkadotapp://stack?key=0xEA4A6C63E29C520ABEF5507B132EC5F9954776AEBEBE7B92421EEA691446D22C&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json",
+      "name": "key-uppercase"
+    }
+  ],
+  "reader": [
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "fetched",
+        "newGeneration": false,
+        "stale": false,
+        "status": "updated"
+      },
+      "fetched": "reader/first-fetch.fetched.json",
+      "name": "first-fetch",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": null
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "fetched",
+        "newGeneration": false,
+        "stale": false,
+        "status": "updated"
+      },
+      "fetched": "reader/higher-sequence.fetched.json",
+      "name": "higher-sequence",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/higher-sequence.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "fetched",
+        "newGeneration": true,
+        "stale": false,
+        "status": "updated"
+      },
+      "fetched": "reader/new-generation.fetched.json",
+      "name": "new-generation",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/new-generation.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "stored",
+        "newGeneration": false,
+        "stale": false,
+        "status": "unchanged"
+      },
+      "fetched": "reader/same-content.fetched.json",
+      "name": "same-content",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/same-content.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "stored",
+        "newGeneration": false,
+        "stale": false,
+        "status": "conflict"
+      },
+      "fetched": "reader/same-sequence-different-content.fetched.json",
+      "name": "same-sequence-different-content",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/same-sequence-different-content.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "stored",
+        "newGeneration": false,
+        "stale": false,
+        "status": "rollback"
+      },
+      "fetched": "reader/lower-sequence-signed.fetched.json",
+      "name": "lower-sequence-signed",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/lower-sequence-signed.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "fetched",
+        "newGeneration": false,
+        "stale": false,
+        "status": "updated"
+      },
+      "fetched": "reader/lower-sequence-unsigned.fetched.json",
+      "name": "lower-sequence-unsigned",
+      "now": 1792065600,
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/lower-sequence-unsigned.stored.json"
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "stored",
+        "newGeneration": false,
+        "stale": false,
+        "status": "unreachable"
+      },
+      "fetched": null,
+      "name": "unreachable-with-stored",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/unreachable-with-stored.stored.json"
+    },
+    {
+      "expect": {
+        "error": "unreachable"
+      },
+      "fetched": null,
+      "name": "unreachable-without-stored",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": null
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "stored",
+        "newGeneration": false,
+        "refused": "unsigned",
+        "stale": false,
+        "status": "refused"
+      },
+      "fetched": "reader/refused-with-stored.fetched.json",
+      "name": "refused-with-stored",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": "reader/refused-with-stored.stored.json"
+    },
+    {
+      "expect": {
+        "error": "unsigned"
+      },
+      "fetched": "reader/refused-without-stored.fetched.json",
+      "name": "refused-without-stored",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": null
+    },
+    {
+      "expect": {
+        "expired": false,
+        "keeps": "fetched",
+        "newGeneration": false,
+        "stale": true,
+        "status": "updated"
+      },
+      "fetched": "reader/stale.fetched.json",
+      "name": "stale",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": null
+    },
+    {
+      "expect": {
+        "expired": true,
+        "keeps": "fetched",
+        "newGeneration": false,
+        "stale": false,
+        "status": "updated"
+      },
+      "fetched": "reader/expired.fetched.json",
+      "name": "expired",
+      "now": 1792065600,
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "stored": null
+    }
+  ]
+}

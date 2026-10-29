@@ -23,7 +23,9 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogD
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -83,7 +85,7 @@ class CoinRecyclingEvaluator @Inject constructor(
                 // to an interval later. Only the asset churn needs damping.
                 .combine(settings.strategyFlow(), ::Input)
                 .withReadinessUpdates(readinessUpdates, { it.assets.vouchers }, { it.strategyType })
-                .collect { input ->
+                .transform { input ->
                     // Both passes run off the same input rather than waiting for the next emission: the
                     // wallet may not change again for minutes, and the immediate verdicts must not stand
                     // that long.
@@ -95,10 +97,13 @@ class CoinRecyclingEvaluator @Inject constructor(
 
                             // Deliberately not a collector of verdictsState: a StateFlow drops equal values,
                             // so a retry after a failed recycle would never reach one.
-                            recycleGated(input, verdicts)
+                            emit(input to verdicts)
                         }
                         .logFailure(LOG_TAG)
                 }
+                // Recycling can wait on the backup, so the evaluation never waits on it and the newest verdicts go next.
+                .conflate()
+                .collect { (input, verdicts) -> recycleGated(input, verdicts) }
         }
     }
 

@@ -9,7 +9,6 @@ actor PendingDeviceFanOutProcessor {
     private let fanOutSettingsRepository: AnyDataProviderRepository<Chat.ContactDevicesFanOutSettings>
     private let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     private let localDeviceRepository: AnyDataProviderRepository<Chat.LocalDevice>
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
     private let logger: LoggerProtocol
 
     private var subscriptionTask: Task<Void, Never>?
@@ -17,14 +16,12 @@ actor PendingDeviceFanOutProcessor {
 
     init(
         chatContactDataProviderFactory: ChatContactDataProviderMaking,
-        messageExchangeModeProvider: MessageExchangeModeProviding,
         messageRepositoryFactory: ChatMessageRepositoryMaking = ChatMessageRepositoryFactory(),
         localDeviceRepositoryFactory: LocalDeviceRepositoryMaking = LocalDeviceRepositoryFactory(),
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         fanOutSettingsRepository = AnyDataProviderRepository(storageFacade.createRepository(
             mapper: AnyCoreDataMapper(ContactDevicesFanOutSettingsMapper())
         ))
@@ -83,10 +80,7 @@ private extension PendingDeviceFanOutProcessor {
 
     func broadcastPendingLocalDevices(for contacts: [Chat.Contact]) async throws {
         let contactsToProcess = beginFanOut(for: contacts.filter {
-            $0.pendingDevicesFanOut &&
-                $0.chatRequest == nil &&
-                !$0.isBlocked &&
-                messageExchangeModeProvider.mode(for: $0) == .multidevice
+            $0.pendingDevicesFanOut && $0.chatRequest == nil && !$0.isBlocked
         })
 
         guard !contactsToProcess.isEmpty else {

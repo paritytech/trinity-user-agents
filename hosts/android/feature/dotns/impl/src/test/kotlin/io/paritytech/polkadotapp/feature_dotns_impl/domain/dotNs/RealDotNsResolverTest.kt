@@ -13,6 +13,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.times
+import org.mockito.Mockito.verify
 
 class RealDotNsResolverTest {
     private val contractApi: DotNsContractApi = mock()
@@ -47,6 +49,20 @@ class RealDotNsResolverTest {
 
         assertTrue(result.isFailure)
         assertTrue(resolver.getProgressByDomain(domain).first() is DotNsLoadProgress.Failed)
+    }
+
+    // A failed lookup is usually a read that did not land, such as a device briefly offline.
+    // Remembered, it would keep the product unreachable until the app restarts, network or not.
+    @Test
+    fun `a lookup that failed is read from the chain again rather than remembered`() = runTest {
+        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn(null)
+        whenever(contractApi.resolveContentHash(domain)).thenReturn(Result.failure(IllegalStateException("no node")))
+        val resolver = resolver()
+
+        resolver.resolveToLocalUri(domain)
+        resolver.resolveToLocalUri(domain)
+
+        verify(contractApi, times(2)).resolveContentHash(domain)
     }
 
     private fun TestScope.resolver() = RealDotNsResolver(

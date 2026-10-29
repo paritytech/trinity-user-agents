@@ -11,7 +11,7 @@ use core::{net::Ipv4Addr, str::FromStr};
 
 use url::{Host, Url};
 
-use crate::platform::{RuntimeConfigValidationError, normalize_product_identifier};
+use crate::platform::{ProductId, ProductIdError};
 
 const HTTP_PREFIX: &str = "http://";
 const HTTPS_PREFIX: &str = "https://";
@@ -26,9 +26,9 @@ const PRODUCT_ID_PARAM: &str = "product_id";
 /// produce one only in development builds.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct DevServerProduct {
-	/// Identifier the product runs under: the normalized `product_id` the
-	/// address names, otherwise `localhost` or `localhost:<port>`.
-	pub product_id: String,
+	/// Identifier the product runs under: the `product_id` the address names,
+	/// otherwise `localhost` or `localhost:<port>`.
+	pub product_id: ProductId,
 	/// `http://<host>[:<port>]` origin the page is served from.
 	pub origin: String,
 	/// The address to load, with the path and query the developer typed.
@@ -47,7 +47,7 @@ pub enum DevServerError {
 	/// The `product_id` query is not an identifier the core runs a product
 	/// under.
 	#[error(transparent)]
-	InvalidProductId(RuntimeConfigValidationError),
+	InvalidProductId(#[from] ProductIdError),
 }
 
 /// Accepts `localhost` and loopback or private IPv4 hosts over `http`, with or
@@ -83,11 +83,10 @@ impl FromStr for DevServerProduct {
 			None => ("localhost".to_string(), format!("{HTTP_PREFIX}{host}")),
 		};
 		let product_id = match parsed.query_pairs().find(|(name, _)| name == PRODUCT_ID_PARAM) {
-			Some((_, named)) => {
-				normalize_product_identifier(&named).map_err(DevServerError::InvalidProductId)?
-			},
+			Some((_, named)) => named.into_owned(),
 			None => localhost_id,
 		};
+		let product_id = product_id.parse::<ProductId>()?;
 		Ok(Self { product_id, origin, url: parsed.into() })
 	}
 }
@@ -99,7 +98,6 @@ fn is_dev_address(address: Ipv4Addr) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::platform::is_localhost_product_identifier;
 
 	fn product(
 		product_id: &str,
@@ -107,7 +105,7 @@ mod tests {
 		url: &str,
 	) -> Result<DevServerProduct, DevServerError> {
 		Ok(DevServerProduct {
-			product_id: product_id.to_string(),
+			product_id: ProductId::for_test(product_id),
 			origin: origin.to_string(),
 			url: url.to_string(),
 		})
@@ -174,26 +172,6 @@ mod tests {
 				"http://192.168.1.59:3000/app?product_id=Humanity.DOT",
 			)
 		);
-	}
-
-	#[test]
-	fn the_identifier_is_one_the_core_runs_a_product_under() {
-		for input in [
-			"localhost",
-			"localhost:3000",
-			"10.0.2.2:3000",
-			"192.168.1.59:8081",
-			"localhost:3000?product_id=humanity.dot",
-		] {
-			let product: DevServerProduct = input.parse().expect(input);
-			assert_eq!(
-				normalize_product_identifier(&product.product_id).as_deref(),
-				Ok(product.product_id.as_str()),
-				"{input}"
-			);
-		}
-		let product: DevServerProduct = "10.0.2.2:3000".parse().expect("dev server");
-		assert!(is_localhost_product_identifier(&product.product_id));
 	}
 
 	#[test]

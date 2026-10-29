@@ -18,10 +18,10 @@ class ExpandedProductPage(
     private val parentScope: CoroutineScope,
     private val openSession: (ComputationalScope, String) -> SpaHostSession,
 ) {
-    private val shownSession = MutableStateFlow<SpaHostSession?>(null)
+    private val shownProduct = MutableStateFlow<ShownProduct?>(null)
     private var held: HeldProduct? = null
 
-    val session: StateFlow<SpaHostSession?> = shownSession.asStateFlow()
+    val shown: StateFlow<ShownProduct?> = shownProduct.asStateFlow()
 
     /**
      * Shows the product for [url], reusing the one already held when it is the same. A WebView and a
@@ -30,8 +30,8 @@ class ExpandedProductPage(
     fun open(url: String) {
         val heldProduct = held
         if (heldProduct?.url == url) {
-            if (shownSession.value == null) heldProduct.session.resumeConnections()
-            shownSession.value = heldProduct.session
+            if (shownProduct.value == null) heldProduct.session.resumeConnections()
+            shownProduct.value = ShownProduct(url, heldProduct.session)
             return
         }
         release()
@@ -40,12 +40,17 @@ class ExpandedProductPage(
         val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext.job))
         val product = HeldProduct(url, scope, openSession(ComputationalScope(scope), url))
         held = product
-        shownSession.value = product.session
+        shownProduct.value = ShownProduct(url, product.session)
+    }
+
+    /** Shows [url]'s product at the tap only if it is held; a new one waits for the card to settle. */
+    fun showIfHeld(url: String) {
+        if (held?.url == url) open(url)
     }
 
     /** The product stays alive for the card being opened again, paused so it does nothing unseen. */
     fun close() {
-        shownSession.value = null
+        shownProduct.value = null
         held?.session?.pauseConnections()
     }
 
@@ -65,8 +70,10 @@ class ExpandedProductPage(
     fun release() {
         held?.scope?.cancel()
         held = null
-        shownSession.value = null
+        shownProduct.value = null
     }
 
     private class HeldProduct(val url: String, val scope: CoroutineScope, val session: SpaHostSession)
 }
+
+data class ShownProduct(val url: String, val session: SpaHostSession)

@@ -9,12 +9,29 @@ extension MainTabBarViewController: SPAHosting {
     func openProduct(page: ProductPage) {
         // A card is a modal over the container, so what it links to mounts unseen.
         presentedViewController?.dismiss(animated: true)
-        #if FEATURE_PRODUCTS
-            let tab = browserCoordinator.findOrCreateTab(for: page)
-            mountSPA(for: tab)
-        #else
-            presentProduct(page: page)
-        #endif
+        let tab = browserCoordinator.findOrCreateTab(for: page)
+        mountSPA(for: tab)
+    }
+
+    /// Presents a product as a one-shot sheet over the container. It never enters the tab store,
+    /// so closing it leaves no shelf chip.
+    func presentProduct(page: ProductPage) {
+        guard let view = SPAViewFactory.createView(
+            page: page,
+            flowState: flowStateProvider.flowState(),
+            presentation: .sheet
+        ) else {
+            return
+        }
+
+        view.controller.modalPresentationStyle = .pageSheet
+        view.controller.sheetPresentationController?.detents = [
+            .custom { $0.maximumDetentValue * 0.92 }
+        ]
+        view.controller.sheetPresentationController?.prefersGrabberVisible = true
+
+        let host = UIWindow.keyWindow?.topmostViewController ?? self
+        host.present(view.controller, animated: true)
     }
 
     func minimizeSPA() {
@@ -42,13 +59,13 @@ extension MainTabBarViewController {
             return
         }
         container.mountSPA(controller, for: tab.id)
-        chromeController.apply(.spa(controller))
+        applyChrome(.spa(controller))
         applyChips()
     }
 
     func applyChips() {
         let chips = spaChipViewModels.map {
-            DSTabBarChip(id: $0.id, name: $0.name, icon: $0.icon)
+            TabBarShelfChip(id: $0.id, name: $0.name, icon: $0.icon)
         }
         chromeController.setSPATabs(chips, selected: mountedSPATabId)
         applyProductGamePill()
@@ -71,7 +88,7 @@ extension MainTabBarViewController {
         guard let tab = browserCoordinator.tabs.first(where: predicate) else {
             return false
         }
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
         mountSPA(for: tab)
         return true
     }
@@ -80,30 +97,6 @@ extension MainTabBarViewController {
 // MARK: - Private
 
 private extension MainTabBarViewController {
-    #if !FEATURE_PRODUCTS
-        /// Without the browse tab a product is a one-shot rather than a peer of the tabs: it is
-        /// presented over the container, so it never enters the tab store and closing it leaves
-        /// no chip behind.
-        func presentProduct(page: ProductPage) {
-            guard let view = SPAViewFactory.createView(
-                page: page,
-                flowState: flowStateProvider.flowState(),
-                isBrowserTab: true
-            ) else {
-                return
-            }
-
-            view.controller.modalPresentationStyle = .pageSheet
-            view.controller.sheetPresentationController?.detents = [
-                .custom { $0.maximumDetentValue * 0.92 }
-            ]
-            view.controller.sheetPresentationController?.prefersGrabberVisible = true
-
-            let host = UIWindow.keyWindow?.topmostViewController ?? self
-            host.present(view.controller, animated: true)
-        }
-    #endif
-
     var mountedSPATabId: UUID? {
         guard case let .spa(id) = container.selection else {
             return nil

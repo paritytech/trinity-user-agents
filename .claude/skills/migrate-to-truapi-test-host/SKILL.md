@@ -338,11 +338,11 @@ something plausible. The rest, including the statement-store controls and
 `injectChatAction`, are served.
 
 - payments (`getPaymentLog`, `setPaymentBalance`, `simulatePaymentStatus`,
-  `setPaymentTopUpBehavior`, `clearPaymentLog`) -- the protocol declares them
-  and no host implements them. Every method of the core's payment capability
-  returns an error and ignores its arguments, so there is no behaviour to mock.
-  A suite with payment specs cannot migrate them; it can only drop or rewrite
-  them.
+  `setPaymentTopUpBehavior`, `clearPaymentLog`) -- only native and Rust hosts
+  serve payments, because the browser host-callback bridge cannot carry the
+  payment platforms yet. This host answers every payment call `Unsupported`,
+  so there is no payment engine to drive. A suite with payment specs cannot
+  migrate them; it can only drop or rewrite them.
 - `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
   to the fixture instead, which is where this host takes it.
 

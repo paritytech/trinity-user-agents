@@ -71,6 +71,12 @@ interface CoinageTransactionService {
      */
     suspend fun preCommitHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit>
 
+    /**
+     * Like [preCommitHandoff], but writes nothing until the commit, which marks [assets] final in one step.
+     * An asset claimed or handed off in between fails that commit.
+     */
+    suspend fun prepareHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit>
+
     /** Clears the reservations of payments that never became durable. Runs once, on launch. */
     suspend fun releaseUncommittedHandoffs(): Result<Unit>
 

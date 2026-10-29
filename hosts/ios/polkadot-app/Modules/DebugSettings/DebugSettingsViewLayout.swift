@@ -126,7 +126,7 @@ final class DebugSettingsViewLayout: UIView {
         view.typography = .bodyMedium
         view.textColor = .fgSecondary
         view.lineBreakMode = .byTruncatingMiddle
-        view.text = "Chain ID: \(AppConfig.Chains.usernameChain)"
+        view.text = "Chain ID: \(AppConfig.Chains.peopleChain)"
     }
 
     private let scrollView: UIScrollView = .create { scrollView in

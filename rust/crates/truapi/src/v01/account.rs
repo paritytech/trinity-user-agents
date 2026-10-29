@@ -1,5 +1,7 @@
 use parity_scale_codec::{Decode, Encode};
 
+use crate::product_id::ProductId;
+
 /// Account selector within a product subtree. Encodes as
 /// `Either<u32, [u8; 32]>` on the wire (`Index` = left, `Raw` = right).
 ///
@@ -22,7 +24,7 @@ pub enum DerivationIndex {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ProductAccountId {
 	/// A dotNS domain name identifier (e.g., `"my-product.dot"`).
-	pub dot_ns_identifier: String,
+	pub dot_ns_identifier: ProductId,
 	/// Account selector within the product subtree.
 	pub derivation_index: DerivationIndex,
 }

@@ -16,7 +16,7 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     func showLoading()
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
-    func updateLoadProgress(_ progress: DotNsLoadProgress)
+    func updateLoadPhase(_ phase: ProductLoadPhase)
 }
 
 @MainActor
@@ -25,8 +25,9 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapMoreButton()
     func didTapMinimize()
     func didTapClose()
-    func didTapRetry()
+    func didTapRefresh()
     func didInterceptNavigation(to url: URL)
+    func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
@@ -37,6 +38,7 @@ protocol SPAPresenterProtocol: AnyObject {
 protocol SPAInteractorInputProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func retry()
+    func reloadLatestBuild()
     func hasChatEntry() -> Bool
     func openChat()
 }
@@ -45,13 +47,16 @@ protocol SPAInteractorInputProtocol: AnyObject {
 protocol SPAInteractorOutputProtocol: AnyObject {
     func didFail(error: Error)
     func didRequestNavigation(to url: URL)
+    func didRequestReload()
+    func didRestartLoading()
     func didPrepareChat(chatId: Chat.Id)
-    func didUpdateLoadProgress(_ progress: DotNsLoadProgress)
+    func didUpdateLoadPhase(_ phase: ProductLoadPhase)
 }
 
 @MainActor
 protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showProductSPA(from view: ControllerBackedProtocol?, productHost: ProductHost)
+    func openDeeplink(_ url: URL)
     func showMoreActions(
         from view: ControllerBackedProtocol?,
         actions: [SPAMoreAction],

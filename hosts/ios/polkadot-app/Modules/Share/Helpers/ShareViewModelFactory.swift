@@ -46,7 +46,7 @@ final class ShareViewModelFactory: ShareViewModelFactoryProtocol {
 
     private func makeAvatarViewModel(
         chat: Chat.LocalModel,
-        peerMetadata: Chat.PeerMetadata
+        peerMetadata: Chat.PeerListMetadata
     ) -> AvatarViewModel {
         if let image = peerMetadata.icon.image {
             return .image(image)

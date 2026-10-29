@@ -11,7 +11,7 @@ pub struct HostLocalStorageWriteRequest {
 }
 
 /// Local storage operation error.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostLocalStorageReadError {
 	/// Storage quota exceeded.
@@ -19,6 +19,7 @@ pub enum HostLocalStorageReadError {
 	Full,
 	/// Catch-all.
 	#[display("{reason}")]
+	#[from]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

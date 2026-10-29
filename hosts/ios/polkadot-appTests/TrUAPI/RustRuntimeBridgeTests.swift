@@ -5,12 +5,14 @@ import ChainRegistry
 import Products
 import SubstrateSdk
 import Keystore_iOS
+import StructuredConcurrency
 import TrUAPIHost
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
 import UIKitExt
+import StructuredConcurrencyTestSupport
 @testable import polkadot_app
 
 // MARK: - Helpers
@@ -86,9 +88,10 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -116,19 +119,31 @@ private func makeBridge(
     ), cardFace: cardFace)
 }
 
-@MainActor
-private func waitUntil(_ condition: () -> Bool) async {
-    for _ in 0 ..< 200 where !condition() {
-        try? await Task.sleep(for: .milliseconds(5))
-    }
-}
-
 // MARK: - Tests
 
 /// MainActor suite: MockNavigationRouter is @MainActor, and Swift Testing
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// The core hands over a Pocket link as `polkadotapp://pocket/...`, which names
+    /// no product. Opened as a product page it would go nowhere, so it has to
+    /// reach the router's app-link path, which takes it to the Pocket.
+    @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+        let link = "polkadotapp://pocket/add?product=game.dot&card=loyalty"
+
+        try await bridge.navigateTo(url: link)
+
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == URL(string: link))
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to
@@ -655,7 +670,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        await waitUntil { !execution.themeChanges.isEmpty }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -671,10 +686,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        await waitUntil { execution.themeChanges.count == 1 }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         themeManager.select(.app(.berlinDay))
-        await waitUntil { execution.themeChanges.count == 2 }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])

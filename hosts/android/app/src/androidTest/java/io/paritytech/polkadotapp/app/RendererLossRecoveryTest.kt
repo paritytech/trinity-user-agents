@@ -11,6 +11,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dagger.hilt.android.testing.HiltAndroidTest
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.parity.truapi.HostBridge
@@ -38,8 +39,9 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
+@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class RendererLossRecoveryTest {
+class RendererLossRecoveryTest : BaseIntegrationTest() {
     // A renderer can die while the product sits in the background. Android never revives that
     // WebView, so the product only comes back if a fresh one loads the route it was on with the
     // same bootstrap and reconnects to the execution it already has.
@@ -59,7 +61,7 @@ class RendererLossRecoveryTest {
                     val first = runBlocking {
                         provider.addWebViewSetup { it.addJavascriptInterface(reports, "report") }
                         provider.addWebViewSetup(
-                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN))(
+                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN), "renderer-loss-test")(
                                 LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
                             ),
                         )

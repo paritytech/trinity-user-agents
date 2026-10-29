@@ -51,6 +51,9 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] No unnecessary abstraction wrappers
 - [ ] Preview/debug Tasks removed before merge
 - [ ] Stack view insertions use natural ordering (no manual index tracking)
+- [ ] SwiftUI gestures: state set in `onChanged` is reset when the gesture is cancelled (`@GestureState`), since `onEnded` does not run on cancellation.
+- [ ] Custom gesture-driven controls expose an accessibility label, trait and action.
+- [ ] Content that overhangs a hosting view is inside the view's hit region.
 
 **Ref:** code/ui-uikit.md, code/design-system.md
 

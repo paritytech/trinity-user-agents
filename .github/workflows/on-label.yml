@@ -1,0 +1,99 @@
+name: Label builds
+
+# The builds and tests a pull request asks for with a label, rather than
+# running on every commit. Each job calls one workflow and starts when its label
+# is added, and again on each later push, so the result follows the branch
+# instead of pinning to whichever commit was the head when someone asked. The
+# simulator preview and the instrumented tests also start when the pull request
+# is opened or reopened with the label on.
+#
+# `labeled` fires for every label, so each job matches only its own label being
+# added. Matching on the label being present would let any other label, added
+# by a person or by labeler.yml, start a second run of every labelled job for
+# the same commit. ci.yml does not run on `labeled`, so a label never reruns the
+# required checks.
+#
+# Every concurrency group is on a job, either the calling job here or the jobs
+# of the called workflow, and a skipped job never joins a group, so a run
+# started by one label never cancels a build another label started.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  # The iOS jobs run on the Parity machines, which are persistent and shared,
+  # so a fork's code never reaches them.
+  ios-simulator-preview:
+    name: iOS simulator preview
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event.action == 'labeled' && github.event.label.name == 'ios-simulator-build')
+          || (github.event.action != 'labeled'
+              && contains(github.event.pull_request.labels.*.name, 'ios-simulator-build')))
+    concurrency:
+      group: ios-simulator-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/ios-app.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    with:
+      preview: true
+
+  ios-device-preview:
+    name: iOS device preview
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event.action == 'labeled' && github.event.label.name == 'ios-device-build')
+          || (github.event.action == 'synchronize'
+              && contains(github.event.pull_request.labels.*.name, 'ios-device-build')))
+    uses: ./.github/workflows/ios-device-preview.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
+
+  # A fork's run reaches no secrets, and the workflow says so on the pull
+  # request rather than handing over a build that cannot sign in.
+  android-device-preview:
+    name: Android device preview
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'android-device-build')
+      || (github.event.action == 'synchronize'
+          && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
+    uses: ./.github/workflows/android-device-preview.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      pull-requests: write
+
+  android-instrumented-tests:
+    name: Android instrumented tests
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'android-instrumented-tests')
+      || (github.event.action != 'labeled'
+          && contains(github.event.pull_request.labels.*.name, 'android-instrumented-tests'))
+    uses: ./.github/workflows/android-instrumented-tests.yml
+    secrets: inherit
+
+  # Both platforms, and never from a fork, since the iOS leg runs on the Parity
+  # machines. contents: write is the cap for the job that edits a nightly's
+  # release notes, which never runs for a pull request; every job that does
+  # run reads only.
+  host-playground-e2e:
+    name: host-playground e2e
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+          || (github.event.action == 'synchronize'
+              && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))
+    uses: ./.github/workflows/host-playground-e2e.yml
+    secrets: inherit
+    permissions:
+      contents: write

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.data.transaction
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.database.dao.CoinageAssetStateProjection
 import io.paritytech.polkadotapp.database.dao.CoinageEntryDao
 import io.paritytech.polkadotapp.database.dao.CoinageEntryWithAssets
@@ -80,11 +81,15 @@ class RealCoinageAssetLedger @Inject constructor(
         return null
     }
 
-    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = runCatching {
+    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = mark(assets, committed = false)
+
+    override suspend fun markHandedOffCommitted(assets: List<LedgerAsset>): Result<Unit> =
+        mark(assets, committed = true)
+
+    private suspend fun mark(assets: List<LedgerAsset>, committed: Boolean): Result<Unit> = runCancellableCatching {
         val keys = assets.map { it.publicKey }
 
-        // One transaction, so nothing can claim these between the check and the mark. Unlike registration,
-        // no engine transaction is open around this call: a handoff writes coinage rows only.
+        // One transaction for check and mark; it joins the caller's, so a committed mark lands with its message.
         dao.withTransaction {
             val scope = DaoValidationScope(dao)
 
@@ -102,7 +107,7 @@ class RealCoinageAssetLedger @Inject constructor(
                 throw CoinageRegistrationError.HandoffOfHandedOffAsset(it)
             }
 
-            dao.insertHandoffs(assets.mapNotNull { it.toHandoffLocal() })
+            dao.insertHandoffs(assets.mapNotNull { it.toHandoffLocal(committed) })
         }
     }
 
@@ -209,7 +214,7 @@ private fun RegistrationOutput.toLocal(entryId: Long, position: Int) = CoinageEn
     onChainKey = publicKey.value,
 )
 
-private fun LedgerAsset.toHandoffLocal(): CoinageHandoffLocal? {
+private fun LedgerAsset.toHandoffLocal(committed: Boolean): CoinageHandoffLocal? {
     val owned = asset ?: return null
 
     return CoinageHandoffLocal(
@@ -217,7 +222,7 @@ private fun LedgerAsset.toHandoffLocal(): CoinageHandoffLocal? {
         assetKind = owned.kind().toLocal(),
         installationId = owned.index().installation.value.value,
         derivationIndex = owned.index().item,
-        committed = false,
+        committed = committed,
     )
 }
 

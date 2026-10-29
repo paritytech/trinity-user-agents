@@ -5,6 +5,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
@@ -20,6 +21,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Token
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
@@ -54,11 +56,13 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountMapper: TokenAmountMapper,
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val router: PocketRouter,
+    private val collectiblesUrlResolver: CollectiblesUrlResolver,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
+    private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
@@ -78,12 +82,10 @@ class PocketViewModel @Inject constructor(
     private val balanceCard = combine(
         digitalDollarAmounts,
         interactor.observeBackupProgress().onStart { emit(BackupProgress.Unknown) },
-        interactor.observeAccountBackupPending().onStart { emit(false) },
-    ) { amounts, backupProgress, accountBackupPending ->
+    ) { amounts, backupProgress ->
         PocketCardUiModel.DigitalDollar(
             amounts = amounts,
             syncInProgress = backupProgress.isInProgress(),
-            accountBackupPending = accountBackupPending,
         )
     }
 
@@ -113,22 +115,31 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
+    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
+        .flowOn(dispatchers.computation)
+        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
+
     val state: StateFlow<PocketScreenState> = combine(
         cards,
         selectedCardId,
+        collectiblesShown,
+        collectiblesUrl,
         removalCandidate
-    ) { cards, selectedId, candidate ->
+    ) { cards, selectedId, collectiblesShown, collectiblesUrl, candidate ->
         val selectedCard = cards.firstOrNull { it.id == selectedId }
-        if (selectedCard != null) {
-            PocketScreenState.CardDetails(selectedCard = selectedCard)
-        } else {
-            PocketScreenState.List(removalCandidate = candidate)
+        when {
+            selectedCard != null -> PocketScreenState.CardDetails(selectedCard = selectedCard)
+            collectiblesShown -> PocketScreenState.Collectibles
+            else -> PocketScreenState.List(
+                collectiblesAvailable = collectiblesUrl != null,
+                removalCandidate = candidate
+            )
         }
     }
         .stateIn(
             scope = this,
             started = SharingStarted.Eagerly,
-            initialValue = PocketScreenState.List(removalCandidate = null)
+            initialValue = PocketScreenState.List(collectiblesAvailable = false, removalCandidate = null)
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
@@ -177,7 +188,6 @@ class PocketViewModel @Inject constructor(
                 },
                 amounts?.let { tokenAmountFormatter.formatTokenAmount(it.ready, RoundPrecision.FIAT, withSymbol = false) },
                 card.syncInProgress,
-                card.accountBackupPending,
                 amounts?.notFullyReady
             ).joinToString("|")
         }
@@ -192,7 +202,7 @@ class PocketViewModel @Inject constructor(
     )
 
     /** The product page under the expanded card, live only while that card is open. */
-    val expandedProductSession = expandedProduct.session
+    val shownProduct = expandedProduct.shown
 
     /** Whether the selected card opens with its face shown; null until its product has answered. */
     val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
@@ -217,6 +227,7 @@ class PocketViewModel @Inject constructor(
         if (selectedCardId.value == card.id) return
 
         if (selectedCardId.value != null) dismissCard()
+        collectiblesShown.value = false
         removalCandidate.value = null
         selectCard(card)
     }
@@ -224,6 +235,7 @@ class PocketViewModel @Inject constructor(
     fun selectCard(card: PocketCardUiModel) {
         selectedCardId.value = card.id
         if (card is PocketCardUiModel.ProductCard) {
+            expandedProduct.showIfHeld(card.key.launchUrl())
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -265,9 +277,22 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = null
     }
 
+    fun showCollectiblesSketchbook() {
+        collectiblesShown.value = true
+    }
+
+    fun hideCollectiblesSketchbook() {
+        collectiblesShown.value = false
+    }
+
+    fun openCollectibles() {
+        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
+    }
+
     /**
      * The product is loaded only once the card has finished travelling. Building a WebView while the
      * card is still moving starves the animation, and the card is the part the user is watching.
+     * A product already held is shown at the tap instead, by [selectCard].
      * A card already left can still report itself settled while it fades out, so only the selected
      * one is hosted.
      */
