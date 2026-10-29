@@ -108,6 +108,7 @@ import { SerialQueue } from "./app/serial-queue.js";
 import { versionSections, type VersionRow } from "./app/versions.js";
 import { SearchCard } from "./app/search-card.js";
 import { bindDeviceMode } from "./app/device-mode.js";
+import { followKeyboard } from "./app/keyboard-viewport.js";
 import { SearchPeople } from "./contacts/search-people.js";
 import {
   WalletPublicInfoStore,
@@ -647,6 +648,9 @@ const chrome = bindChrome({
   focus: element<HTMLButtonElement>("dev-toggle"),
   close: element<HTMLButtonElement>("devtools-close"),
 });
+// A phone's keyboard covers the Docklet and the search field unless the page
+// shrinks to what shows above it.
+followKeyboard(document.documentElement, window.visualViewport);
 bindDeviceMode({
   viewport: element<HTMLMetaElement>("viewport-meta"),
   fullscreen: element<HTMLButtonElement>("fullscreen"),
