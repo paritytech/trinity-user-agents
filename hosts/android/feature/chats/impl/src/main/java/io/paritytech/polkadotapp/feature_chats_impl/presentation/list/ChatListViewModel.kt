@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
+import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ActivityPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatPreviewUiModel
@@ -109,10 +110,11 @@ class ChatListViewModel @Inject constructor(
         callContext: CallResolutionContext,
     ): ChatListUiState.ChatItem {
         val draftText = drafts[id]?.text?.takeIf { it.isNotBlank() }
-        val previewModel = if (draftText != null) {
-            DraftPreviewUiModel(timestamp = timestamp, text = draftText)
-        } else {
-            preview.toUi(
+        // An activity is live, so it shows also over a draft.
+        val previewModel = when {
+            activity != null -> ActivityPreviewUiModel(timestamp = timestamp, text = activity.text, ongoing = activity.ongoing)
+            draftText != null -> DraftPreviewUiModel(timestamp = timestamp, text = draftText)
+            else -> preview.toUi(
                 timestamp = timestamp,
                 customMessageRenderers = customMessageRenderers,
                 customPreviewDelegate = customPreviewRenderer,
@@ -136,6 +138,7 @@ class ChatListViewModel @Inject constructor(
             is ChatSummaryBadge.Notification,
             is ChatSummaryBadge.None -> ChatListUiState.Badge.None
             is ChatSummaryBadge.Unread -> ChatListUiState.Badge.Unread(count)
+            is ChatSummaryBadge.Image -> ChatListUiState.Badge.Image(icon)
         }
     }
 
