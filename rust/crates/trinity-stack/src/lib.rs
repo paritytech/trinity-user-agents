@@ -20,7 +20,9 @@ pub use descriptor::{
 	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, SERVICE_KINDS, Service, SpecFile,
 	VERSION,
 };
-pub use dotns::{DOTNS_KEYS, Dotns, DotnsAnswer, DotnsCall, DotnsLookup, DotnsRecord, DotnsStep};
+pub use dotns::{
+	DOTNS_KEYS, DotnsAnswer, DotnsCall, DotnsDrift, DotnsLookup, DotnsStep, dotns_drift,
+};
 pub use envelope::{Document, Verified, open, public_key, sign};
 pub use error::Error;
 pub use pointer::{DEFAULT_LINK_BASE, Pointer};
@@ -28,6 +30,5 @@ pub use publish::{PublishState, Rendered, render};
 pub use reader::{Accepted, Fetched, Status, accept};
 pub use spec::light_spec_genesis;
 pub use stack_reader::{
-	CurrentStack, DotnsLookedUp, DotnsRead, FetchRequest, Refresh, Refreshed, Served, StackRead,
-	StackReader,
+	CurrentStack, FetchRequest, Refresh, Refreshed, Served, StackRead, StackReader,
 };

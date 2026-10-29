@@ -64,6 +64,9 @@ pub struct Descriptor {
 	/// Asset Hub contracts readers need that the chains do not point to, by name.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub contracts: Option<BTreeMap<String, String>>,
+	/// dotNS contract addresses by protocol registry key, such as `storeFactory`.
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
+	pub dotns: Option<BTreeMap<String, String>>,
 	/// Chain role and instance of the Coinage pallet.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub coinage: Option<Coinage>,
@@ -300,6 +303,18 @@ impl Descriptor {
 		}
 		for address in self.contracts.iter().flat_map(|contracts| contracts.values()) {
 			format::hex_bytes::<20>("contracts", address)?;
+		}
+		if let Some(dotns) = &self.dotns {
+			self.require_chain("AssetHub")?;
+			for (key, address) in dotns {
+				// A registry key is a `bytes32`, which `get(bytes32)` reads it as.
+				if !(1..=32).contains(&key.len()) ||
+					!key.bytes().all(|byte| byte.is_ascii_alphanumeric())
+				{
+					return Err(Error::DotnsKey(key.clone()));
+				}
+				format::hex_bytes::<20>("dotns", address)?;
+			}
 		}
 		Ok(())
 	}

@@ -1,9 +1,9 @@
-//! A stack's dotNS contracts, read from its Asset Hub in the three steps the RFC describes. The
-//! caller makes every read; [`DotnsLookup`] says which and judges the answers.
+//! Checks a descriptor's `dotns` against its Asset Hub, read in the three steps the RFC
+//! describes. The caller makes every read; [`DotnsLookup`] says which and judges the answers.
 
-use crate::{Block, Error, format};
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use crate::{Descriptor, Error, format};
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The protocol registry's address keys, as dotNS's `DotnsConstants` names them.
 pub const DOTNS_KEYS: [&str; 16] = [
@@ -34,61 +34,36 @@ const PROTOCOL_REGISTRY: [u8; 4] = [0x76, 0x56, 0x41, 0x9f];
 const TARGET: [u8; 4] = [0xcc, 0x1f, 0x2a, 0xfa];
 const REGISTRY_GET: [u8; 4] = [0x8e, 0xaa, 0x6a, 0xc0];
 
-/// A stack's dotNS contracts, as its Asset Hub's gateway and protocol registry name them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Dotns {
-	/// The contract `DotnsGateway` dispatches to.
-	pub dispatcher: String,
-	/// The protocol registry, which names every other dotNS contract.
-	pub protocol_registry: String,
-	/// Registry keys to addresses. Keys the registry leaves unset are absent.
-	pub addresses: BTreeMap<String, String>,
+/// A `dotns` key on which a descriptor and its chain disagree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[serde(rename_all = "camelCase")]
+pub struct DotnsDrift {
+	/// The registry key.
+	pub key: String,
+	/// The descriptor's address; `None` when the descriptor leaves the key out.
+	pub stated: Option<String>,
+	/// The registry's address; `None` when the registry leaves the key unset.
+	pub on_chain: Option<String>,
 }
 
-/// What a reader keeps of a lookup. It serves only descriptors of its `generation`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
-#[serde(deny_unknown_fields)]
-pub struct DotnsRecord {
-	/// The `generation` of the descriptor the lookup ran for.
-	pub generation: String,
-	/// The Asset Hub block every read was made at.
-	pub at: Block,
-	/// `None` when the stack's Asset Hub has no dotNS gateway.
-	pub dotns: Option<Dotns>,
-}
-
-impl DotnsRecord {
-	/// Reads a record as [`DotnsRecord::to_json`] wrote it, checking every address.
-	pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
-		// Through `Value`, which the crate links anyway, rather than a typed slice parser.
-		let record = serde_json::from_slice::<serde_json::Value>(bytes)
-			.and_then(Self::deserialize)
-			.map_err(|error| Error::Malformed(error.to_string()))?;
-		record.check()?;
-		Ok(record)
-	}
-
-	/// The record as a reader keeps it, in a store or in a project's build copy.
-	pub fn to_json(&self) -> Vec<u8> {
-		let mut json = serde_json::to_vec_pretty(self).expect("a record serialises");
-		json.push(b'\n');
-		json
-	}
-
-	/// Fails when an address or the block hash is not lowercase 0x-prefixed hex of its length.
-	pub fn check(&self) -> Result<(), Error> {
-		format::hex_bytes::<32>("at.hash", &self.at.hash)?;
-		let Some(dotns) = &self.dotns else { return Ok(()) };
-		format::hex_bytes::<20>("dispatcher", &dotns.dispatcher)?;
-		format::hex_bytes::<20>("protocolRegistry", &dotns.protocol_registry)?;
-		for address in dotns.addresses.values() {
-			format::hex_bytes::<20>("addresses", address)?;
-		}
-		Ok(())
-	}
+/// Every key, in order, on which `descriptor`'s `dotns` and the addresses a [`DotnsLookup`]
+/// found on its chain disagree; empty when they agree. `found` is `None` for a chain with no
+/// dotNS gateway.
+pub fn dotns_drift(
+	descriptor: &Descriptor,
+	found: Option<&BTreeMap<String, String>>,
+) -> Vec<DotnsDrift> {
+	let stated = descriptor.dotns.as_ref();
+	let keys: BTreeSet<&String> =
+		stated.into_iter().chain(found).flat_map(BTreeMap::keys).collect();
+	keys.into_iter()
+		.filter_map(|key| {
+			let stated = stated.and_then(|addresses| addresses.get(key)).cloned();
+			let on_chain = found.and_then(|addresses| addresses.get(key)).cloned();
+			(stated != on_chain).then(|| DotnsDrift { key: key.clone(), stated, on_chain })
+		})
+		.collect()
 }
 
 /// A contract call a lookup needs, made at its block.
@@ -129,32 +104,35 @@ pub enum DotnsStep {
 	/// These calls' answers, in order; answer with [`DotnsLookup::answer`]. They do not depend
 	/// on each other, so a caller can batch them.
 	Calls(Vec<DotnsCall>),
-	/// The lookup is over.
-	Done(DotnsRecord),
+	/// The lookup is over: the address of each key the registry sets, or `None` when Asset Hub
+	/// has no dotNS gateway.
+	Done(Option<BTreeMap<String, String>>),
 }
 
-/// Reads a stack's dotNS contracts, one [`DotnsStep`] at a time, all at one block.
+/// Reads a stack's dotNS addresses, one [`DotnsStep`] at a time. The caller makes every read at
+/// one block, such as the latest finalized one.
 ///
 /// ```
-/// use trinity_stack::{Block, DotnsAnswer, DotnsLookup, DotnsStep};
+/// use trinity_stack::{Descriptor, DotnsAnswer, DotnsLookup, DotnsStep, dotns_drift};
 ///
 /// # fn read_storage(_: [u8; 32]) -> Option<Vec<u8>> { None }
 /// # fn call(_: &trinity_stack::DotnsCall) -> DotnsAnswer { DotnsAnswer::Reverted }
-/// let at = Block { number: 182_044, hash: format!("0x{}", "ab".repeat(32)) };
-/// let mut lookup = DotnsLookup::new("2026-10-26T22:19:25Z".into(), at)?;
-/// let record = loop {
+/// # fn check(descriptor: &Descriptor) -> Result<(), trinity_stack::Error> {
+/// let mut lookup = DotnsLookup::new(descriptor);
+/// let found = loop {
 ///     match lookup.next() {
 ///         DotnsStep::Storage(key) => lookup.storage(read_storage(key).as_deref())?,
 ///         DotnsStep::Calls(calls) => lookup.answer(&calls.iter().map(call).collect::<Vec<_>>())?,
-///         DotnsStep::Done(record) => break record,
+///         DotnsStep::Done(found) => break found,
 ///     }
 /// };
-/// # Ok::<(), trinity_stack::Error>(())
+/// let drift = dotns_drift(descriptor, found.as_ref());
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Debug)]
 pub struct DotnsLookup {
-	generation: String,
-	at: Block,
+	keys: Vec<String>,
 	state: State,
 }
 
@@ -163,17 +141,19 @@ enum State {
 	Gateway,
 	ProtocolRegistry { dispatcher: [u8; 20] },
 	Target { dispatcher: [u8; 20] },
-	TargetRegistry { dispatcher: [u8; 20], controller: [u8; 20] },
-	Addresses { dispatcher: [u8; 20], registry: [u8; 20] },
-	Done(Option<Dotns>),
+	TargetRegistry { controller: [u8; 20] },
+	Addresses { registry: [u8; 20] },
+	Done(Option<BTreeMap<String, String>>),
 }
 
 impl DotnsLookup {
-	/// A lookup for a descriptor of `generation`, whose every read the caller makes at `at`.
-	/// Fails when `at`'s hash is not lowercase 0x-prefixed hex, which no record may carry.
-	pub fn new(generation: String, at: Block) -> Result<Self, Error> {
-		format::hex_bytes::<32>("at.hash", &at.hash)?;
-		Ok(Self { generation, at, state: State::Gateway })
+	/// A lookup of every key in [`DOTNS_KEYS`] and every other key `descriptor`'s `dotns` has,
+	/// so [`dotns_drift`] compares each address the descriptor has.
+	pub fn new(descriptor: &Descriptor) -> Self {
+		let stated = descriptor.dotns.iter().flat_map(BTreeMap::keys);
+		let mut keys: Vec<String> = DOTNS_KEYS.map(str::to_owned).to_vec();
+		keys.extend(stated.filter(|key| !DOTNS_KEYS.contains(&key.as_str())).cloned());
+		Self { keys, state: State::Gateway }
 	}
 
 	/// What the lookup needs next.
@@ -185,17 +165,13 @@ impl DotnsLookup {
 				DotnsStep::Calls(vec![call(*dispatcher, &PROTOCOL_REGISTRY)])
 			},
 			State::Target { dispatcher } => DotnsStep::Calls(vec![call(*dispatcher, &TARGET)]),
-			State::TargetRegistry { controller, .. } => {
+			State::TargetRegistry { controller } => {
 				DotnsStep::Calls(vec![call(*controller, &PROTOCOL_REGISTRY)])
 			},
-			State::Addresses { registry, .. } => DotnsStep::Calls(
-				DOTNS_KEYS.iter().map(|key| call(*registry, &registry_get(key))).collect(),
+			State::Addresses { registry } => DotnsStep::Calls(
+				self.keys.iter().map(|key| call(*registry, &registry_get(key))).collect(),
 			),
-			State::Done(dotns) => DotnsStep::Done(DotnsRecord {
-				generation: self.generation.clone(),
-				at: self.at.clone(),
-				dotns: dotns.clone(),
-			}),
+			State::Done(found) => DotnsStep::Done(found.clone()),
 		}
 	}
 
@@ -230,33 +206,28 @@ impl DotnsLookup {
 		}
 		self.state = match (&self.state, &answers[0]) {
 			(
-				State::ProtocolRegistry { dispatcher } | State::TargetRegistry { dispatcher, .. },
+				State::ProtocolRegistry { .. } | State::TargetRegistry { .. },
 				DotnsAnswer::Returned(data),
-			) => State::Addresses { dispatcher: *dispatcher, registry: address(data, &calls[0])? },
+			) => State::Addresses { registry: address(data, &calls[0])? },
 			(State::ProtocolRegistry { dispatcher }, DotnsAnswer::Reverted) => {
 				State::Target { dispatcher: *dispatcher }
 			},
-			(State::Target { dispatcher }, DotnsAnswer::Returned(data)) => State::TargetRegistry {
-				dispatcher: *dispatcher,
-				controller: address(data, &calls[0])?,
+			(State::Target { .. }, DotnsAnswer::Returned(data)) => {
+				State::TargetRegistry { controller: address(data, &calls[0])? }
 			},
 			(State::Target { dispatcher }, DotnsAnswer::Reverted) => {
 				return Err(Error::UnknownDispatcher(format::to_hex(dispatcher)));
 			},
-			(State::Addresses { dispatcher, registry }, _) => {
+			(State::Addresses { .. }, _) => {
 				let mut addresses = BTreeMap::new();
-				for ((key, call), answer) in DOTNS_KEYS.iter().zip(&calls).zip(answers) {
+				for ((key, call), answer) in self.keys.iter().zip(&calls).zip(answers) {
 					let DotnsAnswer::Returned(data) = answer else { return Err(reverted(call)) };
 					let value = address(data, call)?;
 					if value != [0; 20] {
-						addresses.insert(key.to_string(), format::to_hex(&value));
+						addresses.insert(key.clone(), format::to_hex(&value));
 					}
 				}
-				State::Done(Some(Dotns {
-					dispatcher: format::to_hex(dispatcher),
-					protocol_registry: format::to_hex(registry),
-					addresses,
-				}))
+				State::Done(Some(addresses))
 			},
 			(_, DotnsAnswer::Reverted) => return Err(reverted(&calls[0])),
 			(State::Gateway | State::Done(_), _) => unreachable!("no calls are asked here"),
@@ -305,8 +276,8 @@ mod tests {
 
 	#[test]
 	fn answering_the_wrong_step_is_refused_and_changes_nothing() {
-		let at = Block { number: 1, hash: format!("0x{}", "00".repeat(32)) };
-		let mut lookup = DotnsLookup::new("g".into(), at).unwrap();
+		let descriptor: Descriptor = serde_json::from_str(r#"{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"dot","services":[],"chains":[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["wss://relay.example"]}]}"#).unwrap();
+		let mut lookup = DotnsLookup::new(&descriptor);
 		assert_eq!(lookup.answer(&[]).map_err(|error| error.code()), Err("lookup-step"));
 		lookup.storage(Some(&[0xd1; 20])).unwrap();
 		assert_eq!(lookup.storage(None).map_err(|error| error.code()), Err("lookup-step"));

@@ -2,10 +2,9 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, Block, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsLookedUp,
-	DotnsRead, DotnsRecord, DotnsStep, Error, FetchRequest, Fetched, Pointer, PublishState,
-	Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified, accept as accept_fetched,
-	format, open as open_bytes,
+	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsDrift, DotnsStep, Error,
+	FetchRequest, Fetched, Pointer, PublishState, Refresh, Refreshed, Rendered, Served, SpecFile,
+	StackRead, Verified, accept as accept_fetched, format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -180,48 +179,41 @@ fn hex_value(value: &str) -> Result<Vec<u8>, JsValue> {
 		.ok_or_else(|| type_error(&format!("{value:?} is not 0x-prefixed hex")))
 }
 
-/// Reads a dotNS record as `encodeDotnsRecord` wrote it, checking every address.
-#[wasm_bindgen(js_name = decodeDotnsRecord)]
-pub fn decode_dotns_record(bytes: &[u8]) -> Result<Ts<DotnsRecord>, JsValue> {
-	to_js(&DotnsRecord::parse(bytes).map_err(to_js_error)?)
-}
-
-/// A dotNS record as a project commits it.
-#[wasm_bindgen(js_name = encodeDotnsRecord)]
-pub fn encode_dotns_record(record: Ts<DotnsRecord>) -> Result<Vec<u8>, JsValue> {
-	let record = self::record(record)?;
-	record.check().map_err(to_js_error)?;
-	Ok(record.to_json())
-}
-
-fn record(record: Ts<DotnsRecord>) -> Result<DotnsRecord, JsValue> {
-	record
-		.to_rust()
-		.map_err(|_| type_error("a dotNS record needs generation, at and dotns"))
-}
-
-/// [`crate::DotnsLookup`] for JS.
+/// [`crate::DotnsLookup`] for JS, with the descriptor it checks.
 #[wasm_bindgen(js_name = DotnsLookup)]
-pub struct JsDotnsLookup(crate::DotnsLookup);
+pub struct JsDotnsLookup {
+	descriptor: Descriptor,
+	lookup: crate::DotnsLookup,
+}
 
 #[wasm_bindgen(js_class = DotnsLookup)]
 impl JsDotnsLookup {
-	/// A lookup for a descriptor of `generation`, read at Asset Hub block `at`.
+	/// A lookup of the addresses `descriptor`'s `dotns` is checked against.
 	#[wasm_bindgen(constructor)]
-	pub fn new(generation: String, at: Ts<Block>) -> Result<JsDotnsLookup, JsValue> {
-		let at = at.to_rust().map_err(|_| type_error("a block needs number and hash"))?;
-		Ok(Self(crate::DotnsLookup::new(generation, at).map_err(to_js_error)?))
+	pub fn new(descriptor: Ts<Descriptor>) -> Result<JsDotnsLookup, JsValue> {
+		let descriptor = descriptor
+			.to_rust()
+			.map_err(|error| type_error(&format!("descriptor: {error}")))?;
+		Ok(Self { lookup: crate::DotnsLookup::new(&descriptor), descriptor })
 	}
 
 	/// What the lookup needs next.
 	pub fn next(&self) -> Result<Ts<DotnsStep>, JsValue> {
-		to_js(&self.0.next())
+		to_js(&self.lookup.next())
+	}
+
+	/// The keys on which the descriptor and the chain disagree, once the lookup is done.
+	pub fn drift(&self) -> Result<Vec<Ts<DotnsDrift>>, JsValue> {
+		let DotnsStep::Done(found) = self.lookup.next() else {
+			return Err(to_js_error(Error::LookupStep("drift before the lookup is done".into())));
+		};
+		crate::dotns_drift(&self.descriptor, found.as_ref()).iter().map(to_js).collect()
 	}
 
 	/// Takes the hex value at the storage key, undefined when it is unset.
 	pub fn storage(&mut self, value: Option<String>) -> Result<(), JsValue> {
 		let value = value.as_deref().map(hex_value).transpose()?;
-		self.0.storage(value.as_deref()).map_err(to_js_error)
+		self.lookup.storage(value.as_deref()).map_err(to_js_error)
 	}
 
 	/// Takes the calls' answers in order: the hex data a call returned, or null when it
@@ -238,7 +230,7 @@ impl JsDotnsLookup {
 				None => Err(type_error("an answer is hex data, or null for a revert")),
 			})
 			.collect::<Result<Vec<_>, _>>()?;
-		self.0.answer(&answers).map_err(to_js_error)
+		self.lookup.answer(&answers).map_err(to_js_error)
 	}
 }
 
@@ -272,16 +264,10 @@ impl JsStackReader {
 		&mut self,
 		pointer: Ts<Pointer>,
 		build: Option<Vec<u8>>,
-		build_dotns: Option<Ts<DotnsRecord>>,
 		stored: Option<Vec<u8>>,
 	) -> Result<(), JsValue> {
 		self.0
-			.load(
-				&self::pointer(&pointer)?,
-				build.as_deref(),
-				build_dotns.map(record).transpose()?,
-				stored.as_deref(),
-			)
+			.load(&self::pointer(&pointer)?, build.as_deref(), stored.as_deref())
 			.map_err(to_js_error)
 	}
 
@@ -331,36 +317,5 @@ impl JsStackReader {
 			.fetched(&self::pointer(&pointer)?, served, now_unix_seconds as i64)
 			.map_err(to_js_error)?;
 		to_js(&refreshed)
-	}
-
-	/// The dotNS record to use and a lookup to run; undefined until a descriptor is held.
-	pub fn dotns(
-		&mut self,
-		pointer: Ts<Pointer>,
-		now_unix_seconds: f64,
-	) -> Result<Option<Ts<DotnsRead>>, JsValue> {
-		self.0
-			.dotns(&self::pointer(&pointer)?, now_unix_seconds as i64)
-			.map(|read| to_js(&read))
-			.transpose()
-	}
-
-	/// Takes a lookup's record, undefined when it failed.
-	#[wasm_bindgen(js_name = lookedUp)]
-	pub fn looked_up(
-		&mut self,
-		pointer: Ts<Pointer>,
-		record: Option<Ts<DotnsRecord>>,
-		now_unix_seconds: f64,
-	) -> Result<Ts<DotnsLookedUp>, JsValue> {
-		let looked_up = self
-			.0
-			.looked_up(
-				&self::pointer(&pointer)?,
-				record.map(self::record).transpose()?,
-				now_unix_seconds as i64,
-			)
-			.map_err(to_js_error)?;
-		to_js(&looked_up)
 	}
 }

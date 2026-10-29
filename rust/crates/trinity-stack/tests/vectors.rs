@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use trinity_stack::{
-	Block, CurrentStack, DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsRecord, DotnsStep,
-	FetchRequest, Fetched, Pointer, Refresh, Served, StackReader, accept, open, public_key, sign,
+	CurrentStack, DOTNS_KEYS, Descriptor, DotnsAnswer, DotnsLookup, DotnsStep, FetchRequest,
+	Fetched, Pointer, Refresh, Served, StackReader, accept, dotns_drift, open, public_key, sign,
 };
 
 const SECRET: [u8; 32] = [7; 32];
@@ -442,6 +442,32 @@ fn document_cases() -> Vec<DocumentCase> {
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
 			"invalid-hex",
 		),
+		plain("dotns-set", stating(both_stated()), "ok"),
+		plain(
+			"dotns-without-asset-hub",
+			with(|value| {
+				value["dotns"] = both_stated();
+				value["chains"].as_array_mut().unwrap().remove(1);
+				value.as_object_mut().unwrap().remove("assets");
+			}),
+			"unknown-chain-role",
+		),
+		plain(
+			"dotns-key-longer-than-bytes32",
+			stating(json!({ "a".repeat(33): hex(&REGISTRAR) })),
+			"dotns-key",
+		),
+		plain(
+			"dotns-key-with-a-dash",
+			stating(json!({ "store-factory": hex(&REGISTRAR) })),
+			"dotns-key",
+		),
+		plain("dotns-key-empty", stating(json!({ "": hex(&REGISTRAR) })), "dotns-key"),
+		plain(
+			"dotns-address-uppercase",
+			stating(json!({ "registrar": hex(&REGISTRAR).to_uppercase().replace("0X", "0x") })),
+			"invalid-hex",
+		),
 		plain(
 			"rpc-plain-ws-on-hostname",
 			with(|value| {
@@ -742,21 +768,29 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
-const GENERATION: &str = "2026-10-26T22:19:25Z";
 const DISPATCHER: [u8; 20] = [0xd1; 20];
 const ROOT_DISPATCHER: [u8; 20] = [0xd0; 20];
 const CONTROLLER: [u8; 20] = [0xc0; 20];
 const REGISTRY: [u8; 20] = [0xee; 20];
 const REGISTRAR: [u8; 20] = [0xaa; 20];
 const RESOLVER: [u8; 20] = [0xbb; 20];
+const MOVED: [u8; 20] = [0xcc; 20];
 /// `twox128("DotnsGateway") ++ twox128("DispatcherAddress")`.
 const DISPATCHER_ADDRESS_KEY: &str =
 	"0x57ca9018d648b40a8286a471e82c3808f31ce5ec278db3dff6304333f0019302";
 const PROTOCOL_REGISTRY: &str = "0x7656419f";
 const TARGET: &str = "0xcc1f2afa";
+/// A registry key no release of this crate knows, which a check reads because the descriptor
+/// has it.
+const NEW_KEY: &str = "newContract";
 
-fn at() -> Value {
-	json!({ "number": 182_044, "hash": hex(&[0xab; 32]) })
+/// The base descriptor with `dotns` set.
+fn stating(dotns: Value) -> Value {
+	with(|value| value["dotns"] = dotns)
+}
+
+fn both_stated() -> Value {
+	json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER) })
 }
 
 /// An address as a call returns it: one ABI word.
@@ -768,11 +802,12 @@ fn call(to: &[u8; 20], input: &str) -> String {
 	format!("{}:{input}", hex(to))
 }
 
-/// The registry's answers to `get(bytes32)` for every key: `set` ones hold an address, the rest
-/// are unset.
-fn registry(set: &[(&str, [u8; 20])]) -> Vec<(String, Value)> {
+/// The registry's answers to `get(bytes32)` for every key in `DOTNS_KEYS` and `extra`: `set`
+/// ones hold an address, the rest are unset.
+fn registry(extra: &[&str], set: &[(&str, [u8; 20])]) -> Vec<(String, Value)> {
 	DOTNS_KEYS
 		.iter()
+		.chain(extra)
 		.map(|key| {
 			let mut input = format!("0x8eaa6ac0{}", hex::encode(key));
 			input.extend(std::iter::repeat_n('0', 74 - input.len()));
@@ -783,32 +818,31 @@ fn registry(set: &[(&str, [u8; 20])]) -> Vec<(String, Value)> {
 		.collect()
 }
 
-fn found(dispatcher: &[u8; 20]) -> Value {
-	json!({
-		"generation": GENERATION,
-		"at": at(),
-		"dotns": {
-			"dispatcher": hex(dispatcher),
-			"protocolRegistry": hex(&REGISTRY),
-			"addresses": { "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER) },
-		},
-	})
+fn drift(key: &str, stated: Option<&[u8; 20]>, on_chain: Option<&[u8; 20]>) -> Value {
+	json!({ "key": key, "stated": stated.map(|address| hex(address)), "onChain": on_chain.map(|address| hex(address)) })
 }
 
-/// The lookup cases: what the chain holds and answers, and the record or error a reader ends
-/// with. A null call answer is a revert. A reader must make no call the chain does not list.
-fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
-	let both = || registry(&[("registrar", REGISTRAR), ("resolver", RESOLVER)]);
+/// The check cases: a descriptor, what its chain holds and answers, and the addresses and drift
+/// a reader ends with, or its error. A null call answer is a revert. A reader must make no call
+/// the chain does not list.
+fn dotns_cases() -> Vec<(&'static str, Value, Value, Value, Value)> {
+	let both = || registry(&[], &[("registrar", REGISTRAR), ("resolver", RESOLVER)]);
 	let calls = |answers: Vec<(String, Value)>| Value::Object(answers.into_iter().collect());
+	let at_gateway = |registry: Vec<(String, Value)>| {
+		calls([vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))], registry].concat())
+	};
+	let found = |drift: Vec<Value>| json!({ "found": both_stated(), "drift": drift });
 	vec![
 		(
 			"controller-at-the-gateway",
+			stating(both_stated()),
 			json!(hex(&DISPATCHER)),
-			calls([vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))], both()].concat()),
-			found(&DISPATCHER),
+			at_gateway(both()),
+			found(vec![]),
 		),
 		(
 			"dispatcher-behind-target",
+			stating(both_stated()),
 			json!(hex(&ROOT_DISPATCHER)),
 			calls(
 				[
@@ -821,16 +855,63 @@ fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
 				]
 				.concat(),
 			),
-			found(&ROOT_DISPATCHER),
+			found(vec![]),
 		),
 		(
-			"no-gateway",
+			"stated-address-moved",
+			stating(json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&MOVED) })),
+			json!(hex(&DISPATCHER)),
+			at_gateway(both()),
+			found(vec![drift("resolver", Some(&MOVED), Some(&RESOLVER))]),
+		),
+		(
+			"registry-sets-a-key-the-descriptor-leaves-out",
+			stating(json!({ "registrar": hex(&REGISTRAR) })),
+			json!(hex(&DISPATCHER)),
+			at_gateway(both()),
+			found(vec![drift("resolver", None, Some(&RESOLVER))]),
+		),
+		(
+			"descriptor-has-a-key-the-registry-leaves-unset",
+			stating(
+				json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), "storeFactory": hex(&MOVED) }),
+			),
+			json!(hex(&DISPATCHER)),
+			at_gateway(both()),
+			found(vec![drift("storeFactory", Some(&MOVED), None)]),
+		),
+		(
+			"a-stated-key-outside-the-known-ones-is-read-too",
+			stating(
+				json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), NEW_KEY: hex(&MOVED) }),
+			),
+			json!(hex(&DISPATCHER)),
+			at_gateway(registry(
+				&[NEW_KEY],
+				&[("registrar", REGISTRAR), ("resolver", RESOLVER), (NEW_KEY, MOVED)],
+			)),
+			json!({ "found": { "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), NEW_KEY: hex(&MOVED) }, "drift": [] }),
+		),
+		(
+			"no-gateway-and-none-stated",
+			base(),
 			Value::Null,
 			calls(vec![]),
-			json!({ "generation": GENERATION, "at": at(), "dotns": null }),
+			json!({ "found": null, "drift": [] }),
+		),
+		(
+			"no-gateway-but-addresses-stated",
+			stating(both_stated()),
+			Value::Null,
+			calls(vec![]),
+			json!({
+				"found": null,
+				"drift": [drift("registrar", Some(&REGISTRAR), None), drift("resolver", Some(&RESOLVER), None)],
+			}),
 		),
 		(
 			"dispatcher-answers-neither",
+			stating(both_stated()),
 			json!(hex(&ROOT_DISPATCHER)),
 			calls(vec![
 				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
@@ -840,18 +921,21 @@ fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
 		),
 		(
 			"gateway-holds-no-address",
+			stating(both_stated()),
 			json!("0x1234"),
 			calls(vec![]),
 			json!({ "error": "dispatcher-address" }),
 		),
 		(
 			"registry-word-with-high-bytes",
+			stating(both_stated()),
 			json!(hex(&DISPATCHER)),
 			calls(vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), json!(hex(&[0xff; 32])))]),
 			json!({ "error": "not-an-address" }),
 		),
 		(
 			"controller-behind-target-reverts",
+			stating(both_stated()),
 			json!(hex(&ROOT_DISPATCHER)),
 			calls(vec![
 				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
@@ -862,13 +946,10 @@ fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
 		),
 		(
 			"registry-get-reverts",
+			stating(both_stated()),
 			json!(hex(&DISPATCHER)),
-			calls(
-				[
-					vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))],
-					registry(&[]).into_iter().map(|(call, _)| (call, Value::Null)).collect(),
-				]
-				.concat(),
+			at_gateway(
+				registry(&[], &[]).into_iter().map(|(call, _)| (call, Value::Null)).collect(),
 			),
 			json!({ "error": "reverted" }),
 		),
@@ -894,22 +975,7 @@ fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
 			at(43, &|value| value["generation"] = json!(NEW_GENERATION)),
 		),
 		("refresh/44.json", at(44, &|_| {})),
-		(
-			"refresh/42-without-asset-hub.json",
-			at(42, &|value| {
-				value["chains"]
-					.as_array_mut()
-					.unwrap()
-					.retain(|chain| chain["role"] != "AssetHub");
-				value.as_object_mut().unwrap().remove("assets");
-			}),
-		),
 	]
-}
-
-/// A dotNS record of `generation`, with no gateway: the reader's choices do not depend on it.
-fn record(generation: &str) -> Value {
-	json!({ "generation": generation, "at": at(), "dotns": null })
 }
 
 /// The refresh cases: a policy, the copies a reader starts from, and steps in order, each with
@@ -917,13 +983,12 @@ fn record(generation: &str) -> Value {
 /// caller waits. `stores` says whether the reader handed back bytes to store. A `restart` starts
 /// a new reader from its build copy and what the last step stored.
 fn refresh_cases() -> Vec<Value> {
-	let base_generation = base()["generation"].clone();
 	let fetch = |etag: Option<&str>| json!({ "ifNoneMatch": etag });
 	let get = |now: i64, serves: Option<u64>, fetch: Value| json!({ "get": now, "expect": { "serves": serves, "fetch": fetch } });
 	let fetched = |document: Option<&str>, etag: Option<&str>, now: i64, expect: Value| json!({ "fetched": { "document": document, "etag": etag, "notModified": false }, "now": now, "expect": expect });
 	let not_modified = |now: i64, expect: Value| json!({ "fetched": { "document": null, "etag": null, "notModified": true }, "now": now, "expect": expect });
 	let outcome = |status: &str, serves: u64, stores: bool| json!({ "status": status, "serves": serves, "stores": stores, "newGeneration": false });
-	let case = |name: &str, refresh: Value, build: Option<&str>, steps: Vec<Value>| json!({ "name": name, "pointer": { "url": URL, "key": key() }, "refresh": refresh, "build": build, "buildDotns": null, "steps": steps });
+	let case = |name: &str, refresh: Value, build: Option<&str>, steps: Vec<Value>| json!({ "name": name, "pointer": { "url": URL, "key": key() }, "refresh": refresh, "build": build, "steps": steps });
 	let max_age = json!({ "maxAge": 3600 });
 	vec![
 		case(
@@ -980,7 +1045,7 @@ fn refresh_cases() -> Vec<Value> {
 				json!({ "due": NOW + 3_600, "expect": true }),
 				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
 				not_modified(NOW + 3_600, outcome("unchanged", 42, true)),
-				json!({ "restart": NOW + 3_600, "build": "refresh/42.json", "buildDotns": null }),
+				json!({ "restart": NOW + 3_600, "build": "refresh/42.json" }),
 				get(NOW + 7_199, Some(42), Value::Null),
 				get(NOW + 7_200, Some(42), fetch(Some("\"a\""))),
 			],
@@ -1035,43 +1100,22 @@ fn refresh_cases() -> Vec<Value> {
 					NOW + 86_400,
 					outcome("unchanged", 42, true),
 				),
-				json!({ "restart": NOW, "build": "refresh/42.json", "buildDotns": null }),
+				json!({ "restart": NOW, "build": "refresh/42.json" }),
 				get(NOW, Some(42), fetch(None)),
 				get(NOW + 1, Some(42), Value::Null),
 			],
-		),
-		json!({
-			"name": "an-explicit-refresh-reads-dotns-again",
-			"pointer": { "url": URL, "key": key() },
-			"refresh": "never",
-			"build": "refresh/42.json",
-			"buildDotns": record(base_generation.as_str().unwrap()),
-			"steps": [
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
-				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
-				fetched(Some("refresh/42.json"), None, NOW, outcome("unchanged", 42, true)),
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": base_generation } },
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
-			],
-		}),
-		case(
-			"a-stack-without-an-asset-hub-has-no-dotns",
-			json!("never"),
-			Some("refresh/42-without-asset-hub.json"),
-			vec![get(NOW, Some(42), Value::Null), json!({ "dotns": NOW, "expect": null })],
 		),
 		json!({
 			"name": "an-unsigned-store-never-moves-back-past-its-build-copy",
 			"pointer": { "url": URL, "key": null },
 			"refresh": "never",
 			"build": "refresh/42.json",
-			"buildDotns": null,
 			"steps": [
 				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
 				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
-				{ "restart": NOW, "build": "refresh/44.json", "buildDotns": null },
+				{ "restart": NOW, "build": "refresh/44.json" },
 				get(NOW, Some(44), Value::Null),
-				{ "restart": NOW, "build": "refresh/42.json", "buildDotns": null },
+				{ "restart": NOW, "build": "refresh/42.json" },
 				get(NOW, Some(43), Value::Null),
 			],
 		}),
@@ -1097,10 +1141,10 @@ fn refresh_cases() -> Vec<Value> {
 			vec![
 				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
 				fetched(Some("refresh/43.json"), Some("\"b\""), NOW, outcome("updated", 43, true)),
-				json!({ "restart": NOW, "build": "refresh/42.json", "buildDotns": null }),
+				json!({ "restart": NOW, "build": "refresh/42.json" }),
 				get(NOW, Some(43), Value::Null),
 				json!({ "refresh": NOW, "expect": { "fetch": fetch(Some("\"b\"")) } }),
-				json!({ "restart": NOW, "build": "refresh/44.json", "buildDotns": null }),
+				json!({ "restart": NOW, "build": "refresh/44.json" }),
 				get(NOW, Some(44), Value::Null),
 			],
 		),
@@ -1118,59 +1162,6 @@ fn refresh_cases() -> Vec<Value> {
 				),
 			],
 		),
-		json!({
-			"name": "dotns-follows-the-descriptors-generation",
-			"pointer": { "url": URL, "key": key() },
-			"refresh": "never",
-			"build": "refresh/42.json",
-			"buildDotns": record(base_generation.as_str().unwrap()),
-			"steps": [
-				get(NOW, Some(42), Value::Null),
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
-				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
-				fetched(
-					Some("refresh/43-new-generation.json"),
-					None,
-					NOW,
-					json!({ "status": "updated", "serves": 43, "stores": true, "newGeneration": true }),
-				),
-				{ "dotns": NOW, "expect": { "record": null, "lookUp": NEW_GENERATION } },
-				{ "dotns": NOW, "expect": { "record": null, "lookUp": null } },
-				{ "lookedUp": record(base_generation.as_str().unwrap()), "now": NOW, "expect": { "record": null, "stores": false } },
-				{ "dotns": NOW, "expect": { "record": null, "lookUp": NEW_GENERATION } },
-				{ "lookedUp": record(NEW_GENERATION), "now": NOW, "expect": { "record": NEW_GENERATION, "stores": true } },
-				{ "dotns": NOW + 86_400, "expect": { "record": NEW_GENERATION, "lookUp": null } },
-				{ "restart": NOW, "build": "refresh/42.json", "buildDotns": record(base_generation.as_str().unwrap()) },
-				{ "dotns": NOW, "expect": { "record": NEW_GENERATION, "lookUp": null } },
-			],
-		}),
-		json!({
-			"name": "dotns-once-reads-again-and-falls-back-to-its-record",
-			"pointer": { "url": URL, "key": key() },
-			"refresh": "once",
-			"build": "refresh/42.json",
-			"buildDotns": record(base_generation.as_str().unwrap()),
-			"steps": [
-				get(NOW, None, fetch(None)),
-				fetched(None, None, NOW, outcome("unreachable", 42, false)),
-				{ "dotns": NOW, "expect": { "record": null, "lookUp": base_generation } },
-				{ "lookedUp": null, "now": NOW, "expect": { "record": base_generation, "stores": false } },
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
-			],
-		}),
-		json!({
-			"name": "dotns-max-age-refreshes-behind-its-record",
-			"pointer": { "url": URL, "key": key() },
-			"refresh": max_age,
-			"build": "refresh/42.json",
-			"buildDotns": record(base_generation.as_str().unwrap()),
-			"steps": [
-				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": base_generation } },
-				{ "lookedUp": record(base_generation.as_str().unwrap()), "now": NOW, "expect": { "record": base_generation, "stores": true } },
-				{ "dotns": NOW + 3_599, "expect": { "record": base_generation, "lookUp": null } },
-				{ "dotns": NOW + 3_600, "expect": { "record": base_generation, "lookUp": base_generation } },
-			],
-		}),
 	]
 }
 
@@ -1202,8 +1193,8 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.collect();
 	let dotns: Vec<Value> = dotns_cases()
 		.into_iter()
-		.map(|(name, storage, calls, expect)| {
-			json!({ "name": name, "generation": GENERATION, "at": at(), "storageKey": DISPATCHER_ADDRESS_KEY, "storage": storage, "calls": calls, "expect": expect })
+		.map(|(name, descriptor, storage, calls, expect)| {
+			json!({ "name": name, "descriptor": descriptor, "storageKey": DISPATCHER_ADDRESS_KEY, "storage": storage, "calls": calls, "expect": expect })
 		})
 		.collect();
 	for (path, bytes) in refresh_documents() {
@@ -1347,35 +1338,13 @@ fn every_vector_gets_its_verdict() {
 	}
 
 	for case in cases["dotns"].as_array().unwrap() {
-		let outcome = look_up(case).unwrap_or_else(|error| json!({ "error": error.code() }));
+		let outcome = check_dotns(case).unwrap_or_else(|error| json!({ "error": error.code() }));
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
 	}
 
 	for case in cases["refresh"].as_array().unwrap() {
 		run_refresh(case, file);
 	}
-}
-
-/// A rebuild that read a registry rewire must not be shadowed by the record an earlier run
-/// stored, which a reader under `Never` would otherwise keep using.
-#[test]
-fn the_store_never_moves_a_dotns_record_back_past_the_builds() {
-	let pointer = Pointer::new(URL, Some(&key())).unwrap();
-	let build = signed(&with(|value| value["sequence"] = json!(42)));
-	let read_at = |number: u32| DotnsRecord {
-		generation: base()["generation"].as_str().unwrap().into(),
-		at: Block { number, hash: hex(&[0xab; 32]) },
-		dotns: None,
-	};
-	let dotns_after = |build_dotns: u32, stored: Option<&[u8]>| {
-		let mut reader = StackReader::new(Refresh::Never);
-		reader.load(&pointer, Some(&build), Some(read_at(build_dotns)), stored).unwrap();
-		reader.dotns(&pointer, NOW).unwrap().record.map(|record| record.at.number)
-	};
-	let mut reader = StackReader::new(Refresh::Never);
-	reader.load(&pointer, Some(&build), Some(read_at(1)), None).unwrap();
-	let stored = reader.looked_up(&pointer, Some(read_at(2)), NOW).unwrap().stored.unwrap();
-	assert_eq!([dotns_after(3, Some(&stored)), dotns_after(1, Some(&stored))], [Some(3), Some(2)]);
 }
 
 /// Runs a refresh vector's steps, checking each answer.
@@ -1387,18 +1356,13 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 		Value::String(policy) if policy == "once" => Refresh::Once,
 		policy => Refresh::MaxAge(policy["maxAge"].as_u64().unwrap()),
 	};
-	let record = |value: &Value| {
-		(!value.is_null()).then(|| serde_json::from_value::<DotnsRecord>(value.clone()).unwrap())
-	};
-	let start = |build: &Value, build_dotns: &Value, stored: Option<&[u8]>| {
+	let start = |build: &Value, stored: Option<&[u8]>| {
 		let mut reader = StackReader::new(refresh);
-		reader
-			.load(&pointer, file(build).as_deref(), record(build_dotns), stored)
-			.unwrap();
+		reader.load(&pointer, file(build).as_deref(), stored).unwrap();
 		reader
 	};
 	let mut stored: Option<Vec<u8>> = None;
-	let mut reader = start(&case["build"], &case["buildDotns"], None);
+	let mut reader = start(&case["build"], None);
 	let fetch_of = |request: Option<FetchRequest>| {
 		request.map_or(Value::Null, |request| json!({ "ifNoneMatch": request.if_none_match }))
 	};
@@ -1433,32 +1397,19 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 					})
 				},
 			}
-		} else if step.get("restart").is_some() {
-			reader = start(&step["build"], &step["buildDotns"], stored.as_deref());
-			continue;
-		} else if step.get("dotns").is_some() {
-			reader.dotns(&pointer, at("dotns")).map_or(Value::Null, |read| {
-				json!({
-					"record": read.record.map(|record| record.generation),
-					"lookUp": read.look_up,
-				})
-			})
 		} else {
-			let looked_up =
-				reader.looked_up(&pointer, record(&step["lookedUp"]), at("now")).unwrap();
-			let stores = looked_up.stored.is_some();
-			stored = looked_up.stored.or(stored);
-			json!({ "record": looked_up.record.map(|record| record.generation), "stores": stores })
+			reader = start(&step["build"], stored.as_deref());
+			continue;
 		};
 		assert_eq!(outcome, step["expect"], "{name} step {index}");
 	}
 }
 
-/// Runs a lookup against a dotNS vector's chain.
-fn look_up(case: &Value) -> Result<Value, trinity_stack::Error> {
+/// Checks a dotNS vector's descriptor against its chain.
+fn check_dotns(case: &Value) -> Result<Value, trinity_stack::Error> {
 	let bytes = |value: &Value| hex::decode(&value.as_str().unwrap()[2..]).unwrap();
-	let at = serde_json::from_value(case["at"].clone()).unwrap();
-	let mut lookup = DotnsLookup::new(case["generation"].as_str().unwrap().into(), at)?;
+	let descriptor = Descriptor::from_json(case["descriptor"].clone()).unwrap();
+	let mut lookup = DotnsLookup::new(&descriptor);
 	loop {
 		match lookup.next() {
 			DotnsStep::Storage(key) => {
@@ -1481,7 +1432,10 @@ fn look_up(case: &Value) -> Result<Value, trinity_stack::Error> {
 					.collect();
 				lookup.answer(&answers)?
 			},
-			DotnsStep::Done(record) => return Ok(serde_json::to_value(record).unwrap()),
+			DotnsStep::Done(found) => {
+				let drift = dotns_drift(&descriptor, found.as_ref());
+				return Ok(json!({ "found": found, "drift": drift }));
+			},
 		}
 	}
 }
