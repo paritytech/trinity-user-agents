@@ -130,9 +130,9 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
                 alert: .init(
-                    title: .Notification.gameNotificationGameStartTitle,
+                    title: LocalizedStringResource.Notification.gameNotificationGameStartTitle.resolvedText,
                     secondaryButton: .init(
-                        text: .Notification.gameAlarmPlayGame,
+                        text: LocalizedStringResource.Notification.gameAlarmPlayGame.resolvedText,
                         textColor: .textAndIconsPrimaryDark,
                         systemImageName: "figure.walk.arrival"
                     ),
@@ -163,3 +163,14 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
 @available(iOS 26.1, *)
 struct GameAlarmMetadata: AlarmMetadata {}
+
+extension LocalizedStringResource {
+    /// The string translated now, in this process, as a resource whose fallback is that text.
+    ///
+    /// The system looks alarm strings up in the app bundle when the alarm fires, through a bundle
+    /// path and sandbox token captured at scheduling. A device restart or an app update invalidates
+    /// both, and the lookup then shows the key.
+    var resolvedText: LocalizedStringResource {
+        LocalizedStringResource(stringLiteral: String(localized: self))
+    }
+}
