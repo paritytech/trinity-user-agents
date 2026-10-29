@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Fetch, encodeLink } from "./index.js";
@@ -155,5 +155,36 @@ describe("trinity-stack add and update", () => {
     await expect(add("../up", link, undefined, options())).rejects.toThrow(
       "is not a stack name",
     );
+    await expect(add("stacks", link, undefined, options())).rejects.toThrow(
+      "stacks.json",
+    );
+    await add("constructor", link, undefined, options());
+    expect((await list({ dir })).map(({ name }) => name)).toEqual([
+      "constructor",
+    ]);
+  });
+
+  test("a link under an https base is read as a link, not a descriptor URL", async () => {
+    await add(
+      "local",
+      encodeLink(pointer, "https://app.example/open"),
+      undefined,
+      options(),
+    );
+    const [stack] = await list({ dir });
+    expect(stack.descriptor?.sequence).toBe(100);
+  });
+
+  test("a stack whose link no longer reads fails alone", async () => {
+    await add("local", link, undefined, options());
+    await writeFile(
+      join(dir, "stacks.json"),
+      JSON.stringify({ broken: "not a link", local: link }),
+    );
+    served = await at(200);
+    const { changed, failures } = await update([], options());
+    expect(changed).toContain("local.json");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toStartWith("broken: ");
   });
 });

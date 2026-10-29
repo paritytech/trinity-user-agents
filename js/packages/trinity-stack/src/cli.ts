@@ -16,18 +16,17 @@ update exits 0 when nothing changed, 2 when it wrote something and 1 when a stac
 which keeps its copies while the others update. It reads dotNS over the stack's eth-rpc, so a
 stack with a dotNS gateway and no eth-rpc fails.`;
 
-const { positionals, values } = parseArgs({
-  allowPositionals: true,
-  options: {
-    dir: { type: "string" },
-    key: { type: "string" },
-    help: { type: "boolean", short: "h" },
-  },
-});
-const [command, ...rest] = positionals;
-const options = { dir: values.dir };
-
 try {
+  const { positionals, values } = parseArgs({
+    allowPositionals: true,
+    options: {
+      dir: { type: "string" },
+      key: { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  const [command, ...rest] = positionals;
+  const options = { dir: values.dir };
   if (values.help || !command) {
     console.log(USAGE);
   } else if (command === "add" && rest.length === 2) {

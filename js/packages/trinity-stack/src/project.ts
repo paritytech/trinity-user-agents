@@ -49,15 +49,17 @@ export async function add(
 ): Promise<Outcome> {
   if (!NAME.test(name))
     throw new Error(`${name} is not a stack name: use a-z, 0-9 and -`);
-  const linked = target.startsWith("https://")
-    ? { url: target }
-    : decodeLink(target);
+  if (name === "stacks")
+    throw new Error("stacks is the name of stacks.json; pick another");
+  const linked = new URL(target).searchParams.has("url")
+    ? decodeLink(target)
+    : { url: target };
   if (key && linked.key && key !== linked.key)
     throw new Error(`the link carries key ${linked.key}, not ${key}`);
   const pointer: Pointer = { url: linked.url, key: key ?? linked.key };
   stackId(pointer);
   const stacks = await readStacks(options);
-  if (stacks[name])
+  if (Object.hasOwn(stacks, name))
     throw new Error(`${name} is already added; remove it first`);
   const changed = await refresh(name, pointer, options);
   await writeStacks({ ...stacks, [name]: encodeLink(pointer) }, options);
@@ -75,12 +77,14 @@ export async function update(
   options: ProjectOptions = {},
 ): Promise<Outcome & { failures: string[] }> {
   const stacks = await readStacks(options);
-  const unknown = names.filter((name) => !stacks[name]);
+  const unknown = names.filter((name) => !Object.hasOwn(stacks, name));
   if (unknown.length > 0)
     throw new Error(`no stack named ${unknown.join(", ")}`);
   const chosen = names.length > 0 ? names : Object.keys(stacks);
   const results = await Promise.allSettled(
-    chosen.map((name) => refresh(name, decodeLink(stacks[name]), options)),
+    chosen.map(async (name) =>
+      refresh(name, decodeLink(stacks[name]), options),
+    ),
   );
   const changed = results.flatMap((result) =>
     result.status === "fulfilled" ? result.value : [],
@@ -107,8 +111,9 @@ export async function remove(
   name: string,
   options: ProjectOptions = {},
 ): Promise<Outcome> {
-  const { [name]: removed, ...stacks } = await readStacks(options);
-  if (!removed) throw new Error(`no stack named ${name}`);
+  const stacks = await readStacks(options);
+  if (!Object.hasOwn(stacks, name)) throw new Error(`no stack named ${name}`);
+  delete stacks[name];
   await writeStacks(stacks, options);
   for (const file of Object.values(filesOf(name)))
     await rm(join(dir(options), file), { force: true });
