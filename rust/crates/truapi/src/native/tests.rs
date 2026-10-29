@@ -2049,9 +2049,9 @@ fn native_chat_adapter_surfaces_a_room_list_rejection() {
 	);
 }
 
-// Creating a room declares nothing, new or not: a room keeps the
-// declarations the product makes after it, so a worker restart that creates
-// its rooms again does not undo them.
+// A new room, or a room that exists, gets no declarations from `create_room`.
+// A room keeps the declarations that the product makes after it, so a worker
+// that starts again and creates its rooms again does not undo them.
 #[test]
 fn native_chat_adapter_creates_a_room_without_declarations() {
 	let (callbacks, platform, product) = chat_adapter();
@@ -2140,7 +2140,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 		*callbacks.chat_declared.lock().expect("declared mutex poisoned"),
 		["config support", "metadata support", "preview support", "delete support"]
 	);
-	// Deleting a room republishes the room list without it.
+	// A deletion publishes the room list again, without the room.
 	assert!(ready_rooms(rooms.as_mut(), "the list after the delete").rooms.is_empty());
 }
 
