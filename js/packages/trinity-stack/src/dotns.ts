@@ -71,7 +71,7 @@ async function lookUp(
   }
   try {
     const at = await transport.at();
-    const lookup = new wasm.DotnsLookup(descriptor);
+    const lookup = new wasm.DotnsLookup(JSON.stringify(descriptor));
     try {
       for (;;) {
         const step = lookup.next();

@@ -188,12 +188,13 @@ pub struct JsDotnsLookup {
 
 #[wasm_bindgen(js_class = DotnsLookup)]
 impl JsDotnsLookup {
-	/// A lookup of the addresses `descriptor`'s `dotns` is checked against.
+	/// A lookup of the addresses a descriptor's `dotns` is checked against, from the descriptor's
+	/// JSON text. Throws the rule's code when the descriptor breaks one.
 	#[wasm_bindgen(constructor)]
-	pub fn new(descriptor: Ts<Descriptor>) -> Result<JsDotnsLookup, JsValue> {
-		let descriptor = descriptor
-			.to_rust()
-			.map_err(|error| type_error(&format!("descriptor: {error}")))?;
+	pub fn new(descriptor: &str) -> Result<JsDotnsLookup, JsValue> {
+		let document = serde_json::from_str(descriptor)
+			.map_err(|error| to_js_error(Error::NotJson(error.to_string())))?;
+		let descriptor = Descriptor::from_json(document).map_err(to_js_error)?;
 		Ok(Self { lookup: crate::DotnsLookup::new(&descriptor), descriptor })
 	}
 

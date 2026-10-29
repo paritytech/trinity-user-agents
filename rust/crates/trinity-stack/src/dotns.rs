@@ -148,7 +148,8 @@ enum State {
 
 impl DotnsLookup {
 	/// A lookup of every key in [`DOTNS_KEYS`] and every other key `descriptor`'s `dotns` has,
-	/// so [`dotns_drift`] compares each address the descriptor has.
+	/// so [`dotns_drift`] compares each address the descriptor has. `descriptor` must pass the
+	/// crate's rules, as every one it reads does: a key longer than a `bytes32` reads another slot.
 	pub fn new(descriptor: &Descriptor) -> Self {
 		let stated = descriptor.dotns.iter().flat_map(BTreeMap::keys);
 		let mut keys: Vec<String> = DOTNS_KEYS.map(str::to_owned).to_vec();
